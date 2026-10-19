@@ -68,7 +68,7 @@
 +#define NORD2_FB_CELL_H 32u
 +/* The log lives in the bottom band of the panel: the last line is always the
 + * bottom-most one, which is what matters for a boot that never returns. */
-+#define NORD2_FB_ROWS   20u
++#define NORD2_FB_ROWS   32u
 +#define NORD2_FB_ORIGIN_Y (NORD2_FB_HEIGHT - NORD2_FB_ROWS * NORD2_FB_CELL_H)
 +
 +extern unsigned char iso_font[256 * 16];
@@ -505,7 +505,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +567,172 @@
+@@ -133,11 +567,179 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -617,7 +617,11 @@
 +	unsigned int size;
 +	uint64_t e = 0, d = 0, s = 0, x = 0;
 +
-+	if (nord2_cb_valid || SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
++	if (nord2_cb_valid) {
++		return;
++	}
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
++		sweet_early_string("NORD2-XNU: cache: no /chosen\n");
 +		return;
 +	}
 +	if (SecureDTGetProperty(chosen, "nord2-stock-entry", &prop, &size) == kSuccess &&
@@ -639,6 +643,9 @@
 +		nord2_cb_start = s;
 +		nord2_cb_end = x;
 +		nord2_cb_valid = 1;
++		sweet_early_string("NORD2-XNU: chain-back cached\n");
++	} else {
++		sweet_early_string("NORD2-XNU: cache: bad properties\n");
 +	}
 +}
 +

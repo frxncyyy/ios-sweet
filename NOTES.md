@@ -13,6 +13,17 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **bottom band widened to 32 lines and the
+  chain-back cache now logs its own result**, because the previous 20-line band
+  scrolled the `NORD2-XNU` stage markers and the panic header out of view (the
+  photo only kept the register tail and the final
+  `no /chosen` / `cannot chain back`). It also proved the cache fallback had
+  **not** engaged (`using cached chain-back parameters` absent), cause still
+  unknown; the new `NORD2-XNU: chain-back cached` / `cache: …` lines will say
+  whether the lookup or the properties fail. New image
+  `nord2-xnu-vmfb.img` 30.566.400 bytes SHA-256
+  `0a498b8e90db2820c197d36ed68e193e458ac5d798c92e55ce7b75fcb0a74bfa`; all five
+  verify; patch dry-run OK. Not flashed.
 - 2026-10-19 (session 5, Claude): **on-screen log moved to the bottom band**
   (user request: easier to photograph). The console now uses the last
   `20 * 32 = 640` rows of the panel (`NORD2_FB_ORIGIN_Y = 1760`), scrolls one
