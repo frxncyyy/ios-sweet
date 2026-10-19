@@ -9,7 +9,7 @@ not to this user. **iOS has NOT booted on the Nord 2.** Android and userdata
 are preserved; no permission to erase userdata has been given.
 
 - Branch `codex/nord2-bringup`, base `fdad0de8dc0e75c5ea84762adc03f7232dc91f19`.
-- Private backups: `backup/nord2/manifest.json` and 20 partition dumps, each
+- Private backups: `backup/nord2/manifest.json` and 19 partition dumps, each
   originally checked against the device. Original boot SHA-256:
   `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
 - Both boot-only diagnostic tests and their restoration were explicitly
@@ -53,11 +53,39 @@ are preserved; no permission to erase userdata has been given.
   kernel's static segment layout. cctools ld can, but needs support libs.
   Official libdispatch1415.140.2 compiled successfully for kernel arm64:
   `research/nord2/firehose.o`, command in firehose-command.json.
-  Remaining LLVM profiling functions and Darwin chkstk implementation
-  needed to relink; downloaded Windows chkstk.S is NOT appropriate.
-- Next: verify restored Android completed, finish a reproducible local
-  XNU relink, replace Qualcomm early writes with Nord2 RAM logging,
-  build an initial XNU payload with bounded diagnostics and recovery.
+  LLVM16 profiling support and a Darwin chkstk implementation were subsequently
+  built; link now succeeds (details below). Downloaded Windows chkstk.S is
+  NOT appropriate and was not used.
+- User supplied current Android source: `https://github.com/frxncyyy/android_kernel_oplus_mt6893/tree/KSUN-RUI-susfs-v2.2.0-manual-hook`, cloned at `../nord2-current-kernel`; HEAD `04d00c2565764c3922c9b4826b5acff1106e533f` matches the running kernel build hash.
+- Local XNU relink now succeeds with cctools, firehose and LLVM16 profiling support plus a Darwin stack probe. Initial output `research/nord2/kernel.relink` is not yet a Nord2 kernel and has NOT been booted.
+- User requested a harness handoff because usage is running out; no further
+  phone test is pending. Final read-only check again confirmed Android
+  `sys.boot_completed=1` and original full-partition boot SHA-256.
+- Reproduction commands: `research/nord2/firehose-command.json`,
+  `profile-command.json`, `link-command.json`. The latter is a complete argv
+  list executable with Python subprocess from the repo root. Compiler-rt
+  files live in `research/nord2/compiler-rt`; libdispatch in research/libdispatch.
+  `chkstk.S`/`.o` in research/nord2 implement the observed Darwin x9/x10 ABI;
+  evidence in chkstk-evidence.txt from cctools nm + LLVM C API. REA provider
+  unavailable (no Ghidra/Hopper/IDA); ordinary shell evidence, not REA output.
+- Relink SHA-256 `5913361f2f39f492bf1154779b0512fe4252ebaed80cf320240102224b79f914`,
+  21979536 bytes, no undefined symbols, no chained-fixups command. This is
+  still the Sweet platform kernel and is unsafe to boot on Nord2.
+- Source compile smoke checks only: sweet_early.c compiled; start.s failed
+  because VM_KERNEL_LINK_ADDRESS was not supplied. Commands saved as
+  start-command.json / sweet_early-command.json. Both source files remain
+  UNMODIFIED. Reconcile all compile flags with MakeInc.def before using
+  output: CFLAGS_ARM64 include ARM_LARGE_MEMORY=1, PAGE_SIZE_FIXED,
+  VM_KERNEL_LINK_ADDRESS=0xfffffe0007004000, arm64/ARM64/__ARM64__/LP64,
+  __API__=v4 and fno-strict-aliasing. Missing flags can affect ABI; successful
+  linking alone does not validate the support libraries or kernel layout.
+- Next: reproduce and audit the local relink with the correct original ABI
+  flags, replace Qualcomm early writes with Nord2 RAM logging, and build an
+  initial XNU payload with bounded diagnostics and recovery. No XNU probe
+  patch/image/ADT/return trampoline has been implemented yet. A proposed
+  direction is to stop before arm_vm_init (early stage7) and return to the
+  original Android kernel; this requires proper MMU/cache/register recovery
+  and tightly scoped memory maps, and must be reviewed before testing.
   A working CPU probe is not a working iOS port. Display, touch and UFS
   takeover still need implementation and validation.
 
