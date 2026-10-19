@@ -3,6 +3,17 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 6, Claude, handoff to Opencode): **diagnostic test of
+  `nord2-xnu-late2.img` `4a2614ce…` (authorized, run twice) done; Android did
+  not come back.** Photo of the final screen:
+  `/home/frxncy/Downloads/materialgram/IMG_20261019_214059_2.jpg`. User: the
+  phone resets about 1 s after the last printed line. Analysis of the photo is
+  left to Opencode (not done in this session).
+  **Phone state at handoff: the boot partition still holds the test image**
+  (every boot re-enters the test). Restore first: fastboot, flash
+  `backup/nord2/boot.img`, read back SHA-256 `04e84c4a…6e1f01`, check
+  `sys.boot_completed=1`.
+
 - 2026-10-19 (session 6, Claude): **test of the io_map console fix (image
   `3721f971…`, authorized): still stops after `SWEET BATTERY`, then reboot
   loop.** pstore empty (`PMIC_cold_reboot`), log
