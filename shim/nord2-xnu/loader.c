@@ -156,6 +156,17 @@ static int same(const char *a, const char *b)
     return *a == *b;
 }
 
+/* Compare an 8-byte magic that is not NUL-terminated (same() would read on). */
+static int magic8(const char *a, const char *b)
+{
+    for (int i = 0; i < 8; i++) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static uint32_t be32(const void *p)
 {
     const volatile unsigned char *b = p;
@@ -406,7 +417,7 @@ void xnu_main(uintptr_t dtb)
     hex_log("payload", payload_pa);
 
     const struct payload *pl = (const struct payload *)payload_pa;
-    if (!same(pl->magic, "SWEETXNU")) {
+    if (!magic8(pl->magic, "SWEETXNU")) {
         fatal("no SWEETXNU payload after the stock kernel");
     }
     if (pl->version != 1 || pl->nsegs == 0 || pl->nsegs > 64 ||
@@ -419,6 +430,9 @@ void xnu_main(uintptr_t dtb)
     if (pl->adt_off + pl->adt_size > payload_limit) {
         fatal("payload ADT out of range");
     }
+    puts_log("NORD2-XNU LOADER: payload ok\n");
+    hex_log("nsegs", pl->nsegs);
+    hex_log("entry_va", pl->entry_va);
 
     uint64_t kernel_end_pa = pl->kernel_end - pl->virt_base + pl->phys_base;
     if (kernel_end_pa + pl->adt_size + 2 * PAGE_16K > NORD2_XNU_PHYS_BASE + NORD2_XNU_MEM_SIZE) {

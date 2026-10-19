@@ -81,6 +81,38 @@
     verified 57.4 MB (payload overlapping the stock BSS, dropping the
     `__LINKEDIT` segment and/or putting part of it in the loader's 2 MiB
     reserve). Each image needs its own explicit flash authorization.
+- 2026-10-19 (session 3, test 2 — full probe, authorized): **Android booted
+  and the pmsg log survived** (`backup/nord2/probe-v3-pmsg.txt`, 249 bytes):
+  ```
+  NORD2-XNU LOADER: early probe, no storage writes
+  dtb=0x0000000047c80000
+  NORD2-XNU LOADER: live FDT and cache state ok
+  stock_image_size=0x00000000034c1000
+  payload=0x0000000043744000
+  NORD2-XNU: LOADER FATAL: no SWEETXNU payload after the stock kernel
+  ```
+  **Verified on hardware:** LK decompresses the 71.6 MB blob (the loader ran,
+  so `KERNEL_DECOMPRESS_SIZE` was never the problem); the loader's live-FDT
+  checks (mediatek,MT6893 / mblock-16-pstore / ramoops.pmsg_size / SCTLR) all
+  pass; the stock Image header is readable at 0x40280000 with
+  `image_size = 0x34c1000`; the log ring is readable by Android as
+  `/sys/fs/pstore/pmsg-ramoops-0`; and the loader's chain-back works — Android
+  reached `sys.boot_completed=1` and boot was restored afterwards.
+  - **Root cause of the logo hang (a loader bug, not LK):** `same()` compares
+    up to a NUL, but `payload.magic` is 8 bytes *not* NUL-terminated and is
+    followed by `version = 1`, so `same(pl->magic, "SWEETXNU")` returned false
+    always → `fatal("no SWEETXNU payload")` → the old fatal spun in `wfe`
+    (first flash) / chained back (second flash). Fixed with a fixed-width
+    `magic8()` comparison. The ADT property-name uses of `same()` are fine
+    (32-byte NUL-padded fields).
+  - Rebuilt images (all statically verified, same payload
+    `36877c87d08c56b0f67f178667041305b1f83d3af64200a9c9194c136eb3334d`):
+    `nord2-xnu-boot.img` `5b1ec736638e57844187ec2f951f0ecba9f77ac38b6260a7c69142aa5538f9a0`,
+    `nord2-xnu-loaderonly.img` `04d4f0b1b10e0a8072a7a882ae51a4aace12ea0513bfa22e919039f738233764`,
+    `nord2-xnu-copy.img` `04cc460c7fbbb09d3d3eb68d2c7aa8736e122887c6050699ac0c13a9c9e430b2`.
+  - Next: flash the fixed full probe and read how far XNU gets (the log shows
+    the loader stages, then `NORD2-XNU <stage>: ...` markers and either the
+    return-to-stock messages or a panic captured by `sweet_early_panic`).
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
