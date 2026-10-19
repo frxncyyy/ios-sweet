@@ -701,7 +701,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +756,265 @@
+@@ -133,11 +756,270 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -854,6 +854,11 @@
 +	if (intid == sweet_vtimer_intid) {
 +		nord2_ticks++;
 +		/* Bounded, so a live timer cannot scroll the real last line away. */
++		if ((nord2_ticks & 0x3f) == 0 && nord2_wdt && nord2_ticks <= 256) {
++			nord2_wdt_log("wdt_mode", nord2_wdt[0]);
++			nord2_wdt_log("wdt_interval", nord2_wdt[3]);
++			nord2_wdt_log("wdt_status", nord2_wdt[2]);
++		}
 +		if (nord2_ticks <= 3 || ((nord2_ticks & 0x3f) == 0 && nord2_ticks <= 2048)) {
 +			sweet_early_string("NORD2-XNU: timer tick 0x");
 +			nord2_hex64(nord2_ticks);

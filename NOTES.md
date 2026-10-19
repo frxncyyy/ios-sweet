@@ -1273,3 +1273,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     registers from the live DT) or read its status before the reset; also
     consider a heartbeat/timestamp line each second to measure the exact time
     from boot to reset across runs.
+
+- 2026-10-19 (session 7, Opencode): **WDT registers repeated on ticks (built,
+  not flashed).** The startup `wdt_mode/status/interval` lines scrolled out of
+  the 32-line band in every photo; they are now reprinted at ticks 0x40, 0x80
+  and 0xc0 (i.e. inside the visible tail), so the last screen shows whether
+  the MediaTek toprgu is armed and with what interval. Live DT facts:
+  `pwrap@10026000` (pwrap + spi_mst at 0x10028000 with spi/wrap/ulposc clocks)
+  and the MT6359 node has **`apwdtrst_en = <1>`**, i.e. the PMIC is allowed to
+  reset the AP on an AP-watchdog event — consistent with the
+  `PMIC_cold_reboot` reason. A real pwrap pet needs a pwrap/SPI driver
+  (clocks + command framing), so the cheap next measurement is the toprgu
+  state. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
+  `2361ded64af5d30914868b46881db2ddcf27420bfd716d6daa38cf5cfc743518`;
+  7 images, `FAILURES: none`; patch regenerated.
