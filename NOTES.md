@@ -113,6 +113,49 @@
   - Next: flash the fixed full probe and read how far XNU gets (the log shows
     the loader stages, then `NORD2-XNU <stage>: ...` markers and either the
     return-to-stock messages or a panic captured by `sweet_early_panic`).
+- 2026-10-19 (session 3, test 3 — fixed probe, authorized): **MILESTONE —
+  XNU RUNS ON THE NORD 2 UP TO `cpu_init()` AND RETURNS TO ANDROID.**
+  Authorized flash of `nord2-xnu-boot.img`
+  `5b1ec736638e57844187ec2f951f0ecba9f77ac38b6260a7c69142aa5538f9a0`; Android
+  reached `sys.boot_completed=1` ~54 s after `fastboot reboot`. Full pmsg log
+  (`backup/nord2/probe-v4-pmsg.txt`, 725 bytes):
+  ```
+  NORD2-XNU LOADER: early probe, no storage writes
+  dtb=0x0000000047c80000
+  NORD2-XNU LOADER: live FDT and cache state ok
+  stock_image_size=0x00000000034c1000
+  payload=0x0000000043744000
+  NORD2-XNU LOADER: payload ok
+  nsegs=0x0000000000000009
+  entry_va=0xfffffe0007a94488
+  NORD2-XNU LOADER: copying kernel
+  kernel_end=0x000000014426c000
+  adt=0x000000014426c000
+  boot_args=0x0000000144270000
+  entry=0x0000000143a94488
+  NORD2-XNU LOADER: JUMP TO XNU
+  NORD2-XNU 1: arm_init entered (MMU on)
+  NORD2-XNU 2: PE_init_platform done
+  NORD2-XNU 3: ml_parse_cpu_topology done
+  NORD2-XNU 4: cpu_bootstrap done
+  NORD2-XNU 5: kernel_startup_bootstrap done
+  NORD2-XNU 6: cpu_init done
+  NORD2-XNU: RETURN TO STOCK ANDROID KERNEL
+  NORD2-XNU: entry=0000000040280000
+  ```
+  **Verified:** the ADT is accepted (platform identity + 8 CPU nodes +
+  `ml_parse_cpu_topology` on MT6893 affinities), `PE_init_platform` and
+  `cpu_init` (MIDR/cache id/coresight path) complete, the 992 MiB window and
+  the V=P map work, the pmsg block mapping at `0x48000000` works with the MMU
+  on, and the trampoline returns to the stock kernel with the observed
+  MMU-off `SCTLR_EL1` state (Android boots). This is XNU kernel code running
+  on MediaTek silicon — not an iOS boot: no display, touch, UFS, GIC or timer
+  take-over, and nothing past `arm_vm_init`.
+  - Next milestone options: (1) route `PE_putc` to pmsg so the kernel's own
+    `dprintf`/kprintf output becomes visible (needs a patched `pe_serial.c`);
+    (2) push the stop point from stage 6 past `processor_bootstrap()` and
+    `arm_vm_init` (GIC/arch-timer/PMAP bring-up, the real porting work);
+    (3) restore the boot partition (pending, needs a manual fastboot entry).
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
@@ -205,15 +248,13 @@ are preserved; no permission to erase userdata has been given.
   VM_KERNEL_LINK_ADDRESS=0xfffffe0007004000, arm64/ARM64/__ARM64__/LP64,
   __API__=v4 and fno-strict-aliasing. Missing flags can affect ABI; successful
   linking alone does not validate the support libraries or kernel layout.
-- Next (from session 3): (1) present the verified image and ask for explicit
-  authorization to flash **boot only**; (2) on the phone, pull
-  `/sys/fs/pstore/pmsg-ramoops-0` after Android comes back, then restore and
-  verify the original boot partition; (3) if the probe stops before stage 6 or
-  panics, extend the ADT/driver work in that direction; if it reaches stage 6,
-  the next milestone is arming a real console (route `PE_putc` to pmsg) and
-  then GIC/arch-timer bring-up for `arm_vm_init`. No XNU probe had been
-  implemented before session 3 (that text is kept in git history); display,
-  touch and UFS takeover still need implementation and validation.
+- Next (from session 3): (1) ~XNU now stops cleanly after `cpu_init` and
+  returns to Android (log `backup/nord2/probe-v4-pmsg.txt`); the next
+  milestones are a real early console (`PE_putc` → pmsg) and then
+  `processor_bootstrap()`/`arm_vm_init` with GIC and arch-timer bring-up;
+  (2) restore the boot partition from the backup (pending a manual fastboot
+  entry) and verify hash + `sys.boot_completed`. Display, touch and UFS
+  takeover still need implementation and validation.
   A working CPU probe is not a working iOS port. Display, touch and UFS
   takeover still need implementation and validation.
 
