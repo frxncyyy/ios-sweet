@@ -212,6 +212,35 @@
     and either print its progress (console hook) or panic (logged, chained
     back). Expect the first real memory-map/GIC work to fail: that is the
     next porting task.
+- 2026-10-19 (session 3, test 5 — `nord2-xnu-vm.img` fixed, authorized):
+  **`arm_vm_init` HANGS** (no panic): Android never came back, the user saw a
+  bootloop and had to force fastboot. Two lessons, both verified:
+  - The loader now *preserves* an existing ring instead of resetting it
+    (`previous log preserved` line), and **DRAM does survive a normal
+    reboot** — after `adb reboot` the file held the earlier Android pmsg data
+    plus both probe runs (`backup/nord2/probe-v8-reboot-pmsg.txt`, 2158
+    bytes). But **DRAM does not survive the reset that follows a hang**
+    (cold/WDT): at the next boot the loader found no previous ring, so the
+    hung run's log is unrecoverable. Any future step that can hang must
+    therefore be *bounded by a stop hook that returns to Android*, never run
+    to a hang.
+  - Note: `/sys/fs/pstore/pmsg-ramoops-0` is a *shared* zone — Android writes
+    its own "TENS" records into it through `/dev/pmsg0`, so the file contains
+    Android records followed by our appended probe log.
+  - Next plan (agreed shape): instrument `arm_vm_init` with a sequence of
+    numbered gates (`nord2_vm_gate(stage)`, controlled by a boot argument)
+    that each log `NORD2-NEXT=<stage+1>` and chain back to Android; the
+    loader reads that value out of the preserved previous log and rewrites
+    the `nord2vmstop=` field of the payload command line in RAM before XNU
+    starts. One flash, then each plain reboot advances the gate by one step
+    until a boot hangs: the last `NORD2-NEXT` seen is the failing step.
+    Rebuild images (30.562.304 bytes, all verified):
+    `nord2-xnu-boot.img` `b23c76acb1265822275629ac035affd120e74a8e845dd1a28337a021127e046b`
+    (loader preserves the ring), `nord2-xnu-continue.img` `69a1dd03…`,
+    `nord2-xnu-vm.img` `292f8a5c50785f88dbb9288c0db3606208f402da7d12dc7d2817c678b13fce79`.
+  - **Phone state:** `boot` holds `nord2-xnu-boot.img` (`b23c76ac…`), which
+    always returns to Android; it must still be restored from
+    `backup/nord2/boot.img`.
   - **Phone state:** `boot` currently holds the console probe
     (`217c377d…`, verified boot: Android starts normally through the
     chain-back). It must be restored from `backup/nord2/boot.img` at the end

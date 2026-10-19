@@ -375,11 +375,26 @@ void xnu_main(uintptr_t dtb)
     /* Bring the log up first: every later failure must be readable. */
     g_dtb = dtb;
     logbuf = (volatile struct ring *)PMSG_BASE;
-    logpos = 0;
+    /*
+     * Do NOT drop a previous run's log. The ramoops zone lives in RAM that
+     * survives a warm reset, and a probe that hangs (e.g. inside arm_vm_init)
+     * never gets back to Android to be read. Appending to the existing ring
+     * lets the next boot, which stops early and chains back, show how far the
+     * hung run got.
+     */
+    unsigned prev = 0;
+    if (logbuf->sig == PMSG_SIG && logbuf->size < PMSG_SIZE - RING_HDR) {
+        prev = logbuf->size;
+    }
+    logpos = prev;
+    if (!prev) {
+        logbuf->start = 0;
+        logbuf->size = 0;
+    }
     logbuf->sig = PMSG_SIG;
-    logbuf->start = 0;
-    logbuf->size = 0;
-    puts_log("NORD2-XNU LOADER: early probe, no storage writes\n");
+    puts_log(prev ?
+        "\n=== NORD2-XNU LOADER: new run, previous log preserved ===\n" :
+        "NORD2-XNU LOADER: early probe, no storage writes\n");
     hex_log("dtb", dtb);
 
     p = prop(dtb, "", "compatible", &n);
