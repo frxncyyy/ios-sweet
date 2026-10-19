@@ -13,6 +13,25 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **PANIC-CACHE TEST FAILED to return (image
+  `905a1431…`, authorized).** The phone stayed in the crash (user: "continua a
+  ritornare sul crash e non andare in Android", then forced fastboot). So the
+  cached-parameter fallback did **not** get the panic path back to Android.
+  The pmsg log of that boot was lost with the reset, so the last screen line
+  is unknown. Hypotheses (unverified): by then the CPU/stack state is already
+  unusable (XNU's own handler panicked with "without SP selected"), and/or the
+  bootstrap V=P table is no longer usable after `pmap_bootstrap()` (it may be
+  reused), so both the pmsg write and the trampoline fault again.
+  - Restore verified after the test: `boot` = `04e84c4a…6e1f01`,
+    `sys.boot_completed=1`.
+  - Proposed next step (NOT implemented): a **self-contained fault trap** that
+    depends on no kernel page table. Install our own `VBAR_EL1` before
+    `arm_vm_init` with a handler that, with the MMU already off, (a) writes
+    `ESR_EL1/ELR_EL1/FAR_EL1` to the pmsg ring **at its physical address**,
+    (b) reads a {stock entry, dtb} pair that the **loader** would store at a
+    fixed physical address (e.g. `0x142008000`), and (c) branches there with
+    `x0 = dtb`, `x1..x3 = 0`. That returns to Android from *any* fault,
+    including the one at `far = 0x4003c5`.
 - 2026-10-19 (session 5, Claude): **PHASE-2 TEST DONE (image
   `f8213c7c…`, authorized). Verified from the panel photo:**
   - **The on-screen console works.** The panel showed the kernel log in white
