@@ -1255,3 +1255,21 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   30.568.448 bytes SHA-256
   `280518b9e965c01198cd68a5f3238ca5c938dbc9b1c13df7ce9c84245f9632b9`;
   7 images, `FAILURES: none`; patch regenerated.
+
+- 2026-10-19 (session 7, Opencode): **timer-stall probe result (image
+  `280518b9…`, run with user "vai"): dead earlier than before, and no
+  `timer stalled` line.** The boot stopped right after
+  `SWEET HID: touch registered` (the battery line never printed), i.e. at a
+  *different* log position than the previous runs, and it died "while
+  printing". Since the probe only reports when 256 console chars pass with an
+  unchanged tick counter, the absence of a report means the ticks were still
+  arriving shortly before the reset. Conclusion: the failure is
+  **time-based and nondeterministic relative to the log**, not tied to a
+  specific driver line — consistent with a watchdog expiring after a fixed
+  time from boot. The toprgu pet does not stop it, so the remaining candidate
+  is the **PMIC (MT6359) watchdog fed over pwrap**, or a PMIC reset write from
+  the power stack. `bootreason=PMIC_cold_reboot` supports the PMIC path.
+  - Next: give the PMIC watchdog attention over pwrap (needs the MT6359/pwrap
+    registers from the live DT) or read its status before the reset; also
+    consider a heartbeat/timestamp line each second to measure the exact time
+    from boot to reset across runs.
