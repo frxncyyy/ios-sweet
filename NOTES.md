@@ -1468,3 +1468,16 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     STARTUP_SUB_IOKIT)` in `startup.c`, C, cheaper) and bisect with
     `nord2stopat=0004`; then the next driver/step after `SweetBattery` will
     name the actual hang.
+
+- 2026-10-20 (session 7, Opencode): **point-4 hook built via CI.** Run
+  `39336045043` (7m52s, after one infrastructure flake: `hdiutil couldn't eject
+  disk4`) includes `nord2_stop_at(4, "after StartIOKitMatching")` in
+  `iokit/Kernel/IOStartIOKit.cpp`. Kernel
+  `research/ci-39336045043/xnu-kernel/kernel.development.sweet` 17.240.104
+  bytes; image `shim/out/nord2-xnu/nord2-ci-4.img` **30.676.992 bytes** SHA-256
+  `787aa7548df2a5c5dbbbc8fab1388a0e38591f49d45bde53a2a234be60322d70`, payload
+  `d7692637…`, `FAILURES: none`.
+  - Expected: if it returns to Android, the IOKit matching completes and the
+    hang is later (`bsd_init`); if it hangs, the hang is inside
+    `StartIOKitMatching()` and the next step is a per-driver log (class name) in
+    the matching loop.
