@@ -1441,9 +1441,9 @@
   * Version 2.0.
   */
  
-+#if defined(NORD2)
++/* Unconditional: the header carries its own SWEET/NORD2 guards, and NORD2 is
++ * defined by the board config, which is not yet included at this point. */
 +#include <arm64/sweet_early.h>
-+#endif
  #include <sys/param.h>
  #include <sys/filedesc.h>
  #include <sys/kernel.h>
