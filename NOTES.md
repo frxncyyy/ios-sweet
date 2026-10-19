@@ -1405,3 +1405,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   `dadfea1d…` exactly. C++ instrumentation (the hook around
   `SweetBattery::registerService()`) must go through the **CI build**
   (`xnu/patches/` + `gh workflow run xnu.yml`), not the local relink.
+
+- 2026-10-19 (session 7, Opencode): **CI route prepared (README §1).** Patch
+  0082 now also contains (a) the two `nord2_stop_at()` hooks around
+  `SweetBattery::registerService()` (CI-only instrumentation, Apple clang) and
+  (b) `#define NORD2 1` in `pexpert/pexpert/arm64/SWEET.h`, because the CI build
+  does not pass `-DNORD2` and would otherwise compile the Nord2 code out.
+  Patch regenerated (1552 lines, applies cleanly, matches the buildtree),
+  commit `28904d9`. `gh` is not installed and not authenticated here, so the
+  workflow must be run by the user:
+  1. push this branch to a fork (public forks get free macOS minutes);
+  2. Actions -> `xnu.yml` -> Run workflow (or `gh workflow run xnu.yml -R FORK`);
+  3. download the artifact (`out-XXXX` with the built kernel and buildtree);
+  4. hand it over: the Nord 2 image is then
+     `strip -S -x kernel.development.sweet` -> `tools/mkpayload.py` with
+     `tools/mkadt-nord2.py` -> `tools/nord2-pack-xnu.py` -> `tools/nord2-check-xnu.py`.
+  Nothing has been pushed from this machine.
