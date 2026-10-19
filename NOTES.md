@@ -13,7 +13,33 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
-- 2026-10-19 (session 5, Claude): **PHASE 2 built, NOT flashed.** On-screen
+- 2026-10-19 (session 5, Claude): **PHASE-2 TEST DONE (image
+  `f8213c7c…`, authorized). Verified from the panel photo:**
+  - **The on-screen console works.** The panel showed the kernel log in white
+    on black — phase 2's goal (seeing the log during a boot that never returns
+    to Android) is met.
+  - The boot ends in an XNU panic, not a silent hang:
+    `NORD2-XNU PANIC: Synchronous exception taken without SP selected …`
+    followed by a register dump whose values are partly 32-bit truncated
+    (`0x7a9258c` is `0xfffffe0007a9258c`, `x15 = 0xffffffff96000006` is the
+    ESR): the exception handler could not build a proper frame.
+  - The original exception is a **data abort**: `esr = 0x96000006`
+    (EC 0x25, DFSC 6 = translation fault level 2) with **`far = 0x4003c5`**,
+    a low, unmapped address — the kernel dereferenced a bad pointer.
+  - The chain-back then failed with `NORD2-XNU: no /chosen; cannot chain back`,
+    because after `arm_vm_init()` switches the kernel page tables the ADT
+    (placed just past the kernel image) is no longer reachable **at the VA
+    stored in `boot_args.deviceTreeP`**.
+  - Fix implemented and built (not flashed): `nord2_cache_chain_back()` reads
+    the three `/chosen` properties at the `cpu_init` stop and again just
+    before `arm_vm_init`, and `nord2_leave_to()` falls back to that copy
+    (`using cached chain-back parameters`) when the ADT lookup fails. A panic
+    after the table switch can then still return to Android, so the complete
+    panic text lands in pmsg and no photo is needed.
+  - Image: `shim/out/nord2-xnu/nord2-xnu-vmfb.img`, **30.566.400 bytes**,
+    SHA-256 `905a1431716f490ef329c0aec905288423fc502a39a20be4a88285264a35701f`
+    (payload `6574e058…`); all five images verify with
+    `tools/nord2-check-xnu.py`; patch regenerated (1094 lines, dry-run OK).
   console for the `arm_vm_init` hang, per `shim/nord2-xnu/DISPLAY-LOG.md`:
   - `start.s` also maps `0x76000000` and `0x78000000` (32 MiB each, Normal
     Non-Cacheable) for the framebuffer carve-out, next to the Device block

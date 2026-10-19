@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,228 @@
+@@ -1,16 +1,231 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -198,6 +198,9 @@
 +static unsigned int nord2_pos;
 +static unsigned int nord2_started;
 +static int nord2_leaving;
++/* Chain-back parameters read while the device tree was still reachable. */
++static uint64_t nord2_cb_entry, nord2_cb_dtb, nord2_cb_start, nord2_cb_end;
++static int nord2_cb_valid;
 +
 +static void
 +nord2_flush(void)
@@ -234,7 +237,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -38,10 +250,14 @@
+@@ -38,10 +253,14 @@
  		}
  	}
  }
@@ -249,7 +252,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +292,7 @@
+@@ -76,6 +295,7 @@
  		}
  	}
  	early_col++;
@@ -257,7 +260,7 @@
  }
  
  static void
-@@ -86,9 +303,174 @@
+@@ -86,9 +306,174 @@
  	}
  }
  
@@ -432,7 +435,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +489,36 @@
+@@ -107,11 +492,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -469,7 +472,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +530,10 @@
+@@ -123,8 +533,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -480,7 +483,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +542,116 @@
+@@ -133,11 +545,172 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -518,30 +521,42 @@
 +	uint64_t region_start = 0, region_end = 0;
 +
 +	nord2_leaving = 1;
-+	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
-+		sweet_early_string("NORD2-XNU: no /chosen; cannot chain back\n");
-+		for (;;) {
-+			__asm__ volatile("wfe");
++
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess) {
++		if (SecureDTGetProperty(chosen, "nord2-stock-entry", &prop, &size) == kSuccess &&
++		    size == sizeof(uint64_t)) {
++			entry = *(uint64_t const *)prop;
 +		}
++		if (SecureDTGetProperty(chosen, "nord2-stock-dtb", &prop, &size) == kSuccess &&
++		    size == sizeof(uint64_t)) {
++			dtb = *(uint64_t const *)prop;
++		}
++		if (SecureDTGetProperty(chosen, "nord2-xnu-region", &prop, &size) == kSuccess &&
++		    size == 2 * sizeof(uint64_t)) {
++			region_start = ((uint64_t const *)prop)[0];
++			region_end = ((uint64_t const *)prop)[1];
++		}
++	} else {
++		sweet_early_string("NORD2-XNU: no /chosen\n");
 +	}
-+	if (SecureDTGetProperty(chosen, "nord2-stock-entry", &prop, &size) == kSuccess &&
-+	    size == sizeof(uint64_t) && entry_override == 0) {
-+		entry = *(uint64_t const *)prop;
++	if ((entry == 0 || dtb == 0 || region_start == 0 ||
++	    region_end <= region_start) && nord2_cb_valid) {
++		/*
++		 * arm_vm_init() switched the kernel page tables, so the ADT (placed
++		 * just past the kernel image) is no longer reachable: fall back to
++		 * the copy taken while it still was.
++		 */
++		sweet_early_string("NORD2-XNU: using cached chain-back parameters\n");
++		entry = nord2_cb_entry;
++		dtb = nord2_cb_dtb;
++		region_start = nord2_cb_start;
++		region_end = nord2_cb_end;
 +	}
 +	if (entry_override != 0) {
 +		entry = entry_override;
 +	}
-+	if (SecureDTGetProperty(chosen, "nord2-stock-dtb", &prop, &size) == kSuccess &&
-+	    size == sizeof(uint64_t)) {
-+		dtb = *(uint64_t const *)prop;
-+	}
-+	if (SecureDTGetProperty(chosen, "nord2-xnu-region", &prop, &size) == kSuccess &&
-+	    size == 2 * sizeof(uint64_t)) {
-+		region_start = ((uint64_t const *)prop)[0];
-+		region_end = ((uint64_t const *)prop)[1];
-+	}
 +	if (entry == 0 || dtb == 0 || region_start == 0 || region_end <= region_start) {
-+		sweet_early_string("NORD2-XNU: bad chain-back properties\n");
++		sweet_early_string("NORD2-XNU: cannot chain back\n");
 +		for (;;) {
 +			__asm__ volatile("wfe");
 +		}
@@ -566,10 +581,51 @@
 + * Boot-arg nord2stop: 1 (default) stops after cpu_init and returns to the
 + * stock kernel; 0 continues into arm_vm_init (not yet supported on Nord2).
 + */
++/*
++ * Remember the chain-back properties while the device tree is still
++ * reachable. arm_vm_init() switches the kernel page tables, after which the
++ * ADT (placed just past the kernel image) cannot be looked up any more; a
++ * panic later in that function would then have no way back to Android.
++ */
++void
++nord2_cache_chain_back(void)
++{
++	DTEntry chosen = NULL;
++	void const *prop;
++	unsigned int size;
++	uint64_t e = 0, d = 0, s = 0, x = 0;
++
++	if (nord2_cb_valid || SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
++		return;
++	}
++	if (SecureDTGetProperty(chosen, "nord2-stock-entry", &prop, &size) == kSuccess &&
++	    size == sizeof(uint64_t)) {
++		e = *(uint64_t const *)prop;
++	}
++	if (SecureDTGetProperty(chosen, "nord2-stock-dtb", &prop, &size) == kSuccess &&
++	    size == sizeof(uint64_t)) {
++		d = *(uint64_t const *)prop;
++	}
++	if (SecureDTGetProperty(chosen, "nord2-xnu-region", &prop, &size) == kSuccess &&
++	    size == 2 * sizeof(uint64_t)) {
++		s = ((uint64_t const *)prop)[0];
++		x = ((uint64_t const *)prop)[1];
++	}
++	if (e != 0 && d != 0 && s != 0 && x > s) {
++		nord2_cb_entry = e;
++		nord2_cb_dtb = d;
++		nord2_cb_start = s;
++		nord2_cb_end = x;
++		nord2_cb_valid = 1;
++	}
++}
++
 +void
 +nord2_maybe_return(void)
 +{
 +	uint32_t stop = 1;
++
++	nord2_cache_chain_back();
 +	(void)PE_parse_boot_argn("nord2stop", &stop, sizeof(stop));
 +	if (!stop) {
 +		sweet_early_string("NORD2-XNU: continuing past early stop\n");
@@ -587,6 +643,9 @@
 +nord2_before_vm_init(void)
 +{
 +	uint32_t vm = 0;
++
++	/* Last moment at which the ADT is still reachable. */
++	nord2_cache_chain_back();
 +	(void)PE_parse_boot_argn("nord2vm", &vm, sizeof(vm));
 +	if (vm) {
 +		sweet_early_string("NORD2-XNU: entering arm_vm_init (nord2vm=1)\n");
@@ -605,7 +664,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,26 @@
+@@ -10,8 +10,28 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -622,6 +681,8 @@
 +void nord2_vm_gate(unsigned int stage);
 +/* Phase 1 display register dump (read-only), see shim/nord2-xnu/DISPLAY-LOG.md. */
 +void nord2_display_dump(void);
++/* Cache the /chosen chain-back values before arm_vm_init. */
++void nord2_cache_chain_back(void);
 +/* Jump to another entry point (0 = the stock kernel from /chosen). */
 +void nord2_leave_to(uint64_t entry_override) __attribute__((noreturn));
 +void nord2_return_to_stock(void) __attribute__((noreturn));
