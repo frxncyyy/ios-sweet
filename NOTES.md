@@ -1222,3 +1222,25 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
     `e1eb6b1ea91b84489c94884b777a7fa194b8b8f04e05df56676a97916910acf0`;
     7 images, `FAILURES: none`; patch regenerated.
+
+- 2026-10-19 (session 7, Opencode): **pet-on-console test (image `e1eb6b1e…`,
+  authorized): reset unchanged.** Same picture: ticks `0x1,0x2,0x3,0x40,0xc0`
+  with `pc=0xfffffe0007a8eca8/0xecc0` (the **idle loop**), then the driver lines
+  continue while **no more timer ticks arrive**, and ~1 s after
+  `SWEET BATTERY: static fallback` the SoC resets with no panic and no pstore.
+  Feeding the MediaTek toprgu (`WDT_RESTART=0x1971`) from both the IRQ path and
+  every console write does **not** prevent it, so the reset is not the toprgu.
+  `androidboot.bootreason=PMIC_cold_reboot` points at the PMIC reset path
+  (PMIC watchdog MT6359 fed over pwrap, or a PMIC write from the power stack).
+  Verified facts: (a) timer interrupts stop after tick 192 although the kernel
+  keeps executing and logging; (b) the reset follows the last Sweet driver;
+  (c) no panic is printed (`gPanicBase` is not initialised, but our console
+  hook still prints panics, so this is not a plain XNU panic).
+  - Open questions for next session: why the timer IRQ stops after 0xc0
+    (rtclock re-arm vs lost GIC EOI); whether the PMIC watchdog (MT6359 over
+    pwrap) is the reset source; whether the power stack started by
+    `SweetBattery::registerService()` writes a PMIC/reset register.
+  - Candidates: port a minimal pwrap/MT6359 watchdog pet (or read its status),
+    and/or stop `SweetBattery` before `registerService()` (needs the CI C++
+    flags in `nord2-xnu-cc.py`, still unresolved), and/or keep the timer alive
+    (EOI diagnostics in `sleh_irq`).
