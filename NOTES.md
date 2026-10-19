@@ -170,15 +170,29 @@
   (`serial_console.c` added), relinked and stripped; entry moved to
   `0xfffffe0007a93488` (`__start`, now checked dynamically by
   `tools/nord2-check-xnu.py` in segment 2 instead of a hardcoded VA).
-  Images (all statically verified): `nord2-xnu-boot.img`
-  `217c377d163bf356bb84c797793c6f1ef53827b7377aa67282518114d01e45d2`,
-  `nord2-xnu-loaderonly.img`
-  `4f1d1c2bc056dfd66b020a33e8151a451092caa53e0a6ee9f4b061863747f654`,
-  `nord2-xnu-copy.img`
-  `a4b48e211e8ac4d116482e03e0eb7989e613eb905cf6a17edba3bd56ecb0d0ed`;
-  payload `84d12ca084d85228cd9201d085bdd8cc0e01901ccd9bcb2e5578f13c8456bf48`.
-  The boot partition on the phone is stock at the time of writing; a test
-  needs a new explicit flash authorization.
+  - Flashed and read back (authorized): log identical to probe-v4 plus the
+    new `entry` value — **no kernel `printf` output exists before `cpu_init`**,
+    so the hook is armed for the next stage (`backup/nord2/probe-v5-pmsg.txt`).
+- 2026-10-19 (session 3, escalation built, NOT flashed): **two more stop
+  points.** `nord2_maybe_return()` (stage 6) already continues when
+  `nord2stop=0`; a new `nord2_before_vm_init()` hook was added in
+  `arm_init.c` between `processor_bootstrap()` and `arm_vm_init()` and stops
+  (chaining back to Android, console still live) unless the boot argument
+  `nord2vm=1` is given. `shim/nord2-xnu/build.sh` now also builds the payload
+  variants and their images:
+  - `nord2-xnu-boot.img` `5324d9d8595bc8497ccdaa160c4bf79f4303a56431d62857beec6a108deee0a8`
+    (`nord2stop=1`, stop after `cpu_init`; payload `5f8942ea…`);
+  - `nord2-xnu-continue.img` `bbe528024cfc22e10cae91c98ffebf1568528a453828fa0c2856b34c15218a2b`
+    (`nord2stop=0`, run `processor_bootstrap()` then stop before
+    `arm_vm_init`; payload `d7b9c56a…`);
+  - `nord2-xnu-vm.img` `5b967b4beda0517993231e9beb1cbcc3adade0da4404981ccc7f85afb956b66a`
+    (`nord2stop=0 nord2vm=1`, enter `arm_vm_init`; payload `4b7f1ba2…`).
+  All three statically verified. Any panic in the entered code is logged and
+  chains back to Android (`sweet_early_panic`).
+  - **Phone state:** `boot` currently holds the console probe
+    (`217c377d…`, verified boot: Android starts normally through the
+    chain-back). It must be restored from `backup/nord2/boot.img` at the end
+    of the session.
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,

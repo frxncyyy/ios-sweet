@@ -78,39 +78,33 @@ PY
 python3 tools/mkadt-nord2.py "$out/nord2-probe.adt"
 python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" "$out/payload.bin" \
     --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=1"
+# Escalation: continue past cpu_init, stop before arm_vm_init; then enter it.
+python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
+    "$out/payload-continue.bin" \
+    --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0"
+python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
+    "$out/payload-vm.bin" \
+    --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1"
 
-# 5. Loader. Three variants of the same source, in escalation order:
-#    - loader-only-Image:  validate the FDT/payload, then chain to Android
-#      (no segment copy, no XNU): isolates LK's decompression of the blob.
-#    - copy-Image:         also copies the segments into the XNU window, then
-#      chains: isolates the window writes.
-#    - loader-Image:       the probe (runs XNU, stops after cpu_init).
-#    Every variant leaves a pmsg log and returns to Android, even on failure.
-build_loader() {
-    variant="$1"
-    extra="$2"
-    for source in start.S loader.c; do
-        clang --target=aarch64-none-elf -O2 -ffreestanding -nostdlib -fno-pic \
-            -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-builtin \
-            -Wall -Wextra -Werror $extra -c "shim/nord2-xnu/$source" -o "$out/$variant-$source.o"
-    done
-    ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none "$out/$variant-start.S.o" \
-        "$out/$variant-loader.c.o" -o "$out/$variant.elf"
-    ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none --oformat=binary \
-        "$out/$variant-start.S.o" "$out/$variant-loader.c.o" -o "$out/$variant-Image"
-}
-build_loader loader ""
-build_loader loader-only "-DNORD2_LOADER_ONLY=1"
-build_loader copy "-DNORD2_COPY_ONLY=1"
+# 5. Loader. The probe entry point; also buildable as -DNORD2_LOADER_ONLY=1
+#    (validate only) or -DNORD2_COPY_ONLY=1 (also copy the segments), which
+#    both chain straight back to Android and are useful when isolating a hang.
+clang --target=aarch64-none-elf -O2 -ffreestanding -nostdlib -fno-pic \
+    -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-builtin \
+    -Wall -Wextra -Werror -c shim/nord2-xnu/start.S -o "$out/start.S.o"
+clang --target=aarch64-none-elf -O2 -ffreestanding -nostdlib -fno-pic \
+    -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-builtin \
+    -Wall -Wextra -Werror -c shim/nord2-xnu/loader.c -o "$out/loader.c.o"
+ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none "$out/start.S.o" "$out/loader.c.o" \
+    -o "$out/loader.elf"
+ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none --oformat=binary \
+    "$out/start.S.o" "$out/loader.c.o" -o "$out/loader-Image"
 
 # 6. Boot images and static verification.
-for variant in boot loaderonly copy; do
-    case "$variant" in
-        boot) src=loader ;;
-        loaderonly) src=loader-only ;;
-        copy) src=copy ;;
-    esac
-    python3 tools/nord2-pack-xnu.py backup/nord2/boot.img "$out/$src-Image" \
-        "$out/payload.bin" "$out/nord2-xnu-$variant.img"
-    python3 tools/nord2-check-xnu.py "$out/nord2-xnu-$variant.img" "$out/payload.bin" | tail -4
+for spec in "boot:payload.bin" "continue:payload-continue.bin" "vm:payload-vm.bin"; do
+    name="${spec%%:*}"
+    payload="${spec#*:}"
+    python3 tools/nord2-pack-xnu.py backup/nord2/boot.img "$out/loader-Image" \
+        "$out/$payload" "$out/nord2-xnu-$name.img"
+    python3 tools/nord2-check-xnu.py "$out/nord2-xnu-$name.img" "$out/$payload" | tail -4
 done

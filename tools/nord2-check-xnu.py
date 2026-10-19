@@ -171,8 +171,8 @@ class Checker:
                    found.get('nord2-xnu-region') == b'\0' * 16)
 
         cmdline = p[0x48:0x48 + 608].split(b'\0')[0].decode()
-        self.check('cmdline stops after the early stage',
-                   'nord2stop=1' in cmdline, cmdline)
+        self.check('cmdline carries the escalation boot arguments',
+                   'nord2stop=' in cmdline, cmdline)
 
 
 def main():

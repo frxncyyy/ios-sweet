@@ -200,7 +200,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +262,92 @@
+@@ -133,11 +262,110 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -290,6 +290,24 @@
 +		return;
 +	}
 +	nord2_return_to_stock();
++}
++
++/*
++ * Second, independent stop point just before arm_vm_init(): lets the probe
++ * run processor_bootstrap() while keeping the Sweet memory-map code (PMAP,
++ * physmap, GIC/timer assumptions) out of the picture. nord2vm=1 enters it.
++ */
++void
++nord2_before_vm_init(void)
++{
++	uint32_t vm = 0;
++	(void)PE_parse_boot_argn("nord2vm", &vm, sizeof(vm));
++	if (vm) {
++		sweet_early_string("NORD2-XNU: entering arm_vm_init (nord2vm=1)\n");
++		return;
++	}
++	sweet_early_string("NORD2-XNU: stopping before arm_vm_init\n");
++	nord2_return_to_stock();
  }
 +#endif /* NORD2 */
  #endif /* SWEET */
@@ -301,7 +319,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,16 @@
+@@ -10,8 +10,17 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -310,6 +328,7 @@
 +#if defined(NORD2)
 +/* nord2_early.c: leave XNU for the preserved stock kernel. */
 +void nord2_maybe_return(void) __attribute__((noreturn));
++void nord2_before_vm_init(void) __attribute__((noreturn));
 +void nord2_return_to_stock(void) __attribute__((noreturn));
 +/* serial_console.c: every console byte goes to the ramoops pmsg ring. */
 +void sweet_early_console_write(const char *c, int size);
@@ -471,6 +490,17 @@
  	processor_bootstrap();
  
  	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
+@@ -522,6 +535,10 @@
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
+ 	sweet_early_mark(7, "entering arm_vm_init");
++#if defined(NORD2)
++	/* Stops here unless the boot argument nord2vm=1 is present. */
++	nord2_before_vm_init();
++#endif
+ 	arm_vm_init(xmaxmem, args);
+ 	sweet_early_mark(15, "arm_vm_init returned");
+ 
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -1826,6 +1826,12 @@
