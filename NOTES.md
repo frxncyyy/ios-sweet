@@ -238,6 +238,24 @@
     `nord2-xnu-boot.img` `b23c76acb1265822275629ac035affd120e74a8e845dd1a28337a021127e046b`
     (loader preserves the ring), `nord2-xnu-continue.img` `69a1dd03…`,
     `nord2-xnu-vm.img` `292f8a5c50785f88dbb9288c0db3606208f402da7d12dc7d2817c678b13fce79`.
+  - **Gates implemented (2026-10-19, built, NOT flashed):** ten
+    `nord2_vm_gate()` calls inside `arm_vm_init` (entry, before the bootstrap
+    table setup, before the page-table allocation, after the segment lookup,
+    before `arm_set_user_tbi`, after the TTBR0-off/physmap rebind, before and
+    after `pmap_bootstrap`, after the early I/O tables, and at the end). A gate
+    stops only when `stage >= nord2vmstop` and logs
+    `NORD2-XNU: gate 0x… stop; NORD2-NEXT=0x…`. The loader scans the
+    *preserved* ring for the last `NORD2-NEXT=0x…` and rewrites the four
+    digits after `nord2vmstop=` in the payload command line (in RAM, before
+    `boot_args` are filled) — so one image walks one gate per reboot. Images:
+    `nord2-xnu-vmstep.img`
+    `4e943109a6824ff19d4bd1b9f0842318bea4ff24c897080d0c126983fe6ef3b8`
+    (payload `41f93f50…`, cmdline `… nord2stop=0 nord2vm=1 nord2vmstop=0001`),
+    plus refreshed `-boot` `07a2755d…`, `-continue` `5334b698…`, `-vm`
+    `40d8f90b…` (all 30.564.352 bytes, `FAILURES: none`).
+    Caveat: the ring is shared with Android, whose own pmsg records grow it;
+    the "last tag wins" rule assumes the ring does not wrap (64 KiB against a
+    few KiB of logs).
   - **Phone state:** `boot` was restored to
     `backup/nord2/boot.img` after the hang (`read-back` SHA-256
     `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`,

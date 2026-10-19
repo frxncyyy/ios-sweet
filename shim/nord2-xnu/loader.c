@@ -187,6 +187,80 @@ static int contains(const char *s, unsigned n, const char *wanted)
     return 0;
 }
 
+/*
+ * Walk the preserved ring for the last "NORD2-NEXT=0x<hex>" line written by
+ * nord2_vm_gate() and return its value; 0 when there is none. The probe uses
+ * this to advance one gate per reboot, so a hang never has to be diagnosed
+ * from a lost log: the next boot knows which gate it stopped at.
+ */
+static unsigned next_gate_from_log(void)
+{
+    static const char tag[] = "NORD2-NEXT=0x";
+    if (!logbuf || logbuf->sig != PMSG_SIG) {
+        return 0;
+    }
+    unsigned n = logpos;
+    const char *s = (const char *)logbuf->data;
+    unsigned last = 0;
+    for (unsigned i = 0; i + sizeof(tag) - 1 < n; i++) {
+        unsigned j = 0;
+        while (tag[j] && s[i + j] == tag[j]) {
+            j++;
+        }
+        if (tag[j]) {
+            continue;
+        }
+        unsigned v = 0;
+        for (unsigned k = i + sizeof(tag) - 1; k < n; k++) {
+            char c = s[k];
+            unsigned d;
+            if (c >= '0' && c <= '9') {
+                d = (unsigned)(c - '0');
+            } else if (c >= 'a' && c <= 'f') {
+                d = (unsigned)(c - 'a' + 10);
+            } else {
+                break;
+            }
+            v = (v << 4) | d;
+            if (v > 0xffff) {
+                v = 0xffff;
+            }
+        }
+        if (v) {
+            last = v;
+        }
+    }
+    return last;
+}
+
+/*
+ * Replace the four decimal digits after "nord2vmstop=" in the payload command
+ * line (patched in RAM, before boot_args are filled in). PE_parse_boot_argn
+ * takes the first occurrence, so the value must be rewritten in place.
+ */
+static void patch_gate_arg(char *cmdline, unsigned value)
+{
+    static const char key[] = "nord2vmstop=";
+    for (unsigned i = 0; cmdline[i]; i++) {
+        unsigned j = 0;
+        while (key[j] && cmdline[i + j] == key[j]) {
+            j++;
+        }
+        if (key[j]) {
+            continue;
+        }
+        char *d = cmdline + i + sizeof(key) - 1;
+        if (value > 9999) {
+            value = 9999;
+        }
+        for (int k = 3; k >= 0; k--) {
+            d[k] = (char)('0' + value % 10);
+            value /= 10;
+        }
+        return;
+    }
+}
+
 /* Bounded FDT parsing; never log or export serial numbers / bootargs. */
 static const unsigned char *prop(uintptr_t addr, const char *path,
     const char *key, uint32_t *length)
@@ -458,6 +532,20 @@ void xnu_main(uintptr_t dtb)
     }
     if (payload_pa + pl->adt_off + pl->adt_size > STOCK_KERNEL_PA + 0x6000000) {
         fatal("payload overlaps the ramdisk");
+    }
+
+    /*
+     * One gate per reboot: if the preserved log holds a NORD2-NEXT=0x… tag,
+     * this run stops at that arm_vm_init gate instead of the image default.
+     * The command line is rewritten in RAM before boot_args are filled in.
+     */
+    {
+        unsigned next = next_gate_from_log();
+        struct payload *plw = (struct payload *)(uintptr_t)pl;
+        if (next && contains(plw->cmdline, sizeof(plw->cmdline), "nord2vm=1")) {
+            patch_gate_arg(plw->cmdline, next);
+            hex_log("nord2vmstop", next);
+        }
     }
 
     uint64_t delta = pl->phys_base - pl->virt_base;

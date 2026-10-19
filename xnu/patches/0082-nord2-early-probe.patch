@@ -113,7 +113,7 @@
  }
  
  static void
-@@ -86,9 +159,38 @@
+@@ -86,9 +159,72 @@
  	}
  }
  
@@ -130,6 +130,40 @@
 +	for (int i = 0; i < size; i++) {
 +		nord2_putc(c[i]);
 +	}
++}
++
++static void
++nord2_hex64(uint64_t v)
++{
++	for (int i = 15; i >= 0; i--) {
++		unsigned int nibble = (unsigned int)(v >> (i * 4)) & 0xf;
++		sweet_early_putc((char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10));
++	}
++}
++
++/*
++ * Bounded gate for the Nord2 arm_vm_init bring-up. The riskiest code of the
++ * port cannot be allowed to run into a hang: a hang loses the pmsg log
++ * because the reset that follows clears DRAM. Each gate therefore stops
++ * (logging NORD2-NEXT=<stage+1> for the loader to pick up) unless the boot
++ * argument nord2vmstop is 0 or greater than the gate's stage. Reboots then
++ * walk the gates one at a time, and the last NORD2-NEXT seen before a hang
++ * names the failing step.
++ */
++void
++nord2_vm_gate(unsigned int stage)
++{
++	uint32_t stop = 0;
++	(void)PE_parse_boot_argn("nord2vmstop", &stop, sizeof(stop));
++	if (stop == 0 || stage < stop) {
++		return;
++	}
++	sweet_early_string("NORD2-XNU: gate 0x");
++	nord2_hex64(stage);
++	sweet_early_string(" stop; NORD2-NEXT=0x");
++	nord2_hex64(stage + 1);
++	sweet_early_string("\n");
++	nord2_return_to_stock();
 +}
 +#endif
 +
@@ -152,7 +186,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +209,36 @@
+@@ -107,11 +243,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -189,7 +223,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +250,10 @@
+@@ -123,8 +284,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -200,7 +234,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +262,110 @@
+@@ -133,11 +296,107 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -266,10 +300,7 @@
 +	sweet_early_string("NORD2-XNU: RETURN TO STOCK ANDROID KERNEL\n");
 +	sweet_early_string("NORD2-XNU: entry=");
 +	/* Minimal hex, no formatting dependency at this point. */
-+	for (int i = 15; i >= 0; i--) {
-+		unsigned int nibble = (unsigned int)(entry >> (i * 4)) & 0xf;
-+		sweet_early_putc((char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10));
-+	}
++	nord2_hex64(entry);
 +	sweet_early_string("\n");
 +	/* The trampoline lives 16K above the first mapped block. */
 +	nord2_leave_xnu(entry, dtb, region_start, region_end,
@@ -319,7 +350,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,20 @@
+@@ -10,8 +10,22 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -332,6 +363,8 @@
 + */
 +void nord2_maybe_return(void);
 +void nord2_before_vm_init(void);
++/* arm_vm_init.c: numbered stop points for the bounded bring-up. */
++void nord2_vm_gate(unsigned int stage);
 +void nord2_return_to_stock(void) __attribute__((noreturn));
 +/* serial_console.c: every console byte goes to the ramoops pmsg ring. */
 +void sweet_early_console_write(const char *c, int size);
@@ -527,8 +560,53 @@
  #endif
  
  void
-@@ -2179,7 +2186,7 @@
+@@ -1864,6 +1871,9 @@
+ 	vm_offset_t      ptpage_vaddr;
+ 	vm_map_address_t dynamic_memory_begin;
  
++#if defined(NORD2)
++	nord2_vm_gate(1);
++#endif
+ 	/*
+ 	 * Get the virtual and physical kernel-managed memory base from boot_args.
+ 	 */
+@@ -1950,6 +1960,9 @@
+ 		panic("Unsupported memory configuration %lx", mem_size);
+ 	}
+ 
++#if defined(NORD2)
++	nord2_vm_gate(2);
++#endif
+ 	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
+ 	boot_ttep = kvtophys((vm_offset_t)boot_tte);
+ 
+@@ -1982,6 +1995,9 @@
+ 	arm_replace_identity_map();
+ #endif
+ 
++#if defined(NORD2)
++	nord2_vm_gate(3);
++#endif
+ 	/* Initialize invalid tte page */
+ 	invalid_tte = (tt_entry_t *)alloc_ptpage(TRUE);
+ 	invalid_ttep = kvtophys((vm_offset_t)invalid_tte);
+@@ -2060,6 +2076,9 @@
+ 	sectHIBDATACONSTB = (vm_offset_t) getsectdatafromheader(&_mh_execute_header, "__DATA_CONST", "__hib_const", &sectSizeHIBDATACONST);
+ 	segHIBDATAB      = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__HIBDATA", &segSizeHIBDATA);
+ 
++#if defined(NORD2)
++	nord2_vm_gate(4);
++#endif
+ 	if (kernel_mach_header_is_in_fileset(&_mh_execute_header)) {
+ 		kernel_mach_header_t *kc_mh = PE_get_kc_header(KCKindPrimary);
+ 
+@@ -2177,9 +2196,12 @@
+ 	mt_early_init();
+ #endif /* MONOTONIC */
+ 
++#if defined(NORD2)
++	nord2_vm_gate(5);
++#endif
  	arm_set_user_tbi();
  
 -#if defined(SWEET)
@@ -536,7 +614,7 @@
  	/* phystokv() must still refer to the bootstrap aperture here. */
  	sweet_early_map_final();
  #endif
-@@ -2188,7 +2195,7 @@
+@@ -2188,7 +2210,7 @@
  
  	ml_enable_monitor();
  
@@ -545,6 +623,52 @@
  	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
  	sweet_early_relocate(SWEET_EARLY_FB_VA);
  #endif
+@@ -2201,6 +2223,9 @@
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+ 	sweet_early_mark(11, "physmap table pointers rebound");
++#if defined(NORD2)
++	nord2_vm_gate(6);
++#endif
+ 
+ 	// From here on out, we're off the bootstrap translation tables.
+ 
+@@ -2293,9 +2318,15 @@
+     }
+ #endif
+ #endif
++#if defined(NORD2)
++	nord2_vm_gate(7);
++#endif
+ 	sweet_early_mark(12, "calling pmap_bootstrap");
+ 	pmap_bootstrap(dynamic_memory_begin);
+ 	sweet_early_mark(13, "pmap_bootstrap done");
++#if defined(NORD2)
++	nord2_vm_gate(8);
++#endif
+ 
+ 	disable_preemption();
+ 
+@@ -2347,6 +2378,9 @@
+ 		cpu_l1_tte++;
+ 	}
+ 	sweet_early_mark(14, "early I/O page tables ready");
++#if defined(NORD2)
++	nord2_vm_gate(9);
++#endif
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+ 	/*
+@@ -2422,6 +2456,9 @@
+ #endif
+ 	first_avail = avail_start;
+ 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
++#if defined(NORD2)
++	nord2_vm_gate(10);
++#endif
+ 	enable_preemption();
+ }
+ 
 --- a/osfmk/console/serial_console.c
 +++ b/osfmk/console/serial_console.c
 @@ -282,10 +282,24 @@

@@ -62,6 +62,16 @@ with the `SCTLR_EL1` value the CPU probe observed at stock entry
 Because the early stop is before `arm_vm_init()`, the kernel never touches
 the GIC, the arch timer or UFS: only the ADT is parsed.
 
++### Bounded arm_vm_init walk
+
+`arm_vm_init` is the first code that can hang (a hang loses the pmsg log,
+because the reset that follows clears DRAM). It therefore contains ten
+numbered gates, compiled in and chosen by the boot argument `nord2vmstop`:
+a gate stops the kernel and logs `NORD2-NEXT=0x…`. The loader reads the last
+`NORD2-NEXT` out of the preserved ring and rewrites `nord2vmstop=` in the
+payload command line, so `nord2-xnu-vmstep.img` advances one gate per plain
+reboot; the last `NORD2-NEXT` printed before a hang names the failing step.
+
 ## Reading the result
 
 After Android starts, the log is `/sys/fs/pstore/pmsg-ramoops-0` (read it
