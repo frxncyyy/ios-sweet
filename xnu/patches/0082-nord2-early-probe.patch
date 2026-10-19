@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,83 @@
+@@ -1,16 +1,84 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -54,6 +54,7 @@
 +    (volatile struct nord2_ring *)NORD2_PMSG_BASE;
 +static unsigned int nord2_pos;
 +static unsigned int nord2_started;
++static int nord2_leaving;
 +
 +static void
 +nord2_flush(void)
@@ -89,7 +90,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -38,10 +105,14 @@
+@@ -38,10 +106,14 @@
  		}
  	}
  }
@@ -104,7 +105,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +147,7 @@
+@@ -76,6 +148,7 @@
  		}
  	}
  	early_col++;
@@ -112,7 +113,7 @@
  }
  
  static void
-@@ -89,6 +161,19 @@
+@@ -89,6 +162,19 @@
  void
  sweet_early_mark(unsigned int stage, const char *label)
  {
@@ -132,7 +133,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +192,22 @@
+@@ -107,11 +193,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -143,7 +144,12 @@
  sweet_early_panic(const char *fmt, va_list *args)
  {
 +#if defined(NORD2)
-+	/* Keep the ring usable across a panic: no re-entrancy guard needed. */
++	/*
++	 * Log the panic and then leave XNU for the preserved stock kernel: on
++	 * Nord2 there is no console and no debugger, so a panic here would
++	 * otherwise spin and take the pmsg log down with it. nord2_leaving
++	 * stops recursion if the chain-back itself panics.
++	 */
 +	sweet_early_string("\nNORD2-XNU PANIC: ");
 +	va_list copy;
 +	va_copy(copy, *args);
@@ -151,11 +157,20 @@
 +	va_end(copy);
 +	sweet_early_putc('\n');
 +	nord2_flush();
++	if (nord2_leaving) {
++		for (;;) {
++			__asm__ volatile("wfe");
++		}
++	}
++	nord2_return_to_stock();
++	for (;;) {
++		__asm__ volatile("wfe");
++	}
 +#else
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +219,10 @@
+@@ -123,8 +234,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -166,7 +181,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +231,91 @@
+@@ -133,11 +246,92 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -203,6 +218,7 @@
 +	uint64_t entry = 0, dtb = 0;
 +	uint64_t region_start = 0, region_end = 0;
 +
++	nord2_leaving = 1;
 +	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
 +		sweet_early_string("NORD2-XNU: no /chosen; cannot chain back\n");
 +		for (;;) {

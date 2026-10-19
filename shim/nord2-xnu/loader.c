@@ -77,6 +77,7 @@ struct ring {
 
 static volatile struct ring *logbuf;
 static unsigned logpos;
+static uintptr_t g_dtb;
 
 static void puts_log(const char *s)
 {
@@ -88,6 +89,35 @@ static void puts_log(const char *s)
     logbuf->size = logpos;
     __asm__ volatile("dsb sy" ::: "memory");
 }
+
+/*
+ * Leave the loader for the untouched stock Android kernel. The loader always
+ * runs with the MMU and caches off, so this is the same state the verified
+ * CPU probe used: x0 is the live FDT, x1..x3 are zero. Every failure path
+ * ends here so that Android still boots and the pmsg log stays readable.
+ */
+static void chain_stock(void) __attribute__((noreturn));
+
+static void
+chain_stock(void)
+{
+    __asm__ volatile(
+        "msr daifset, #15\n"
+        "dsb sy\n"
+        "ic iallu\n"
+        "dsb sy\n"
+        "isb\n"
+        "mov x0, %0\n"
+        "mov x1, xzr\n"
+        "mov x2, xzr\n"
+        "mov x3, xzr\n"
+        "movz x9, #0\n"
+        "movk x9, #0x4028, lsl #16\n"
+        "br x9\n"
+        : : "r"(g_dtb) : "x0", "x1", "x2", "x3", "x9", "memory");
+    __builtin_unreachable();
+}
+
 
 static void hex_log(const char *name, uint64_t v)
 {
@@ -229,9 +259,8 @@ static void fatal(const char *why)
     puts_log("NORD2-XNU: LOADER FATAL: ");
     puts_log(why);
     puts_log("\n");
-    for (;;) {
-        __asm__ volatile("wfe");
-    }
+    /* Never trap here: Android must boot so the log survives. */
+    chain_stock();
 }
 
 void loader_exception(uint64_t slot)
@@ -243,7 +272,7 @@ void loader_exception(uint64_t slot)
     __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
     __asm__ volatile("mrs %0, far_el1" : "=r"(far));
     hex_log("esr", esr); hex_log("elr", elr); hex_log("far", far);
-    fatal("exception");
+    chain_stock();
 }
 
 /* ---- ADT: fill in the /chosen chain-back properties ---- */
@@ -332,6 +361,16 @@ void xnu_main(uintptr_t dtb)
     uint32_t n = 0;
     const unsigned char *p;
 
+    /* Bring the log up first: every later failure must be readable. */
+    g_dtb = dtb;
+    logbuf = (volatile struct ring *)PMSG_BASE;
+    logpos = 0;
+    logbuf->sig = PMSG_SIG;
+    logbuf->start = 0;
+    logbuf->size = 0;
+    puts_log("NORD2-XNU LOADER: early probe, no storage writes\n");
+    hex_log("dtb", dtb);
+
     p = prop(dtb, "", "compatible", &n);
     if (!p || !contains((const char *)p, n, "mediatek,MT6893")) {
         fatal("not MT6893");
@@ -348,14 +387,7 @@ void xnu_main(uintptr_t dtb)
     if (__builtin_arm_rsr64("sctlr_el1") & 5) {
         fatal("MMU or D-cache already on");
     }
-
-    logbuf = (volatile struct ring *)PMSG_BASE;
-    logpos = 0;
-    logbuf->sig = PMSG_SIG;
-    logbuf->start = 0;
-    logbuf->size = 0;
-    puts_log("NORD2-XNU LOADER: early probe, no storage writes\n");
-    hex_log("dtb", dtb);
+    puts_log("NORD2-XNU LOADER: live FDT and cache state ok\n");
 
     /* Stock Android Image header: image_size at offset 16. */
     const unsigned char *img = (const unsigned char *)STOCK_KERNEL_PA;
@@ -400,6 +432,7 @@ void xnu_main(uintptr_t dtb)
     }
 
     uint64_t delta = pl->phys_base - pl->virt_base;
+#ifndef NORD2_LOADER_ONLY
     puts_log("NORD2-XNU LOADER: copying kernel\n");
     for (uint32_t i = 0; i < pl->nsegs; i++) {
         const struct payload_seg *s = &pl->segs[i];
@@ -416,6 +449,9 @@ void xnu_main(uintptr_t dtb)
             zero64(dst + s->file_size, s->vmsize - s->file_size);
         }
     }
+#else
+    puts_log("NORD2-XNU LOADER: validation only, no segment copy\n");
+#endif
 
     uintptr_t adt_pa = (uintptr_t)kernel_end_pa;
     copy64(adt_pa, payload_pa + pl->adt_off, pl->adt_size);
@@ -465,6 +501,10 @@ void xnu_main(uintptr_t dtb)
     hex_log("adt", adt_pa);
     hex_log("boot_args", ba_pa);
     hex_log("entry", pl->entry_va + delta);
+#if defined(NORD2_LOADER_ONLY) || defined(NORD2_COPY_ONLY)
+    puts_log("NORD2-XNU LOADER: TEST MODE, chaining to stock (no XNU)\n");
+    chain_stock();
+#endif
     puts_log("NORD2-XNU LOADER: JUMP TO XNU\n");
 
     __asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");

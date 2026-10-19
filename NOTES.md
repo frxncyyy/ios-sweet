@@ -51,6 +51,36 @@
     explicitly authorized **boot-partition-only** flash of the image above,
     then restoration from `backup/nord2/boot.img` with hash and
     `sys.boot_completed` checks.
+- 2026-10-19 (session 3, continued): **FIRST FLASH TESTED — it hangs at the
+  OnePlus logo and never reaches Android.** Flash of `boot` only was
+  authorized, done (`fastboot flash boot`, OKAY) and reverted; the read-back
+  boot SHA-256 matched the original backup and the follow-up Android boot
+  reached `sys.boot_completed=1`. **The pmsg log was lost**: the phone had to
+  be reset by hand into fastboot, and `/sys/fs/pstore` was empty afterwards
+  (no `pmsg-ramoops-0`), so it was a cold enough reset to clear the ramoops
+  RAM (or the loader never wrote anything). No conclusion can be drawn about
+  how far the probe got — the hang is consistent with (a) LK failing to
+  decompress the 71.6 MB blob, (b) a loader `fatal()`/fault with the old
+  "spin" behaviour, or (c) an XNU fault/hang.
+  - Fix built for the next attempt: **every failure path now returns to
+    Android** instead of spinning, so the log always survives. Loader:
+    log ring initialised *first*; `fatal()` and the exception vectors log and
+    then `chain_stock()` (jump to `0x40280000` with `x0 = dtb`); XNU:
+    `sweet_early_panic()` logs the panic and calls `nord2_return_to_stock()`
+    (guarded against recursion). Three escalation images from one build
+    (`shim/nord2-xnu/build.sh`), all statically verified, all with the same
+    71.6 MB blob: `nord2-xnu-loaderonly.img` (validate only, no copy, no XNU;
+    SHA-256 `97e98f6332598a82da601bab1d4453a6663b2f8cf0a802c9d1950734936f87b6`),
+    `nord2-xnu-copy.img` (+ segment copy; `7c56bd30f058719ef6d20d14f298fa2ab4a932513a3d0640d3995c3d65cd3854`),
+    `nord2-xnu-boot.img` (full probe; `663a2a18029f74f7190ff2afe65022dac51dc9fb98724094aa23a3f948eb1fa8`).
+    Payload `36877c87d08c56b0f67f178667041305b1f83d3af64200a9c9194c136eb3334d`.
+  - Next: flash `loaderonly` first. If Android boots with the loader log in
+    pmsg, LK decompression and the loader zig are fine and the fault is in the
+    copy or XNU; if it still hangs at the logo, the prime suspect is LK's
+    `KERNEL_DECOMPRESS_SIZE` (< 71.6 MB) and the blob must shrink to the
+    verified 57.4 MB (payload overlapping the stock BSS, dropping the
+    `__LINKEDIT` segment and/or putting part of it in the loader's 2 MiB
+    reserve). Each image needs its own explicit flash authorization.
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
