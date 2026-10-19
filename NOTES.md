@@ -3,6 +3,54 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 3): **first Nord2 XNU probe image built and statically
+  verified; NOT flashed.** Artifact `shim/out/nord2-xnu/nord2-xnu-boot.img`,
+  30560256 bytes, SHA-256
+  `9c537406ee9a0a48229230ce90090af4f2d890df2d769cda86aad2e5b206edc2`
+  (payload `3564f764fd7fe2ac409813b15c55704a7a115a4bf260d7ff7ce45a156d7f69d5`,
+  14140432 bytes). `shim/nord2-xnu/build.sh` reproduces that hash end to end.
+  Design and layout in `shim/nord2-xnu/README.md`; the XNU side is
+  `xnu/patches/0082-nord2-early-probe.patch` (five files, four objects).
+  - What it does: `start.s` maps the 32 MiB block at `0x48000000` in the
+    existing V=P L2 page (Normal Non-Cacheable) for NORD2 instead of writing
+    the Sweet framebuffer band at `0x9c000000`; `sweet_early.c` logs to the
+    pmsg ring at `0x48160000`; `arm_init.c` calls `nord2_maybe_return()`
+    after stage 6 (`cpu_init`), before `processor_bootstrap()`/`arm_vm_init`;
+    `arm_vm_init.c` drops Sweet's `sweet_early_map_final/relocate`.
+  - The loader (18705-byte Image at `0x40080000`) validates the live FDT
+    (MT6893, `mblock-16-pstore` reservation, `ramoops.pmsg_size=0x10000`,
+    MMU/D-cache off), logs, copies the payload segments into
+    `0x1_42000000 + 0x3e000000`, places the ADT (9336 bytes) and boot_args
+    just after the kernel, patches `/chosen`
+    `nord2-stock-entry/dtb/xnu-region`, and enters `__start`.
+  - Payload: SWEETXNU v1, 9 segments, virt_base `0xfffffe0006000000`, entry
+    `0xfffffe0007a94488` (`__start`), kernel_end `0xfffffe000826c000`;
+    symbol table stripped (`strip -S -x`, 14.1 MiB). `start.s` identity-maps
+    30 x 32 MiB from `phys_base` (`0x142000000..0x17e000000`), so the
+    trampoline page is `0x142004000`.
+  - Chain-back: `nord2_leave_xnu(entry, dtb, region_start, region_end,
+    region_start+0x4000)` — verified against the verified CPU probe: the
+    stock Image's first instruction is the `code0` branch, so entry is
+    `0x40280000`; trampoline disables the MMU with the probe-observed
+    `SCTLR_EL1=0x30d00800`, zeroes x1..x3, `x0=dtb`. `nord2stop=1` default.
+  - Boot image: stock boot v2 header/ramdisk/DT reused byte-for-byte; kernel
+    gzip = `[loader 2 MiB][stock Image padded to image_size][payload]`,
+    decompressing to 71566352 bytes ending at `0x444c0410`, below the ramdisk
+    at `0x51100000`. Static checks in `tools/nord2-check-xnu.py` all pass.
+  - Sizes/limits: `tools/nord2-pack-xnu.py` previously demanded
+    `len(stock Image) == image_size` and a 16 MiB gzip: both wrong on this
+    dump (43896848 vs 55316480; 26.2 MiB gz) and fixed. LK's decompression
+    bound is `KERNEL_DECOMPRESS_SIZE`; public MediaTek LK `rules.mk` sets
+    `0xc800000` (200 MiB) and the verified probe already decompressed 57.4 MiB,
+    so 68 MiB (71.6 MB) is inferred safe, not read out of this device's LK.
+  - Known limits of the probe: the kernel console (`PE_putc`) is not routed to
+    pmsg, so only stage marks and `sweet_early_panic` text are visible; if XNU
+    faults before `debug.c`'s panic path there will be no output past the last
+    mark. A "no output / Android back up" result still needs the log pulled.
+  - NOT flashed, and no permission has been asked yet. A test needs an
+    explicitly authorized **boot-partition-only** flash of the image above,
+    then restoration from `backup/nord2/boot.img` with hash and
+    `sys.boot_completed` checks.
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
@@ -95,13 +143,15 @@ are preserved; no permission to erase userdata has been given.
   VM_KERNEL_LINK_ADDRESS=0xfffffe0007004000, arm64/ARM64/__ARM64__/LP64,
   __API__=v4 and fno-strict-aliasing. Missing flags can affect ABI; successful
   linking alone does not validate the support libraries or kernel layout.
-- Next: reproduce and audit the local relink with the correct original ABI
-  flags, replace Qualcomm early writes with Nord2 RAM logging, and build an
-  initial XNU payload with bounded diagnostics and recovery. No XNU probe
-  patch/image/ADT/return trampoline has been implemented yet. A proposed
-  direction is to stop before arm_vm_init (early stage7) and return to the
-  original Android kernel; this requires proper MMU/cache/register recovery
-  and tightly scoped memory maps, and must be reviewed before testing.
+- Next (from session 3): (1) present the verified image and ask for explicit
+  authorization to flash **boot only**; (2) on the phone, pull
+  `/sys/fs/pstore/pmsg-ramoops-0` after Android comes back, then restore and
+  verify the original boot partition; (3) if the probe stops before stage 6 or
+  panics, extend the ADT/driver work in that direction; if it reaches stage 6,
+  the next milestone is arming a real console (route `PE_putc` to pmsg) and
+  then GIC/arch-timer bring-up for `arm_vm_init`. No XNU probe had been
+  implemented before session 3 (that text is kept in git history); display,
+  touch and UFS takeover still need implementation and validation.
   A working CPU probe is not a working iOS port. Display, touch and UFS
   takeover still need implementation and validation.
 
