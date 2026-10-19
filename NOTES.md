@@ -1332,3 +1332,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     Next: implement minimal pwrap read/write (mtk-pmic-wrap.c), read CTRL1/
     CTRL2, clear `apwdtrst_en` (CTRL2 bit7) and the CTRL1 I2C-timeout enable,
     then re-run the deep boot.
+
+- 2026-10-19 (session 7, Opencode): **ROOT CAUSE of the reset: the toprgu pet was
+  writing the wrong register.** The MediaTek toprgu layout (vendor
+  `aee/hangdet/aee_hangdet.c` and `watchdog/mtk_wdt.c`) is
+  `WDT_MODE = 0x00` (bit0 = enable), `WDT_LENGTH = 0x04`,
+  **`WDT_RST = 0x08` with magic `0x1971`**, `WDT_STATUS = 0x0c`. Our code wrote
+  `0x1971` to **0x04 (LENGTH)** and read "status"/"interval" at 0x08/0x0c, so
+  the AP watchdog was **never kicked** — and the Nord 2 DT enables the MT6360
+  AP-watchdog reset input (`apwdtrst_en = <1>`, MT6360 on I2C, not pwrap).
+  That explains every observation: `wdt_mode = 0x7d` (enabled), `wdt_length`
+  read from the wrong register showed 0, petting had no effect, the reset is
+  time-based and independent of the log, and `bootreason = PMIC_cold_reboot`.
+  Fix: kick `WDT_RST` (offset 0x08) and log `MODE/LENGTH/STATUS` from their
+  real offsets. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
+  `dadfea1d8709c96e4b246991c9139744278286b3b6ad635be48e38c869849ee4`;
+  7 images, `FAILURES: none`; patch regenerated.

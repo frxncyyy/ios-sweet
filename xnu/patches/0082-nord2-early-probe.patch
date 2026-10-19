@@ -187,9 +187,9 @@
 +	nord2_wdt = (volatile uint32_t *)ml_io_map(0x10007000, 0x1000);
 +	if (nord2_wdt) {
 +		nord2_wdt_log("wdt_mode", nord2_wdt[0]);
-+		nord2_wdt_log("wdt_status", nord2_wdt[2]);
-+		nord2_wdt_log("wdt_interval", nord2_wdt[3]);
-+		nord2_wdt[1] = 0x1971;	/* WDT_RESTART */
++		nord2_wdt_log("wdt_length", nord2_wdt[1]);
++		nord2_wdt_log("wdt_status", nord2_wdt[3]);
++		nord2_wdt[2] = 0x1971;	/* WDT_RST (0x08): kick the AP watchdog */
 +	}
 +	__asm__ volatile("dsb sy; isb" ::: "memory");
 +	/* Switch over only once every alias exists. */
@@ -420,7 +420,7 @@
 +	}
 +	nord2_ring()->data[nord2_pos++] = c;
 +	if (nord2_wdt) {
-+		nord2_wdt[1] = 0x1971;	/* WDT_RESTART on console traffic too */
++		nord2_wdt[2] = 0x1971;	/* WDT_RST on console traffic too */
 +	}
 +	if (((++nord2_chars) & 0xff) == 0 && nord2_stall_reports < 6) {
 +		if (nord2_ticks == nord2_tick_snapshot) {
@@ -849,15 +849,15 @@
 +nord2_irq_seen(uint32_t intid, uint64_t pc)
 +{
 +	if (nord2_wdt) {
-+		nord2_wdt[1] = 0x1971;	/* WDT_RESTART: keep the SoC alive */
++		nord2_wdt[2] = 0x1971;	/* WDT_RST: keep the SoC alive */
 +	}
 +	if (intid == sweet_vtimer_intid) {
 +		nord2_ticks++;
 +		/* Bounded, so a live timer cannot scroll the real last line away. */
 +		if ((nord2_ticks & 0x3f) == 0 && nord2_wdt && nord2_ticks <= 256) {
 +			nord2_wdt_log("wdt_mode", nord2_wdt[0]);
-+			nord2_wdt_log("wdt_interval", nord2_wdt[3]);
-+			nord2_wdt_log("wdt_status", nord2_wdt[2]);
++			nord2_wdt_log("wdt_length", nord2_wdt[1]);
++			nord2_wdt_log("wdt_status", nord2_wdt[3]);
 +		}
 +		if (nord2_ticks <= 3 || ((nord2_ticks & 0x3f) == 0 && nord2_ticks <= 2048)) {
 +			sweet_early_string("NORD2-XNU: timer tick 0x");
