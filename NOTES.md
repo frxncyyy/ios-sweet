@@ -1495,3 +1495,22 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     whether it is before or after the copyright print; if 0005 hangs, the hang
     is between `StartIOKitMatching()` and `bsd_init` entry
     (`vm_set_restrictions`/`kperf_init_early`).
+
+- 2026-10-20 (session 7, Opencode): **point 5 (bsd_init entry) HANGS → the hang
+  is before `bsd_init`, between `StartIOKitMatching()` and bsd_init.** Restore
+  verified (`boot` = `04e84c4a…6e1f01`, Android up). Remaining region in
+  `kernel_bootstrap` (startup.c:786-796):
+  ```c
+  vm_set_restrictions(machine_info.max_cpus);   /* trivial, no hang possible */
+  #if KPERF
+      kperf_init_early();                        /* <- only nontrivial call left */
+  #endif
+      bsd_init();
+  ```
+  `vm_set_restrictions` (vm_pageout.c:4974) only reads a boot arg and sets a
+  flag. So the hang is either `kperf_init_early()` (if KPERF is enabled) or the
+  very first instructions of `bsd_init()` before the point-5 hook (prologue /
+  stack), though the latter is only initialisation.
+  - Next: build with a point 7 hook **after `vm_set_restrictions`** and a point 8
+    **after `kperf_init_early`** (or simply after `kperf_init_early` before
+    `bsd_init`) to split the last two candidates; both are C and local.
