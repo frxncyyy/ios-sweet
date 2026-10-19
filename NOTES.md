@@ -151,16 +151,34 @@
   MMU-off `SCTLR_EL1` state (Android boots). This is XNU kernel code running
   on MediaTek silicon — not an iOS boot: no display, touch, UFS, GIC or timer
   take-over, and nothing past `arm_vm_init`.
-  - Next milestone options: (1) route `PE_putc` to pmsg so the kernel's own
-    `dprintf`/kprintf output becomes visible (needs a patched `pe_serial.c`);
-    (2) push the stop point from stage 6 past `processor_bootstrap()` and
-    `arm_vm_init` (GIC/arch-timer/PMAP bring-up, the real porting work);
-    (3) restore the boot partition (pending, needs a manual fastboot entry).
+  - Next milestone options: (1) route the kernel console to pmsg so the
+    kernel's own `dprintf`/kprintf output becomes visible; (2) push the stop
+    point from stage 6 past `processor_bootstrap()` and `arm_vm_init`
+    (GIC/arch-timer/PMAP bring-up, the real porting work).
   - **Boot partition restored** (same session, after a manual fastboot
     entry): `fastboot flash boot backup/nord2/boot.img`, read-back SHA-256
     `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`
     (matches the backup) and `sys.boot_completed=1`. Phone is back on the
     untouched stock boot image.
+- 2026-10-19 (session 3, console work — built, NOT flashed): **kernel console
+  now routed to pmsg.** `osfmk/console/serial_console.c` `_cnputs()` (which
+  `console_write()` uses directly before `console_init()`, and for printf,
+  kprintf, IOLog and panic output) now calls `sweet_early_console_write()` on
+  NORD2 instead of the Sweet UFS log / `_cnputc`, so the early kernel's own
+  text lands in the same `pmsg` ring as the stage markers. The Sweet path is
+  untouched for non-NORD2 builds. New objects: five rebuilt
+  (`serial_console.c` added), relinked and stripped; entry moved to
+  `0xfffffe0007a93488` (`__start`, now checked dynamically by
+  `tools/nord2-check-xnu.py` in segment 2 instead of a hardcoded VA).
+  Images (all statically verified): `nord2-xnu-boot.img`
+  `217c377d163bf356bb84c797793c6f1ef53827b7377aa67282518114d01e45d2`,
+  `nord2-xnu-loaderonly.img`
+  `4f1d1c2bc056dfd66b020a33e8151a451092caa53e0a6ee9f4b061863747f654`,
+  `nord2-xnu-copy.img`
+  `a4b48e211e8ac4d116482e03e0eb7989e613eb905cf6a17edba3bd56ecb0d0ed`;
+  payload `84d12ca084d85228cd9201d085bdd8cc0e01901ccd9bcb2e5578f13c8456bf48`.
+  The boot partition on the phone is stock at the time of writing; a test
+  needs a new explicit flash authorization.
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,

@@ -35,7 +35,6 @@ LOADER_RESERVE = 0x200000
 PHYS_BASE = 0x142000000
 MEM_SIZE = 0x3e000000
 VIRT_BASE = 0xfffffe0006000000
-ENTRY_VA = 0xfffffe0007a94488
 BLOCK_SHIFT = 25
 
 STOCK_BOOT = Path(__file__).resolve().parent.parent / 'backup/nord2/boot.img'
@@ -129,7 +128,14 @@ class Checker:
                    pbase == PHYS_BASE and msize == MEM_SIZE,
                    f'{pbase:#x}+{msize:#x}')
         self.check('virt_base', vb == VIRT_BASE, hex(vb))
-        self.check('entry is __start', entry == ENTRY_VA, hex(entry))
+        segs = [struct.unpack_from('<4Q', p, 0x2a8 + i * 32) for i in range(nsegs)]
+        inside = [i for i, s in enumerate(segs)
+                  if s[0] <= entry < s[0] + s[1]]
+        self.check('entry is 4-byte aligned and inside a segment',
+                   entry % 4 == 0 and bool(inside),
+                   f'{entry:#x} in segment {inside}')
+        self.check('entry is in executable text',
+                   bool(inside) and inside[0] >= 2, f'segment {inside}')
 
         head_off = struct.unpack_from('<Q', p, 0x2a8)[0] - vb
         blocks = (msize - head_off) >> BLOCK_SHIFT

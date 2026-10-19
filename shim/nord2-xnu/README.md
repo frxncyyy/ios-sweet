@@ -82,7 +82,7 @@ It needs the extracted CI buildtree (`research/ci-39158169212/buildtree`, from
 `backup/nord2/boot.img`.
 
 The XNU-side changes are `xnu/patches/0082-nord2-early-probe.patch` against
-the CI buildtree (five files; four of them become objects). The script
+the CI buildtree (six files; five of them become objects). The script
 rebuilds those objects with `-DNORD2=1`, swaps them into a copy of the CI
 archive, relinks with the saved `research/nord2/link-command.json` argv,
 strips the symbol table, builds the ADT, the payload, this loader, the boot

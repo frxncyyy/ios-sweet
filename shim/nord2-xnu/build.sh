@@ -10,7 +10,7 @@
 #   backup/nord2/boot.img              verified original boot partition dump
 #   ../toolchains/cctools              Apple ld/ar/strip
 #
-# Steps: rebuild the four modified XNU objects, replace them in the archive,
+# Steps: rebuild the five modified XNU objects, replace them in the archive,
 # relink with research/nord2/link-command.json, strip the symbol table, build
 # the ADT and the payload, build this loader, pack a boot image and run the
 # static checker. Relinking and packing refuse to overwrite an existing
@@ -32,7 +32,9 @@ CC="python3 tools/nord2-xnu-cc.py $BT osfmk"
 EXTRA="-DNORD2=1"
 
 # 1. Modified XNU sources.
-for src in osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c; do
+SRCS="osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c \
+osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c"
+for src in $SRCS; do
     obj="$out/$(basename "$src").o"
     # shellcheck disable=SC2086
     $CC "$BT/xnu/$src" "$obj" $EXTRA
@@ -40,12 +42,13 @@ done
 
 # 2. Replace those objects in a copy of the CI archive.
 cp "$ARCHIVE" "$out/kernel-nord2.a"
-for src in osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c; do
+for src in $SRCS; do
     base="$(basename "$src")"
     ../toolchains/cctools/bin/aarch64-apple-darwin-ar d "$out/kernel-nord2.a" "${base%.c}.o" "${base%.s}.o" 2>/dev/null || true
 done
 ../toolchains/cctools/bin/aarch64-apple-darwin-ar r "$out/kernel-nord2.a" \
-    "$out/sweet_early.c.o" "$out/start.s.o" "$out/arm_init.c.o" "$out/arm_vm_init.c.o"
+    "$out/sweet_early.c.o" "$out/start.s.o" "$out/arm_init.c.o" \
+    "$out/arm_vm_init.c.o" "$out/serial_console.c.o"
 ../toolchains/cctools/bin/aarch64-apple-darwin-ranlib "$out/kernel-nord2.a"
 
 # 3. Relink with the saved argv, swapping the archive and output path.

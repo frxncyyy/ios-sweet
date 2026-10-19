@@ -113,7 +113,26 @@
  }
  
  static void
-@@ -89,6 +162,19 @@
+@@ -86,9 +159,38 @@
+ 	}
+ }
+ 
++#if defined(NORD2)
++/*
++ * Console sink for serial_console.c: every byte the kernel would have sent to
++ * a video or serial console is appended to the same pmsg ring as the markers.
++ * Before console_init() the kernel calls _cnputs directly, so this captures
++ * the early dprintf output (and panics) on a board with no usable console.
++ */
++void
++sweet_early_console_write(const char *c, int size)
++{
++	for (int i = 0; i < size; i++) {
++		nord2_putc(c[i]);
++	}
++}
++#endif
++
  void
  sweet_early_mark(unsigned int stage, const char *label)
  {
@@ -133,7 +152,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +193,36 @@
+@@ -107,11 +209,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -170,7 +189,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +234,10 @@
+@@ -123,8 +250,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -181,7 +200,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +246,92 @@
+@@ -133,11 +262,92 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -282,7 +301,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,14 @@
+@@ -10,8 +10,16 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -292,6 +311,8 @@
 +/* nord2_early.c: leave XNU for the preserved stock kernel. */
 +void nord2_maybe_return(void) __attribute__((noreturn));
 +void nord2_return_to_stock(void) __attribute__((noreturn));
++/* serial_console.c: every console byte goes to the ramoops pmsg ring. */
++void sweet_early_console_write(const char *c, int size);
 +#else
 +void sweet_early_relocate(uint64_t base);
 +#endif
@@ -491,3 +512,30 @@
  	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
  	sweet_early_relocate(SWEET_EARLY_FB_VA);
  #endif
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -282,10 +282,24 @@
+ 	extern int disableConsoleOutput;
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(NORD2)
++	/*
++	 * Nord2 has no early video or serial console: the ramoops pmsg ring is
++	 * the only sink, and sweet_early.c owns it. Everything that reaches
++	 * _cnputs (printf, kprintf, IOLog, panic output) is appended there.
++	 * Never call the Sweet UFS-backed log or _cnputc here: both assume the
++	 * Qualcomm board.
++	 */
++	extern void sweet_early_console_write(const char *c, int size);
++	sweet_early_console_write(c, size);
++	(void)poll;
++	return;
++#else
+ 	sweet_log_append(c, size);
+ 	if (sweet_console_muted && !panic_active()) {
+ 		return;
+ 	}
++#endif /* NORD2 */
+ #endif
+ 
+ 	if (disableConsoleOutput) {
