@@ -189,6 +189,29 @@
     (`nord2stop=0 nord2vm=1`, enter `arm_vm_init`; payload `4b7f1ba2…`).
   All three statically verified. Any panic in the entered code is logged and
   chains back to Android (`sweet_early_panic`).
+  - **Test 4 (`nord2-xnu-vm.img`, authorized): Android booted and the panic+`
+    chain-back chain worked end to end** — XNU's `sleh` handler caught the
+    fault, `sweet_early_panic` dumped the CPU state to pmsg and
+    `nord2_return_to_stock()` brought Android back
+    (`backup/nord2/probe-v6-vm-pmsg.txt`, 1839 bytes). The panic was a
+    **self-inflicted `brk #1` in `nord2_maybe_return`**: the two stop hooks
+    were declared `__attribute__((noreturn))` but return when
+    `nord2stop=0`/`nord2vm=1`, so the compiler put an unreachable `brk #1`
+    at the end of the returning path (pc `0xfffffe0007a92f44`, ESR
+    `0xf2000001` = BRK, ISS comment 1). The `nord2stop=0` path itself had
+    worked (it printed "continuing past early stop"), and
+    `PE_parse_boot_argn` read the cmdline correctly. Fixed by dropping the
+    `noreturn` attribute from both hooks; the rebuilt kernel has no `brk #1`
+    in that region.
+  - Rebuilt images (30.562.304 bytes each, `FAILURES: none`):
+    `nord2-xnu-vm.img` `69ababae0a8ea795677feb9b2c4e2b0fb98f07e38db28b64a50ca180e640cfd9`
+    (payload `b08fa0eb…`),
+    `nord2-xnu-continue.img` `6d19735ef61c2ba6cc343216ac48fc47212235fa62aa85fce898d4314c9c68f2`,
+    `nord2-xnu-boot.img` `77f1ba34164238cb42b7d1132ff100b82c71534edb0f6c545ce80581fc32debe`.
+  - Next: flash `nord2-xnu-vm.img` again. It should now enter `arm_vm_init`
+    and either print its progress (console hook) or panic (logged, chained
+    back). Expect the first real memory-map/GIC work to fail: that is the
+    next porting task.
   - **Phone state:** `boot` currently holds the console probe
     (`217c377d…`, verified boot: Android starts normally through the
     chain-back). It must be restored from `backup/nord2/boot.img` at the end

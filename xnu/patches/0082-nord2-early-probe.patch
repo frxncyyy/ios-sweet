@@ -319,16 +319,19 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,17 @@
+@@ -10,8 +10,20 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
 -void sweet_early_relocate(uint64_t base);
  void sweet_early_disable(void);
 +#if defined(NORD2)
-+/* nord2_early.c: leave XNU for the preserved stock kernel. */
-+void nord2_maybe_return(void) __attribute__((noreturn));
-+void nord2_before_vm_init(void) __attribute__((noreturn));
++/*
++ * nord2_early.c: the two early stop points may return (nord2stop=0 /
++ * nord2vm=1), so they are NOT noreturn; only the chain-back is.
++ */
++void nord2_maybe_return(void);
++void nord2_before_vm_init(void);
 +void nord2_return_to_stock(void) __attribute__((noreturn));
 +/* serial_console.c: every console byte goes to the ramoops pmsg ring. */
 +void sweet_early_console_write(const char *c, int size);
