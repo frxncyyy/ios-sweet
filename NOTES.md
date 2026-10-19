@@ -156,6 +156,11 @@
     (2) push the stop point from stage 6 past `processor_bootstrap()` and
     `arm_vm_init` (GIC/arch-timer/PMAP bring-up, the real porting work);
     (3) restore the boot partition (pending, needs a manual fastboot entry).
+  - **Boot partition restored** (same session, after a manual fastboot
+    entry): `fastboot flash boot backup/nord2/boot.img`, read-back SHA-256
+    `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`
+    (matches the backup) and `sys.boot_completed=1`. Phone is back on the
+    untouched stock boot image.
 - 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
   rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
   ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
@@ -248,13 +253,13 @@ are preserved; no permission to erase userdata has been given.
   VM_KERNEL_LINK_ADDRESS=0xfffffe0007004000, arm64/ARM64/__ARM64__/LP64,
   __API__=v4 and fno-strict-aliasing. Missing flags can affect ABI; successful
   linking alone does not validate the support libraries or kernel layout.
-- Next (from session 3): (1) ~XNU now stops cleanly after `cpu_init` and
+- Next (from session 3): (1) XNU now stops cleanly after `cpu_init` and
   returns to Android (log `backup/nord2/probe-v4-pmsg.txt`); the next
   milestones are a real early console (`PE_putc` → pmsg) and then
   `processor_bootstrap()`/`arm_vm_init` with GIC and arch-timer bring-up;
-  (2) restore the boot partition from the backup (pending a manual fastboot
-  entry) and verify hash + `sys.boot_completed`. Display, touch and UFS
-  takeover still need implementation and validation.
+  (2) the boot partition is restored and verified (SHA-256 `04e84c4a…6e1f01`,
+  `sys.boot_completed=1`). Display, touch and UFS takeover still need
+  implementation and validation.
   A working CPU probe is not a working iOS port. Display, touch and UFS
   takeover still need implementation and validation.
 
