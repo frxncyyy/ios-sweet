@@ -1481,3 +1481,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     hang is later (`bsd_init`); if it hangs, the hang is inside
     `StartIOKitMatching()` and the next step is a per-driver log (class name) in
     the matching loop.
+
+- 2026-10-20 (session 7, Opencode): **point 4 returns: the IOKit matching
+  completes.** `nord2-ci-4.img` (`787aa754…`, authorized) printed
+  `stop at after StartIOKitMatching` → Android up (~71 s). So the post-battery
+  hang is **after** the matching, in `bsd_init()` (C, buildable locally).
+  Added local hooks (no CI needed): point 5 = `bsd_init` entry, point 6 =
+  right after `printf(copyright)`. Local image with `nord2stopat=0005`:
+  `shim/out/nord2-xnu/nord2-l5.img` **30.570.496 bytes** SHA-256
+  `be5ee58d9b8c562d9dbd526a66c5fe2728ec460d47b9c311e3114f70766ba99c`,
+  payload `3a8dcb28…`, `FAILURES: none`.
+  - Expected: if 0005 returns, the hang is inside `bsd_init` and 0006 will say
+    whether it is before or after the copyright print; if 0005 hangs, the hang
+    is between `StartIOKitMatching()` and `bsd_init` entry
+    (`vm_set_restrictions`/`kperf_init_early`).

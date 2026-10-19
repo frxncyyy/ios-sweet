@@ -1447,7 +1447,17 @@
  #include <sys/param.h>
  #include <sys/filedesc.h>
  #include <sys/kernel.h>
-@@ -494,6 +497,9 @@
+@@ -486,6 +489,9 @@
+ 	boolean_t       netboot = FALSE;
+ #endif
+ 
++#if defined(NORD2)
++	nord2_stop_at(5, "bsd_init entry");
++#endif
+ #if (DEVELOPMENT || DEBUG)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+@@ -494,6 +500,9 @@
  
  #if DEBUG_BSDINIT
  #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
@@ -1457,7 +1467,17 @@
  #else
  #define bsd_init_kprintf(x, ...)
  #endif
-@@ -1119,7 +1125,13 @@
+@@ -501,6 +510,9 @@
+ 	throttle_init();
+ 
+ 	printf(copyright);
++#if defined(NORD2)
++	nord2_stop_at(6, "bsd_init after copyright");
++#endif
+ 
+ #if CONFIG_DEV_KMEM
+ 	bsd_init_kprintf("calling dev_kmem_init\n");
+@@ -1119,7 +1131,13 @@
  		}
  	}
  
