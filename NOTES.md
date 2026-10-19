@@ -13,8 +13,42 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
-- 2026-10-19 (session 5, Claude): **phase 1 implemented, built, NOT flashed.**
-  - The uncommitted `nord2vmloop` gate-walk experiment (loader.c, build.sh,
+- 2026-10-19 (session 5, Claude): **PHASE-1 TEST DONE (image
+  `595ea593ddc66622a9ee538bf565c9df2e3e634f2adeb36c140fb3f90ba4747a`,
+  authorized, boot-only). Android came back in 53 s and the pmsg log
+  survived; collected with `tools/nord2-pull-logs.sh display-phase1` into
+  `backup/nord2/logs/20261019-151659-display-phase1/`. Verified results:**
+  ```
+  NORD2-DISP DSI START=00000001 INTSTA=00000004 MODE=00000000
+  NORD2-DISP MUTEX 0 EN=00000000 SOF=00000000 MOD0=261f7bf7 MOD2=00000003
+  NORD2-DISP MUTEX 1..9 EN=SOF=MOD0=MOD2=0
+  NORD2-DISP OVL OVL0    EN=1 ROI=0960021c SRC=00000002
+  NORD2-DISP LAY OVL0/1    CON=000021ff SIZE=0960021c PITCH=000010e0 ADDR=77806000
+  NORD2-DISP OVL OVL0_2L EN=1 ROI=0960021c SRC=00000001
+  NORD2-DISP LAY OVL0_2L/0 CON=000021ff SIZE=0960021c PITCH=00001100 ADDR=76e10000
+  NORD2-DISP OVL OVL1    EN=1 ROI=0960021c SRC=00000002
+  NORD2-DISP LAY OVL1/1    CON=000021ff SIZE=0960021c PITCH=000010e0 ADDR=77806870
+  NORD2-DISP OVL OVL1_2L EN=1 ROI=0960021c SRC=00000001
+  NORD2-DISP LAY OVL1_2L/0 CON=000021ff SIZE=0960021c PITCH=00001100 ADDR=76e10870
+  ```
+  Reading: `ROI/SIZE = 0x0960021c` = **2400 rows x 540 columns**; `CON =
+  0x21ff` = format index 2 (32 bpp) with the low bits as in the driver; two
+  **full-screen buffers** `0x76e10000` (pitch 4352) and `0x77806000` (pitch
+  4320), each split by x into 540-px halves (right half at +0x870 = 2160 B =
+  540 px), blended by **two pipes**: pipe 0 = OVL0 + OVL0_2L, pipe 1 = OVL1 +
+  OVL1_2L (`SRC` bit0 = 2L layer, bit1 = 1L layer). **All four ADDRs are
+  inside the framebuffer carve-out `0x76e10000..0x78c00000`, so LK uses
+  physical addresses, not an IOMMU** — the phase-2 plan holds. DSI is idle
+  with `FRAME_DONE` (INTSTA bit 4) set and `START=1`. **No mutex is enabled**
+  (all `EN=0`) while `MUTEX 0` still holds `MOD0=0x261f7bf7`/`MOD2=3`: LK
+  appears to disable `MUTEX_EN` after its last frame (hypothesis; phase 2
+  verifies by enabling mutex 0).
+  - Consequences for phase 2: draw into `0x76e10000` with **pitch 4352**,
+    RGBA 32 bpp, treat it as one 1080x2400 surface (the second pipe reads its
+    right half at `+2160`); trigger with `MUTEX_EN(0)=1` + `DSI_START` 0/1 +
+    bounded `FRAME_DONE` poll. Map buffer and MMIO Normal-NC / Device
+    respectively, with a kernel VA alias after `arm_vm_init` drops TTBR0.
+- 2026-10-19 (session 5, Claude): **phase 1 implemented, built, NOT flashed.**  - The uncommitted `nord2vmloop` gate-walk experiment (loader.c, build.sh,
     `tools/nord2-vmstep-walk.sh`) was **discarded** (`git checkout`, file
     removed): the gate walk is abandoned in favour of the on-screen log, and
     the tree is clean at commit `392da40` for the new work.
