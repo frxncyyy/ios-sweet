@@ -13,6 +13,35 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **phase 1 implemented, built, NOT flashed.**
+  - The uncommitted `nord2vmloop` gate-walk experiment (loader.c, build.sh,
+    `tools/nord2-vmstep-walk.sh`) was **discarded** (`git checkout`, file
+    removed): the gate walk is abandoned in favour of the on-screen log, and
+    the tree is clean at commit `392da40` for the new work.
+  - `start.s`: new 32 MiB **Device-nGnRnE** block `0x14000000..0x141fffff`
+    in the existing V=P L2 page (L1 index 0, L2 index 10 — pmsg is 36, the RAM
+    window starts at 161), covering DSI0, both OVL pipes and DISP_MUTEX.
+  - `sweet_early.c`: `nord2_display_dump()`, read-only, called from
+    `arm_init.c` at the stage-6 stop just before `nord2_maybe_return()`. It
+    logs `NORD2-DISP …` lines to pmsg: DSI `START/INTSTA/MODE`; MUTEX 0..9
+    `EN/SOF/MOD0/MOD2`; OVL0, OVL0_2L, OVL1, OVL1_2L `EN/ROI/SRC`; layers 0..3
+    `CON/SIZE/PITCH/ADDR`. It performs **no display writes** and has no
+    unbounded loops. `nord2_leave_to()` (entry override) was split out of
+    `nord2_return_to_stock()` while doing this.
+  - Image: `shim/out/nord2-xnu/nord2-xnu-boot.img`, **30.566.400 bytes**,
+    SHA-256 `595ea593ddc66622a9ee538bf565c9df2e3e634f2adeb36c140fb3f90ba4747a`
+    (payload `5c6b4c3fae171c8ec9dc705d4e1b235dc5368a2140c9adb44455fa50dfafa7d9`,
+    cmdline `… nord2stop=1`). `tools/nord2-check-xnu.py`: all checks pass.
+    Patch `xnu/patches/0082-nord2-early-probe.patch` regenerated (871 lines)
+    and verified with `patch --dry-run` against the pristine buildtree.
+  - Phase-1 acceptance criteria from `DISPLAY-LOG.md`: (1) which mutex is
+    active (`EN`/`MOD0` non-zero, `SOF` = DSI0 SOF); (2) which OVL/2L layer is
+    enabled and whether its `ADDR` is inside `0x76e10000..0x78c00000` (if not,
+    it is an IOMMU address and the phase-2 plan changes); (3) pitch/size/format
+    of the active layer (expect 1080x2400, pitch 4352, 32 bpp — unverified for
+    LK); (4) single vs dual pipe (are OVL1/1_2L layers enabled?).
+  - Next: flash the image boot-only, let Android come back, pull the log with
+    `tools/nord2-pull-logs.sh display-phase1`, analyse, restore, then phase 2.
 
 - 2026-10-19 (session 3): **first Nord2 XNU probe image built and statically
   verified; NOT flashed.** Artifact `shim/out/nord2-xnu/nord2-xnu-boot.img`,

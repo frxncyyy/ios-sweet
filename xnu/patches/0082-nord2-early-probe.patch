@@ -113,7 +113,7 @@
  }
  
  static void
-@@ -86,9 +159,72 @@
+@@ -86,9 +159,174 @@
  	}
  }
  
@@ -130,6 +130,95 @@
 +	for (int i = 0; i < size; i++) {
 +		nord2_putc(c[i]);
 +	}
++}
++
++/*
++ * Phase 1 of shim/nord2-xnu/DISPLAY-LOG.md: read-only dump of the display
++ * state LK leaves behind. start.s maps 0x14000000..0x141fffff Device-nGnRnE
++ * in the bootstrap V=P table, so these physical addresses are valid VAs here.
++ * Nothing is written: no MUTEX_EN, no DSI_START, no OVL register.
++ */
++#define NORD2_DSI0_BASE   0x1400e000UL
++#define NORD2_MUTEX_BASE  0x14117000UL
++#define NORD2_OVL0_BASE   0x14000000UL
++#define NORD2_OVL0L_BASE  0x14001000UL
++#define NORD2_OVL1_BASE   0x14100000UL
++#define NORD2_OVL1L_BASE  0x14101000UL
++
++static uint32_t
++nord2_rd32(uintptr_t a)
++{
++	return *(volatile uint32_t *)a;
++}
++
++static void
++nord2_hex32(uint32_t v)
++{
++	for (int i = 7; i >= 0; i--) {
++		unsigned int d = (v >> (i * 4)) & 0xf;
++		sweet_early_putc((char)(d < 10 ? '0' + d : 'a' + d - 10));
++	}
++}
++
++static void
++nord2_kv(const char *k, uint32_t v)
++{
++	sweet_early_putc(' ');
++	sweet_early_string(k);
++	sweet_early_putc('=');
++	nord2_hex32(v);
++}
++
++static void
++nord2_ovl_dump(const char *name, uintptr_t base)
++{
++	sweet_early_string("NORD2-DISP OVL ");
++	sweet_early_string(name);
++	nord2_kv("EN", nord2_rd32(base + 0x0c));
++	nord2_kv("ROI", nord2_rd32(base + 0x20));
++	nord2_kv("SRC", nord2_rd32(base + 0x2c));
++	sweet_early_putc('\n');
++	for (unsigned int l = 0; l < 4; l++) {
++		uintptr_t o = base + 0x20 * l;
++		sweet_early_string("NORD2-DISP LAY ");
++		sweet_early_string(name);
++		sweet_early_putc('/');
++		sweet_early_putc((char)('0' + l));
++		nord2_kv("CON", nord2_rd32(o + 0x30));
++		nord2_kv("SIZE", nord2_rd32(o + 0x38));
++		nord2_kv("PITCH", nord2_rd32(o + 0x44));
++		sweet_early_putc(' ');
++		sweet_early_string("ADDR=");
++		/* ADDR is 32-bit on MT6885 (0xf40 + 0x20*l). */
++		nord2_hex32(nord2_rd32(o + 0xf40));
++		sweet_early_putc('\n');
++	}
++}
++
++void
++nord2_display_dump(void)
++{
++	sweet_early_string("NORD2-DISP BEGIN phase1 read-only\n");
++	sweet_early_string("NORD2-DISP DSI");
++	nord2_kv("START", nord2_rd32(NORD2_DSI0_BASE + 0x00));
++	nord2_kv("INTSTA", nord2_rd32(NORD2_DSI0_BASE + 0x0c));
++	nord2_kv("MODE", nord2_rd32(NORD2_DSI0_BASE + 0x14));
++	sweet_early_putc('\n');
++	for (unsigned int n = 0; n < 10; n++) {
++		uintptr_t m = NORD2_MUTEX_BASE + 0x20 * n;
++		sweet_early_string("NORD2-DISP MUTEX ");
++		sweet_early_putc((char)('0' + n));
++		nord2_kv("EN", nord2_rd32(m + 0x20));
++		nord2_kv("SOF", nord2_rd32(m + 0x2c));
++		nord2_kv("MOD0", nord2_rd32(m + 0x30));
++		nord2_kv("MOD2", nord2_rd32(m + 0x34));
++		sweet_early_putc('\n');
++	}
++	nord2_ovl_dump("OVL0", NORD2_OVL0_BASE);
++	nord2_ovl_dump("OVL0_2L", NORD2_OVL0L_BASE);
++	nord2_ovl_dump("OVL1", NORD2_OVL1_BASE);
++	nord2_ovl_dump("OVL1_2L", NORD2_OVL1L_BASE);
++	sweet_early_string("NORD2-DISP END phase1\n");
 +}
 +
 +static void
@@ -149,21 +238,34 @@
 + * argument nord2vmstop is 0 or greater than the gate's stage. Reboots then
 + * walk the gates one at a time, and the last NORD2-NEXT seen before a hang
 + * names the failing step.
++ *
++ * To avoid a phone reboot per gate, every gate below the last one returns to
++ * the *loader* (which is still intact at LK's kernel load address) instead of
++ * the stock kernel: the loader re-reads the ring, advances the gate and
++ * re-enters XNU. Only the final gate hands control to the stock kernel, so
++ * the whole walk happens in one power-on and Android then boots with the full
++ * log.
 + */
++#define NORD2_LOADER_PA 0x40080000UL
++#define NORD2_LAST_GATE 15
++
 +void
 +nord2_vm_gate(unsigned int stage)
 +{
 +	uint32_t stop = 0;
++	uint32_t loop = 0;
 +	(void)PE_parse_boot_argn("nord2vmstop", &stop, sizeof(stop));
++	(void)PE_parse_boot_argn("nord2vmloop", &loop, sizeof(loop));
 +	if (stop == 0 || stage < stop) {
 +		return;
 +	}
++	int to_loader = (loop != 0 && stage < loop && stage < NORD2_LAST_GATE);
 +	sweet_early_string("NORD2-XNU: gate 0x");
 +	nord2_hex64(stage);
 +	sweet_early_string(" stop; NORD2-NEXT=0x");
 +	nord2_hex64(stage + 1);
-+	sweet_early_string("\n");
-+	nord2_return_to_stock();
++	sweet_early_string(to_loader ? "; loop to loader\n" : "\n");
++	nord2_leave_to(to_loader ? NORD2_LOADER_PA : 0);
 +}
 +#endif
 +
@@ -186,7 +288,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +243,36 @@
+@@ -107,11 +345,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -223,7 +325,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +284,10 @@
+@@ -123,8 +386,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -234,7 +336,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +296,107 @@
+@@ -133,11 +398,116 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -263,7 +365,7 @@
 +    __attribute__((noreturn));
 +
 +void
-+nord2_return_to_stock(void)
++nord2_leave_to(uint64_t entry_override)
 +{
 +	DTEntry chosen = NULL;
 +	void const *prop;
@@ -279,8 +381,11 @@
 +		}
 +	}
 +	if (SecureDTGetProperty(chosen, "nord2-stock-entry", &prop, &size) == kSuccess &&
-+	    size == sizeof(uint64_t)) {
++	    size == sizeof(uint64_t) && entry_override == 0) {
 +		entry = *(uint64_t const *)prop;
++	}
++	if (entry_override != 0) {
++		entry = entry_override;
 +	}
 +	if (SecureDTGetProperty(chosen, "nord2-stock-dtb", &prop, &size) == kSuccess &&
 +	    size == sizeof(uint64_t)) {
@@ -305,6 +410,12 @@
 +	/* The trampoline lives 16K above the first mapped block. */
 +	nord2_leave_xnu(entry, dtb, region_start, region_end,
 +	    region_start + 0x4000);
++}
++
++void
++nord2_return_to_stock(void)
++{
++	nord2_leave_to(0);
 +}
 +
 +/*
@@ -350,7 +461,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,22 @@
+@@ -10,8 +10,26 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -365,6 +476,10 @@
 +void nord2_before_vm_init(void);
 +/* arm_vm_init.c: numbered stop points for the bounded bring-up. */
 +void nord2_vm_gate(unsigned int stage);
++/* Phase 1 display register dump (read-only), see shim/nord2-xnu/DISPLAY-LOG.md. */
++void nord2_display_dump(void);
++/* Jump to another entry point (0 = the stock kernel from /chosen). */
++void nord2_leave_to(uint64_t entry_override) __attribute__((noreturn));
 +void nord2_return_to_stock(void) __attribute__((noreturn));
 +/* serial_console.c: every console byte goes to the ramoops pmsg ring. */
 +void sweet_early_console_write(const char *c, int size);
@@ -385,7 +500,7 @@
  	/* Stage 0: white 64x32 band, no stack or page tables needed. */
  	MOV64	x0, (0x9c000000 + 2368 * 4320)
  	mov		w1, #-1
-@@ -680,13 +680,23 @@
+@@ -680,19 +680,47 @@
  
  #if defined(SWEET)
  	/*
@@ -414,7 +529,31 @@
  	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
  	orr		x11, x11, x10
  	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
-@@ -912,6 +922,82 @@
+ 	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
+ 	add		x13, x25, #(2 * PGBYTES)
+ 	str		x11, [x13, x12, lsl #TTE_SHIFT]
++
++#if defined(NORD2)
++	/*
++	 * Display MMIO for the read-only phase-1 dump (see
++	 * shim/nord2-xnu/DISPLAY-LOG.md): one 32 MiB Device-nGnRnE block at
++	 * 0x14000000 covers DSI0 (0x1400e000), OVL0/0_2L and OVL1/1_2L, and
++	 * DISP_MUTEX (0x14117000). Same L2 page as the pmsg entry (L1 index 0);
++	 * its L2 index is 10, below the pmsg entry (36) and the RAM window's
++	 * first block (161).
++	 */
++	MOV64	x10, 0x14000000
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	orr		x11, x11, x10
++	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++	add		x13, x25, #(2 * PGBYTES)
++	str		x11, [x13, x12, lsl #TTE_SHIFT]
++#endif
+ #endif
+ 
+ 	/* Ensure TTEs are visible */
+@@ -912,6 +940,82 @@
  	// Branch to the trampoline
  	br		x0
  
@@ -509,7 +648,7 @@
  #include <arm/pmap.h>
  #include <arm/caches_internal.h>
  #include <arm/cpu_internal.h>
-@@ -474,6 +477,16 @@
+@@ -474,6 +477,20 @@
  	cpu_init();
  
  	sweet_early_mark(6, "cpu_init done");
@@ -520,13 +659,17 @@
 +	 * Qualcomm memory map and drivers, so the default (boot-arg nord2stop=1)
 +	 * returns to the preserved stock Android kernel here. The trampoline
 +	 * restores the MMU-off state the stock kernel was entered with.
++	 *
++	 * Phase 1 of the on-screen log work: dump the display registers LK left
++	 * behind (read-only) into the pmsg ring before leaving.
 +	 */
++	nord2_display_dump();
 +	nord2_maybe_return();
 +#endif
  	processor_bootstrap();
  
  	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
-@@ -522,6 +535,10 @@
+@@ -522,6 +539,10 @@
  #endif  /* __ARM_PAN_AVAILABLE__ */
  
  	sweet_early_mark(7, "entering arm_vm_init");
@@ -600,7 +743,7 @@
  	if (kernel_mach_header_is_in_fileset(&_mh_execute_header)) {
  		kernel_mach_header_t *kc_mh = PE_get_kc_header(KCKindPrimary);
  
-@@ -2177,9 +2196,12 @@
+@@ -2177,30 +2196,59 @@
  	mt_early_init();
  #endif /* MONOTONIC */
  
@@ -608,63 +751,93 @@
 +	nord2_vm_gate(5);
 +#endif
  	arm_set_user_tbi();
++#if defined(NORD2)
++	nord2_vm_gate(6);
++#endif
  
 -#if defined(SWEET)
 +#if defined(SWEET) && !defined(NORD2)
  	/* phystokv() must still refer to the bootstrap aperture here. */
  	sweet_early_map_final();
  #endif
-@@ -2188,7 +2210,7 @@
+ 	arm_vm_physmap_init(args);
++#if defined(NORD2)
++	nord2_vm_gate(7);
++#endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
  
  	ml_enable_monitor();
- 
+-
 -#if defined(SWEET)
++#if defined(NORD2)
++	nord2_vm_gate(8);
++#endif
 +#if defined(SWEET) && !defined(NORD2)
  	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
  	sweet_early_relocate(SWEET_EARLY_FB_VA);
  #endif
-@@ -2201,6 +2223,9 @@
++#if defined(NORD2)
++	/*
++	 * Nord2 keeps the bootstrap V=P table in TTBR0 instead of switching to
++	 * the invalid table. The chain-back trampoline, its cache clean loop and
++	 * the pmsg console all need a VA==PA window after this point.
++	 */
++	set_mmu_ttb(boot_ttep & TTBR_BADDR_MASK);
++#else
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
++#endif
+ 
++#if defined(NORD2)
++	nord2_vm_gate(9);
++#endif
+ 	flush_mmu_tlb();
+ 	sweet_early_mark(10, "TTBR0 off; TLB flushed");
++#if defined(NORD2)
++	nord2_vm_gate(10);
++#endif
+ 	kva_active = TRUE;
+ 	// global table pointers may need to be different due to physical aperture remapping
  	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
  	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
  	sweet_early_mark(11, "physmap table pointers rebound");
 +#if defined(NORD2)
-+	nord2_vm_gate(6);
++	nord2_vm_gate(11);
 +#endif
  
  	// From here on out, we're off the bootstrap translation tables.
  
-@@ -2293,9 +2318,15 @@
+@@ -2293,9 +2341,15 @@
      }
  #endif
  #endif
 +#if defined(NORD2)
-+	nord2_vm_gate(7);
++	nord2_vm_gate(12);
 +#endif
  	sweet_early_mark(12, "calling pmap_bootstrap");
  	pmap_bootstrap(dynamic_memory_begin);
  	sweet_early_mark(13, "pmap_bootstrap done");
 +#if defined(NORD2)
-+	nord2_vm_gate(8);
++	nord2_vm_gate(13);
 +#endif
  
  	disable_preemption();
  
-@@ -2347,6 +2378,9 @@
+@@ -2347,6 +2401,9 @@
  		cpu_l1_tte++;
  	}
  	sweet_early_mark(14, "early I/O page tables ready");
 +#if defined(NORD2)
-+	nord2_vm_gate(9);
++	nord2_vm_gate(14);
 +#endif
  
  #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
  	/*
-@@ -2422,6 +2456,9 @@
+@@ -2422,6 +2479,9 @@
  #endif
  	first_avail = avail_start;
  	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
 +#if defined(NORD2)
-+	nord2_vm_gate(10);
++	nord2_vm_gate(15);
 +#endif
  	enable_preemption();
  }
