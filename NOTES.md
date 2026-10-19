@@ -1244,3 +1244,14 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     and/or stop `SweetBattery` before `registerService()` (needs the CI C++
     flags in `nord2-xnu-cc.py`, still unresolved), and/or keep the timer alive
     (EOI diagnostics in `sleh_irq`).
+
+- 2026-10-19 (session 7, Opencode): **timer-stall probe built (not flashed).**
+  Every 256 console characters, `nord2_putc()` compares the tick counter with a
+  snapshot; if it did not advance it prints
+  `NORD2-XNU: timer stalled, ctl=0x… tval=0x…` (up to 6 times). Reading
+  `CNTV_CTL_EL0`/`CNTV_TVAL_EL0` tells whether the architected timer is still
+  armed when the ticks vanish: armed + ISTATUS set → the GIC stops delivering;
+  not armed → `rtclock` stopped re-arming. Image `nord2-xnu-late2.img`
+  30.568.448 bytes SHA-256
+  `280518b9e965c01198cd68a5f3238ca5c938dbc9b1c13df7ce9c84245f9632b9`;
+  7 images, `FAILURES: none`; patch regenerated.

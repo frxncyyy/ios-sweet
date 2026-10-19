@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,420 @@
+@@ -1,16 +1,438 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -124,6 +124,11 @@
 +static uint64_t nord2_l2[NORD2_TT_ENTRIES] __attribute__((aligned(16384)));
 +uint64_t nord2_l1_pa;	/* physical address of the table, set at stage 6 */
 +static volatile uint32_t *nord2_wdt;
++/* Timer-stall probe: if the tick counter no longer advances while the kernel
++ * keeps printing, is the architected timer still armed? */
++static uint64_t nord2_ticks;
++static unsigned int nord2_chars, nord2_stall_reports;
++static uint32_t nord2_tick_snapshot;
 +
 +/*
 + * Kernel-VA aliases of the blocks the console touches, created by
@@ -417,6 +422,19 @@
 +	if (nord2_wdt) {
 +		nord2_wdt[1] = 0x1971;	/* WDT_RESTART on console traffic too */
 +	}
++	if (((++nord2_chars) & 0xff) == 0 && nord2_stall_reports < 6) {
++		if (nord2_ticks == nord2_tick_snapshot) {
++			uint64_t ctl = __builtin_arm_rsr64("CNTV_CTL_EL0");
++			uint64_t tval = __builtin_arm_rsr64("CNTV_TVAL_EL0");
++			nord2_stall_reports++;
++			sweet_early_string("NORD2-XNU: timer stalled, ctl=0x");
++			nord2_hex64(ctl);
++			sweet_early_string(" tval=0x");
++			nord2_hex64(tval);
++			sweet_early_string("\n");
++		}
++		nord2_tick_snapshot = nord2_ticks;
++	}
 +	nord2_ring()->size = nord2_pos;
 +	nord2_ring()->start = 0;
 +	nord2_flush();
@@ -426,7 +444,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +427,7 @@
+@@ -23,6 +445,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -434,7 +452,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +443,14 @@
+@@ -38,10 +461,14 @@
  		}
  	}
  }
@@ -449,7 +467,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +485,7 @@
+@@ -76,6 +503,7 @@
  		}
  	}
  	early_col++;
@@ -457,7 +475,7 @@
  }
  
  static void
-@@ -86,9 +496,177 @@
+@@ -86,9 +514,177 @@
  	}
  }
  
@@ -635,7 +653,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +685,36 @@
+@@ -107,11 +703,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -672,7 +690,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +726,10 @@
+@@ -123,8 +744,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -683,7 +701,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +738,265 @@
+@@ -133,11 +756,265 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
