@@ -13,6 +13,14 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **on-screen log moved to the bottom band**
+  (user request: easier to photograph). The console now uses the last
+  `20 * 32 = 640` rows of the panel (`NORD2_FB_ORIGIN_Y = 1760`), scrolls one
+  cell up when full and always leaves the newest line at the very bottom.
+  New image `nord2-xnu-vmfb.img`, 30.566.400 bytes, SHA-256
+  `a50ab6cfc05563ceb0195daebb10fe67d5ec0fb2d3515f80ec2986f6cc18f735`
+  (payload `d4c4fecb…`); all five images verify; patch regenerated and
+  dry-run OK. Not flashed.
 - 2026-10-19 (session 5, Claude): **PANIC-CACHE TEST FAILED to return (image
   `905a1431…`, authorized).** The phone stayed in the crash (user: "continua a
   ritornare sul crash e non andare in Android", then forced fastboot). So the
