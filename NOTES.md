@@ -13,6 +13,22 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **LATE STOP TEST SUCCEEDED (image
+  `e3f3613f…`, authorized): the full early bring-up runs and the kernel
+  returns to Android with the complete pmsg log**
+  (`backup/nord2/logs/20261019-192352-late-arminit/pstore/pmsg-ramoops-0`,
+  3621 bytes): loader lines, markers 1..20 including
+  `16: calling serial_init`, `19: serial_init returned`,
+  `20: kprintf startup complete`, `chain-back cached`, then
+  `stop at end of arm_init` → `RETURN TO STOCK ANDROID KERNEL` →
+  `entry=0x40280000`; Android reached `sys.boot_completed=1`. The cached
+  chain-back parameters work after the page-table switch. Also note DSI
+  `INTSTA=0x80000010` (BUSY + FRAME_DONE) while the on-screen console is
+  driving frames.
+  - So: **the whole `arm_init` path (arm_vm_init, TTBR0 switch, physmap,
+    serial_init, PE_init_printf) is now proven on MT6893 with a clean return.**
+    The next stop to investigate is in the IOKit/driver init after
+    `SWEET BATTERY`, i.e. hook point 2 (planned in `SweetBattery.cpp`).
 - 2026-10-19 (session 5, Claude): **late stop-with-return added** (built, not
   flashed): `nord2_stop_at(point, label)` (boot argument `nord2stopat=<n>`)
   logs a marker and chains back with the cached parameters; hook 1 sits right
