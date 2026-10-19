@@ -3,6 +3,17 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 4, Claude): logs after a hang are lost because the reset
+  is a PMIC cold reboot (`androidboot.bootreason=PMIC_cold_reboot`; pstore
+  empty). `tools/nord2-pull-logs.sh [label]` saves pstore + boot reason +
+  dmesg right after each attempt. User chose an on-screen early log instead of
+  the gate walk: researched spec in `shim/nord2-xnu/DISPLAY-LOG.md` (DSI0
+  0x1400e000, DISP_MUTEX 0x14117000, OVL 0x14000000/0x14001000, framebuffer
+  carve-out 0x76e10000+0x1df0000; command-mode panel needs MUTEX_EN + DSI_START
+  per frame). Phase 1 = read-only register dump at the cpu_init stop.
+  NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
+  were left untouched.
+
 - 2026-10-19 (session 3): **first Nord2 XNU probe image built and statically
   verified; NOT flashed.** Artifact `shim/out/nord2-xnu/nord2-xnu-boot.img`,
   30560256 bytes, SHA-256
