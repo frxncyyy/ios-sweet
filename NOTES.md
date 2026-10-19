@@ -1207,3 +1207,18 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     the masked state. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
     `b4699780061b5b9b41e1552b4e1997798239b59c0658bd53d359e4a86c859185`;
     7 images, `FAILURES: none`; patch regenerated with `nord2-mkpatch.sh`.
+
+- 2026-10-19 (session 7, Opencode): **tick-PC test result (image `b4699780…`,
+  authorized).** Every logged tick carries `pc=0x…`: ticks 2, 3, 0x40 and 0xc0
+  all show `pc=0xfffffe0007a8eca8`, the **idle loop**, while the bootstrap
+  thread keeps running (the driver lines continue after the ticks stop). So:
+  interrupts stop being delivered after tick 192 although the kernel keeps
+  executing; the last pet of the toprgu was then ~1 s before the reset, which
+  matches a toprgu timeout. New hypothesis: the timer IRQ stops being
+  delivered/re-armed while the system is still alive; because our watchdog pet
+  only ran in the IRQ path, the toprgu then reset the SoC.
+  - Next (built, not flashed): also pet the toprgu (`WDT_RESTART=0x1971`) on
+    **console writes**, so it stays fed even when interrupts stop. Image
+    `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
+    `e1eb6b1ea91b84489c94884b777a7fa194b8b8f04e05df56676a97916910acf0`;
+    7 images, `FAILURES: none`; patch regenerated.

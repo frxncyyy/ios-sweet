@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,417 @@
+@@ -1,16 +1,420 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -414,6 +414,9 @@
 +		return;
 +	}
 +	nord2_ring()->data[nord2_pos++] = c;
++	if (nord2_wdt) {
++		nord2_wdt[1] = 0x1971;	/* WDT_RESTART on console traffic too */
++	}
 +	nord2_ring()->size = nord2_pos;
 +	nord2_ring()->start = 0;
 +	nord2_flush();
@@ -423,7 +426,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +424,7 @@
+@@ -23,6 +427,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -431,7 +434,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +440,14 @@
+@@ -38,10 +443,14 @@
  		}
  	}
  }
@@ -446,7 +449,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +482,7 @@
+@@ -76,6 +485,7 @@
  		}
  	}
  	early_col++;
@@ -454,7 +457,7 @@
  }
  
  static void
-@@ -86,9 +493,177 @@
+@@ -86,9 +496,177 @@
  	}
  }
  
@@ -632,7 +635,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +682,36 @@
+@@ -107,11 +685,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -669,7 +672,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +723,10 @@
+@@ -123,8 +726,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -680,7 +683,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +735,265 @@
+@@ -133,11 +738,265 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
