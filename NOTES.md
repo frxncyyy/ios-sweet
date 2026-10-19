@@ -1030,3 +1030,18 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      cpu_init, before arm_vm_init.
   5. panic hook at top of panic_trap_to_debugger: va_copy + _doprnt(fmt, &copy, sweet_early_putc, 16).
   Verify with tools/xnu-cc.py (compile+symbols) and patch-order simulation before the single CI run.
+
+- 2026-10-19 (session 5, Claude): **hook 2 plan pinned down (NOT implemented).**
+  `iokit/Kernel/arm/SweetBattery.cpp:280` logs
+  `SWEET BATTERY: timer unavailable; static fallback` — the last line the deep
+  boot showed. Add after it, under `ARM64_BOARD_CONFIG_SWEET` + `NORD2`:
+  `extern "C" void nord2_stop_at(unsigned int, const char *);` then
+  `nord2_stop_at(2, "after SweetBattery fallback");`.
+  Build: compile `iokit/Kernel/arm/SweetBattery.cpp` (clang selects C++ from the
+  extension; `nord2-xnu-cc.py` needs no change) and extend the archive replace
+  step to handle `.cpp` (`${base%.cpp}.o` -> `SweetBattery.o`; today only
+  `%.c`/`%.s` are handled), then add the object to the `ar r` line.
+  Test image: the `late` cmdline with `nord2stopat=0002`.
+  Also tried and reverted: hook 2 in `bsd/kern/bsd_init.c` — `nord2-xnu-cc.py`
+  cannot rebuild bsd objects (component-specific generated flags), file restored
+  pristine.
