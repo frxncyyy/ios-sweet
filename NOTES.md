@@ -36,6 +36,8 @@
   - Next: add a return/stop point after the platform expert (or a boot-arg
     driven stop) so the milestone boots back into Android with the log in
     pmsg, then bisect the driver init that follows the battery fallback.
+  - Restore verified after the test: `boot` = `04e84c4a…6e1f01`,
+    `sys.boot_completed=1`.
 - 2026-10-19 (session 5, Claude): **ROOT CAUSE FOUND: the phase-2 panic was
   our own console, not arm_vm_init.** Symbolising the panic photo:
   `pc = PE_parse_boot_argn_internal`, `lr = nord2_putc`. `nord2_fb_on()`
