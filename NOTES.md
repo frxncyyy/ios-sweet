@@ -1191,3 +1191,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   7 images build with `FAILURES: none`; patch regenerated with
   `tools/nord2-mkpatch.sh` (1483 lines, applies cleanly, matches the
   buildtree).
+
+- 2026-10-19 (session 7, Opencode): **WDT-pet test result (image `d12f20e5…`,
+  authorized): reset still happens.** Photo: ticks `0x1,0x2,0x3,0x40,0xc0`
+  and **no `0x100`** before the reset; last line still
+  `SWEET BATTERY: static fallback`. Facts: the timer keeps interrupting until
+  at least tick 192, then **interrupts stop** and the SoC resets ~0.5-1 s
+  later; petting the MediaTek toprgu (`WDT_RESTART=0x1971`) did **not**
+  prevent it, and no panic text appears. Working hypothesis: the kernel enters
+  a state with IRQs masked (spinlock/exception) after `SweetBattery` registers,
+  and the reset comes from the watchdog/PMIC with no console output.
+  - Next diagnostic (built, not flashed): `sleh_irq` now passes the interrupted
+    PC to `nord2_irq_seen()`, and every 64th timer tick prints
+    `tick 0x… pc=0x…`. The last printed PC names the code path that leads to
+    the masked state. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
+    `b4699780061b5b9b41e1552b4e1997798239b59c0658bd53d359e4a86c859185`;
+    7 images, `FAILURES: none`; patch regenerated with `nord2-mkpatch.sh`.

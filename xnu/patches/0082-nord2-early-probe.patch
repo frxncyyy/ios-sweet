@@ -680,7 +680,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +735,263 @@
+@@ -133,11 +735,265 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -825,7 +825,7 @@
 +static unsigned int nord2_other_irqs;
 +
 +void
-+nord2_irq_seen(uint32_t intid)
++nord2_irq_seen(uint32_t intid, uint64_t pc)
 +{
 +	if (nord2_wdt) {
 +		nord2_wdt[1] = 0x1971;	/* WDT_RESTART: keep the SoC alive */
@@ -836,6 +836,8 @@
 +		if (nord2_ticks <= 3 || ((nord2_ticks & 0x3f) == 0 && nord2_ticks <= 2048)) {
 +			sweet_early_string("NORD2-XNU: timer tick 0x");
 +			nord2_hex64(nord2_ticks);
++			sweet_early_string(" pc=0x");
++			nord2_hex64(pc);
 +			sweet_early_string("\n");
 +		}
 +	} else if (nord2_other_irqs < 8) {
@@ -1451,8 +1453,8 @@
  		return; /* spurious */
  	}
 +#if defined(NORD2)
-+	extern void nord2_irq_seen(uint32_t intid);
-+	nord2_irq_seen(intid);
++	extern void nord2_irq_seen(uint32_t intid, uint64_t pc);
++	nord2_irq_seen(intid, (uint64_t)get_saved_state_pc(state));
 +#endif
  	if (intid == sweet_vtimer_intid) {
  		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
