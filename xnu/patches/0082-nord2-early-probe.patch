@@ -528,7 +528,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +583,180 @@
+@@ -133,11 +583,201 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -627,6 +627,27 @@
 + * stock kernel; 0 continues into arm_vm_init (not yet supported on Nord2).
 + */
 +/*
++ * Optional later stop points (boot argument nord2stopat=<n>): log a marker and
++ * return to Android with the pmsg log intact. Unlike the arm_vm_init gates
++ * these run with the kernel page tables fully switched, which is fine because
++ * the chain-back parameters were cached at the cpu_init stop.
++ */
++void
++nord2_stop_at(unsigned int point, const char *label)
++{
++	uint32_t want = 0;
++
++	(void)PE_parse_boot_argn("nord2stopat", &want, sizeof(want));
++	if (want == 0 || want != point) {
++		return;
++	}
++	sweet_early_string("NORD2-XNU: stop at ");
++	sweet_early_string(label);
++	sweet_early_string("\n");
++	nord2_leave_to(0);
++}
++
++/*
 + * Remember the chain-back properties while the device tree is still
 + * reachable. arm_vm_init() switches the kernel page tables, after which the
 + * ADT (placed just past the kernel image) cannot be looked up any more; a
@@ -717,7 +738,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,30 @@
+@@ -10,8 +10,32 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -734,6 +755,8 @@
 +void nord2_vm_gate(unsigned int stage);
 +/* Phase 1 display register dump (read-only), see shim/nord2-xnu/DISPLAY-LOG.md. */
 +void nord2_display_dump(void);
++/* Optional later stop point, returns to Android with the pmsg log. */
++void nord2_stop_at(unsigned int point, const char *label);
 +/* Enable the on-screen console (stage 6, boot args valid). */
 +void nord2_fb_init(void);
 +/* Cache the /chosen chain-back values before arm_vm_init. */
@@ -958,6 +981,17 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
+@@ -588,6 +609,10 @@
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
++#if defined(NORD2)
++	/* Optional late stop that still returns to Android with the pmsg log. */
++	nord2_stop_at(1, "end of arm_init");
++#endif
+ 
+ #if __arm64__
+ #if DEBUG
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -1826,6 +1826,12 @@

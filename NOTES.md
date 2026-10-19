@@ -13,6 +13,15 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **late stop-with-return added** (built, not
+  flashed): `nord2_stop_at(point, label)` (boot argument `nord2stopat=<n>`)
+  logs a marker and chains back with the cached parameters; hook 1 sits right
+  after `PE_init_printf(FALSE)` at the end of `arm_init()`. New image
+  `nord2-xnu-late.img` (cmdline `… nord2stop=0 nord2vm=1 nord2fb=1
+  nord2stopat=0001`), 30.566.400 bytes, SHA-256
+  `e3f3613f761a4f6e706982f0ea1d792e922004fddfaa4a074ac9bc1083b6c06a`; six of
+  six verify; patch dry-run OK. Expected: full early bring-up, then Android
+  returns and the pmsg holds the complete log (no photo needed).
 - 2026-10-19 (session 5, Claude): **MILESTONE — XNU RUNS PAST `arm_vm_init`
   INTO PLATFORM/IOKIT INIT ON MT6893** (image `59d642c9…`, console fix,
   authorized). The panel showed (verified from the photo) the kernel's own
