@@ -1509,3 +1509,44 @@
  	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  	    startup_phase >= STARTUP_SUB_KPRINTF) {
  		kprintf("kernel_bootstrap_thread: %s\n", message);
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -11,6 +11,9 @@
+ #include <IOKit/IOTimerEventSource.h>
+ #include <IOKit/pwr_mgt/IOPMPowerSource.h>
+ #include <libkern/c++/OSCollectionIterator.h>
++#if defined(NORD2)
++extern "C" void nord2_stop_at(unsigned int point, const char *label);
++#endif
+ #include <pexpert/pexpert.h>
+ /* bsd/dev/sweet_spmi.c */
+ extern "C" int sweet_spmi_init(void);
+@@ -280,7 +283,15 @@
+ 			IOLog("SWEET BATTERY: timer unavailable; static fallback\n");
+ 		}
+ 	}
++#if defined(NORD2)
++	/* CI-only instrumentation (Apple clang): stop before/after the IOKit
++	 * publish so the post-battery hang can be localised. */
++	nord2_stop_at(2, "before SweetBattery registerService");
++#endif
+ 	registerService();
++#if defined(NORD2)
++	nord2_stop_at(3, "after SweetBattery registerService");
++#endif
+ 	return true;
+ }
+ 
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -16,6 +16,10 @@
+ #define NO_ECORE                  1
+ 
+ #define SWEET                     1
++/* This branch builds the same XNU sources for the OnePlus Nord 2 (MT6893):
++ * NORD2 gates the MediaTek console/return/display and the CI-only IOKit
++ * instrumentation. */
++#define NORD2                     1
+ 
+ /*
+  * All eight cores (six A55 + two A76) as one homogeneous SMP cluster:
