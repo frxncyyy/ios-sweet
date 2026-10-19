@@ -13,6 +13,29 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **MILESTONE — XNU RUNS PAST `arm_vm_init`
+  INTO PLATFORM/IOKIT INIT ON MT6893** (image `59d642c9…`, console fix,
+  authorized). The panel showed (verified from the photo) the kernel's own
+  output well beyond `cpu_init`:
+  `OSLog stream configured`, `Log queues configured`, `Firehose configured`,
+  `mig_table_max_displ = 54 mach_kobj_count = 374`,
+  `debug_log_init: Error!! gPanicBase is still not initialized` (expected: the
+  ADT has no panic-base), `kdp_core zlib memory`, `iBoot version: nord2-probe`,
+  `SWEET AMFI: built-in interface registered`,
+  `Security policy loaded: Guarded vnode policy`,
+  `SWEET: starting device-tree platform expert`, `SWEET: platform expert
+  registered`, `SWEET AKS: AppleKeyStore registered`, `SWEET WDT: IOWatchdog
+  registered`, `SWEET SURF`, `SWEET HID: buttons/touch registered`,
+  `SWEET BATTERY: static fallback, 100% 4200mV external=1 charging=0`.
+  **So `arm_vm_init` completes on the Nord 2 and the kernel reaches the Sweet
+  platform/IOKit bring-up.** The last visible line is the battery fallback;
+  the boot stops (no Android) somewhere after it, in driver init. Both earlier
+  "arm_vm_init panics" were the console/boot-args bug, not arm_vm_init.
+  - The pmsg of this boot is lost (no return, forced fastboot), but the screen
+    log is sufficient: the on-screen console works for real now.
+  - Next: add a return/stop point after the platform expert (or a boot-arg
+    driven stop) so the milestone boots back into Android with the log in
+    pmsg, then bisect the driver init that follows the battery fallback.
 - 2026-10-19 (session 5, Claude): **ROOT CAUSE FOUND: the phase-2 panic was
   our own console, not arm_vm_init.** Symbolising the panic photo:
   `pc = PE_parse_boot_argn_internal`, `lr = nord2_putc`. `nord2_fb_on()`
