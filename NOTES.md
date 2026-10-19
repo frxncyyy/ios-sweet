@@ -1451,3 +1451,20 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     `7d73673620c91123a46c8da41f6b6c75eb88a5697cb611c8a93fa989268b5e70`,
     payload `e23bd7cf…`, `FAILURES: none`. If it returns, the hang is later;
     if it hangs, it is inside `registerService()`.
+
+- 2026-10-20 (session 7, Opencode): **the after-hook also returns: the hang is
+  NOT in `registerService()`.** `nord2-ci-after.img` (`7d736736…`, authorized)
+  printed `stop at after SweetBattery registerService` → `RETURN TO STOCK
+  ANDROID KERNEL` → Android up (~71 s); log
+  `backup/nord2/logs/*ci-after-register`. So `SweetBattery::start()` completes
+  and the hang happens **after it returns**, inside the same
+  IOKit/STARTUP entry: no further `kernel_bootstrap` step is logged after
+  `PE_lockdown_iokit` (the Sweet drivers run inside that step).
+  - `IOKitBSDInit()` is only `IOKitBSDInit.cpp:publishResource("IOBSD")`, so a
+    hook there is useless. The driver matching happens inside the
+    STARTUP_SUB_IOKIT startup entry (C++), which is now CI-buildable.
+  - Next: add `nord2_stop_at(4, …)` at the end of the IOKit
+    matching/start loop (or right after `kernel_startup_initialize_upto(
+    STARTUP_SUB_IOKIT)` in `startup.c`, C, cheaper) and bisect with
+    `nord2stopat=0004`; then the next driver/step after `SweetBattery` will
+    name the actual hang.
