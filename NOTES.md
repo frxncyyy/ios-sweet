@@ -1312,3 +1312,8 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   grep the whole tree for `apwdtrst`/`WDTRSTB` (likely
   `drivers/power/supply/` or the MT6359 RTC) before writing the kernel-side
   pet. Nothing was changed in the vendor tree.
+  - Correction from the grep: `apwdtrst_en`/`apwdtrst_sel` live in the **MT6360**
+    PMU driver (`drivers/misc/mediatek/pmic/mt6360/pmu/mt6360_pmu_core.c`), so
+    the DT node with `apwdtrst_en = <1>` is an MT6360 (companion PMIC), not the
+    MT6359. That is the most likely AP-reset path: read that driver's register
+    addresses/values and its pwrap transport before writing the kernel-side pet.
