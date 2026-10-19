@@ -1045,3 +1045,18 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Also tried and reverted: hook 2 in `bsd/kern/bsd_init.c` — `nord2-xnu-cc.py`
   cannot rebuild bsd objects (component-specific generated flags), file restored
   pristine.
+
+- 2026-10-19 (session 5, Claude): **hook 2 implemented (late2), tool extended.**
+  `tools/nord2-xnu-cc.py` now reproduces non-osfmk components: every component
+  Makefile's `-include meta_features.h` (CONFIG_DTRACE etc.), all `-D` markers
+  from the component Makefile (`BSD_BUILD`, `BSD_KERNEL_PRIVATE`,
+  `IOKIT_KERNEL_PRIVATE`, …), `-I<xnu>/osfmk` (so the *patched* osfmk headers
+  win over the CI-exported copies) and `-x c++` for `.cpp`. Verified by
+  compiling `bsd/kern/bsd_init.c` cleanly and seeing `U _nord2_stop_at`.
+  `shim/nord2-xnu/build.sh` now passes the right component per source
+  (`comp="${src%%/*}"`) — it previously compiled everything as osfmk.
+  Hook 2 lives after `IOKitBSDInit()` in `bsd_init.c` (call in a small block so
+  the return value survives) and triggers on `nord2stopat=0002`.
+  New image `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
+  `4180e651c734f02b0fd8ec4dde28f42a3a000baea5df06e28c1b93988f3e1ff6`
+  (payload `4034044e…`); 7 images built, all checks pass; patch dry-run OK.

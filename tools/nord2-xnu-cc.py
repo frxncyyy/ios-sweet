@@ -37,6 +37,22 @@ def config_defines(makefile):
 	return shlex.split(m.group(1))
 
 
+def component_defines(makefile):
+	"""Every -D... the component's generated Makefile carries.
+
+	Besides CONFIG_DEFINES these are the per-component markers (BSD_BUILD,
+	BSD_KERNEL_PRIVATE, IOKIT_KERNEL_PRIVATE, ...). Passing them reproduces
+	the CI build for components other than osfmk.
+	"""
+	text = open(makefile, errors='replace').read()
+	seen, out = set(), []
+	for m in re.finditer(r'(?<![\w-])-D[A-Za-z_][A-Za-z0-9_]*(?:=[^\s\\]+)?', text):
+		if m.group(0) not in seen:
+			seen.add(m.group(0))
+			out.append(m.group(0))
+	return out
+
+
 def argv(bt, comp, src, out, extra):
 	obj = os.path.join(bt, 'build/xnu.obj')
 	cfgdir = os.path.join(obj, 'DEVELOPMENT_ARM64_SWEET', comp, 'DEVELOPMENT')
@@ -57,9 +73,17 @@ def argv(bt, comp, src, out, extra):
 		gen = ['-g', '-nostdinc', '-ferror-limit=10000', '-fno-builtin', '-fno-common',
 			'-ftrivial-auto-var-init=zero', '-fsigned-bitfields', '-fmerge-all-constants',
 			'-fno-c++-static-destructors']
+		# Every component's generated Makefile passes -include meta_features.h
+		# (it carries CONFIG_* such as CONFIG_DTRACE); osfmk additionally adds
+		# the kernel-private defines.
 		flags = gen + machine + arm64 + ['-O2'] + deploy + defines \
+			+ ['-include', 'meta_features.h'] \
+			+ component_defines(os.path.join(cfgdir, 'Makefile')) \
 			+ COMPONENT_CFLAGS.get(comp, []) + ['-w']
 	inc = ['-I.', '-I' + os.path.join(srcroot, comp), '-I' + os.path.join(obj, 'EXPORT_HDRS', comp)]
+	# The patched osfmk headers (sweet_early.h, ...) must win over the exported
+	# copies baked into the CI artifact, including when building bsd/iokit.
+	inc += ['-I' + os.path.join(srcroot, 'osfmk')]
 	inc += ['-I' + os.path.join(obj, 'EXPORT_HDRS', c) for c in COMPONENTS if c != comp]
 	inc += ['-I' + os.path.join(srcroot, 'EXTERNAL_HEADERS')]
 	if comp == 'osfmk':
@@ -67,7 +91,9 @@ def argv(bt, comp, src, out, extra):
 	inc += ['-I' + os.path.join(bt, 'fakeroot/usr/local/include/kernel'),
 		'-I' + os.path.join(bt, 'sdk-kernel-platform/platform')]
 	cc = os.environ.get('CLANG', 'clang')
-	return cfgdir, [cc, '-c'] + flags + inc + list(extra) + [os.path.abspath(src), '-o', os.path.abspath(out)]
+	lang = ['-x', 'c++'] if src.endswith(('.cpp', '.cc', '.cxx')) else []
+	return cfgdir, [cc, '-c'] + flags + inc + list(extra) + lang + \
+		[os.path.abspath(src), '-o', os.path.abspath(out)]
 
 
 def main():

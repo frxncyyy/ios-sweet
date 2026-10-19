@@ -28,16 +28,17 @@ mkdir -p "$out"
 
 BT=research/ci-39158169212/buildtree
 ARCHIVE=research/ci-39158169212/xnu-kernel/kernel.development.sweet.link/kernel.development.sweet.a
-CC="python3 tools/nord2-xnu-cc.py $BT osfmk"
+CC="python3 tools/nord2-xnu-cc.py $BT"
 EXTRA="-DNORD2=1"
 
 # 1. Modified XNU sources.
 SRCS="osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c \
-osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c"
+osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c bsd/kern/bsd_init.c"
 for src in $SRCS; do
     obj="$out/$(basename "$src").o"
+    comp="${src%%/*}"
     # shellcheck disable=SC2086
-    $CC "$BT/xnu/$src" "$obj" $EXTRA
+    $CC "$comp" "$BT/xnu/$src" "$obj" $EXTRA
 done
 
 # 2. Replace those objects in a copy of the CI archive.
@@ -48,7 +49,7 @@ for src in $SRCS; do
 done
 ../toolchains/cctools/bin/aarch64-apple-darwin-ar r "$out/kernel-nord2.a" \
     "$out/sweet_early.c.o" "$out/start.s.o" "$out/arm_init.c.o" \
-    "$out/arm_vm_init.c.o" "$out/serial_console.c.o"
+    "$out/arm_vm_init.c.o" "$out/serial_console.c.o" "$out/bsd_init.c.o"
 ../toolchains/cctools/bin/aarch64-apple-darwin-ranlib "$out/kernel-nord2.a"
 
 # 3. Relink with the saved argv, swapping the archive and output path.
@@ -99,6 +100,11 @@ python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
 python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
     "$out/payload-late.bin" \
     --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=0001"
+# Stop hook 2: after IOKitBSDInit(), i.e. after the Sweet IOKit drivers
+# (AMFI, AKS, WDT, SURF, HID, battery) have registered.
+python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
+    "$out/payload-late2.bin" \
+    --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=0002"
 
 # 5. Loader. The probe entry point; also buildable as -DNORD2_LOADER_ONLY=1
 #    (validate only) or -DNORD2_COPY_ONLY=1 (also copy the segments), which
@@ -116,7 +122,7 @@ ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none --oformat=binary \
 
 # 6. Boot images and static verification.
 for spec in "boot:payload.bin" "continue:payload-continue.bin" "vm:payload-vm.bin" \
-            "vmstep:payload-vmstep.bin" "vmfb:payload-vmfb.bin" "late:payload-late.bin"; do
+            "vmstep:payload-vmstep.bin" "vmfb:payload-vmfb.bin" "late:payload-late.bin" "late2:payload-late2.bin"; do
     name="${spec%%:*}"
     payload="${spec#*:}"
     python3 tools/nord2-pack-xnu.py backup/nord2/boot.img "$out/loader-Image" \
