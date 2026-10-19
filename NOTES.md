@@ -1437,3 +1437,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     and return to Android. If it does, the post-battery hang is at/after
     `registerService`; a run with `nord2stopat=0003` will say whether it is
     inside it.
+
+- 2026-10-20 (session 7, Opencode): **CI hook works: stop BEFORE
+  `registerService` returns to Android.** Image `nord2-ci.img` (`dd39cbd4…`,
+  authorized) booted, printed `chain-back cached` then
+  `stop at before SweetBattery registerService`, chained back and Android
+  reached `sys.boot_completed=1` in ~71 s; log
+  `backup/nord2/logs/20261020-001810-ci-before-register` (10.5 KiB, full deep
+  boot). So the CI-built (Apple clang) C++ kernel and the stop hook are sound,
+  and the post-battery hang is **at or after `registerService()`**.
+  - Next: `nord2-ci-after.img` (same kernel, `nord2stopat=0003`, stop *after*
+    `registerService`) 30.676.992 bytes SHA-256
+    `7d73673620c91123a46c8da41f6b6c75eb88a5697cb611c8a93fa989268b5e70`,
+    payload `e23bd7cf…`, `FAILURES: none`. If it returns, the hang is later;
+    if it hangs, it is inside `registerService()`.
