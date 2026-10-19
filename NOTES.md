@@ -72,7 +72,8 @@
     right half at `+2160`); trigger with `MUTEX_EN(0)=1` + `DSI_START` 0/1 +
     bounded `FRAME_DONE` poll. Map buffer and MMIO Normal-NC / Device
     respectively, with a kernel VA alias after `arm_vm_init` drops TTBR0.
-- 2026-10-19 (session 5, Claude): **phase 1 implemented, built, NOT flashed.**  - The uncommitted `nord2vmloop` gate-walk experiment (loader.c, build.sh,
+- 2026-10-19 (session 5, Claude): **phase 1 implemented, built, NOT flashed.**
+  - The uncommitted `nord2vmloop` gate-walk experiment (loader.c, build.sh,
     `tools/nord2-vmstep-walk.sh`) was **discarded** (`git checkout`, file
     removed): the gate walk is abandoned in favour of the on-screen log, and
     the tree is clean at commit `392da40` for the new work.
