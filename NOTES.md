@@ -1302,3 +1302,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     0x10028000 spi_mst, clocks spi/wrap/ulposc) to read/pet the MT6359 AP
     watchdog, or stop `SweetBattery` before `registerService()` (needs the CI
     C++ flags in `nord2-xnu-cc.py`).
+
+- 2026-10-19 (session 7, Opencode, handoff): **pwrap next-step pointers.**
+  The vendor kernel is at
+  `/home/frxncy/Documents/Codex/2026-10-19/vedi-questa-repo-https-github-com/work/nord2-current-kernel`
+  (NOT `~/nord2-current-kernel`). `pwrap_read`/`pwrap_write` and the reg map
+  are in `drivers/soc/mediatek/mtk-pmic-wrap.c`; the PMIC watchdog/AP-reset
+  registers are not under `drivers/mfd` or `drivers/watchdog` in this tree, so
+  grep the whole tree for `apwdtrst`/`WDTRSTB` (likely
+  `drivers/power/supply/` or the MT6359 RTC) before writing the kernel-side
+  pet. Nothing was changed in the vendor tree.
