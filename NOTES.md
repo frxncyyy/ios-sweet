@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 6, Claude): **test of the io_map console fix (image
+  `3721f971…`, authorized): still stops after `SWEET BATTERY`, then reboot
+  loop.** pstore empty (`PMIC_cold_reboot`), log
+  `backup/nord2/logs/20261019-213101-late2-console-fix`. Restore verified
+  (`boot` = `04e84c4a…6e1f01`, `sys.boot_completed=1`). Checked: the Sweet
+  Qualcomm drivers (keys/touch/USB via `sweet_ufs.c:660-662`, UFS) are NOT
+  started — the UFS root path needs `rd=ufsroot0` and the ADT has no
+  `/sweet-ufs`; `SweetWatchdog` never fires; battery is the static fallback.
+  They are still needed later and must be ported to MediaTek (MT6359 PMIC,
+  FT3518 on I2C0, MediaTek UFS LUN2, SSUSB), not removed. Working hypothesis:
+  the kernel stalls once the scheduler starts waiting (timer IRQ not
+  delivered?) and the MediaTek hardware watchdog left armed by LK resets the
+  phone. New diagnostics (patch 0082, sleh.c and startup.c added to the build
+  and to `nord2-mkpatch.sh`): every `kernel_bootstrap_log` /
+  `kernel_bootstrap_thread_log` step and every `bsd_init` step is printed on
+  the console; `sleh_irq` reports timer ticks (1-3, then every 256th up to
+  2048) and the first 8 other INTIDs. Image `nord2-xnu-late2.img` SHA-256
+  `4a2614cebea6594c2da932ca97319953e4f5c9f4e6eabed08724691a48712a72`.
+
 - 2026-10-19 (session 6, Claude): **root cause of the silence after
   `SWEET BATTERY` identified in the source (not yet tested on the phone).**
   `pmap_switch_user_ttb()` (osfmk/arm/pmap/pmap.c:7577-7587) loads

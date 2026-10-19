@@ -659,7 +659,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +714,222 @@
+@@ -133,11 +714,260 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -784,6 +784,44 @@
 + * these run with the kernel page tables fully switched, which is fine because
 + * the chain-back parameters were cached at the cpu_init stop.
 + */
++/* kernel_bootstrap_log() / kernel_bootstrap_thread_log() steps (startup.c). */
++void
++nord2_bootstrap_log(const char *who, const char *message)
++{
++	sweet_early_string(who);
++	sweet_early_string(message);
++	sweet_early_string("\n");
++}
++
++/*
++ * Called from sleh_irq() for every acknowledged interrupt: proves the timer
++ * PPI is delivered once the scheduler runs (first 3 ticks, then every 256th
++ * up to the 2048th)
++ * and names the first few other INTIDs.
++ */
++extern uint32_t sweet_vtimer_intid;	/* pexpert/arm/pe_fiq.c */
++static uint64_t nord2_ticks;
++static unsigned int nord2_other_irqs;
++
++void
++nord2_irq_seen(uint32_t intid)
++{
++	if (intid == sweet_vtimer_intid) {
++		nord2_ticks++;
++		/* Bounded, so a live timer cannot scroll the real last line away. */
++		if (nord2_ticks <= 3 || ((nord2_ticks & 0xff) == 0 && nord2_ticks <= 8 * 0x100)) {
++			sweet_early_string("NORD2-XNU: timer tick 0x");
++			nord2_hex64(nord2_ticks);
++			sweet_early_string("\n");
++		}
++	} else if (nord2_other_irqs < 8) {
++		nord2_other_irqs++;
++		sweet_early_string("NORD2-XNU: irq intid 0x");
++		nord2_hex64(intid);
++		sweet_early_string("\n");
++	}
++}
++
 +void
 +nord2_stop_at(unsigned int point, const char *label)
 +{
@@ -1357,7 +1395,17 @@
  #include <sys/param.h>
  #include <sys/filedesc.h>
  #include <sys/kernel.h>
-@@ -1119,7 +1122,13 @@
+@@ -494,6 +497,9 @@
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
++#elif defined(NORD2)
++/* No serial port on the Nord 2: show the steps on the early console. */
++#define bsd_init_kprintf(x, ...) printf("bsd_init: " x, ## __VA_ARGS__)
+ #else
+ #define bsd_init_kprintf(x, ...)
+ #endif
+@@ -1119,7 +1125,13 @@
  		}
  	}
  
@@ -1372,3 +1420,40 @@
  }
  
  
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1867,6 +1867,10 @@
+ 	if (intid >= 1020 && intid <= 1023) {
+ 		return; /* spurious */
+ 	}
++#if defined(NORD2)
++	extern void nord2_irq_seen(uint32_t intid);
++	nord2_irq_seen(intid);
++#endif
+ 	if (intid == sweet_vtimer_intid) {
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
+ 		cdp->cpu_decrementer = -1; /* Large */
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -221,6 +221,10 @@
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(NORD2)
++	extern void nord2_bootstrap_log(const char *who, const char *message);
++	nord2_bootstrap_log("kernel_bootstrap: ", message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap: %s\n", message);
+@@ -231,6 +235,10 @@
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(NORD2)
++	extern void nord2_bootstrap_log(const char *who, const char *message);
++	nord2_bootstrap_log("kernel_bootstrap_thread: ", message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap_thread: %s\n", message);

@@ -15,7 +15,7 @@ TGZ=research/ci-39158169212/xnu-buildtree/buildtree.tgz
 PATCH=xnu/patches/0082-nord2-early-probe.patch
 FILES="osfmk/arm64/sweet_early.c osfmk/arm64/sweet_early.h osfmk/arm64/start.s \
 osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c \
-bsd/kern/bsd_init.c"
+bsd/kern/bsd_init.c osfmk/arm64/sleh.c osfmk/kern/startup.c"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

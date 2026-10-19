@@ -33,7 +33,8 @@ EXTRA="-DNORD2=1"
 
 # 1. Modified XNU sources.
 SRCS="osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c \
-osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c bsd/kern/bsd_init.c"
+osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c bsd/kern/bsd_init.c \
+osfmk/arm64/sleh.c osfmk/kern/startup.c"
 for src in $SRCS; do
     obj="$out/$(basename "$src").o"
     comp="${src%%/*}"
@@ -49,7 +50,8 @@ for src in $SRCS; do
 done
 ../toolchains/cctools/bin/aarch64-apple-darwin-ar r "$out/kernel-nord2.a" \
     "$out/sweet_early.c.o" "$out/start.s.o" "$out/arm_init.c.o" \
-    "$out/arm_vm_init.c.o" "$out/serial_console.c.o" "$out/bsd_init.c.o"
+    "$out/arm_vm_init.c.o" "$out/serial_console.c.o" "$out/bsd_init.c.o" \
+    "$out/sleh.c.o" "$out/startup.c.o"
 ../toolchains/cctools/bin/aarch64-apple-darwin-ranlib "$out/kernel-nord2.a"
 
 # 3. Relink with the saved argv, swapping the archive and output path.
