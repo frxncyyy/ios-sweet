@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,290 @@
+@@ -1,16 +1,345 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -93,6 +93,68 @@
 + * both valid. Enables the on-screen console when the boot argument nord2fb=1
 + * is present.
 + */
++/*
++ * Private identity (V=P) tables for the blocks the console and the chain-back
++ * need. XNU reuses its bootstrap tables after arm_vm_init(), which is why the
++ * log went silent once the kernel took over; these tables live in our own BSS
++ * and stay valid for the whole boot.
++ *
++ *   L2[10]  0x14000000  display MMIO        Device-nGnRnE
++ *   L2[36]  0x48000000  ramoops pmsg ring   Normal Non-Cacheable
++ *   L2[59]  0x76000000  framebuffer         Normal Non-Cacheable
++ *   L2[60]  0x78000000  framebuffer         Normal Non-Cacheable
++ *   L2[161..190]        XNU RAM window      Normal write-back
++ */
++#define NORD2_TT_ENTRIES 2048
++
++#define N2_VALID   (1ULL << 0)
++#define N2_TABLE   (3ULL << 0)
++#define N2_ATTR(i) ((uint64_t)(i) << 2)
++#define N2_SH_IN   (3ULL << 8)
++#define N2_AF      (1ULL << 10)
++#define N2_PXN     (1ULL << 53)
++#define N2_UXN     (1ULL << 54)
++#define N2_NORMAL  (N2_VALID | N2_ATTR(0) | N2_SH_IN | N2_AF | N2_UXN)
++#define N2_NC      (N2_VALID | N2_ATTR(1) | N2_SH_IN | N2_AF | N2_UXN)
++#define N2_DEV     (N2_VALID | N2_ATTR(3) | N2_AF | N2_PXN | N2_UXN)
++
++static uint64_t nord2_l1[NORD2_TT_ENTRIES] __attribute__((aligned(16384)));
++static uint64_t nord2_l2[NORD2_TT_ENTRIES] __attribute__((aligned(16384)));
++uint64_t nord2_l1_pa;	/* physical address of the table, set at stage 6 */
++
++static uintptr_t
++nord2_phys(uintptr_t pa)
++{
++	return pa;	/* identity, by construction of the tables above */
++}
++
++void
++nord2_identity_init(void)
++{
++	struct boot_args *ba = (struct boot_args *)PE_boot_args();
++	uint64_t delta;
++
++	if (!ba) {
++		return;
++	}
++	delta = ba->physBase - ba->virtBase;	/* pa = va + delta */
++	for (unsigned int i = 0; i < NORD2_TT_ENTRIES; i++) {
++		nord2_l1[i] = 0;
++		nord2_l2[i] = 0;
++	}
++	nord2_l1[0] = ((uint64_t)(uintptr_t)nord2_l2 + delta) | N2_TABLE;
++	nord2_l2[10] = 0x14000000ULL | N2_DEV;
++	nord2_l2[36] = 0x48000000ULL | N2_NC;
++	nord2_l2[59] = 0x76000000ULL | N2_NC;
++	nord2_l2[60] = 0x78000000ULL | N2_NC;
++	for (unsigned int i = 161; i <= 190; i++) {
++		nord2_l2[i] = ((uint64_t)i << 25) | N2_NORMAL;
++	}
++	__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
++	nord2_l1_pa = (uint64_t)(uintptr_t)nord2_l1 + delta;
++	sweet_early_string("NORD2-XNU: identity tables installed\n");
++}
++
 +void
 +nord2_fb_init(void)
 +{
@@ -237,14 +299,7 @@
 + * map, kept in TTBR0 for NORD2). Afterwards that map is no longer reliable, so
 + * the same physical pages are addressed through the kernel physmap instead.
 + */
-+/* Set by nord2_vm_gate() once arm_vm_init() has switched page tables. */
-+static int nord2_physmap_active;
 +
-+static uintptr_t
-+nord2_phys(uintptr_t pa)
-+{
-+	return nord2_physmap_active ? (uintptr_t)phystokv(pa) : pa;
-+}
 +
 +static volatile struct nord2_ring *
 +nord2_ring(void)
@@ -296,7 +351,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +297,7 @@
+@@ -23,6 +352,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -304,7 +359,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +313,14 @@
+@@ -38,10 +368,14 @@
  		}
  	}
  }
@@ -319,7 +374,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +355,7 @@
+@@ -76,6 +410,7 @@
  		}
  	}
  	early_col++;
@@ -327,7 +382,7 @@
  }
  
  static void
-@@ -86,9 +366,181 @@
+@@ -86,9 +421,178 @@
  	}
  }
  
@@ -412,6 +467,7 @@
 +void
 +nord2_display_dump(void)
 +{
++	nord2_identity_init();
 +	nord2_fb_init();
 +	sweet_early_string("NORD2-DISP BEGIN phase1 read-only\n");
 +	sweet_early_string("NORD2-DISP DSI");
@@ -470,11 +526,7 @@
 +	uint32_t stop = 0;
 +	uint32_t loop = 0;
 +
-+	/* Gate 10 is the first one reached after set_mmu_ttb(); from here on the
-+	 * physmap is the reliable way to reach the pmsg ring and the framebuffer. */
-+	if (stage >= 10) {
-+		nord2_physmap_active = 1;
-+	}
++
 +	(void)PE_parse_boot_argn("nord2vmstop", &stop, sizeof(stop));
 +	(void)PE_parse_boot_argn("nord2vmloop", &loop, sizeof(loop));
 +	if (stop == 0 || stage < stop) {
@@ -509,7 +561,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +559,36 @@
+@@ -107,11 +611,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -546,7 +598,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +600,10 @@
+@@ -123,8 +652,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -557,7 +609,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +612,201 @@
+@@ -133,11 +664,201 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -767,7 +819,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,32 @@
+@@ -10,8 +10,35 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -786,6 +838,9 @@
 +void nord2_display_dump(void);
 +/* Optional later stop point, returns to Android with the pmsg log. */
 +void nord2_stop_at(unsigned int point, const char *label);
++/* Private identity tables for pmsg/framebuffer/RAM window (stage 6). */
++extern uint64_t nord2_l1_pa;
++void nord2_identity_init(void);
 +/* Enable the on-screen console (stage 6, boot args valid). */
 +void nord2_fb_init(void);
 +/* Cache the /chosen chain-back values before arm_vm_init. */
@@ -1084,7 +1139,7 @@
  	if (kernel_mach_header_is_in_fileset(&_mh_execute_header)) {
  		kernel_mach_header_t *kc_mh = PE_get_kc_header(KCKindPrimary);
  
-@@ -2177,30 +2196,59 @@
+@@ -2177,30 +2196,61 @@
  	mt_early_init();
  #endif /* MONOTONIC */
  
@@ -1119,11 +1174,13 @@
  #endif
 +#if defined(NORD2)
 +	/*
-+	 * Nord2 keeps the bootstrap V=P table in TTBR0 instead of switching to
-+	 * the invalid table. The chain-back trampoline, its cache clean loop and
-+	 * the pmsg console all need a VA==PA window after this point.
++	 * Nord2 keeps an identity table in TTBR0 instead of switching to the
++	 * invalid one: the chain-back trampoline, its cache clean loop, the pmsg
++	 * console and the on-screen framebuffer all need a VA==PA window after
++	 * this point. It is our own table (sweet_early.c), not the bootstrap one,
++	 * because XNU reuses bootstrap_pagetables later.
 +	 */
-+	set_mmu_ttb(boot_ttep & TTBR_BADDR_MASK);
++	set_mmu_ttb(nord2_l1_pa & TTBR_BADDR_MASK);
 +#else
  	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 +#endif
@@ -1147,7 +1204,7 @@
  
  	// From here on out, we're off the bootstrap translation tables.
  
-@@ -2293,9 +2341,15 @@
+@@ -2293,9 +2343,15 @@
      }
  #endif
  #endif
@@ -1163,7 +1220,7 @@
  
  	disable_preemption();
  
-@@ -2347,6 +2401,9 @@
+@@ -2347,6 +2403,9 @@
  		cpu_l1_tte++;
  	}
  	sweet_early_mark(14, "early I/O page tables ready");
@@ -1173,7 +1230,7 @@
  
  #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
  	/*
-@@ -2422,6 +2479,9 @@
+@@ -2422,6 +2481,9 @@
  #endif
  	first_avail = avail_start;
  	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);

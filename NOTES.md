@@ -1074,3 +1074,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   New `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
   `855534e238fa091436da5cb72e14704c67f73f1dce194b2e2eaa2e3f09010bb2`;
   7 images, all checks pass; patch dry-run OK.
+
+- 2026-10-19 (session 5, Claude): **identity tables instead of the physmap
+  alias.** The physmap-alias test stopped right after marker 10
+  (`TTBR0 off; TLB flushed`): XNU's physmap only covers
+  `[physBase, physBase+memSize)` = `0x142000000..0x180000000`, so
+  `phystokv(0x48160000)` / `phystokv(0x76e10000)` point outside it and fault.
+  Fix: `sweet_early.c` builds its **own** L1+L2 tables in BSS
+  (`nord2_identity_init()` at the stage-6 stop) covering L2[10] display
+  (Device), L2[36] pmsg (Normal-NC), L2[59]/[60] framebuffer (Normal-NC) and
+  L2[161..190] the XNU RAM window (Normal WB), and `arm_vm_init.c` puts
+  `nord2_l1_pa` in TTBR0 instead of the reusable bootstrap table. pmsg, the
+  framebuffer, the trampoline and the cache-clean loop keep working for the
+  whole boot.
+  New `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
+  `b2c0977deafc87d1403b9fbbb01e58002934c1003ff3a6d14769678b1e0231c6`;
+  7 images, all checks pass; patch dry-run OK.
