@@ -1166,3 +1166,28 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     `1c99b8192b786b8f5c3d5eff8e80d2172eb65ef93d09647b012fd5b048c443ac`
     (bootstrap V=P table, console through the identity map, hook 2 present in
     `bsd_init.c` but not reachable). 7 images, all checks pass.
+
+- 2026-10-19 (session 7, Opencode): **photo of the session-6 diagnostic image
+  analysed (facts).** `/home/frxncy/Downloads/materialgram/IMG_20261019_214059_2.jpg`
+  shows the whole `kernel_bootstrap` sequence (`PE_init_iokit`, `early_boot`,
+  `vnguard_policy_init`, `dtrace_early_init`, `trust_cache_init`,
+  `OSKextRemoveKextBootstrap`, `machine_lockdown`, `kernel_do_post - done`,
+  `PE_lockdown_iokit`), then `SWEET: starting device-tree platform expert`,
+  platform expert registered, AKS, WDT (logged twice), HID buttons/touch and
+  finally `SWEET BATTERY: static fallback, 100% 4200mV external=1 charging=0`.
+  **The timer ticks are delivered** (`NORD2-XNU: timer tick 0x1/0x2/0x3`), so
+  the "timer IRQ not delivered" hypothesis is disproved. No panic text and no
+  `after IOKit BSD init` line: the reset (~1 s later) happens inside
+  `IOKitBSDInit()`, after the last Sweet driver, without a printed panic —
+  consistent with a hardware reset (watchdog) rather than an XNU panic.
+- 2026-10-19 (session 7, Opencode): **WDT + tick-rate diagnostic built (not
+  flashed).** `nord2_console_remap()` now maps the MediaTek toprgu watchdog
+  (`0x10007000`) and logs `wdt_mode/status/interval`, then pets it
+  (`WDT_RESTART = 0x1971`); `nord2_irq_seen()` pets it on every interrupt and
+  prints the timer tick every 64 up to 2048 (was every 256), so we can see
+  whether ticks continue right up to the reset (hardware WDT) or stop earlier
+  (CPU fault/hang). Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
+  `d12f20e59aca04a6615d8bafd1bd1b0a3fcb0850affdafa63ff4cac69a7f3736`;
+  7 images build with `FAILURES: none`; patch regenerated with
+  `tools/nord2-mkpatch.sh` (1483 lines, applies cleanly, matches the
+  buildtree).

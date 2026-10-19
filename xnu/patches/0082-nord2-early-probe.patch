@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,396 @@
+@@ -1,16 +1,417 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -76,7 +76,6 @@
 +
 +extern unsigned char iso_font[256 * 16];
 +static void sweet_early_string(const char *s);
-+static void hex_log(const char *name, uint64_t v);
 +static uintptr_t nord2_phys(uintptr_t pa);
 +
 +static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
@@ -124,6 +123,7 @@
 +static uint64_t nord2_l1[NORD2_TT_ENTRIES] __attribute__((aligned(16384)));
 +static uint64_t nord2_l2[NORD2_TT_ENTRIES] __attribute__((aligned(16384)));
 +uint64_t nord2_l1_pa;	/* physical address of the table, set at stage 6 */
++static volatile uint32_t *nord2_wdt;
 +
 +/*
 + * Kernel-VA aliases of the blocks the console touches, created by
@@ -157,6 +157,19 @@
 +}
 +
 +/* Called from arm_init() right after arm_vm_init(), before serial_init(). */
++static void
++nord2_wdt_log(const char *name, uint32_t v)
++{
++	sweet_early_string("NORD2-XNU: ");
++	sweet_early_string(name);
++	sweet_early_string("=0x");
++	for (int i = 7; i >= 0; i--) {
++		unsigned int d = (v >> (i * 4)) & 0xf;
++		sweet_early_putc((char)(d < 10 ? '0' + d : 'a' + d - 10));
++	}
++	sweet_early_string("\n");
++}
++
 +void
 +nord2_console_remap(void)
 +{
@@ -165,6 +178,14 @@
 +	uintptr_t dsi = ml_io_map(NORD2_DSI0, 0x1000);
 +	uintptr_t mtx = ml_io_map(NORD2_DISP_MUTEX, 0x1000);
 +
++	/* MediaTek top-level watchdog (toprgu): LK may leave it armed. */
++	nord2_wdt = (volatile uint32_t *)ml_io_map(0x10007000, 0x1000);
++	if (nord2_wdt) {
++		nord2_wdt_log("wdt_mode", nord2_wdt[0]);
++		nord2_wdt_log("wdt_status", nord2_wdt[2]);
++		nord2_wdt_log("wdt_interval", nord2_wdt[3]);
++		nord2_wdt[1] = 0x1971;	/* WDT_RESTART */
++	}
 +	__asm__ volatile("dsb sy; isb" ::: "memory");
 +	/* Switch over only once every alias exists. */
 +	nord2_va_dsi = dsi;
@@ -402,7 +423,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +403,7 @@
+@@ -23,6 +424,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -410,7 +431,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +419,14 @@
+@@ -38,10 +440,14 @@
  		}
  	}
  }
@@ -425,7 +446,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +461,7 @@
+@@ -76,6 +482,7 @@
  		}
  	}
  	early_col++;
@@ -433,7 +454,7 @@
  }
  
  static void
-@@ -86,9 +472,177 @@
+@@ -86,9 +493,177 @@
  	}
  }
  
@@ -611,7 +632,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +661,36 @@
+@@ -107,11 +682,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -648,7 +669,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +702,10 @@
+@@ -123,8 +723,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -659,7 +680,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +714,260 @@
+@@ -133,11 +735,263 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -806,10 +827,13 @@
 +void
 +nord2_irq_seen(uint32_t intid)
 +{
++	if (nord2_wdt) {
++		nord2_wdt[1] = 0x1971;	/* WDT_RESTART: keep the SoC alive */
++	}
 +	if (intid == sweet_vtimer_intid) {
 +		nord2_ticks++;
 +		/* Bounded, so a live timer cannot scroll the real last line away. */
-+		if (nord2_ticks <= 3 || ((nord2_ticks & 0xff) == 0 && nord2_ticks <= 8 * 0x100)) {
++		if (nord2_ticks <= 3 || ((nord2_ticks & 0x3f) == 0 && nord2_ticks <= 2048)) {
 +			sweet_early_string("NORD2-XNU: timer tick 0x");
 +			nord2_hex64(nord2_ticks);
 +			sweet_early_string("\n");
