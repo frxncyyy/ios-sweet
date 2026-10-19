@@ -3,6 +3,22 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 2): `tools/nord2-xnu-cc.py BUILDTREE COMPONENT SRC OUT.o`
+  rebuilds the CI compile flags from makedefs (PLATFORM=MacOSX:
+  ARM_LARGE_MEMORY=1, link 0xfffffe0007004000, -march=armv8.2-a+crypto,
+  DEFINES + CONFIG_DEFINES, osfmk meta_features.h, INCFLAGS). Checked against
+  the CI archive objects (`research/nord2/orig-objs`): unmodified start.s gives
+  an identical start.o except alignment fill (zeros instead of NOPs, never
+  executed; load commands and relocations identical); sweet_early.c gives the
+  same symbols and data/bss/cstring sizes (code differs: clang 23 vs Apple
+  clang). Support libs (firehose, profiling) come from separate Apple projects
+  and were not re-audited. No Nord2 XNU patch, ADT or image exists yet.
+- Proton Clang 13.0.0 in `../toolchains/proton-clang`, GNU bc in
+  `../toolchains/bc`; `../nord2-current-kernel` now a full checkout (+ KSU-Next
+  submodule 3c352ee); `olddefconfig` from device config.gz reproduces it
+  exactly (out dir `../nord2-kout`). Local README line added there only to get
+  the `-dirty` release string.
+
 This checkout now targets a connected OnePlus Nord 2 / MediaTek MT6893.
 All Sweet phone state and approvals below this section belong to upstream,
 not to this user. **iOS has NOT booted on the Nord 2.** Android and userdata
