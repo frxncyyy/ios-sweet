@@ -25,6 +25,8 @@
   chain-back parameters work after the page-table switch. Also note DSI
   `INTSTA=0x80000010` (BUSY + FRAME_DONE) while the on-screen console is
   driving frames.
+  - Restore verified after the test: `boot` = `04e84c4a…6e1f01`,
+    `sys.boot_completed=1`.
   - So: **the whole `arm_init` path (arm_vm_init, TTBR0 switch, physmap,
     serial_init, PE_init_printf) is now proven on MT6893 with a clean return.**
     The next stop to investigate is in the IOKit/driver init after
