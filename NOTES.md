@@ -1391,3 +1391,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   - Expected: stop **before** `registerService` → Android returns. If it does,
     the post-battery hang is at/after `registerService` and a `nord2stopat=0003`
     run will tell whether it is inside it.
+
+- 2026-10-19 (session 7, Opencode): **the local C++ build path was reverted on
+  purpose.** The project README (§1 "Build the kernel") is explicit: the
+  kernel is built on GitHub's macOS runners with blacktop/darwin-xnu-build,
+  applying `xnu/patches/`; local `tools/xnu-cc.py` is only for single-file
+  checks. The `__builtin_xnu_*` fallbacks made SweetBattery.cpp compile with
+  upstream clang, but the resulting `__kalloc_type` metadata (signature/flags)
+  would not be what Apple clang emits, and the kernel validates those views at
+  boot — an unsanctioned and potentially unsafe shortcut. Reverted:
+  `SweetBattery.cpp` is pristine, `build.sh`/`nord2-mkpatch.sh` no longer
+  reference it, and the rebuild reproduces the known-good image
+  `dadfea1d…` exactly. C++ instrumentation (the hook around
+  `SweetBattery::registerService()`) must go through the **CI build**
+  (`xnu/patches/` + `gh workflow run xnu.yml`), not the local relink.
