@@ -238,9 +238,10 @@
     `nord2-xnu-boot.img` `b23c76acb1265822275629ac035affd120e74a8e845dd1a28337a021127e046b`
     (loader preserves the ring), `nord2-xnu-continue.img` `69a1dd03…`,
     `nord2-xnu-vm.img` `292f8a5c50785f88dbb9288c0db3606208f402da7d12dc7d2817c678b13fce79`.
-  - **Phone state:** `boot` holds `nord2-xnu-boot.img` (`b23c76ac…`), which
-    always returns to Android; it must still be restored from
-    `backup/nord2/boot.img`.
+  - **Phone state:** `boot` was restored to
+    `backup/nord2/boot.img` after the hang (`read-back` SHA-256
+    `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`,
+    `sys.boot_completed=1`). Nothing of the probe is left on the device.
   - **Phone state:** `boot` currently holds the console probe
     (`217c377d…`, verified boot: Android starts normally through the
     chain-back). It must be restored from `backup/nord2/boot.img` at the end
