@@ -1317,3 +1317,18 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     the DT node with `apwdtrst_en = <1>` is an MT6360 (companion PMIC), not the
     MT6359. That is the most likely AP-reset path: read that driver's register
     addresses/values and its pwrap transport before writing the kernel-side pet.
+  - **Concrete MT6360 facts found (session 7, end):**
+    `drivers/misc/mediatek/pmic/mt6360/inc/mt6360_pmu.h`:
+    `MT6360_PMU_CORE_CTRL1 = 0x01`, `MT6360_PMU_CORE_CTRL2 = 0x06`.
+    `mt6360_pmu_core.c`: `apwdtrst_en` = CTRL2 **bit7 (0x80)**,
+    `apwdtrst_sel` = CTRL2 bit6 (0x40); `i2cstmr_rst_en` / `i2cstmr_rst_tmr`
+    are in CTRL1 (bit fields in the same `mt6360_val_props` table). There is an
+    IRQ `ap_wdtrst_evt` with `mt6360_pmu_ap_wdtrst_evt_handler()`, i.e. the
+    PMIC deliberately resets the AP on an AP-watchdog/I2C-timeout event, and
+    the Nord 2 DT sets `apwdtrst_en = <1>`. **Most likely reset path: the
+    MT6360's I2C/AP watchdog timing out because the kernel never talks to the
+    PMIC over pwrap — time-based and log-position independent, exactly what we
+    observed.**
+    Next: implement minimal pwrap read/write (mtk-pmic-wrap.c), read CTRL1/
+    CTRL2, clear `apwdtrst_en` (CTRL2 bit7) and the CTRL1 I2C-timeout enable,
+    then re-run the deep boot.
