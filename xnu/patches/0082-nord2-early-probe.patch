@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,267 @@
+@@ -1,16 +1,290 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -28,6 +28,7 @@
  #include <stdint.h>
  #include <kern/misc_protos.h>
 +#if defined(NORD2)
++#include <arm/pmap/pmap.h>
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
 +#endif
@@ -73,6 +74,7 @@
 +
 +extern unsigned char iso_font[256 * 16];
 +static void sweet_early_string(const char *s);
++static uintptr_t nord2_phys(uintptr_t pa);
 +
 +static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
 +static int nord2_fb_started;
@@ -108,7 +110,7 @@
 +static void
 +nord2_fb_fill(uint32_t px)
 +{
-+	volatile uint32_t *fb = (volatile uint32_t *)NORD2_FB_PA;
++	volatile uint32_t *fb = (volatile uint32_t *)nord2_phys(NORD2_FB_PA);
 +	for (unsigned int y = 0; y < NORD2_FB_HEIGHT; y++) {
 +		volatile uint32_t *line = fb + y * (NORD2_FB_PITCH / 4);
 +		for (unsigned int x = 0; x < NORD2_FB_WIDTH; x++) {
@@ -120,7 +122,7 @@
 +static void
 +nord2_fb_clear_row(void)
 +{
-+	volatile uint32_t *fb = (volatile uint32_t *)(NORD2_FB_PA +
++	volatile uint32_t *fb = (volatile uint32_t *)(nord2_phys(NORD2_FB_PA) +
 +	    (NORD2_FB_ORIGIN_Y + nord2_fb_row * NORD2_FB_CELL_H) * NORD2_FB_PITCH);
 +	for (unsigned int y = 0; y < NORD2_FB_CELL_H; y++) {
 +		volatile uint32_t *line = fb + y * (NORD2_FB_PITCH / 4);
@@ -160,7 +162,7 @@
 +static void
 +nord2_fb_scroll(void)
 +{
-+	volatile uint32_t *fb = (volatile uint32_t *)NORD2_FB_PA;
++	volatile uint32_t *fb = (volatile uint32_t *)nord2_phys(NORD2_FB_PA);
 +	const unsigned int src = NORD2_FB_ORIGIN_Y + NORD2_FB_CELL_H;
 +	const unsigned int lines = (NORD2_FB_ROWS - 1) * NORD2_FB_CELL_H;
 +
@@ -210,7 +212,7 @@
 +		nord2_fb_newline();
 +	}
 +	const unsigned char *g = iso_font + (unsigned char)c * 16;
-+	volatile uint32_t *base = (volatile uint32_t *)(NORD2_FB_PA +
++	volatile uint32_t *base = (volatile uint32_t *)(nord2_phys(NORD2_FB_PA) +
 +	    (NORD2_FB_ORIGIN_Y + nord2_fb_row * NORD2_FB_CELL_H) * NORD2_FB_PITCH +
 +	    nord2_fb_col * NORD2_FB_CELL_W * 4);
 +	for (unsigned int gy = 0; gy < 16; gy++) {
@@ -227,6 +229,27 @@
 +		}
 +	}
 +	nord2_fb_col++;
++}
++
++/*
++ * Before arm_vm_init() switches the page tables the pmsg block and the
++ * framebuffer are reachable at their physical addresses (the bootstrap V=P
++ * map, kept in TTBR0 for NORD2). Afterwards that map is no longer reliable, so
++ * the same physical pages are addressed through the kernel physmap instead.
++ */
++/* Set by nord2_vm_gate() once arm_vm_init() has switched page tables. */
++static int nord2_physmap_active;
++
++static uintptr_t
++nord2_phys(uintptr_t pa)
++{
++	return nord2_physmap_active ? (uintptr_t)phystokv(pa) : pa;
++}
++
++static volatile struct nord2_ring *
++nord2_ring(void)
++{
++	return (volatile struct nord2_ring *)nord2_phys(NORD2_PMSG_BASE);
 +}
 +
 +static volatile struct nord2_ring *nord2_log =
@@ -249,12 +272,12 @@
 +{
 +	if (!nord2_started) {
 +		nord2_started = 1;
-+		nord2_pos = nord2_log->size;
-+		if (nord2_log->sig != NORD2_PMSG_SIG ||
++		nord2_pos = nord2_ring()->size;
++		if (nord2_ring()->sig != NORD2_PMSG_SIG ||
 +		    nord2_pos >= NORD2_PMSG_SIZE - NORD2_RING_HDR) {
 +			nord2_pos = 0;
 +		}
-+		nord2_log->sig = NORD2_PMSG_SIG;
++		nord2_ring()->sig = NORD2_PMSG_SIG;
 +	}
 +	if (c == '\r') {
 +		return;
@@ -263,9 +286,9 @@
 +	if (nord2_pos >= NORD2_PMSG_SIZE - NORD2_RING_HDR) {
 +		return;
 +	}
-+	nord2_log->data[nord2_pos++] = c;
-+	nord2_log->size = nord2_pos;
-+	nord2_log->start = 0;
++	nord2_ring()->data[nord2_pos++] = c;
++	nord2_ring()->size = nord2_pos;
++	nord2_ring()->start = 0;
 +	nord2_flush();
 +	nord2_fb_putc(c);
 +}
@@ -273,7 +296,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +274,7 @@
+@@ -23,6 +297,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -281,7 +304,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +290,14 @@
+@@ -38,10 +313,14 @@
  		}
  	}
  }
@@ -296,7 +319,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +332,7 @@
+@@ -76,6 +355,7 @@
  		}
  	}
  	early_col++;
@@ -304,7 +327,7 @@
  }
  
  static void
-@@ -86,9 +343,175 @@
+@@ -86,9 +366,181 @@
  	}
  }
  
@@ -446,6 +469,12 @@
 +{
 +	uint32_t stop = 0;
 +	uint32_t loop = 0;
++
++	/* Gate 10 is the first one reached after set_mmu_ttb(); from here on the
++	 * physmap is the reliable way to reach the pmsg ring and the framebuffer. */
++	if (stage >= 10) {
++		nord2_physmap_active = 1;
++	}
 +	(void)PE_parse_boot_argn("nord2vmstop", &stop, sizeof(stop));
 +	(void)PE_parse_boot_argn("nord2vmloop", &loop, sizeof(loop));
 +	if (stop == 0 || stage < stop) {
@@ -480,7 +509,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +530,36 @@
+@@ -107,11 +559,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -517,7 +546,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +571,10 @@
+@@ -123,8 +600,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -528,7 +557,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +583,201 @@
+@@ -133,11 +612,201 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }

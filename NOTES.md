@@ -1060,3 +1060,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   New image `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
   `4180e651c734f02b0fd8ec4dde28f42a3a000baea5df06e28c1b93988f3e1ff6`
   (payload `4034044e…`); 7 images built, all checks pass; patch dry-run OK.
+
+- 2026-10-19 (session 5, Claude): **late2 test: silence right after
+  `SWEET BATTERY: static fallback`, then reboot loop** (authorized). The hook 2
+  stop was never reached. Diagnosis: the console still addressed the pmsg ring
+  and the framebuffer through the identity (V=P) map, which stops being
+  reliable once `arm_vm_init`/`pmap` take over the bootstrap tables — so the
+  log goes silent while the kernel keeps running into a fault (reset loop).
+  Fix: `nord2_phys()` now uses `phystokv()` once `nord2_physmap_active` is set
+  by `nord2_vm_gate()` at gate 10 (the first gate after `set_mmu_ttb()`); the
+  ring and the framebuffer are then reached through the kernel physmap. The
+  restore after the test was verified (`boot` = `04e84c4a…6e1f01`).
+  New `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
+  `855534e238fa091436da5cb72e14704c67f73f1dce194b2e2eaa2e3f09010bb2`;
+  7 images, all checks pass; patch dry-run OK.
