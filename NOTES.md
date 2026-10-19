@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-19 (this workspace)
 
+- 2026-10-19 (session 6, Claude): **root cause of the silence after
+  `SWEET BATTERY` identified in the source (not yet tested on the phone).**
+  `pmap_switch_user_ttb()` (osfmk/arm/pmap/pmap.c:7577-7587) loads
+  `invalid_ttep` into TTBR0 when it switches to a kernel thread, so the
+  bootstrap V=P map that the console used (pmsg 0x48160000, framebuffer
+  0x76e10000, DSI/MUTEX MMIO) disappears with the first context switch — that is
+  when the log stopped. It also explains why the late stop at the end of
+  `arm_init` worked (no switch yet). The bootstrap table itself is NOT reused:
+  `bootstrap_pagetables` is read-only-late data and `cpu.c:928-935` cleans it to
+  PoC to start secondary CPUs, so it stays a valid V=P table for the whole boot
+  (the earlier "XNU reuses the bootstrap tables" note was wrong).
+  Fix (patch 0082): `nord2_console_remap()` right after `arm_vm_init()` maps
+  pmsg and framebuffer with `ml_io_map_wcomb` and DSI0/DISP_MUTEX with
+  `ml_io_map` (TTBR1 aliases, valid in every thread); `nord2_phys()` and the
+  frame push use them. `nord2_leave_to()` now masks DAIF first, uses the cached
+  chain-back values before any device-tree lookup, and reloads TTBR0 with
+  `kvtophys(bootstrap_pagetables)` + TLB flush before the trampoline
+  (verified in the linked kernel's disassembly). Expected on screen after the
+  test: `console remapped to kernel VA`, then the log continues past the
+  battery line to the real failure, or to hook 2 and back to Android.
+  - New `tools/nord2-mkpatch.sh`: regenerates 0082 from the buildtree and checks
+    it applies to the pristine CI sources and reproduces the buildtree.
+  - Images rebuilt (all `FAILURES: none`, 30.568.448 bytes). Test candidate
+    `nord2-xnu-late2.img` SHA-256
+    `3721f9717986935adb90456f319a592e2768aa0372a58d30c71c51d5c84b3a7e`
+    (`nord2stopat=0002`, on-screen log). Previous outputs moved to
+    `shim/out/nord2-xnu.prev-*`.
+
 - 2026-10-19 (session 4, Claude): logs after a hang are lost because the reset
   is a PMIC cold reboot (`androidboot.bootreason=PMIC_cold_reboot`; pstore
   empty). `tools/nord2-pull-logs.sh [label]` saves pstore + boot reason +
