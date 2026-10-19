@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,345 @@
+@@ -1,16 +1,346 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -74,6 +74,7 @@
 +
 +extern unsigned char iso_font[256 * 16];
 +static void sweet_early_string(const char *s);
++static void hex_log(const char *name, uint64_t v);
 +static uintptr_t nord2_phys(uintptr_t pa);
 +
 +static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
@@ -351,7 +352,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +352,7 @@
+@@ -23,6 +353,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -359,7 +360,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +368,14 @@
+@@ -38,10 +369,14 @@
  		}
  	}
  }
@@ -374,7 +375,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +410,7 @@
+@@ -76,6 +411,7 @@
  		}
  	}
  	early_col++;
@@ -382,7 +383,7 @@
  }
  
  static void
-@@ -86,9 +421,178 @@
+@@ -86,9 +422,177 @@
  	}
  }
  
@@ -467,7 +468,6 @@
 +void
 +nord2_display_dump(void)
 +{
-+	nord2_identity_init();
 +	nord2_fb_init();
 +	sweet_early_string("NORD2-DISP BEGIN phase1 read-only\n");
 +	sweet_early_string("NORD2-DISP DSI");
@@ -1180,7 +1180,7 @@
 +	 * this point. It is our own table (sweet_early.c), not the bootstrap one,
 +	 * because XNU reuses bootstrap_pagetables later.
 +	 */
-+	set_mmu_ttb(nord2_l1_pa & TTBR_BADDR_MASK);
++	set_mmu_ttb(boot_ttep & TTBR_BADDR_MASK);
 +#else
  	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 +#endif

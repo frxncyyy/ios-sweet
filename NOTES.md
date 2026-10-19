@@ -1090,3 +1090,23 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   New `nord2-xnu-late2.img`, 30.566.400 bytes, SHA-256
   `b2c0977deafc87d1403b9fbbb01e58002934c1003ff3a6d14769678b1e0231c6`;
   7 images, all checks pass; patch dry-run OK.
+
+- 2026-10-19 (session 5, Claude): **identity-table attempt failed, reverted.**
+  The private identity tables (`nord2_identity_init`) made the boot stop early
+  in `arm_vm_init` (user: last line `NORD2-XNU 7: entering arm_vm_init`), i.e.
+  before marker 10, so they were worse than the bootstrap table, which reached
+  the battery. Reverted to `set_mmu_ttb(boot_ttep)`, identity-table code left
+  dormant (not called). Also learned why hook 2 never fired: it sat in the
+  `else` branch of `if (fReal)` in `SweetBattery::start`, and `fReal` is false
+  without `sweetbattery=1`; the correct place is right after
+  `registerService()` in the same function. `SweetBattery.cpp` still cannot be
+  rebuilt: `nord2-xnu-cc.py` gets 70 errors from `IOLib.h`
+  (`'T' does not refer to a value`), i.e. the CI's C++/kext flags are not
+  reproduced yet; `-fapple-kext` alone does not help. All Sweet IOKit drivers
+  match unconditionally on `IOResources` (`KernelConfigTables.cpp`), so they
+  cannot be disabled through the ADT.
+  - Best-known-good image rebuilt after the revert:
+    `nord2-xnu-late2.img` 30.566.400 bytes SHA-256
+    `1c99b8192b786b8f5c3d5eff8e80d2172eb65ef93d09647b012fd5b048c443ac`
+    (bootstrap V=P table, console through the identity map, hook 2 present in
+    `bsd_init.c` but not reachable). 7 images, all checks pass.
