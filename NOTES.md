@@ -13,6 +13,30 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **PHASE 2 built, NOT flashed.** On-screen
+  console for the `arm_vm_init` hang, per `shim/nord2-xnu/DISPLAY-LOG.md`:
+  - `start.s` also maps `0x76000000` and `0x78000000` (32 MiB each, Normal
+    Non-Cacheable) for the framebuffer carve-out, next to the Device block
+    for the display MMIO.
+  - `sweet_early.c`: `nord2_fb_*` draws into the phase-1-active buffer
+    `0x76e10000` (pitch **4352**, 1080x2400, RGBA 32 bpp, 16x32 cells) and
+    pushes one frame per line: bounded wait for `DSI_BUSY`, `MUTEX_EN(0)=1`,
+    `DSI_START` 0 then 1, bounded wait for `FRAME_DONE` (bit 4), then W1C it.
+    All polls are bounded; nothing can block forever. Enabled only by boot
+    argument `nord2fb=1` (absent = off, so `boot`/`vm` behave as before). It is
+    fed by `nord2_putc`, so every pmsg line is also drawn on the panel.
+  - Image: `shim/out/nord2-xnu/nord2-xnu-vmfb.img`, **30.566.400 bytes**,
+    SHA-256 `f8213c7c13d44865e1ddc3d9acd0bb4911c4f789b7fe124e4c9d91a145688c18`
+    (payload `9d9c45fd…`, cmdline `… nord2stop=0 nord2vm=1 nord2fb=1`).
+    `tools/nord2-check-xnu.py`: all checks pass. `nord2-xnu-boot.img` rebuilt
+    too (`c4e3f527…`, FB off).
+  - Expected: the phone boots into XNU, draws the log, hangs in
+    `arm_vm_init`; the panel keeps the last frame, so a **photo** gives the
+    last line reached. pmsg is lost (PMIC cold reboot) by design here.
+  - Note: the phase-1 dump's string literals do not appear in the binary
+    because clang inlines `sweet_early_string` for constant strings into
+    `putc` calls; the dump is present and was verified on hardware (an
+    earlier `strings` check was a false alarm).
 - 2026-10-19 (session 5, Claude): **PHASE-1 TEST DONE (image
   `595ea593ddc66622a9ee538bf565c9df2e3e634f2adeb36c140fb3f90ba4747a`,
   authorized, boot-only). Android came back in 53 s and the pmsg log

@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,84 @@
+@@ -1,16 +1,228 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -50,6 +50,149 @@
 +	volatile char data[];
 +};
 +
++/* ---- phase-2 on-screen console (DISPLAY-LOG.md) ------------------------ */
++#define NORD2_FB_PA      0x76e10000UL	/* active buffer, phase 1 */
++#define NORD2_FB_PITCH   4352u		/* 1088 px * 4 B */
++#define NORD2_FB_WIDTH   1080u
++#define NORD2_FB_HEIGHT  2400u
++#define NORD2_DSI0       0x1400e000UL
++#define NORD2_DISP_MUTEX 0x14117000UL
++
++#define NORD2_DSI_START   0x00u
++#define NORD2_DSI_INTSTA  0x0cu
++#define NORD2_DSI_FRAME_DONE (1u << 4)
++#define NORD2_DSI_BUSY       (1u << 31)
++#define NORD2_MUTEX_EN0   0x20u
++
++#define NORD2_FB_CELL_W 16u
++#define NORD2_FB_CELL_H 32u
++
++extern unsigned char iso_font[256 * 16];
++
++static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
++static int nord2_fb_started;
++static unsigned int nord2_fb_row, nord2_fb_col;
++
++static int
++nord2_fb_on(void)
++{
++	if (nord2_fb_state < 0) {
++		uint32_t v = 0;
++		if (!PE_boot_args()) {
++			/* arm_init's first line runs before PE_init_platform. */
++			return 0;
++		}
++		nord2_fb_state = PE_parse_boot_argn("nord2fb", &v, sizeof(v)) && v;
++	}
++	return nord2_fb_state;
++}
++
++static void
++nord2_fb_fill(uint32_t px)
++{
++	volatile uint32_t *fb = (volatile uint32_t *)NORD2_FB_PA;
++	for (unsigned int y = 0; y < NORD2_FB_HEIGHT; y++) {
++		volatile uint32_t *line = fb + y * (NORD2_FB_PITCH / 4);
++		for (unsigned int x = 0; x < NORD2_FB_WIDTH; x++) {
++			line[x] = px;
++		}
++	}
++}
++
++static void
++nord2_fb_clear_row(void)
++{
++	volatile uint32_t *fb = (volatile uint32_t *)
++	    (NORD2_FB_PA + nord2_fb_row * NORD2_FB_CELL_H * NORD2_FB_PITCH);
++	for (unsigned int y = 0; y < NORD2_FB_CELL_H; y++) {
++		volatile uint32_t *line = fb + y * (NORD2_FB_PITCH / 4);
++		for (unsigned int x = 0; x < NORD2_FB_WIDTH; x++) {
++			line[x] = 0xff000000u;
++		}
++	}
++}
++
++/*
++ * One frame per line, exactly as the command-mode panel needs it: bounded
++ * waits only, so a misbehaving engine can never turn the log into a hang.
++ */
++static void
++nord2_fb_push(void)
++{
++	volatile uint32_t *dsi = (volatile uint32_t *)NORD2_DSI0;
++	volatile uint32_t *mtx = (volatile uint32_t *)NORD2_DISP_MUTEX;
++
++	for (unsigned int i = 0; i < 100000; i++) {
++		if (!(dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_BUSY)) {
++			break;
++		}
++	}
++	mtx[NORD2_MUTEX_EN0 / 4] = 1;
++	dsi[NORD2_DSI_START / 4] = 0;
++	__asm__ volatile("dsb sy" ::: "memory");
++	dsi[NORD2_DSI_START / 4] = 1;
++	for (unsigned int i = 0; i < 200000; i++) {
++		if (dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_FRAME_DONE) {
++			break;
++		}
++	}
++	dsi[NORD2_DSI_INTSTA / 4] = NORD2_DSI_FRAME_DONE;
++}
++
++static void
++nord2_fb_newline(void)
++{
++	nord2_fb_col = 0;
++	nord2_fb_row++;
++	if ((nord2_fb_row + 1) * NORD2_FB_CELL_H > NORD2_FB_HEIGHT) {
++		nord2_fb_row = 0;
++		nord2_fb_fill(0xff000000u);
++	} else {
++		nord2_fb_clear_row();
++	}
++}
++
++static void
++nord2_fb_putc(char c)
++{
++	if (!nord2_fb_on()) {
++		return;
++	}
++	if (c == '\r') {
++		return;
++	}
++	if (!nord2_fb_started) {
++		nord2_fb_started = 1;
++		nord2_fb_fill(0xff000000u);
++	}
++	if (c == '\n') {
++		nord2_fb_newline();
++		nord2_fb_push();
++		return;
++	}
++	if (nord2_fb_col >= NORD2_FB_WIDTH / NORD2_FB_CELL_W) {
++		nord2_fb_newline();
++	}
++	const unsigned char *g = iso_font + (unsigned char)c * 16;
++	volatile uint32_t *base = (volatile uint32_t *)
++	    (NORD2_FB_PA + nord2_fb_row * NORD2_FB_CELL_H * NORD2_FB_PITCH +
++	    nord2_fb_col * NORD2_FB_CELL_W * 4);
++	for (unsigned int gy = 0; gy < 16; gy++) {
++		unsigned int bits = g[gy];
++		for (unsigned int sy = 0; sy < 2; sy++) {
++			volatile uint32_t *line = base +
++			    (gy * 2 + sy) * (NORD2_FB_PITCH / 4);
++			for (unsigned int gx = 0; gx < 8; gx++) {
++				uint32_t px = (bits & (1u << gx)) ?
++				    0xffffffffu : 0xff000000u;
++				line[gx * 2] = px;
++				line[gx * 2 + 1] = px;
++			}
++		}
++	}
++	nord2_fb_col++;
++}
++
 +static volatile struct nord2_ring *nord2_log =
 +    (volatile struct nord2_ring *)NORD2_PMSG_BASE;
 +static unsigned int nord2_pos;
@@ -85,12 +228,13 @@
 +	nord2_log->size = nord2_pos;
 +	nord2_log->start = 0;
 +	nord2_flush();
++	nord2_fb_putc(c);
 +}
 +#else
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -38,10 +106,14 @@
+@@ -38,10 +250,14 @@
  		}
  	}
  }
@@ -105,7 +249,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +148,7 @@
+@@ -76,6 +292,7 @@
  		}
  	}
  	early_col++;
@@ -113,7 +257,7 @@
  }
  
  static void
-@@ -86,9 +159,174 @@
+@@ -86,9 +303,174 @@
  	}
  }
  
@@ -288,7 +432,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +345,36 @@
+@@ -107,11 +489,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -325,7 +469,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +386,10 @@
+@@ -123,8 +530,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -336,7 +480,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +398,116 @@
+@@ -133,11 +542,116 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -500,7 +644,7 @@
  	/* Stage 0: white 64x32 band, no stack or page tables needed. */
  	MOV64	x0, (0x9c000000 + 2368 * 4320)
  	mov		w1, #-1
-@@ -680,19 +680,47 @@
+@@ -680,19 +680,65 @@
  
  #if defined(SWEET)
  	/*
@@ -526,21 +670,20 @@
 +#else
  	MOV64	x10, 0x9c000000
 +#endif
- 	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
- 	orr		x11, x11, x10
- 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
- 	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
- 	add		x13, x25, #(2 * PGBYTES)
- 	str		x11, [x13, x12, lsl #TTE_SHIFT]
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	orr		x11, x11, x10
++	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++	add		x13, x25, #(2 * PGBYTES)
++	str		x11, [x13, x12, lsl #TTE_SHIFT]
 +
 +#if defined(NORD2)
 +	/*
-+	 * Display MMIO for the read-only phase-1 dump (see
-+	 * shim/nord2-xnu/DISPLAY-LOG.md): one 32 MiB Device-nGnRnE block at
-+	 * 0x14000000 covers DSI0 (0x1400e000), OVL0/0_2L and OVL1/1_2L, and
-+	 * DISP_MUTEX (0x14117000). Same L2 page as the pmsg entry (L1 index 0);
-+	 * its L2 index is 10, below the pmsg entry (36) and the RAM window's
-+	 * first block (161).
++	 * Display MMIO for the phase-1 dump / phase-2 console: one 32 MiB
++	 * Device-nGnRnE block at 0x14000000 covers DSI0 (0x1400e000),
++	 * OVL0/0_2L and OVL1/1_2L, and DISP_MUTEX (0x14117000). Same L2 page as
++	 * the pmsg entry (L1 index 0); its L2 index is 10, below the pmsg entry
++	 * (36) and the RAM window's first block (161).
 +	 */
 +	MOV64	x10, 0x14000000
 +	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
@@ -549,11 +692,30 @@
 +	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
 +	add		x13, x25, #(2 * PGBYTES)
 +	str		x11, [x13, x12, lsl #TTE_SHIFT]
++
++	/*
++	 * Framebuffer carve-out (mblock-18-framebuffer, 0x76e10000..0x78c00000)
++	 * for the phase-2 on-screen log: the two 32 MiB blocks at 0x76000000 and
++	 * 0x78000000, Normal Non-Cacheable so CPU writes reach the display
++	 * engine. L2 indices 59 and 60.
++	 */
++	MOV64	x10, 0x76000000
+ 	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
+ 	orr		x11, x11, x10
+ 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
+ 	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
+ 	add		x13, x25, #(2 * PGBYTES)
+ 	str		x11, [x13, x12, lsl #TTE_SHIFT]
++	MOV64	x10, 0x78000000
++	orr		x11, x11, x10
++	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++	str		x11, [x13, x12, lsl #TTE_SHIFT]
 +#endif
  #endif
  
  	/* Ensure TTEs are visible */
-@@ -912,6 +940,82 @@
+@@ -912,6 +958,82 @@
  	// Branch to the trampoline
  	br		x0
  

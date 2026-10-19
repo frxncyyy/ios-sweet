@@ -90,6 +90,10 @@ python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
 python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
     "$out/payload-vmstep.bin" \
     --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2vmstop=0001"
+# Phase 2: the same arm_vm_init entry, with the on-screen console enabled.
+python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
+    "$out/payload-vmfb.bin" \
+    --cmdline "debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2fb=1"
 
 # 5. Loader. The probe entry point; also buildable as -DNORD2_LOADER_ONLY=1
 #    (validate only) or -DNORD2_COPY_ONLY=1 (also copy the segments), which
@@ -107,7 +111,7 @@ ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none --oformat=binary \
 
 # 6. Boot images and static verification.
 for spec in "boot:payload.bin" "continue:payload-continue.bin" "vm:payload-vm.bin" \
-            "vmstep:payload-vmstep.bin"; do
+            "vmstep:payload-vmstep.bin" "vmfb:payload-vmfb.bin"; do
     name="${spec%%:*}"
     payload="${spec#*:}"
     python3 tools/nord2-pack-xnu.py backup/nord2/boot.img "$out/loader-Image" \

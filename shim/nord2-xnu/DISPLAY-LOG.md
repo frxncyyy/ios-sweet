@@ -5,7 +5,12 @@ boot (and a phone photo) replaces the gate-per-reboot walk. The pmsg ring is
 lost on the PMIC cold reset that follows a hang (`bootreason=PMIC_cold_reboot`,
 see `tools/nord2-pull-logs.sh`); the panel keeps its last frame until reset.
 
-Status: research only, nothing implemented or tested. Sources: the running
+Status: **phase 1 done and measured on hardware (2026-10-19); phase 2 built, not yet flashed.**
+Phase-1 results are in `NOTES.md` (session 5) and
+`backup/nord2/logs/20261019-151659-display-phase1/`: dual pipe, four
+540x2400 layers, two full-screen physical buffers in the carve-out
+(`0x76e10000` pitch 4352, `0x77806000` pitch 4320), 32 bpp, no mutex enabled
+at the stop. Sources: the running
 kernel's driver (`../nord2-current-kernel/drivers/gpu/drm/mediatek`, HEAD
 04d00c25) and `dtb/nord2/live.dts`. Facts below are cited; anything about the
 state LK leaves behind is a hypothesis until phase 1 has read it back.
