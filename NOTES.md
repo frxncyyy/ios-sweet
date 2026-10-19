@@ -1421,3 +1421,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      `strip -S -x kernel.development.sweet` -> `tools/mkpayload.py` with
      `tools/mkadt-nord2.py` -> `tools/nord2-pack-xnu.py` -> `tools/nord2-check-xnu.py`.
   Nothing has been pushed from this machine.
+
+- 2026-10-20 (session 7, Opencode): **CI BUILD PASSED and the CI kernel is
+  packaged.** Run `39331965998` on `frxncyyy/ios-sweet` (branch
+  `codex/nord2-bringup`, macOS runner, 6m58s) with patch 0082 (NORD2 in
+  `SWEET.h`, SweetBattery hooks, unconditional `sweet_early.h` include in
+  `bsd_init.c`). Artifacts in `research/ci-39331965998/`; kernel
+  `kernel.development.sweet` 17.223.720 bytes, contains `nord2_stop_at`,
+  `nord2_console_remap`, `nord2_vm_gate` and the SweetBattery globals.
+  Image built with `tools/nord2-image-from-kernel.sh` (strip, ADT, payload,
+  pack, check): `shim/out/nord2-xnu/nord2-ci.img` **30.676.992 bytes**,
+  SHA-256 `dd39cbd46a14d4efba75897d4ccaaade7aac774a63d62ed62c90f8282366ab49`,
+  payload `9cca1181…`, cmdline `nord2stopat=0002`; `FAILURES: none`.
+  - Expected: stop **before** `SweetBattery::registerService()` (the CI hook)
+    and return to Android. If it does, the post-battery hang is at/after
+    `registerService`; a run with `nord2stopat=0003` will say whether it is
+    inside it.
