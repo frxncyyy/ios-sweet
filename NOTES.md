@@ -13,6 +13,23 @@
   per frame). Phase 1 = read-only register dump at the cpu_init stop.
   NOT implemented. Opencode's uncommitted loader/build changes (nord2vmloop)
   were left untouched.
+- 2026-10-19 (session 5, Claude): **ROOT CAUSE FOUND: the phase-2 panic was
+  our own console, not arm_vm_init.** Symbolising the panic photo:
+  `pc = PE_parse_boot_argn_internal`, `lr = nord2_putc`. `nord2_fb_on()`
+  called `PE_parse_boot_argn("nord2fb")` on the **first marker (stage 1)**,
+  before `PE_init_platform()` initialised the boot arguments → data abort
+  (translation fault, `esr = 0x96000006`) → panic with
+  `Synchronous exception taken while/without SP selected` → `/chosen`
+  unavailable (ADT not initialised yet) → `cannot chain back`. So nothing in
+  `arm_vm_init` has been observed hanging yet; both earlier "arm_vm_init
+  panic" tests were hitting this console bug.
+  - Fix: `nord2_fb_on()` no longer parses anything (it only reads a cached
+    flag). New `nord2_fb_init()` is called at the stage-6 stop (boot args and
+    DT valid) from `nord2_display_dump()` and `nord2_maybe_return()`, sets the
+    flag from `nord2fb=1` and draws `on-screen log active`.
+  - New image `nord2-xnu-vmfb.img`, 30.566.400 bytes, SHA-256
+    `59d642c90cfd236a0fae57a580d011da134e6210b0d2cebae78a5bbed5a51ee9`; five of
+    five verify; patch regenerated and dry-run OK. Not flashed.
 - 2026-10-19 (session 5, Claude): **bottom band widened to 32 lines and the
   chain-back cache now logs its own result**, because the previous 20-line band
   scrolled the `NORD2-XNU` stage markers and the panic header out of view (the
