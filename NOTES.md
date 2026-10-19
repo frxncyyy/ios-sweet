@@ -1287,3 +1287,18 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   state. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
   `2361ded64af5d30914868b46881db2ddcf27420bfd716d6daa38cf5cfc743518`;
   7 images, `FAILURES: none`; patch regenerated.
+
+- 2026-10-19 (session 7, Opencode): **toprgu registers measured (image
+  `2361ded6…`, authorized).** On screen: `wdt_mode=0x0000007d` (bit0 = 1, the
+  **AP watchdog is enabled**), `wdt_interval=0x00000000`,
+  `wdt_status=0x00000000`, repeated at ticks 0x40/0x80/0xc0. Petting the
+  toprgu (`WDT_RESTART=0x1971`) both on IRQs and on every console byte still
+  does **not** stop the reset, so the AP watchdog either is not the reset
+  source or the MT6893 pet path differs. Combined with
+  `apwdtrst_en = <1>` in the MT6359 node and `bootreason=PMIC_cold_reboot`,
+  the remaining candidate is the **PMIC-side reset path** (MT6359 AP watchdog
+  over pwrap, or the power stack started by `SweetBattery::registerService()`).
+  - Next session: implement minimal pwrap access (0x10026000 pwrap +
+    0x10028000 spi_mst, clocks spi/wrap/ulposc) to read/pet the MT6359 AP
+    watchdog, or stop `SweetBattery` before `registerService()` (needs the CI
+    C++ flags in `nord2-xnu-cc.py`).
