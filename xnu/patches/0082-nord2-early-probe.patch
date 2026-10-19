@@ -1537,6 +1537,28 @@
  	return true;
  }
  
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -57,6 +57,9 @@
+ void InitIOKit(void *dtTop);
+ void ConfigureIOKit(void);
+ void StartIOKitMatching(void);
++#if defined(NORD2)
++extern "C" void nord2_stop_at(unsigned int point, const char *label);
++#endif
+ void IORegistrySetOSBuildVersion(char * build_version);
+ void IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t theme);
+ 
+@@ -186,6 +189,9 @@
+ 	if (__improbable(!ok)) {
+ 		panic("Failed to start IOService matching");
+ 	}
++#if defined(NORD2)
++	nord2_stop_at(4, "after StartIOKitMatching");
++#endif
+ 
+ #if !NO_KEXTD
+ 	if (OSKext::iokitDaemonAvailable()) {
 --- a/pexpert/pexpert/arm64/SWEET.h
 +++ b/pexpert/pexpert/arm64/SWEET.h
 @@ -16,6 +16,10 @@
