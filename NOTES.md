@@ -1371,3 +1371,23 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
     `registerService()` (e.g. an IOKit boot-arg/`IOKitBSDInit` pre-check);
     (c) port a minimal MT6360 I2C driver and clear `apwdtrst_en` (the MT6360 is
     an I2C device, so pwrap is not the path).
+
+- 2026-10-19 (session 7, Opencode): **C++ BLOCKER SOLVED.** `IOLib.h`'s
+  `__builtin_xnu_type_summary/__builtin_xnu_types_compatible/...` can be
+  satisfied with three preprocessor fallbacks
+  (`-D__builtin_xnu_type_summary(x)=0xffff`,
+  `-D__builtin_xnu_types_compatible(a,b)=1`,
+  `-D__builtin_xnu_type_signature(x)="NORD"`): the templates that use them are
+  parsed but not instantiated by `SweetBattery.cpp`, so the object is clean.
+  `shim/nord2-xnu/build.sh` now builds `iokit/Kernel/arm/SweetBattery.cpp`
+  (component `iokit`, C++ via `-x c++`) and replaces the archive member
+  **`SweetBattery.cpo`** (not `.o` — it is a `.cpp`, so `ar d` needed the
+  `.cpo` name; 30 duplicate symbols proved it). `SweetBattery::start()` now has
+  two hooks: `nord2_stop_at(2, "before SweetBattery registerService")` and
+  `nord2_stop_at(3, "after …")`. Image `nord2-xnu-late2.img`
+  (cmdline `nord2stopat=0002`) 30.568.448 bytes SHA-256
+  `5a3aed311685bcf109a0369923995c587d7a4c857aeee86170385a9b2bf85c1e`;
+  7 images, `FAILURES: none`; patch regenerated.
+  - Expected: stop **before** `registerService` → Android returns. If it does,
+    the post-battery hang is at/after `registerService` and a `nord2stopat=0003`
+    run will tell whether it is inside it.

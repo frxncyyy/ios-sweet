@@ -34,23 +34,30 @@ EXTRA="-DNORD2=1"
 # 1. Modified XNU sources.
 SRCS="osfmk/arm64/sweet_early.c osfmk/arm64/start.s osfmk/arm/arm_init.c \
 osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c bsd/kern/bsd_init.c \
-osfmk/arm64/sleh.c osfmk/kern/startup.c"
+osfmk/arm64/sleh.c osfmk/kern/startup.c iokit/Kernel/arm/SweetBattery.cpp"
 for src in $SRCS; do
     obj="$out/$(basename "$src").o"
     comp="${src%%/*}"
+    # IOLib.h needs Apple-only __builtin_xnu_* builtins; the fallbacks keep the
+    # templates parseable (they are not instantiated by SweetBattery).
+    cppflags=
+    case "$src" in
+        *.cpp) cppflags='-D__builtin_xnu_type_summary(x)=0xffff -D__builtin_xnu_types_compatible(a,b)=1 -D__builtin_xnu_type_signature(x)="NORD"' ;;
+    esac
     # shellcheck disable=SC2086
-    $CC "$comp" "$BT/xnu/$src" "$obj" $EXTRA
+    $CC "$comp" "$BT/xnu/$src" "$obj" $EXTRA $cppflags
 done
 
 # 2. Replace those objects in a copy of the CI archive.
 cp "$ARCHIVE" "$out/kernel-nord2.a"
 for src in $SRCS; do
     base="$(basename "$src")"
-    ../toolchains/cctools/bin/aarch64-apple-darwin-ar d "$out/kernel-nord2.a" "${base%.c}.o" "${base%.s}.o" 2>/dev/null || true
+    ../toolchains/cctools/bin/aarch64-apple-darwin-ar d "$out/kernel-nord2.a" "${base%.c}.o" "${base%.s}.o" "${base%.cpp}.o" "${base%.cpp}.cpo" 2>/dev/null || true
 done
 ../toolchains/cctools/bin/aarch64-apple-darwin-ar r "$out/kernel-nord2.a" \
     "$out/sweet_early.c.o" "$out/start.s.o" "$out/arm_init.c.o" \
     "$out/arm_vm_init.c.o" "$out/serial_console.c.o" "$out/bsd_init.c.o" \
+    "$out/SweetBattery.cpp.o" \
     "$out/sleh.c.o" "$out/startup.c.o"
 ../toolchains/cctools/bin/aarch64-apple-darwin-ranlib "$out/kernel-nord2.a"
 
