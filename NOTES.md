@@ -1348,3 +1348,26 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   real offsets. Image `nord2-xnu-late2.img` 30.568.448 bytes SHA-256
   `dadfea1d8709c96e4b246991c9139744278286b3b6ad635be48e38c869849ee4`;
   7 images, `FAILURES: none`; patch regenerated.
+
+- 2026-10-19 (session 7, Opencode): **WDT pet fix works; the C++ path is
+  impossible on this host.** Test `dadfea1d…` (authorized): ticks now go past
+  `0xc0` (seen `0x100`), `wdt_mode=0x7d`, `wdt_length=0x000f0000`,
+  `wdt_status=0` — the AP watchdog is fed. The reset still comes, but **about
+  10 s after** `SWEET BATTERY: static fallback` (user), matching the ~0x000f0000
+  timeout: after the battery line the kernel **hangs** (no further console
+  writes → no pets) and the watchdog then resets it. So the remaining bug is a
+  genuine hang in `SweetBattery::registerService()` / the IOKit C++ path.
+  - **Blocker confirmed (not a flag problem):** `IOLib.h` uses Apple-only
+    builtins `__builtin_xnu_type_summary()` and
+    `__builtin_xnu_types_compatible()` (preprocessed expansion checked). They
+    exist only in Apple's clang, which is not available on this Linux host, so
+    **no Sweet `.cpp` object can be rebuilt here** — instrumenting or gating
+    `SweetBattery.cpp` is not possible with the current toolchain.
+  - Consequences: the next step must stay in C (osfmk/bsd/pexpert/sleh) or
+    avoid the C++ drivers entirely. Options: (a) find the hang from the CPU
+    side (keep the timer alive so the tick handler can print the PC during the
+    hang; the timer currently stops before the battery line); (b) a C-side
+    workaround that prevents the power stack from being started by
+    `registerService()` (e.g. an IOKit boot-arg/`IOKitBSDInit` pre-check);
+    (c) port a minimal MT6360 I2C driver and clear `apwdtrst_en` (the MT6360 is
+    an I2C device, so pwrap is not the path).
