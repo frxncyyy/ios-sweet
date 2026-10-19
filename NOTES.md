@@ -1,5 +1,67 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+
+## Nord 2 active handoff — 2026-10-19 (this workspace)
+
+This checkout now targets a connected OnePlus Nord 2 / MediaTek MT6893.
+All Sweet phone state and approvals below this section belong to upstream,
+not to this user. **iOS has NOT booted on the Nord 2.** Android and userdata
+are preserved; no permission to erase userdata has been given.
+
+- Branch `codex/nord2-bringup`, base `fdad0de8dc0e75c5ea84762adc03f7232dc91f19`.
+- Private backups: `backup/nord2/manifest.json` and 20 partition dumps, each
+  originally checked against the device. Original boot SHA-256:
+  `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
+- Both boot-only diagnostic tests and their restoration were explicitly
+  authorized. Test 1 had no surviving log after a cold reset. Test 2
+  (`shim/nord2/build.sh --chain-stock`) succeeded: 454-byte pmsg log,
+  all diagnostics COMPLETE, then Android boot completed. Logs saved as
+  `backup/nord2/probe-v2-*`. **Original boot restored and read-back SHA-256
+  matched**, and the subsequent Android boot reached `sys.boot_completed=1`.
+- Tested chain image SHA-256:
+  `43108d50e95688c3275f6b16093f2d13c08f438396adfaf6ccece3a575b64318`.
+  `/proc/iomem` confirms original Android kernel relocated by 2 MiB.
+  See `shim/nord2/README.md` for CPU register results and build procedure.
+- `fastboot boot` fails even on the exact original image. `adb reboot
+  bootloader` returns to Android despite kernel requesting bootloader.
+  User manually enters fastboot. Do not reuse Sweet flashing commands.
+- Phone is unlocked, rooted (KernelSU). Android properties spoof OPPO;
+  hardware/live FDT confirm MT6893 and OnePlus Nord 2. ADB/fastboot are in
+  `/home/frxncy/Android/Sdk/platform-tools`. Quote a single combined remote
+  command as `su -c <shell-quoted-command>` so all commands run as root.
+- Live DT: `dtb/nord2/live.dtb`, `.dts`; original boot unpacked under
+  `dtb/nord2/boot-unpacked`. Boot v2, kernel 0x40080000, ramdisk 0x51100000,
+  FDT 0x47c80000. DTB payload is an Android DT table. Compressed Android
+  kernel has appended DTBs; do not drop them.
+- RAM 0x40000000 + 8 GiB with carveouts. GICD 0x0c000000,
+  GICR 0x0c040000; virtual timer IRQ 27, physical IRQ 30, 13 MHz.
+  PSCI and SMCCC 1.1. CPU affinity 0,0x100,...,0x700.
+  UFS 0x11270000, IRQ137, partitioned disk is LUN2 (Sweet assumes LUN0).
+  Screen Samsung AMS643YE05, 1080x2400; Android stride4352. Live packed
+  atag,videolfb gives 0x76e10000 + 0x1df0000. Touch FT3518 at I2C0/0x38.
+  None of Sweet's Qualcomm display/USB/PMIC/touch addresses are safe here.
+- Ramoops reservation 0x48090000+0xe0000; pmsg last64KiB at0x48160000,
+  header sig/start/size (12 bytes), ECC0. Chainload avoids the cold reset
+  that previously lost the log.
+- IPSW in Downloads: iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw.
+  Identity and DeviceTree only extracted so far under research/nord2/ipsw.
+- CI artifacts from upstream run39158169212 downloaded to
+  `research/ci-39158169212`: patched XNU source, generated headers,
+  complete object archive and linked kernel. Latest patch0081 included.
+  No gh/auth here; Linux host root unavailable. Do not upload artifacts.
+- cctools-port built at `../toolchains/cctools`; ld64.lld cannot link this
+  kernel's static segment layout. cctools ld can, but needs support libs.
+  Official libdispatch1415.140.2 compiled successfully for kernel arm64:
+  `research/nord2/firehose.o`, command in firehose-command.json.
+  Remaining LLVM profiling functions and Darwin chkstk implementation
+  needed to relink; downloaded Windows chkstk.S is NOT appropriate.
+- Next: verify restored Android completed, finish a reproducible local
+  XNU relink, replace Qualcomm early writes with Nord2 RAM logging,
+  build an initial XNU payload with bounded diagnostics and recovery.
+  A working CPU probe is not a working iOS port. Display, touch and UFS
+  takeover still need implementation and validation.
+
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
