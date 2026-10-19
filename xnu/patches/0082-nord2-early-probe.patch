@@ -1184,6 +1184,32 @@
  /*
   * V=P to KVA trampoline.
   *	x0 - KVA of cpu data pointer
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -11,6 +11,9 @@
+ #include <IOKit/IOTimerEventSource.h>
+ #include <IOKit/pwr_mgt/IOPMPowerSource.h>
+ #include <libkern/c++/OSCollectionIterator.h>
++#if defined(NORD2)
++extern "C" void nord2_stop_at(unsigned int point, const char *label);
++#endif
+ #include <pexpert/pexpert.h>
+ /* bsd/dev/sweet_spmi.c */
+ extern "C" int sweet_spmi_init(void);
+@@ -280,7 +283,13 @@
+ 			IOLog("SWEET BATTERY: timer unavailable; static fallback\n");
+ 		}
+ 	}
++#if defined(NORD2)
++	nord2_stop_at(2, "before SweetBattery registerService");
++#endif
+ 	registerService();
++#if defined(NORD2)
++	nord2_stop_at(3, "after SweetBattery registerService");
++#endif
+ 	return true;
+ }
+ 
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
 @@ -57,6 +57,9 @@
