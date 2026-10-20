@@ -3,9 +3,9 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT CANDIDATES: generic2/4/8 stop20 built/verified; awaiting NEW authorization.**
-  Prior sequence was stopped after2 failed; its permission does not cover
-  these changed images. Phone last observed in manual fastboot at14:57 CEST.
+- **CURRENT RESULT: generic2 PASSED real XNU SMP; generic4 next, already authorized.**
+  User explicitly authorized the NEW exact generic2/4/8 sequence.
+  Previous original-image sequence remains stopped. Phone in fastboot.
   New full Apple-clang kernel from successful CI39424762428/source98efcd7,
   with explicit generic CPU target to remove the observed RCpc2 fault.
   Each image33542144B fits boot33554432B with12288B margin. Static checker
@@ -27,9 +27,9 @@
   - `shim/out/nord2-xnu/nord2-smp-generic8-stop20.img`
     SHA-256 `cb172efbfe4c059c8a9c1f7ade25feac758b051847f84602f0669f8251ffc276`;
     payload `843f86ec2e28e15993837ac3c377341a59d92a943ea1e29fcd8a47a51c86335b`.
-  Request new authorization for conditional2→4→8 boot-only tests, with
-  rescue after each and original boot restoration if rescue fails. Manual
-  fastboot may be needed between tests/recovery. Do not flash before approval.
+  Authorized: conditional2→4→8 boot-only tests, rescue after each and
+  original boot restoration if rescue fails. Manual fastboot may be needed
+  between tests/recovery. No renewed permission for these unchanged images.
   After approval, do not re-ask for these unchanged exact images; flash only
   the next one once previous test fully passes and root rescue is verified.
   Backup boot SHA04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01.
@@ -37,7 +37,15 @@
   Require N/N workers, correct CPU/MIDR,done1,ticks>0,IPI replies core+1,
   shared counter=N*4096,console_dropped0,PASS1,all-secondary-OFF marker,
   authenticated root rescue marker and no block/data filesystem mounts.
-  Stop sequence at any failure. No new image has been flashed yet.
+  Test2 PASSED at15:04 CEST: worker0/1 actual0/1, A55 MIDR412fd050,
+  timer ticks33/17, IPI replies1/2 and IRQ counts36/90, counter8192,
+  console_dropped0, scheduler2/2 PASS1. All secondaries OFF before Linux;
+  authenticated root ADB rescue and no block/data mounts verified.
+  Pmsg13775B SHA-256 `fca148ba5c97a3851def890dc1bb08e4817ff95841eea2fb5e74287dc644e8bd`,
+  `backup/nord2/logs/20261020-150252-smp-generic2-stop20/pstore/pmsg-ramoops-0`.
+  Evidence generic/hardware-test-2/verified.json. Stop sequence at any failure.
+  Next: ask only manual fastboot for already-authorized generic4, then test8
+  only after full4-core success and root rescue. No new permission required.
 
 - **Previous result: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
   User authorized the exact three images conditionally,2→4→8; do not flash
