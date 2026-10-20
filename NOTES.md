@@ -24,7 +24,9 @@
   stage/header/range logs preserve every existing hash and validation gate.
   Results/parser/raw evidence: private `research/nord2/rtc-ufs-wifi/`.
 
-- **NEXT SOURCE INTEGRATED; FULL CI TO BE DISPATCHED.**
+- **NEXT SOURCE INTEGRATED; CI39495585573 RUNNING.**
+  Source dece242488ecb646fc4693e81319b2e0b0f28d1f; macOS full kernel build.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39495585573
   Adds first-two complete swap-record diagnostics, bounded vendor validation
   evidence, opt-in dedicated EMI-read worker and separate `nord2ufs2lane=1`
   diagnostic. The latter runs before root publication, tests negotiated x2
@@ -36,6 +38,16 @@
   bounded logging, display/vendor/firmware tests and local ARM64 compiles pass.
   Dedicated two-lane mode has NOT run on hardware. A new exact image approval
   is required for any further flash; neither new image is packed yet.
+
+- **FUTURE ROM TRANSACTION HELPER TESTED, NOT LINKED.**
+  `wifi_rom_transaction.{c,h}` uses the verified ROM plan and an injected I/O
+  adapter, snapshots all four exact spans before writing, checks placement,
+  restores and verifies original bytes. Partial writes and prerequisite loss
+  are covered; unverified cleanup retains the original backup and dirty flag.
+  ASan/UBSan fault tests and local ARM64 compile pass; independent review found
+  no blocker within its explicit adapter contract. It does not establish MPU
+  permissions, cold/reset state or physical ownership, and has no native I/O
+  implementation or activation hook. Not included in CI39495585573.
 
 - **COMBINED CANDIDATE VERIFIED (PROVENANCE).**
   CI39491596110/source ce25bf39098c1be91cc8d929c4e6b2dd4959088c passed.
