@@ -1,5 +1,27 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-21: common setup stopped at its AP guard; iOS remains functional
+
+The authorized `2e4f315e…a33dfd1d` image completed its 180-second capture.
+The radio power probe reached ID `0x20010101` and restored its original state,
+but common setup reported `skipped=1 reason=owner-or-AP` before COLD reads or
+any of the 40 common-register writes. The user confirmed the lockscreen,
+touch and buttons. First display ownership was 47.673 seconds from early
+framebuffer initialization; this is not a measured power-on-to-lockscreen time.
+
+The exact seven AP predicates agree with the selected Android source; the
+existing short log does not identify which failed. The next source change
+preserves every gate and short-circuit MMIO access, records the first failure,
+and prints validity-tagged raw values without rereading registers. Owner bits
+are only the evaluated prefix, and unread MMIO fields are not observations.
+
+The public Topaz branch at `89451b811a4e6cc5cdcf734c45887163d92c599e`
+provides useful scan, PMK, Ethernet and link-event API examples. Its Qualcomm
+hardware path is not applicable to this MT6893 radio. The inspected checkout
+does not contain the iOS-facing consumers of those hooks. Our actual Nord2
+ADT lacks `wlan`; adding that launch gate is deferred until a usable driver
+exists. Full reference analysis is retained privately under research/nord2/wifi.
+
 ## 2026-10-21: firmware reads verified; common setup ready for a hardware test
 
 The `0956173b…2235c89a` boot verified all four firmware files in RAM from

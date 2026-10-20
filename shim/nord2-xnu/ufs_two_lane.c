@@ -115,7 +115,7 @@ static int digest(struct run *s,unsigned char hash[32])
 }
 static int equal(const unsigned char a[32],const unsigned char b[32])
 {unsigned d=0;for(unsigned i=0;i<32;i++)d|=a[i]^b[i];return d==0;}
-int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
+static int n2l_run(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r,int live)
 {
  if(!r)return -1;struct n2l_result zero={0};*r=zero;
  if(optin!=1||!o||!o->read32||!o->write32||!o->ticks||!o->delay_us||!o->barrier||
@@ -145,6 +145,11 @@ int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_r
  r->phase=2;int forward=negotiate(&s,saved,2);
  if(!forward && (digest(&s,observed)||!equal(baseline,observed)))forward=-1;
  if(r->uncertain){r->error=-6;return -1;}
+ if(live && !forward){
+  /* Exactly the validated forward transaction and two complete read digests.
+   * No root publication here; adapter must still enforce pre-root ownership. */
+  r->active_verified=1;r->root_allowed=1;r->handoff_allowed=0;r->phase=5;return 0;
+ }
  /* Always restore by another negotiated transition, even if preparatory SET
   * failed. No raw-active-attribute rollback masquerades as a restored link. */
  r->phase=3;r->rollback_attempted=1;
@@ -155,4 +160,13 @@ int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_r
  r->original_verified=1;r->handoff_allowed=1;r->phase=4;
  if(forward){r->error=-8;return -1;}
  r->root_allowed=1;return 0;
+}
+
+int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
+{return n2l_run(o,ctx,optin,r,0);}
+int n2l_live(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
+{
+ int error=n2l_run(o,ctx,optin,r,1);
+ if(r){r->handoff_allowed=0;if(error || !r->active_verified)r->root_allowed=0;}
+ return error;
 }

@@ -31,6 +31,7 @@ struct n2l_result {
  uint32_t owned_valid,owned_fail; uint64_t owned_values[24];
  uint32_t phase,commands,sets,reads,last_attr,last_result,last_is,last_hcs;
  uint32_t snapshot[18],limits[6],snapshot_mask,limits_mask;
+ int active_verified; /* live mode only; x2 readback+fixed digest proved */
  int error,uncertain,rollback_attempted,original_verified,root_allowed,handoff_allowed;
 };
 /* optin must equal1. Return0 ONLY after x2 negotiated/read verified AND original
@@ -38,4 +39,6 @@ struct n2l_result {
  * and publication; uncertain state also blocks Linux handoff. Caller MUST obey
  * both flags. No software deadline can bound a hung MMIO access/callback. */
 int n2l_diagnostic(const struct n2l_ops *,void *,unsigned,struct n2l_result *);
+/* Success retains verified x2; handoff_allowed is ALWAYS0 in live mode. */
+int n2l_live(const struct n2l_ops *,void *,unsigned,struct n2l_result *);
 #endif

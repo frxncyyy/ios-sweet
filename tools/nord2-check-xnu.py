@@ -70,6 +70,27 @@ def unmatched_cpus(kernel, root):
     return names, missing if cpus else ['/cpus absent or empty']
 
 
+def live_ufs_checks(args, kernel):
+    """Check the separate retained-x2 mode, including its manual reset policy."""
+    def tokens(key):
+        return [arg for arg in args if arg.split('=', 1)[0] == key]
+    optin = tokens('nord2ufs2live')
+    if not optin or optin == ['nord2ufs2live=0']:
+        return []
+    required = {'nord2ufs2live': '1', 'nord2stopat': '23', 'cpus': '8',
+                'rd': 'ufsroot0', 'ufsroot': 'userdata', 'ufsrw': '1',
+                'rootrw': '1', 'nord2ufsprofile': '1'}
+    markers = (b'NORD2 UFS X2 LIVE POLICY:', b'reason=manual-reset-required',
+               b'NORD2 UFS X2 LIVE PROOF:', b'NORD2 UFS X2 LIVE REFUSED:',
+               b'link_fields=pre-transition-baseline return_policy=manual-reset-only',
+               b'runtime I/O failed; retain DMA/ownership; manual reset required')
+    return [('retained x2 requires exact normal iOS arguments and excludes stop-only mode',
+             not tokens('nord2ufs2lane') and
+             all(tokens(key) == [key + '=' + value] for key, value in required.items())),
+            ('kernel contains retained-x2 verification and manual-reset refusal paths',
+             all(marker in kernel for marker in markers))]
+
+
 def point23_root_checks(args, kernel):
     """Ordinary iOS needs RW; the explicit pre-root lane experiment needs RO."""
     def exact(key, value):
@@ -230,6 +251,8 @@ class Checker:
                    all(re.fullmatch(r'[^=]+=(?:0|[1-9][0-9]*|0x[0-9a-fA-F]+)', arg)
                        for arg in stops), ', '.join(stops))
         args = cmdline.split()
+        for label, valid in live_ufs_checks(args, kernel):
+            self.check(label, valid)
         if 'nord2stopat=13' in args:
             self.check('point 13 has the bounded MediaTek USB snapshot',
                        b'NORD2 USB: MTU3 snapshot begin (read-only)' in kernel and

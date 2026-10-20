@@ -28,14 +28,45 @@ static vm_offset_t ncc_aperture(uint32_t address)
  default:return 0;
  }
 }
+/* First failing evaluation is immutable until the next opt-in window. Raw
+ * words are valid only where valid_mask says they were actually read. */
+static struct { unsigned captured,owner_ok,owner_fail,valid_mask,failed;
+ uint32_t raw[7]; } ncc_ap_failure;
 static int ncc_ap_check(void)
 {
- if(!ncc_fresh_owned||ncc_latched_dirty||!nw.saved||!nw.domain_touched||
-  ncc_native.id!=0x20010101||!nw.spm||!nw.infra||!nw.gals||!ncc_native.host)return -1;
- if((ni_rd(nw.spm,0x304)&0x1f)!=0xd||!(ni_rd(nw.spm,0x16c)&2)||
-  !(ni_rd(nw.spm,0x170)&2)||!(ni_rd(nw.gals,0x504)&1)||
-  (ni_rd(nw.infra,0x228)&0x6000)||(ni_rd(nw.infra,0x724)&4))return -1;
- return (ni_rd(ncc_native.host,0x184)&0x20)?-1:0;
+ unsigned owner=0,valid=0,failed=7;uint32_t raw[7]={0};
+#define NCC_OWNER(bit,condition) do { if(!(condition)){failed=bit;goto owner_fail;} owner|=1u<<(bit); } while(0)
+ NCC_OWNER(0,ncc_fresh_owned);NCC_OWNER(1,!ncc_latched_dirty);
+ NCC_OWNER(2,nw.saved);NCC_OWNER(3,nw.domain_touched);
+ NCC_OWNER(4,ncc_native.id==0x20010101);NCC_OWNER(5,nw.spm);
+ NCC_OWNER(6,nw.infra);NCC_OWNER(7,nw.gals);NCC_OWNER(8,ncc_native.host);
+#undef NCC_OWNER
+#define NCC_AP(i,base,off,mask,want) do { raw[i]=ni_rd(base,off);valid|=1u<<(i);if((raw[i]&(mask))!=(want)){failed=i;goto ap_fail;} } while(0)
+ NCC_AP(0,nw.spm,0x304,0x1f,0xd);
+ NCC_AP(1,nw.spm,0x16c,2,2);NCC_AP(2,nw.spm,0x170,2,2);
+ NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x6000,0);
+ NCC_AP(5,nw.infra,0x724,4,0);NCC_AP(6,ncc_native.host,0x184,0x20,0);
+#undef NCC_AP
+ return 0;
+owner_fail:
+ if(!ncc_ap_failure.captured)ncc_ap_failure.owner_fail=failed+1;
+ failed=7;
+ap_fail:
+ if(!ncc_ap_failure.captured){
+  ncc_ap_failure.owner_ok=owner;ncc_ap_failure.valid_mask=valid;
+  ncc_ap_failure.failed=failed;
+  for(unsigned i=0;i<7;i++)ncc_ap_failure.raw[i]=raw[i];
+  ncc_ap_failure.captured=1;
+ }
+ return -1;
+}
+static void ncc_ap_report(void)
+{
+ if(!ncc_ap_failure.captured)return;
+ printf("NORD2 WIFI COMMON AP: owner_ok=%#x owner_fail=%u valid=%#x failed=%u\n",
+  ncc_ap_failure.owner_ok,ncc_ap_failure.owner_fail,ncc_ap_failure.valid_mask,ncc_ap_failure.failed);
+ printf("NORD2 WIFI COMMON AP RAW: pwr=%#x ack0=%#x ack1=%#x gals=%#x prot=%#x rx=%#x host=%#x\n",
+  ncc_ap_failure.raw[0],ncc_ap_failure.raw[1],ncc_ap_failure.raw[2],ncc_ap_failure.raw[3],ncc_ap_failure.raw[4],ncc_ap_failure.raw[5],ncc_ap_failure.raw[6]);
 }
 static int ncc_native_check(void *opaque,unsigned required)
 {
@@ -100,9 +131,10 @@ static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
 {
  unsigned enabled=0;PE_parse_boot_argn("nord2wificommon",&enabled,sizeof(enabled));
  if(enabled!=1)return; /* zero additional MMIO/map/log by default */
+ ncc_ap_failure=(__typeof__(ncc_ap_failure)){0};
  ncc_native.host=host;ncc_native.cfg=cfg;ncc_native.id=id;
  if(ncc_ap_check()){
-  printf("NORD2 WIFI COMMON: skipped=1 reason=owner-or-AP\n");return;
+  printf("NORD2 WIFI COMMON: skipped=1 reason=owner-or-AP\n");ncc_ap_report();return;
  }
  ncc_native.rgu=ml_io_map(0x18000000,0x1000);
  if(!ncc_native.rgu){printf("NORD2 WIFI COMMON: skipped=1 reason=rgu-map\n");return;}
@@ -110,7 +142,7 @@ static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
  int status=nwc_snapshot(&cold_ops,0,1,&cold);
  printf("NORD2 WIFI COMMON COLD: status=%d valid=%#x cpu=%#x top=%#x power=%#x\n",
   status,cold.valid_mask,cold.raw[0],cold.raw[1],cold.raw[2]);
- if(status)return;
+ if(status){ncc_ap_report();return;}
  ncc_native.spi=ml_io_map(0x18004000,0x1000);
  ncc_native.table=ml_io_map(0x18005000,0x1000);
  ncc_native.fm=ml_io_map(0x18008000,0x1000);
@@ -121,7 +153,7 @@ static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
  if(ncc_native_check(0,NCC_REQUIRED)||ncc_native_check(0,NCC_REQUIRED)){
   unsigned i=ncc_native.failed_field;
   printf("NORD2 WIFI COMMON: skipped=1 valid=%#x field=%u raw=%#x\n",
-   ncc_native.predicate_valid,i,(i<14&&(ncc_native.predicate_valid&(1u<<i)))?ncc_native.predicate_raw[i]:0);return;
+   ncc_native.predicate_valid,i,(i<14&&(ncc_native.predicate_valid&(1u<<i)))?ncc_native.predicate_raw[i]:0);ncc_ap_report();return;
  }
  const struct ncc_ops ops={ncc_native_check,ncc_native_read,ncc_native_write,ncc_native_barrier};
  uint64_t begin=NCC_TICKS();
@@ -135,6 +167,7 @@ static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
   ncc_native.predicate_valid,ncc_native.failed_field);
  printf("NORD2 WIFI COMMON TIME: ticks=%llu frequency=%llu\n",
   (unsigned long long)elapsed,(unsigned long long)NCC_FREQUENCY());
+ if(status)ncc_ap_report();
  if(!r->clean){
   /* Persistent latch is checked by nw_restore and the Linux-return path.
    * Do NOT power down, clear saved ownership or discard snapshots. */

@@ -16,8 +16,10 @@ if '--canonical-only' not in sys.argv:
   assert (ACTIVE/name).read_text()==expected, 'active helper differs: '+name
 assert '#include \"ufs_two_lane.c\"' in source
 assert '#include \"ufs_two_lane_adapter.inc\"' in source
-assert 'if (nord2_x2_stop || nord2_x2_uncertain) { return false; }' in source
-assert 'if (nord2_x2_stop || nord2_x2_uncertain) { return -1; }' in source
+# Live mode adds a permanent refusal; the original stop/uncertain gates remain.
+return_guard='nord2_live_armed || nord2_x2_stop || nord2_x2_uncertain' if 'nord2_live_armed' in source else 'nord2_x2_stop || nord2_x2_uncertain'
+assert 'if ('+return_guard+') { return false; }' in source
+assert 'if ('+return_guard+') { return -1; }' in source
 assert source.index('nord2_x2_stop = true;',source.index('sweet_ufs_init(void)'))<source.index('SecureDTLookupEntry',source.index('sweet_ufs_init(void)'))
 assert source.index('error = nord2_x2_run(')<source.index('su.bmajor = bdevsw_add')
 assert 'lck_mtx_unlock(&sweet_ufs_lock);\n\t\tnord2_x2_halt' in source
@@ -56,7 +58,7 @@ typedef uintptr_t vm_offset_t;
 static struct { bool ready,writable,probe_only;unsigned lun,bdev,bmajor,cmajor;
  uintptr_t regs,dma;uint64_t dma_pa,first_block,nblocks; } su;
 static int sweet_ufs_lock,held=1,interrupts=1,irq,preempt,read_error,reads;
-static bool nord2_x2_in_progress,nord2_x2_uncertain,nord2_x2_stop,nord2_root_owned,nord2_ufs_uic_pending;
+static bool nord2_live_armed,nord2_live_active,nord2_x2_in_progress,nord2_x2_uncertain,nord2_x2_stop,nord2_root_owned,nord2_ufs_uic_pending;
 static uint32_t regs[64],pa[65536];static unsigned writes,logs,auto_uic;
 static uint64_t counter;
 static unsigned char dma[0x9000];
@@ -88,6 +90,7 @@ static void reset(void){
  memset(&su,0,sizeof(su));memset(regs,0,sizeof(regs));
  su.regs=1;su.dma=(uintptr_t)dma;su.dma_pa=0x145000000ull;su.first_block=3153920;su.nblocks=28082168;su.lun=2;
  nord2_x2_in_progress=nord2_x2_stop=nord2_root_owned=true;
+ nord2_live_armed=nord2_live_active=false;
  nord2_x2_uncertain=nord2_ufs_uic_pending=false;interrupts=1;irq=preempt=read_error=reads=writes=0;
  regs[REG_UTRLBA/4]=(uint32_t)su.dma_pa;regs[REG_UTRLBAU/4]=(uint32_t)(su.dma_pa>>32);regs[REG_UTRLRSR/4]=1;
 }

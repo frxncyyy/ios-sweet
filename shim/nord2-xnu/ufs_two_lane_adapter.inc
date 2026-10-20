@@ -7,7 +7,7 @@ static int nord2_x2_owned(void *opaque)
  uint64_t v;
 #define OWN(index,expr,pass) do {v=(expr);if(c->observing){c->values[index]=v;c->valid|=1u<<(index);}if(!(pass)){if(c->observing)c->fail=(index)+1;return 0;}}while(0)
  OWN(0,nord2_x2_in_progress,v!=0);
- OWN(1,nord2_x2_stop,v!=0);
+ OWN(1,nord2_x2_stop || nord2_live_armed,v!=0);
  OWN(2,nord2_x2_uncertain,v==0);
  OWN(3,nord2_root_owned,v!=0);
  OWN(4,su.ready,v==0);
@@ -81,11 +81,12 @@ static int nord2_x2_run(struct n2l_result *result)
   nord2_x2_barrier,nord2_x2_owned,nord2_x2_digest,expected,
   __builtin_arm_rsr64("CNTFRQ_EL0")};
  nord2_x2_in_progress=true;
- int error=n2l_diagnostic(&ops,&c,1,result);
+ int error=nord2_live_armed?n2l_live(&ops,&c,1,result):n2l_diagnostic(&ops,&c,1,result);
  result->owned_valid=c.valid;result->owned_fail=c.fail;
  for(unsigned i=0;i<24;i++)result->owned_values[i]=c.values[i];
  if(result->uncertain)nord2_x2_uncertain=true;
  nord2_x2_in_progress=false;
+ if(nord2_live_armed)nord2_live_active=!error && result->active_verified && result->root_allowed && !result->uncertain;
  return error;
 }
 static void nord2_x2_halt(int error,const struct n2l_result *r) __attribute__((noreturn));

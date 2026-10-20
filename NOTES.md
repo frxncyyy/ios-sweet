@@ -3,6 +3,98 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **LIVE-X2 / AP OBSERVABILITY READY FOR FULL CI.**
+  Final active driver SHA-256
+  1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
+  Parent caught a pre-active TUR retry gap after the first independent review;
+  that review is marked superseded. Fixed wrapper now halts uncertain armed
+  requests before descriptor reuse, including pre-root TUR, while preserving
+  known-completed unit-attention retry and engine rollback. Independent exact
+  TUR-loop fault regression and revised review PASS, both profile modes.
+  Canonical live engine/adapter/arguments/runtime, original stop adapter,
+  new image-mode checker and common Wi-Fi tests PASS. Full active UFS ARM64
+  compile PASS; generated patch 7472 lines applies/reproduces exactly.
+  Private next image templates: `ufs-live-common-ap/ios`, planned
+  nord2-ios-ufs2-wifi-ap-stop23.img, single combined live-x2/common AP observer.
+  CI/source/kernel identity still deliberately unfilled, no image or approval.
+  Current 2e4f iOS remains working; no USB/device mutation since its capture.
+
+
+- **REVIEWED LIVE-X2 SOURCE INTEGRATED; NO NEW IMAGE OR AUTHORIZATION YET.**
+  Private live-candidate independent review PASS; exact production candidate
+  installed into canonical helpers and active sweet_ufs.c. New opt-in
+  nord2ufs2live=1 requires unique normal RW, stop23, cpus8, userdata and
+  profile1 arguments; stop-only nord2ufs2lane token must be absent.
+  Forward engine success: phase5, 60 UIC / 18 SET / 2 verified GPT reads;
+  root writable/publication only afterward. Failed/uncertain transitions and
+  runtime active I/O errors stop without legacy DMA abort/reuse. Linux return
+  is permanently blocked from before UFS setup; recovery is manual reset to
+  fastboot and explicit rescue/known-good image flash, not automatic fallback.
+  Existing stop-only behavior passed frozen reference trace comparisons.
+  Precise common Wi-Fi AP first-failure logs integrated with no gate changes.
+  Generated patch 7467 lines applies/reproduces active tree exactly. Parent
+  finalizes tracked tests/checker/docs before full CI. Current 2e4f315e iOS is
+  still running, human confirmed lockscreen/input, no USB client active.
+
+
+- **COMMON WI-FI CAPTURE COMPLETE; WORKING IOS LEFT RUNNING.**
+  Both authorized 477e2abf / 2e4f315e runners executed; never rerun either.
+  Current image is 2e4f315e66bb84e9d811ca4245db08342ad1aff235e2b121fc7d13aea33dfd1d,
+  CI 39506694221 / source 9327714bfe56719881e4c6251243fcd6afc97b24.
+  USB 180 s exited 0 at deadline, no transport/capacity error; final log 237,955 B,
+  SHA-256 2939196c9328b03656b749277e4f216d4e8e961e8ffc04920ad7133484469d49.
+  Private `ufs-linereset-common/ios/final-common-cost-report.json` validates
+  exact capture and records `complete=true`, `classification=skipped_guard`.
+  Common probe skipped at owner-or-AP before COLD/table; no new common writes.
+  Outer power stage 3, ID 0x20010101/config 3, success 1, restored 1.
+  First GUI ownership 47.672765 s from early framebuffer init, not power-on or
+  human lockscreen onset; framebuffer 4.252993 s, no timeouts. UFS errors and
+  timeouts 0. Range-map timing not isolated from workload; no speedup claim.
+  Human confirms current-image lockscreen and touch/buttons working.
+  No capture client remains. Next candidates are NOT authorized: precise AP
+  failure logging (gates/read ordering unchanged), plus opt-in live x2 UFS.
+  Sol agent ufs_link owns private live candidate, boot_speed independent review;
+  parent owns integration. Live mode must retain x2 only after verified GPT,
+  permit root only after success, and permanently block Linux return on this
+  boot; any uncertain/active I/O failure requires physical reset/fastboot.
+  Source stop diagnostic must remain behavior-equivalent. No active UFS edits yet.
+  Topaz exact 89451b811a4e6cc5cdcf734c45887163d92c599e reviewed in private
+  `wifi/topaz-reference/report.md`: reusable scan/PMK/Ethernet hooks, Qualcomm
+  hardware sequence not portable; public checkout lacks the iOS-facing hook
+  consumers. Actual Nord2 ADT lacks wlan; defer daemon gate until real driver.
+  Investigating exact AP predicates against Android source without relaxing them.
+
+- **AUTHORIZED COMMON WI-FI OBSERVER STARTING.**
+  Human confirms physical fastboot. Exact2e4f315e image runner starting now;
+  covered by the preceding two-image authorization. Capture180s. Parent owns
+  USB; never rerun this runner after flash.log exists. Evaluate cold/common/
+  restore/TIME and outer restoration, then iOS/input/display. New live-x2 and
+  scoped A-die candidates remain private; this image still uses one UFS lane.
+
+- **TWO-LANE UFS HARDWARE TEST PASSED; NEED FASTBOOT FOR AUTHORIZED WI-FI.**
+  477e2abf flash/reboot OKAY00:29:37CEST; USB60s exit0, log16,907 bytes
+  SHA-256 bdaba5e79dd32ef4a21b1e6ff523bc1dae8bd3e0850694f339e4f5e89ca987d4.
+  Correct policy parser PASS: rc0 phase4 error0 commands115 sets37 reads3,
+  uncertain0 rollback1 original1; all18 saved attributes and6 limits valid.
+  x2 negotiated/read-verified and x1 negotiated/restored/read-verified.
+  Initial UECPA80000010 now accepted; all ownership/preflight checks passed.
+  No root mount or disk writes; phone intentionally halted. First runner has
+  executed; never rerun. Request physical fastboot, then run already-authorized
+  2e4f315e common Wi-Fi observer. Do not ask for duplicate image approval.
+  No throughput or iOS-on-x2 claim yet. Agent prepares private normal-iOS x2
+  mode with explicit root/handoff rules; stop-only diagnostic stays unchanged.
+  User supplied MakrSas/ios-topaz branchtopaz as Wi-Fi reference; Sol agent
+  inspecting hardware and iOS interfaces separately. No active edits from it.
+
+- **LINERESET / COMMON WI-FI SEQUENCE AUTHORIZED; FIRST RUNNER STARTING.**
+  Human: "Autorizzo entrambi; pronto in fastboot". Exact477e2abf diagnostic
+  then2e4f315e common Wi-Fi observer; tested rescue/currentce84 restoration
+  if necessary also covered. Private authorization-sequence.json records scope.
+  Parent owns USB. First runner starting now, never rerun after flash.log.
+  Parse using --allow-line-reset. Request physical fastboot only before the
+  already-authorized second image; no repeat approval required.
+
 - **NEW UFS / COMMON WI-FI IMAGES VERIFIED; AWAIT EXACT AUTHORIZATION.**
   CI39506694221 / source9327714bfe56719881e4c6251243fcd6afc97b24 passed.
   Focused linked review passed: exact LINERESET exception, paired range mapping,

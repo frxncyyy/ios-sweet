@@ -2800,7 +2800,7 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,13 +151,293 @@
+@@ -141,13 +151,294 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
@@ -2856,6 +2856,7 @@
 +static bool nord2_root_owned;
 +/* Future isolated diagnostic: never publish/root-return after entering it. */
 +static bool nord2_x2_in_progress, nord2_x2_uncertain, nord2_x2_stop;
++#include "ufs_two_lane_live.inc"
 +static struct nord2_ufs_profile_stats {
 +	uint64_t commands, reads, writes, syncs, read_bytes, write_bytes;
 +	uint64_t command_ticks, command_max_ticks, doorbell_ticks, doorbell_max_ticks;
@@ -3095,7 +3096,7 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -204,6 +494,9 @@
+@@ -204,6 +495,9 @@
  	}
  	__builtin_arm_dsb(0xf);
  
@@ -3105,7 +3106,7 @@
  	ufs_wr(REG_UTRLDBR, 1);
  	uint64_t deadline;
  	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
-@@ -216,9 +509,30 @@
+@@ -216,9 +510,30 @@
  		spin_until += mach_absolute_time();
  		nanoseconds_to_absolutetime(CMD_SLEEP_NS, &sleep_interval);
  	}
@@ -3116,7 +3117,7 @@
 +#if defined(NORD2)
 +		/* A stopped counter must not strand the pre-root diagnostic read.
 +		 * Never abort/ack/free its outstanding DMA on this hard bound. */
-+		if (nord2_x2_in_progress && ++nord2_x2_polls >= 1000000u) {
++		if ((nord2_x2_in_progress || nord2_live_armed) && ++nord2_x2_polls >= 1000000u) {
 +			if (nord2_ufs_profile_enabled) { nord2_ufs_profile_wait(profile_issued); }
 +			nord2_x2_uncertain = true;
 +			return ETIMEDOUT;
@@ -3128,7 +3129,7 @@
 +			if (nord2_ufs_profile_enabled) { nord2_ufs_profile_wait(profile_issued); }
 +#endif
 +#if defined(NORD2)
-+			if (nord2_x2_in_progress) {
++			if (nord2_x2_in_progress || nord2_live_armed) {
 +				nord2_x2_uncertain = true;
 +				return ETIMEDOUT; /* preserve outstanding DMA; never abort */
 +			}
@@ -3136,7 +3137,7 @@
  			ufs_wr(REG_UTRLCLR, ~1u);
  			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
  			return ETIMEDOUT;
-@@ -234,8 +548,23 @@
+@@ -234,8 +549,23 @@
  			delay(1);
  		}
  	}
@@ -3148,7 +3149,7 @@
 +	/* A timed-out observation may finish late. Preserve its completion for
 +	 * the bounded recovery drain; SCSI must not consume another owner's UIC. */
 +	uint32_t status = ufs_rd(REG_IS);
-+	if (nord2_x2_in_progress && status != 1u) {
++	if ((nord2_x2_in_progress || nord2_live_armed) && status != 1u) {
 +		nord2_x2_uncertain = true;
 +		return EIO; /* retain all unexpected status; no hidden fatal ACK */
 +	}
@@ -3160,7 +3161,7 @@
  
  	dma_sync(DMA_UTRL, sizeof(*utrd));
  	if (su.cache) {
-@@ -253,9 +582,44 @@
+@@ -253,9 +583,63 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
@@ -3178,6 +3179,11 @@
 +ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
 +{
 +#if defined(NORD2)
++	/* Refuse descriptor/bounce reuse even if a prior ambiguous command's
++	 * caller is accidentally retried before normal live-mode error handling. */
++	if (nord2_live_armed && nord2_x2_uncertain) {
++		panic("NORD2 UFS X2 LIVE: uncertain before I/O; retain DMA/ownership; manual reset required");
++	}
 +	if (nord2_ufs_profile_enabled) {
 +		uint64_t begin = nord2_ufs_counter();
 +		int error = ufs_scsi_impl(cdb, cdb_len, len, write);
@@ -3196,6 +3202,20 @@
 +		}
 +		if (error) { nord2_ufs_stats.errors++; }
 +		if (error == ETIMEDOUT) { nord2_ufs_stats.timeouts++; }
++		if (error && (nord2_live_active || (nord2_live_armed && nord2_x2_uncertain))) {
++			nord2_x2_uncertain = true;
++			panic("NORD2 UFS X2 LIVE: runtime I/O failed; retain DMA/ownership; manual reset required");
++		}
++		return error;
++	}
++#endif
++#if defined(NORD2)
++	if (nord2_live_armed) {
++		int error = ufs_scsi_impl(cdb, cdb_len, len, write);
++		if (error && (nord2_live_active || (nord2_live_armed && nord2_x2_uncertain))) {
++			nord2_x2_uncertain = true;
++			panic("NORD2 UFS X2 LIVE: runtime I/O failed; retain DMA/ownership; manual reset required");
++		}
 +		return error;
 +	}
 +#endif
@@ -3205,7 +3225,7 @@
  /* READ(10) of count device blocks at lba into the bounce buffer. */
  static int
  ufs_read_blocks(uint64_t lba, uint32_t count)
-@@ -374,6 +738,12 @@
+@@ -374,6 +758,12 @@
  	ufs_wr(REG_IE, 0);                      /* polled operation */
  	ufs_wr(REG_IS, ufs_rd(REG_IS));
  	ufs_wr(REG_UTRLRSR, 0);
@@ -3218,7 +3238,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +757,553 @@
+@@ -387,6 +777,558 @@
  	return 0;
  }
  
@@ -3588,7 +3608,7 @@
 +static bool
 +nord2_ufs_restore(const struct nord2_ufs_saved *saved)
 +{
-+	if (nord2_x2_stop || nord2_x2_uncertain) { return false; }
++	if (nord2_live_armed || nord2_x2_stop || nord2_x2_uncertain) { return false; }
 +	if (!nord2_ufs_uic_drain()) { return false; }
 +	if (ufs_rd(REG_UTRLDBR)) {
 +		nord2_ufs_write_reg(REG_UTRLCLR, ~1u);
@@ -3620,6 +3640,11 @@
 +void
 +nord2_ufs_probe(void)
 +{
++	nord2_live_arm();
++	if (nord2_live_armed) {
++		if (nord2_live_invalid) { nord2_live_early_halt(EINVAL); }
++		return; /* valid live mode bypasses point11 before any takeover */
++	}
 +	uint32_t want = 0;
 +	(void)PE_parse_boot_argn("nord2stopat", &want, sizeof(want));
 +	if (want != 11) {
@@ -3727,7 +3752,7 @@
 +int
 +nord2_ufs_prepare_return(void)
 +{
-+	if (nord2_x2_stop || nord2_x2_uncertain) { return -1; }
++	if (nord2_live_armed || nord2_x2_stop || nord2_x2_uncertain) { return -1; }
 +	if (!nord2_root_owned) {
 +		return 0;
 +	}
@@ -3772,7 +3797,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -425,12 +1342,39 @@
+@@ -425,12 +1367,39 @@
  	if (count == 0) {
  		goto done;
  	}
@@ -3813,7 +3838,7 @@
  	for (uint32_t done = 0; done < count;) {
  		uint64_t pos = off + done;
  		uint64_t lba = pos / UFS_BLOCK;
-@@ -441,15 +1385,30 @@
+@@ -441,15 +1410,30 @@
  		if (rd) {
  			error = ufs_read_blocks(su.first_block + lba, blocks);
  			if (!error) {
@@ -3844,7 +3869,7 @@
  				error = ufs_write_blocks(su.first_block + lba, blocks);
  			}
  		}
-@@ -459,8 +1418,11 @@
+@@ -459,8 +1443,11 @@
  		done += want;
  		buf_setresid(bp, count - done);
  	}
@@ -3857,10 +3882,14 @@
  
  done:
  	if (error) {
-@@ -586,6 +1548,12 @@
+@@ -586,6 +1573,16 @@
  static int
  sweet_ufs_init(void)
  {
++#if defined(NORD2)
++	nord2_live_arm();
++	if (nord2_live_armed && nord2_live_invalid) { nord2_live_early_halt(EINVAL); }
++#endif
 +#if defined(NORD2)
 +	/* Arm before any allocation/DT failure or panic can enter fallback. */
 +	uint32_t x2_stop_optin = 0;
@@ -3870,7 +3899,7 @@
  	DTEntry node;
  	uintptr_t const *reg = NULL;
  	unsigned int size = 0;
-@@ -599,15 +1567,43 @@
+@@ -599,15 +1596,43 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3914,7 +3943,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1615,84 @@
+@@ -619,31 +1644,103 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3970,6 +3999,21 @@
 +	}
 +#if defined(NORD2)
 +	if (!error) { nord2_ufs_profile_link(); }
++	if (nord2_live_armed) {
++		struct n2l_result result = { 0 };
++		if (!error) { error = nord2_x2_run(&result); }
++		else { result.error = error; }
++		lck_mtx_unlock(&sweet_ufs_lock);
++		printf("NORD2 UFS X2 LIVE: rc=%d phase=%u error=%d active=%u uncertain=%d root_allowed=%d handoff_allowed=%d\n",
++		    error,result.phase,result.error,(unsigned)nord2_live_active,result.uncertain,result.root_allowed,result.handoff_allowed);
++		printf("NORD2 UFS X2 LIVE PROOF: commands=%u sets=%u reads=%u verified=%d rollback=%d original=%d\n",
++		    result.commands,result.sets,result.reads,result.active_verified,result.rollback_attempted,result.original_verified);
++		printf("NORD2 UFS X2 LIVE PROFILE: link_fields=pre-transition-baseline return_policy=manual-reset-only\n");
++		if (error || !nord2_live_active || !result.root_allowed || result.handoff_allowed) {
++			nord2_x2_halt(error ? error : EIO, &result); /* no root on any failure */
++		}
++		goto live_verified; /* mutex already released; normal publication below */
++	}
 +	uint32_t x2_optin = 0;
 +	PE_parse_boot_argn("nord2ufs2lane", &x2_optin, sizeof(x2_optin));
 +	if (x2_optin == 1) {
@@ -3989,6 +4033,10 @@
 +		goto failed;
  	}
  
++#if defined(NORD2)
++live_verified:
++	if (nord2_live_armed && !nord2_live_active) { nord2_live_early_halt(EIO); }
++#endif
  	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
  	if (su.bmajor < 0) {
 -		return ENXIO;
@@ -4003,7 +4051,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1703,28 @@
+@@ -654,13 +1751,28 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -4032,6 +4080,31 @@
  }
  
  /*
+@@ -811,12 +1923,24 @@
+ int
+ sweet_ufs_rootdev(dev_t *dev)
+ {
++#if defined(NORD2)
++	nord2_live_arm();
++	if (nord2_live_armed && (nord2_live_invalid || (su.ready && !nord2_live_active))) {
++		nord2_live_early_halt(EINVAL);
++	}
++#endif
+ 	if (!su.ready) {
+ 		int error = sweet_ufs_init();
+ 		if (error) {
++#if defined(NORD2)
++			if (nord2_live_armed) { nord2_live_early_halt(error); }
++#endif
+ 			return error;
+ 		}
+ 	}
++#if defined(NORD2)
++	if (nord2_live_armed && !nord2_live_active) { nord2_live_early_halt(EIO); }
++#endif
+ 	*dev = su.bdev;
+ 	return 0;
+ }
 --- a/bsd/dev/sweet_usb.c
 +++ b/bsd/dev/sweet_usb.c
 @@ -15,6 +15,8 @@
@@ -6506,7 +6579,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane.c
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,176 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Original staged pre-root experiment. Selected Linux ufshcd.c:4125,4449;
@@ -6626,7 +6699,7 @@
 +}
 +static int equal(const unsigned char a[32],const unsigned char b[32])
 +{unsigned d=0;for(unsigned i=0;i<32;i++)d|=a[i]^b[i];return d==0;}
-+int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
++static int n2l_run(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r,int live)
 +{
 + if(!r)return -1;struct n2l_result zero={0};*r=zero;
 + if(optin!=1||!o||!o->read32||!o->write32||!o->ticks||!o->delay_us||!o->barrier||
@@ -6656,6 +6729,11 @@
 + r->phase=2;int forward=negotiate(&s,saved,2);
 + if(!forward && (digest(&s,observed)||!equal(baseline,observed)))forward=-1;
 + if(r->uncertain){r->error=-6;return -1;}
++ if(live && !forward){
++  /* Exactly the validated forward transaction and two complete read digests.
++   * No root publication here; adapter must still enforce pre-root ownership. */
++  r->active_verified=1;r->root_allowed=1;r->handoff_allowed=0;r->phase=5;return 0;
++ }
 + /* Always restore by another negotiated transition, even if preparatory SET
 +  * failed. No raw-active-attribute rollback masquerades as a restored link. */
 + r->phase=3;r->rollback_attempted=1;
@@ -6668,10 +6746,19 @@
 + r->root_allowed=1;return 0;
 +}
 +
++int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
++{return n2l_run(o,ctx,optin,r,0);}
++int n2l_live(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_result *r)
++{
++ int error=n2l_run(o,ctx,optin,r,1);
++ if(r){r->handoff_allowed=0;if(error || !r->active_verified)r->root_allowed=0;}
++ return error;
++}
++
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,44 @@
 +#ifndef NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 +#define NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 +#include <stdint.h>
@@ -6705,6 +6792,7 @@
 + uint32_t owned_valid,owned_fail; uint64_t owned_values[24];
 + uint32_t phase,commands,sets,reads,last_attr,last_result,last_is,last_hcs;
 + uint32_t snapshot[18],limits[6],snapshot_mask,limits_mask;
++ int active_verified; /* live mode only; x2 readback+fixed digest proved */
 + int error,uncertain,rollback_attempted,original_verified,root_allowed,handoff_allowed;
 +};
 +/* optin must equal1. Return0 ONLY after x2 negotiated/read verified AND original
@@ -6712,10 +6800,12 @@
 + * and publication; uncertain state also blocks Linux handoff. Caller MUST obey
 + * both flags. No software deadline can bound a hung MMIO access/callback. */
 +int n2l_diagnostic(const struct n2l_ops *,void *,unsigned,struct n2l_result *);
++/* Success retains verified x2; handoff_allowed is ALWAYS0 in live mode. */
++int n2l_live(const struct n2l_ops *,void *,unsigned,struct n2l_result *);
 +#endif
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane_adapter.inc
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,125 @@
 +/* Opt-in stop-only adapter, included after ufs_read_blocks. Never publishes root. */
 +struct nord2_x2_context { uint64_t first,blocks,dma_pa; vm_offset_t dma; uint32_t valid,fail;uint64_t values[24];unsigned observing; };
 +static int nord2_x2_owned(void *opaque)
@@ -6725,7 +6815,7 @@
 + uint64_t v;
 +#define OWN(index,expr,pass) do {v=(expr);if(c->observing){c->values[index]=v;c->valid|=1u<<(index);}if(!(pass)){if(c->observing)c->fail=(index)+1;return 0;}}while(0)
 + OWN(0,nord2_x2_in_progress,v!=0);
-+ OWN(1,nord2_x2_stop,v!=0);
++ OWN(1,nord2_x2_stop || nord2_live_armed,v!=0);
 + OWN(2,nord2_x2_uncertain,v==0);
 + OWN(3,nord2_root_owned,v!=0);
 + OWN(4,su.ready,v==0);
@@ -6799,11 +6889,12 @@
 +  nord2_x2_barrier,nord2_x2_owned,nord2_x2_digest,expected,
 +  __builtin_arm_rsr64("CNTFRQ_EL0")};
 + nord2_x2_in_progress=true;
-+ int error=n2l_diagnostic(&ops,&c,1,result);
++ int error=nord2_live_armed?n2l_live(&ops,&c,1,result):n2l_diagnostic(&ops,&c,1,result);
 + result->owned_valid=c.valid;result->owned_fail=c.fail;
 + for(unsigned i=0;i<24;i++)result->owned_values[i]=c.values[i];
 + if(result->uncertain)nord2_x2_uncertain=true;
 + nord2_x2_in_progress=false;
++ if(nord2_live_armed)nord2_live_active=!error && result->active_verified && result->root_allowed && !result->uncertain;
 + return error;
 +}
 +static void nord2_x2_halt(int error,const struct n2l_result *r) __attribute__((noreturn));
@@ -7094,7 +7185,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_common_adapter.inc
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,177 @@
 +/* Opt-in MT6893 common-configuration diagnostic, included by sweet_touch.c.
 + * Existing sole probe thread; never a worker. No address outside allowlists. */
 +struct ncc_pred {uint32_t address,mask;};
@@ -7125,14 +7216,45 @@
 + default:return 0;
 + }
 +}
++/* First failing evaluation is immutable until the next opt-in window. Raw
++ * words are valid only where valid_mask says they were actually read. */
++static struct { unsigned captured,owner_ok,owner_fail,valid_mask,failed;
++ uint32_t raw[7]; } ncc_ap_failure;
 +static int ncc_ap_check(void)
 +{
-+ if(!ncc_fresh_owned||ncc_latched_dirty||!nw.saved||!nw.domain_touched||
-+  ncc_native.id!=0x20010101||!nw.spm||!nw.infra||!nw.gals||!ncc_native.host)return -1;
-+ if((ni_rd(nw.spm,0x304)&0x1f)!=0xd||!(ni_rd(nw.spm,0x16c)&2)||
-+  !(ni_rd(nw.spm,0x170)&2)||!(ni_rd(nw.gals,0x504)&1)||
-+  (ni_rd(nw.infra,0x228)&0x6000)||(ni_rd(nw.infra,0x724)&4))return -1;
-+ return (ni_rd(ncc_native.host,0x184)&0x20)?-1:0;
++ unsigned owner=0,valid=0,failed=7;uint32_t raw[7]={0};
++#define NCC_OWNER(bit,condition) do { if(!(condition)){failed=bit;goto owner_fail;} owner|=1u<<(bit); } while(0)
++ NCC_OWNER(0,ncc_fresh_owned);NCC_OWNER(1,!ncc_latched_dirty);
++ NCC_OWNER(2,nw.saved);NCC_OWNER(3,nw.domain_touched);
++ NCC_OWNER(4,ncc_native.id==0x20010101);NCC_OWNER(5,nw.spm);
++ NCC_OWNER(6,nw.infra);NCC_OWNER(7,nw.gals);NCC_OWNER(8,ncc_native.host);
++#undef NCC_OWNER
++#define NCC_AP(i,base,off,mask,want) do { raw[i]=ni_rd(base,off);valid|=1u<<(i);if((raw[i]&(mask))!=(want)){failed=i;goto ap_fail;} } while(0)
++ NCC_AP(0,nw.spm,0x304,0x1f,0xd);
++ NCC_AP(1,nw.spm,0x16c,2,2);NCC_AP(2,nw.spm,0x170,2,2);
++ NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x6000,0);
++ NCC_AP(5,nw.infra,0x724,4,0);NCC_AP(6,ncc_native.host,0x184,0x20,0);
++#undef NCC_AP
++ return 0;
++owner_fail:
++ if(!ncc_ap_failure.captured)ncc_ap_failure.owner_fail=failed+1;
++ failed=7;
++ap_fail:
++ if(!ncc_ap_failure.captured){
++  ncc_ap_failure.owner_ok=owner;ncc_ap_failure.valid_mask=valid;
++  ncc_ap_failure.failed=failed;
++  for(unsigned i=0;i<7;i++)ncc_ap_failure.raw[i]=raw[i];
++  ncc_ap_failure.captured=1;
++ }
++ return -1;
++}
++static void ncc_ap_report(void)
++{
++ if(!ncc_ap_failure.captured)return;
++ printf("NORD2 WIFI COMMON AP: owner_ok=%#x owner_fail=%u valid=%#x failed=%u\n",
++  ncc_ap_failure.owner_ok,ncc_ap_failure.owner_fail,ncc_ap_failure.valid_mask,ncc_ap_failure.failed);
++ printf("NORD2 WIFI COMMON AP RAW: pwr=%#x ack0=%#x ack1=%#x gals=%#x prot=%#x rx=%#x host=%#x\n",
++  ncc_ap_failure.raw[0],ncc_ap_failure.raw[1],ncc_ap_failure.raw[2],ncc_ap_failure.raw[3],ncc_ap_failure.raw[4],ncc_ap_failure.raw[5],ncc_ap_failure.raw[6]);
 +}
 +static int ncc_native_check(void *opaque,unsigned required)
 +{
@@ -7197,9 +7319,10 @@
 +{
 + unsigned enabled=0;PE_parse_boot_argn("nord2wificommon",&enabled,sizeof(enabled));
 + if(enabled!=1)return; /* zero additional MMIO/map/log by default */
++ ncc_ap_failure=(__typeof__(ncc_ap_failure)){0};
 + ncc_native.host=host;ncc_native.cfg=cfg;ncc_native.id=id;
 + if(ncc_ap_check()){
-+  printf("NORD2 WIFI COMMON: skipped=1 reason=owner-or-AP\n");return;
++  printf("NORD2 WIFI COMMON: skipped=1 reason=owner-or-AP\n");ncc_ap_report();return;
 + }
 + ncc_native.rgu=ml_io_map(0x18000000,0x1000);
 + if(!ncc_native.rgu){printf("NORD2 WIFI COMMON: skipped=1 reason=rgu-map\n");return;}
@@ -7207,7 +7330,7 @@
 + int status=nwc_snapshot(&cold_ops,0,1,&cold);
 + printf("NORD2 WIFI COMMON COLD: status=%d valid=%#x cpu=%#x top=%#x power=%#x\n",
 +  status,cold.valid_mask,cold.raw[0],cold.raw[1],cold.raw[2]);
-+ if(status)return;
++ if(status){ncc_ap_report();return;}
 + ncc_native.spi=ml_io_map(0x18004000,0x1000);
 + ncc_native.table=ml_io_map(0x18005000,0x1000);
 + ncc_native.fm=ml_io_map(0x18008000,0x1000);
@@ -7218,7 +7341,7 @@
 + if(ncc_native_check(0,NCC_REQUIRED)||ncc_native_check(0,NCC_REQUIRED)){
 +  unsigned i=ncc_native.failed_field;
 +  printf("NORD2 WIFI COMMON: skipped=1 valid=%#x field=%u raw=%#x\n",
-+   ncc_native.predicate_valid,i,(i<14&&(ncc_native.predicate_valid&(1u<<i)))?ncc_native.predicate_raw[i]:0);return;
++   ncc_native.predicate_valid,i,(i<14&&(ncc_native.predicate_valid&(1u<<i)))?ncc_native.predicate_raw[i]:0);ncc_ap_report();return;
 + }
 + const struct ncc_ops ops={ncc_native_check,ncc_native_read,ncc_native_write,ncc_native_barrier};
 + uint64_t begin=NCC_TICKS();
@@ -7232,6 +7355,7 @@
 +  ncc_native.predicate_valid,ncc_native.failed_field);
 + printf("NORD2 WIFI COMMON TIME: ticks=%llu frequency=%llu\n",
 +  (unsigned long long)elapsed,(unsigned long long)NCC_FREQUENCY());
++ if(status)ncc_ap_report();
 + if(!r->clean){
 +  /* Persistent latch is checked by nw_restore and the Linux-return path.
 +   * Do NOT power down, clear saved ownership or discard snapshots. */
@@ -7284,3 +7408,65 @@
 + * No effective EMI permission or firmware execution inference is made. */
 +int nwc_snapshot(const struct nwc_ops *,void *,unsigned,struct nwc_result *);
 +#endif
+--- /dev/null
++++ b/bsd/dev/ufs_two_lane_live.inc
+@@ -0,0 +1,59 @@
++static bool
++nord2_live_arg_exact(const char *key, const char *expected, unsigned *occurrences)
++{
++	/* PE_boot_args() already returns CommandLine, not the boot_args struct. */
++	const char *cmd = PE_boot_args();
++	const size_t capacity = sizeof(((struct boot_args *)0)->CommandLine);
++	*occurrences = 0;
++	if (!cmd) { *occurrences = 1; return false; }
++	size_t length = 0, key_length = 0;
++	while (length < capacity && cmd[length]) { length++; }
++	if (length == capacity) { *occurrences = 1; return false; }
++	while (key[key_length]) { key_length++; }
++	bool matched = false;
++	for (size_t pos = 0; pos < length;) {
++		/* ASCII whitespace, as used by the offline image argument split. */
++		if (cmd[pos] == ' ' || (cmd[pos] >= '\t' && cmd[pos] <= '\r')) { pos++; continue; }
++		size_t begin = pos;
++		while (pos < length && cmd[pos] != ' ' && !(cmd[pos] >= '\t' && cmd[pos] <= '\r')) { pos++; }
++		size_t end = pos, n = 0;
++		while (n < key_length && begin + n < end && cmd[begin + n] == key[n]) { n++; }
++		if (n != key_length || (begin + n != end && cmd[begin + n] != '=')) { continue; }
++		(*occurrences)++;
++		if (begin + n == end) { continue; } /* bare flag is never explicit */
++		size_t value = begin + n + 1;
++		n = 0;
++		while (value + n < end && expected[n] && cmd[value + n] == expected[n]) { n++; }
++		if (value + n == end && !expected[n]) { matched = true; }
++	}
++	return *occurrences == 1 && matched;
++}
++
++static bool nord2_live_armed,nord2_live_invalid,nord2_live_active;
++static void nord2_live_arm(void)
++{
++ if(nord2_live_armed)return;
++ unsigned count=0;
++ bool exact=nord2_live_arg_exact("nord2ufs2live","1",&count);
++ if(!count)return;
++ unsigned zero_count=0;
++ if(count==1 && nord2_live_arg_exact("nord2ufs2live","0",&zero_count))return;
++ nord2_live_armed=true; /* permanent before allocation, map, ownership or SET */
++ nord2_live_invalid=!exact;
++ static const char *const required[][2]={
++  {"nord2ufs2live","1"},{"nord2stopat","23"},{"cpus","8"},
++  {"rd","ufsroot0"},{"ufsroot","userdata"},{"ufsrw","1"},{"rootrw","1"},
++  {"nord2ufsprofile","1"}
++ };
++ for(unsigned i=0;i<sizeof(required)/sizeof(required[0]);i++)
++  if(!nord2_live_arg_exact(required[i][0],required[i][1],&count))nord2_live_invalid=true;
++ (void)nord2_live_arg_exact("nord2ufs2lane","1",&count);
++ if(count)nord2_live_invalid=true; /* stop-mode token must be absent, even0 */
++ printf("NORD2 UFS X2 LIVE POLICY: armed=1 invalid=%u return_blocked=1 reason=manual-reset-required\n",(unsigned)nord2_live_invalid);
++}
++static void nord2_live_early_halt(int error) __attribute__((noreturn));
++static void nord2_live_early_halt(int error)
++{
++ printf("NORD2 UFS X2 LIVE REFUSED: error=%d root_allowed=0 return_blocked=1 manual_reset=1\n",error);
++ for(;;){delay(1000000);}
++}
