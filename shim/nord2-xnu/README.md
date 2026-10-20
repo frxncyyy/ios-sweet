@@ -113,9 +113,18 @@ also writes zero-padded decimal and must be corrected before reuse.
 | 8 | After `kperf_init_early`, before `bsd_init` |
 | 9 | In `bsd_init`, after `inittodr`, before selecting/mounting the root filesystem |
 | 10 | Same location as point 9, after a read-only UFSHCI register snapshot |
+| 11 | Same location, after a bounded LUN2 capacity/GPT read probe and controller-state restoration |
 
 Point numbers are identifiers, not execution order. Never infer success
 from a reboot alone: inspect the stop marker and the Android return marker.
+
+Point 10 has passed on the Nord 2: UFSHCI 2.0 is enabled, supports 64-bit
+addressing, and has no pending requests. Point 11 is prepared but has not
+been tested on hardware. It accepts only TUR, READ CAPACITY(10) and READ(10)
+of GPT metadata in LBAs 1–63; checks GPT CRCs and bounds; then restores the
+inherited request list and interrupt state before returning to Android.
+If a timeout cannot be cleared or restoration fails, it retains its DMA
+memory and waits for a manual reboot. No root filesystem is mounted.
 
 ## Reading the result
 

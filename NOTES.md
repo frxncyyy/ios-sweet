@@ -3,11 +3,63 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE — point-10 test in progress, restore pending.**
-  User explicitly authorized the third boot-only test and subsequent
-  original-boot restore and confirmed fastboot readiness. Device and both
-  hashes checked, flash/reboot successful; evidence in
-  `research/ci-39388874797/stop10/flash.log`.
+- **CURRENT DEVICE STATE — point 10 passed; original Android boot restored
+  and verified.** `sys.boot_completed=1`; full boot partition SHA-256
+  `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
+  User explicitly authorized the third boot-only test and original-boot
+  restore. Flash/reboot and restore evidence:
+  `research/ci-39388874797/stop10/{flash.log,restore.log,restore-verified.json}`.
+  This third test's authorization is completed. No userdata changes.
+  - Saved pmsg: `backup/nord2/logs/20261020-101745-ufs-snapshot-stop10/`,
+    15235 bytes, SHA-256
+    `1850793489a325bcf584e57dc9d9cb620aba4bc3529b8caa3fcf1e2f049602ee`.
+  - Observed UFSHCI: CAP `0x3587071f`, version `0x200`, IS `0`, IE `0x30e75`,
+    HCS `0x10f`, HCE `1`; UTRLBA `0x483ba000`, upper `0`, doorbell `0`,
+    run/stop `1`; UTMRLBA/upper/doorbell all `0`, run/stop `1`.
+    Controller enabled, device and request lists ready, 64-bit addressing
+    advertised, no pending transfer/task requests. This proves MMIO access;
+    DMA and SCSI transport remain untested.
+  - Exact final markers: `UFS snapshot end`,
+    `stop at after read-only UFS host snapshot`,
+    `RETURN TO STOCK ANDROID KERNEL`. Android log collector completed normally.
+
+- **Next candidate — point 11 prepared, NOT flashed or authorized yet.**
+  `shim/out/nord2-xnu/nord2-ufs-read-stop11.img`, 30,572,544 bytes,
+  SHA-256 `2027c467d8162966d9ba7cbb20bd8b1cf550960d48ebec94d4fa53619b00f8f6`.
+  Cmdline uses `cpus=1 nord2stopat=11`; all image checks pass.
+  - Adds a pre-root probe in `bsd/dev/sweet_ufs.c`, active only at point 11:
+    takes over the idle inherited UFS request list, submits TUR,
+    READ CAPACITY(10), READ(10) of primary GPT metadata on LUN2, validates
+    header/entry CRC32 and partition bounds, prints boot/userdata extents.
+    The command guard allows no media writes and no reads outside LBAs 1..63.
+    No disk publication, root mount, persistent log or Qualcomm input/USB.
+  - Before chain-back, waits for idle, restores original UTRL base, run/stop
+    and interrupt-enable registers with read-back checks. A timed-out slot
+    gets a bounded clear. If DMA cannot be quiesced or state restored, stays
+    halted with DMA memory intact and requires a physical reboot; never
+    chain-backs into Android in that state.
+  - Source compiled and patch 0082 regenerated/verified. Exact-code host
+    harness with ASan/UBSan passes success, inactive gate, non-idle host,
+    missing 64-bit DMA, unit attention, corrupt GPT CRCs, bad capacity/tag,
+    rejected request-list address, command timeout cleanup and unsafe-DMA
+    halt. Rejects all CDB opcodes other than TUR/RC10/READ10 and all writes.
+    Harness and logs: `research/ci-39388874797/stop11/`.
+    Relink replaces only `bsd_init.o`, `sweet_ufs.o`, `sweet_early.o` in a
+    copy of the new CI archive; original archive hash unchanged.
+  - Android baseline read-only evidence: `backup/nord2/ufs-baseline/`.
+    `/sys/.../0:0:0:2`, 31,240,192 blocks of 4096 bytes; GPT 128 x128 entries
+    at LBA2, header CRC `ab8324bc`, entries CRC `97de707e`.
+    Boot starts 309504, length8192 blocks; userdata starts3153920,
+    length28082168 blocks. Expected XNU readout must match this evidence.
+  - Host APFS reader built locally: `../toolchains/apfs-fuse`, upstream
+    commit `66b86bd525e8cb90f9012543be89b1f092b75cf3` plus one local
+    `#include <cstdint>` in `ApfsLib/PList.h` required by GCC16.
+    CMake `-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release`.
+    Read-only user FUSE mounts currently under
+    `research/nord2/ipsw/root-images/mounts/{OS,SystemOS,AppOS}`.
+    launchd, dyld, SystemVersion and all 44 dyld cache files read fully,
+    hashes/ownership/modes in `critical-files.json`; version16.7.16/20H392.
+    No HFS root image yet. No system installation or privileged mounts.
 
 - **Completed point-9 test — original Android boot restored and verified.**
   Point 9 **passed**, including `SWEET CPU: requested=1 selected=1`,
@@ -26,7 +78,7 @@
     Android boot completed. Evidence in
     `research/ci-39388874797/stop9/{flash.log,restore.log,restore-verified.json}`.
     No userdata modification authorized or done.
-  - Point-10 candidate (authorized and under test as recorded above):
+  - Point-10 image (test and restoration completed above):
     `shim/out/nord2-xnu/nord2-ufs-snapshot-stop10.img`, 30,570,496 bytes,
     SHA-256 `0a50a1ae5c5548ab716d5093478c67beb99c8380f49621c37eb05eaa8f91db1e`.
     All image checks passed. Read-only UFSHCI register snapshot

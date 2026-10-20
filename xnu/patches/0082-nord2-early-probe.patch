@@ -1017,7 +1017,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,39 @@
+@@ -10,8 +10,41 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1038,6 +1038,8 @@
 +void nord2_stop_at(unsigned int point, const char *label);
 +/* Point 10: inspect inherited MT6893 UFSHCI state, without register writes. */
 +void nord2_ufs_snapshot(void);
++/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
++void nord2_ufs_probe(void);
 +/* Private identity tables for pmsg/framebuffer/RAM window (stage 6). */
 +extern uint64_t nord2_l1_pa;
 +void nord2_identity_init(void);
@@ -1516,7 +1518,7 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -868,6 +880,12 @@
+@@ -868,6 +880,13 @@
  	bsd_init_kprintf("calling inittodr\n");
  	inittodr(0);
  
@@ -1524,12 +1526,13 @@
 +	/* Diagnose BSD initialization without waiting for an unported root device. */
 +	nord2_stop_at(9, "before root filesystem selection");
 +	nord2_ufs_snapshot();
++	nord2_ufs_probe();
 +#endif
 +
  	/* Mount the root file system. */
  	while (TRUE) {
  		int err;
-@@ -1119,7 +1137,13 @@
+@@ -1119,7 +1138,13 @@
  		}
  	}
  
@@ -1544,6 +1547,370 @@
  }
  
  
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -39,6 +39,9 @@
+ #include <pexpert/device_tree.h>
+ #include <libkern/libkern.h>
+ #include <machine/atomic.h>
++#if defined(NORD2)
++#include <arm64/sweet_early.h>
++#endif
+ 
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+ /* osfmk/arm/machine_routines.h, not exported to the BSD layer */
+@@ -112,6 +115,9 @@
+ 	int bmajor, cmajor;
+ 	dev_t bdev;
+ 	bool ready;
++#if defined(NORD2)
++	bool probe_only;                        /* bounded diagnostic, no media writes */
++#endif
+ } su;
+ 
+ static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
+@@ -141,6 +147,40 @@
+ 	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
+ }
+ 
++#if defined(NORD2)
++/*
++ * The pre-root diagnostic accepts exactly TUR, READ CAPACITY(10), and
++ * READ(10) of the primary GPT area (LBAs 1..63). No arbitrary CDB, media
++ * write, cache flush, root publication or Qualcomm peripheral startup.
++ */
++static bool
++nord2_ufs_probe_command(const uint8_t *cdb, unsigned n, uint32_t len, bool write)
++{
++	if (write || !cdb || n == 0 || n > 16) {
++		return false;
++	}
++	if (cdb[0] == 0x00 || cdb[0] == 0x25) {
++		if (n != (cdb[0] == 0 ? 6u : 10u) || len != (cdb[0] == 0 ? 0u : 8u)) {
++			return false;
++		}
++		for (unsigned i = 1; i < n; i++) {
++			if (cdb[i]) {
++				return false;
++			}
++		}
++		return true;
++	}
++	if (cdb[0] != 0x28 || n != 10 || cdb[1] || cdb[6] || cdb[9]) {
++		return false;
++	}
++	uint32_t lba = (uint32_t)cdb[2] << 24 | (uint32_t)cdb[3] << 16 |
++	    (uint32_t)cdb[4] << 8 | cdb[5];
++	uint32_t count = (uint32_t)cdb[7] << 8 | cdb[8];
++	return lba >= 1 && lba < 64 && count >= 1 && count <= 64 - lba &&
++	       len == count * UFS_BLOCK;
++}
++#endif
++
+ /*
+  * One SCSI command in slot 0, data (if any) to/from the bounce buffer
+  * (to the device when write is set). Returns 0 or an errno.
+@@ -148,6 +188,11 @@
+ static int
+ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ {
++#if defined(NORD2)
++	if (su.probe_only && !nord2_ufs_probe_command(cdb, cdb_len, len, write)) {
++		return EPERM;
++	}
++#endif
+ 	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
+ 	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+@@ -253,6 +298,13 @@
+ 		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
+ 		return EIO;
+ 	}
++#if defined(NORD2)
++	if (su.probe_only && (ucd->resp[2] != su.lun || ucd->resp[3] != su.tag ||
++	    (ucd->resp[1] & 0x60))) {
++		printf("NORD2 UFS: response identity or transfer length mismatch\n");
++		return EIO;
++	}
++#endif
+ 	return 0;
+ }
+ 
+@@ -387,6 +439,274 @@
+ 	return 0;
+ }
+ 
++#if defined(NORD2)
++static uint32_t
++nord2_ufs_crc32(const uint8_t *p, uint32_t n)
++{
++	uint32_t crc = ~0u;
++	while (n--) {
++		crc ^= *p++;
++		for (unsigned i = 0; i < 8; i++) {
++			crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
++		}
++	}
++	return ~crc;
++}
++
++static uint32_t
++nord2_ufs_be32(const uint8_t *p)
++{
++	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 |
++	       (uint32_t)p[2] << 8 | p[3];
++}
++
++/* Inspect only GPT metadata; do not read any partition contents. */
++static int
++nord2_ufs_probe_gpt(uint64_t blocks)
++{
++	uint8_t *b = (uint8_t *)(su.dma + DMA_BOUNCE);
++	uint32_t hsize, hcrc, nent, esz, ecrc;
++	uint64_t current, backup, first_usable, last_usable, entry_lba;
++	int error = ufs_read_blocks(1, 1);
++	if (error) {
++		return error;
++	}
++	if (memcmp(b, "EFI PART", 8) || memcmp(b + 8, "\0\0\1\0", 4)) {
++		return EINVAL;
++	}
++	memcpy(&hsize, b + 12, 4);
++	memcpy(&hcrc, b + 16, 4);
++	if (hsize < 92 || hsize > UFS_BLOCK) {
++		return EINVAL;
++	}
++	bzero(b + 16, 4);
++	uint32_t computed = nord2_ufs_crc32(b, hsize);
++	memcpy(b + 16, &hcrc, 4);
++	if (computed != hcrc) {
++		printf("NORD2 UFS: GPT header CRC mismatch\n");
++		return EIO;
++	}
++	memcpy(&current, b + 24, 8);
++	memcpy(&backup, b + 32, 8);
++	memcpy(&first_usable, b + 40, 8);
++	memcpy(&last_usable, b + 48, 8);
++	memcpy(&entry_lba, b + 72, 8);
++	memcpy(&nent, b + 80, 4);
++	memcpy(&esz, b + 84, 4);
++	memcpy(&ecrc, b + 88, 4);
++	if (current != 1 || backup != blocks - 1 || first_usable > last_usable ||
++	    last_usable >= backup || esz != 128 || nent == 0 || nent > 1024) {
++		return EINVAL;
++	}
++	uint32_t bytes = nent * esz;
++	uint32_t count = (bytes + UFS_BLOCK - 1) / UFS_BLOCK;
++	if (entry_lba < 2 || entry_lba >= 64 || count > 64 - entry_lba ||
++	    entry_lba + count > first_usable) {
++		return EINVAL;
++	}
++	error = ufs_read_blocks(entry_lba, count);
++	if (error) {
++		return error;
++	}
++	if (nord2_ufs_crc32(b, bytes) != ecrc) {
++		printf("NORD2 UFS: GPT entry CRC mismatch\n");
++		return EIO;
++	}
++	unsigned found = 0;
++	static const char *const wanted[] = { "boot", "userdata" };
++	for (uint32_t i = 0; i < nent; i++) {
++		const uint8_t *e = b + i * esz;
++		static const uint8_t empty[16] = { 0 };
++		if (memcmp(e, empty, sizeof(empty)) == 0) {
++			continue;
++		}
++		for (unsigned w = 0; w < sizeof(wanted) / sizeof(wanted[0]); w++) {
++			unsigned j = 0;
++			while (wanted[w][j] && e[56 + 2 * j] == wanted[w][j] &&
++			    e[57 + 2 * j] == 0) {
++				j++;
++			}
++			if (wanted[w][j] || e[56 + 2 * j] || e[57 + 2 * j]) {
++				continue;
++			}
++			uint64_t first, last;
++			memcpy(&first, e + 32, 8);
++			memcpy(&last, e + 40, 8);
++			if (first < first_usable || last > last_usable || last < first ||
++			    (found & (1u << w))) {
++				return EINVAL;
++			}
++			found |= 1u << w;
++			printf("NORD2 UFS: GPT %s first=%llu blocks=%llu\n",
++			    wanted[w], first, last - first + 1);
++		}
++	}
++	if (found != 3) {
++		return ENOENT;
++	}
++	printf("NORD2 UFS: GPT verified entries=%u header_crc=0x%08x entries_crc=0x%08x\n",
++	    nent, hcrc, ecrc);
++	return 0;
++}
++
++static bool
++nord2_ufs_wait(uint32_t off, uint32_t mask, uint32_t value)
++{
++	uint64_t deadline;
++	nanoseconds_to_absolutetime(NSEC_PER_SEC, &deadline);
++	deadline += mach_absolute_time();
++	while ((ufs_rd(off) & mask) != value) {
++		if (mach_absolute_time() >= deadline) {
++			return false;
++		}
++		delay(10);
++	}
++	return true;
++}
++
++static void
++nord2_ufs_write_reg(uint32_t off, uint32_t value)
++{
++	ufs_wr(off, value);
++	__builtin_arm_dsb(0xf);
++}
++
++struct nord2_ufs_saved {
++	uint32_t ie, ba, bau, rsr;
++};
++
++static bool
++nord2_ufs_restore(const struct nord2_ufs_saved *saved)
++{
++	if (ufs_rd(REG_UTRLDBR)) {
++		nord2_ufs_write_reg(REG_UTRLCLR, ~1u);
++	}
++	if (!nord2_ufs_wait(REG_UTRLDBR, ~0u, 0)) {
++		return false;
++	}
++	nord2_ufs_write_reg(REG_UTRLRSR, 0);
++	if (!nord2_ufs_wait(REG_UTRLRSR, 1, 0)) {
++		return false;
++	}
++	nord2_ufs_write_reg(REG_UTRLBA, saved->ba);
++	nord2_ufs_write_reg(REG_UTRLBAU, saved->bau);
++	if (ufs_rd(REG_UTRLBA) != saved->ba || ufs_rd(REG_UTRLBAU) != saved->bau) {
++		return false;
++	}
++	nord2_ufs_write_reg(REG_UTRLRSR, saved->rsr);
++	if (!nord2_ufs_wait(REG_UTRLRSR, 1, saved->rsr & 1)) {
++		return false;
++	}
++	nord2_ufs_write_reg(REG_IS, ufs_rd(REG_IS));
++	nord2_ufs_write_reg(REG_IE, saved->ie);
++	return ufs_rd(REG_IE) == saved->ie;
++}
++
++void nord2_ufs_probe(void);
++
++/* Point 11, opt-in only. Always stop before filesystem selection. */
++void
++nord2_ufs_probe(void)
++{
++	uint32_t want = 0;
++	(void)PE_parse_boot_argn("nord2stopat", &want, sizeof(want));
++	if (want != 11) {
++		return;
++	}
++	int error = ENXIO;
++	bool changed = false;
++	struct nord2_ufs_saved saved = { 0 };
++	printf("NORD2 UFS: bounded LUN2 read probe begin\n");
++	if (su.ready || su.dma) {
++		goto done;
++	}
++	su.regs = ml_io_map(0x11270000UL, 0x2300);
++	if (!su.regs || !(ufs_rd(REG_HCE) & 1) ||
++	    (ufs_rd(REG_HCS) & (HCS_DP | HCS_UTRLRDY)) != (HCS_DP | HCS_UTRLRDY) ||
++	    ufs_rd(REG_UTRLDBR) || ufs_rd(0x78) || ufs_rd(REG_IS)) {
++		printf("NORD2 UFS: refusing non-idle inherited host\n");
++		goto done;
++	}
++	saved.ie = ufs_rd(REG_IE);
++	saved.ba = ufs_rd(REG_UTRLBA);
++	saved.bau = ufs_rd(REG_UTRLBAU);
++	saved.rsr = ufs_rd(REG_UTRLRSR);
++	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		error = ENOMEM;
++		goto done;
++	}
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)su.dma);
++	if (!pn) {
++		error = ENOMEM;
++		goto done;
++	}
++	su.dma_pa = ptoa_64(pn);
++	if (((su.dma_pa + DMA_SIZE - 1) >> 32) && !(ufs_rd(REG_CAP) & CAP_64AS)) {
++		goto done;
++	}
++	su.lun = 2;
++	su.tag = 0;
++	su.probe_only = true;
++	su.cache = su.wait = su.writable = false;
++	/* Flush the zeroed descriptor memory before exposing its address. */
++	dma_sync(0, DMA_SIZE);
++	__builtin_arm_dsb(0xf);
++	changed = true;
++	nord2_ufs_write_reg(REG_IE, 0);
++	nord2_ufs_write_reg(REG_UTRLRSR, 0);
++	if (!nord2_ufs_wait(REG_UTRLRSR, 1, 0)) {
++		goto done;
++	}
++	nord2_ufs_write_reg(REG_UTRLBA, (uint32_t)su.dma_pa);
++	nord2_ufs_write_reg(REG_UTRLBAU, (uint32_t)(su.dma_pa >> 32));
++	nord2_ufs_write_reg(REG_UTRLRSR, 1);
++	if (ufs_rd(REG_UTRLBA) != (uint32_t)su.dma_pa ||
++	    ufs_rd(REG_UTRLBAU) != (uint32_t)(su.dma_pa >> 32) ||
++	    !nord2_ufs_wait(REG_UTRLRSR, 1, 1)) {
++		goto done;
++	}
++	printf("NORD2 UFS: request list accepted DMA=0x%llx\n", su.dma_pa);
++	static const uint8_t tur[6] = { 0 };
++	for (unsigned i = 0; i < 3; i++) {
++		error = ufs_scsi(tur, sizeof(tur), 0, false);
++		if (error != EIO) {
++			break;
++		}
++	}
++	if (error) {
++		goto done;
++	}
++	static const uint8_t capacity[10] = { 0x25 };
++	error = ufs_scsi(capacity, sizeof(capacity), 8, false);
++	if (error) {
++		goto done;
++	}
++	const uint8_t *b = (const uint8_t *)(su.dma + DMA_BOUNCE);
++	uint32_t last = nord2_ufs_be32(b), block_size = nord2_ufs_be32(b + 4);
++	printf("NORD2 UFS: LUN2 capacity blocks=%llu block_size=%u\n",
++	    (uint64_t)last + 1, block_size);
++	if (last == UINT32_MAX || last < 64 || block_size != UFS_BLOCK) {
++		error = EINVAL;
++		goto done;
++	}
++	error = nord2_ufs_probe_gpt((uint64_t)last + 1);
++done:
++	if (changed && !nord2_ufs_restore(&saved)) {
++		printf("NORD2 UFS: cannot safely restore host; manual reboot required\n");
++		/* Keep all DMA memory intact. Never chain into Android with active DMA. */
++		for (;;) {
++			__asm__ volatile("wfe");
++		}
++	}
++	if (changed) {
++		printf("NORD2 UFS: inherited request list and interrupts restored\n");
++	}
++	printf("NORD2 UFS: read probe result=%d\n", error);
++	nord2_stop_at(11, "after bounded UFS read probe");
++}
++#endif /* NORD2 */
++
+ static int
+ sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
+ {
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1867,6 +1867,10 @@
