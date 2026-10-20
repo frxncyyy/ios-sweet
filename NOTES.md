@@ -3,7 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **INPUT/OVERLAY IMAGE READY; EXACT BOOT AUTHORIZATION PENDING.**
+- **INPUT CORRECTION: local checks pass, full CI/image still pending.**
+  User confirms volume-down works; volume-up, power and touch do not.
+  First input boot d74b1b18…5a9e59f6 successfully runs iOS and reports GPIO155
+  press/release events. FT3518 ID is00:00/not ready; PMIC reads fail/status0.
+  Both inherited LK layers were disabled and first eight GUI presents done=1
+  in live logs; visual removal of the orange warning is not yet confirmed.
+  Evidence research/nord2/input-ui/hardware-live{,-late}/, flash.log.
+  Cause of PMIC failure identified in selected Android kernel source:
+  drivers/soc/mediatek/mtk-pmic-wrap_v1.c uses MT6885 PMIF SWINF2,
+  NOT the unused legacy WACS2 HAL. New read-only TOPSTATUS command0x2a uses
+  ACCc80/RDATAc94/VLD_CLRca4/STAca8, FSM bits1..3, INIT_DONE bit15.
+  Touch rail availability was unknown; corrected driver checks MT6360 PMU
+  ID0x34:0 and CRC-protected LDO2 on I2C5/GPIO202/203 address0x64.
+  Snapshots enable0x11/selector0x15, enables only VTP at board DT3.0V (0xaa),
+  preserves an already enabled3.0V rail, validates every write by readback.
+  Uses the vendor CRC8 polynomial07 protocol including dummy write byte.
+  Restores original voltage/enable before rescue; failures refuse Linux return.
+  All seven pin fields/four IES masks restored; other rails untouched.
+  Exact-C ASan/UBSan tests cover CRC, identity/write allowlist, inherited rail,
+  enable/readback/restore, failed-write restoration refusal, PMIF/transport
+  timeouts, report decoding/fuzz. Latest evidence research/nord2/input-power/.
+  Only first image flash was authorized; prepare verified next image and
+  request its exact boot-only approval. Phone remains in first input iOS.
+
+- **FIRST INPUT/OVERLAY IMAGE PROVENANCE (results above).**
   User now requests touchscreen and buttons, and reports LK orange warning
   remains over the UI. New opt-in nord2input=1 driver in sweet_touch.c reads
   FT3518 via GPIO204/205 software I2C, reset20/IRQ21; decodes Oplus x4 reports
@@ -35,10 +59,13 @@
   Linux, both DT representations and tested rescue RAMdisk are byte-exact.
   Private manifest.json,verify-image.py,image-build.log and guarded
   run-approved-boot.py --authorized-input-boot are prepared/syntax-checked.
-  Runner NOT EXECUTED; exact boot-only test authorization still required.
-  It will flash only boot, leave installed HFS in place, capture native USB,
-  retain the verified RAM ADB rescue fallback. Phone still runs GUI image
-  061333bb…23f8dca1. Touch/buttons/overlay are NOT hardware-validated yet.
+  User explicitly authorized this exact boot-only test and supplied fastboot.
+  Runner EXECUTED: flash boot and reboot both OKAY at2026-10-20 19:28:45CEST.
+  Installed HFS left in place; no partition except boot was flashed.
+  Native USB capture saved in hardware-live, client-hardware.log
+  and flash.log alongside. Do not rerun the exclusive runner/overwrite logs.
+  Verified RAM ADB rescue fallback remains authorized. Volume-down works;
+  touch/PMIC failed. See correction above; preserve this image and its logs.
   See shim/nord2-xnu/INPUT-LOG.md and research/nord2/input-ui/.
 
 - **MILESTONE: iOS 16.7.16 LOCKSCREEN ON ONEPLUS NORD 2, eight XNU cores.**
