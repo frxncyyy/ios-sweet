@@ -4,6 +4,36 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **PAUSED BY HUMAN — resume only on the next user request.**
+  Human: "possiamo mettere un po' in pausa? riprendiamo domattina".
+  All three Sol agents completed; no CI, image packing, USB capture or flashing
+  started after the working 3b2e live-x2 test. Phone remains working iOS with
+  lockscreen/touch/buttons. UFS and boot tuning explicitly closed by human;
+  preserve current behavior exactly. No new flash authorization pending.
+  Current boot: nord2-ios-ufs2-wifi-ap-stop23.img, SHA-256
+  3b2e7ecb2a8dfeecfda38615229aa6d9f5327a0ede2bfb6424ee355d14204434.
+  No active Wi-Fi implementation changes yet. Next Wi-Fi candidate is private:
+  research/nord2/wifi/next-stage/gate-bit13/. Minimal persistent AP mask
+  6000->2000 aligns selected Android; keep original outer power/wait unchanged.
+  Optional scoped-id-candidate now independently reviewed PASS in its
+  independent-review.json: common40 verified before GPIO180/reset/TOPSPI ID,
+  source clockdetect + timeout-IRQ prerequisite before semaphore11 acquisition,
+  bounded polls, reverse cleanup; uncertain command retains ownership/halt.
+  Candidate native SHA a31ccf2a206302f5d6bf0b90381c8d1bcb836b651bcb7005f24b23554cdff9ff;
+  adapter a44a904c3e6a1e1e938be3273e09d4b4dcbe3a22ae408c2cd90a0a5dbef6c75e;
+  whole touch 5984384f56d2c6b4bdf28ca181f530dafbd2121742f2e47a92650c1e521aa3b6.
+  Review explicitly records source resets clockdetector each retry+jitter;
+  candidate resets once then bounded polls, refusing if clocks unproven.
+  Independent real-value guard, 91 write-fault/lifecycle/clock-IRQ tests and
+  whole candidate ARM64 compile PASS. No network/RF/firmware execution yet.
+  Next after human resumes: integrate reviewed helpers under production names,
+  adapt tracked tests/default-off fixtures and mkpatch; verify unchanged UFS,
+  focused compile/tests, CI build, pack/review exact image and only then ask
+  boot-only authorization. New capture parser must use AP mask2000; preserve
+  old mask6000 evidence/parser. Keep current 3b2e image and tested ADB rescue
+  as manual recovery options; NEVER boot stock Android over iOS userdata.
+
+
 - **LIVE-X2 HARDWARE SUCCESS; USER CLOSES UFS / BOOT WORK FOR NOW.**
   Human confirms lockscreen and touch/buttons on 3b2e7ecb…14204434, then says
   "per quanto ufs e tempi di avvio va bene così, non serve altro per ora".
