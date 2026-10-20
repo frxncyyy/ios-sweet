@@ -16,10 +16,10 @@ ramoops pmsg log remain useful before USB starts.
 
 The user confirmed substantially faster startup after console optimization,
 skipping the missing RTC service wait and restoring the standard Display Zoom
-dimensions. The latest measured display-ownership marker is47.72 seconds
-from loader stage6; it is not an exact power-on-to-lockscreen measurement.
-UFS is currently G4, one lane in each direction, HS seriesB. About2GB of boot
-reads took7.31 aggregate command seconds with no errors in the latest report.
+dimensions. The latest measured display-ownership marker is 47.72 seconds
+from early XNU framebuffer initialization; it is not an exact power-on-to-lockscreen measurement.
+UFS is currently G4, one lane in each direction, HS seriesB. About 2 GB of boot
+reads took 7.31 aggregate command seconds with no errors in the latest report.
 Two-lane negotiation is still a diagnostic experiment. Wi-Fi power and four
 firmware files in RAM have been verified; firmware execution and networking
 are not working yet. See `WIFI-LOG.md` for the next initialization stages.
