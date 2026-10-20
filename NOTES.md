@@ -3,10 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **WI-FI SNAPSHOT PASSED; POWER/FASTLOG IMAGE VERIFIED, AWAITING AUTHORIZATION.**
+- **CONN POWER/ID/RESTORE PASSED; FASTLOG DISPLAY REGRESSION, FIX PREPARED.**
+  User authorized exact5d917ab1…5d773f06d boot-only test and supplied fastboot.
+  Flash/reboot both OKAY at21:39:18CEST. Power runner EXECUTED; never rerun
+  exclusive flash log. Phone now runs power/fastlog image; USB capture starts
+  under private wifi/power/hardware-live/. Radio stage3 ID20010101 cfg3
+  success=1/restored=1, all8 SMP PASS, FT3518/key initialization succeeds.
+  First-GUI ownership100.0895s since stage6; framebuffer58.4852s (58.43%),
+  scrolls0/pushes2343. This is NOT lockscreen timing: first3 presents done=0,
+  inherited-overlay removal absent. User confirms no lockscreen and lower
+  screen becomes noisy after about1s of boot logs (photo214007).
+  UMD interval65.8542->7.4368s; launchd early tasks72.8737->9.40794s.
+  Private initial evidence356955bytes SHA
+  870f85a886632abe9e38955a62d21bb7d93fd156467b0eac8c27bc3203e025a2.
+  Full capture still running; hardware-result.json marks display regression.
+  Verified fallback runner wifi/power/restore-working-ios.py prepared, NOT
+  executed; user asked to enter fastboot for already-authorized working-iOS
+  restoration. Preserve userdata; never normal Android.
+  Source defect found: old console push used W1C semantics for W0C INTSTA,
+  did not clear stale FRAME_DONE before START, and retriggered despite BUSY
+  timeout. Faster logging may expose this race; causality not yet isolated.
+  Sol correction now in sweet_early.c: proper W0C, no START when BUSY,10ms
+  idle/20ms completion deadlines plus hard iteration bounds; fast-mode10Hz
+  rate limit, default/panic unthrottled. Adds completion/timeout/skip counters.
+  Exact-C ASan/UBSan MMIO/time tests and local ARMv8.2 compile PASS; display
+  regression model updated for one-time GUI timing after lock release, PASS.
+  Patch0082 regenerated/exact reproduction PASS; full CI/image pending.
+  UFS maximum speed is UNVERIFIED; user asks to investigate. No UFS tuning
+  writes or benchmark claim. Sol is inspecting link settings/driver evidence.
+
+- **WI-FI SNAPSHOT PASSED; POWER/FASTLOG IMAGE PROVENANCE.**
   User authorized bf0ea8bb…ba34fa88; boot-only flash and reboot succeeded
   21:05:38CEST. Private wifi/snapshot/run-approved-boot.py EXECUTED; do not
-  rerun exclusive flash log. Phone now runs that snapshot image, not fd6d75ca.
+  rerun exclusive flash log. This snapshot has since been replaced by the authorized power/fastlog test.
   All24 PMIC reads succeeded; all8 cores PASS, FT3518/key initialization OK.
   Eight GUI presents done=1; user confirms lockscreen, touch and buttons work.
   CONN power=0x12, both status=0x10580e01 (CONN bit1 off), RC=0x401425.
@@ -24,7 +53,7 @@
   Preserves voltage settings, refuses non-cold/RC/1.3V state, restores only
   owned bits. Failed power-off/protection restoration retains rails and
   prevents Linux return. Exact-C ASan/UBSan fault tests and local C compile
-  PASS; input regression/fuzz PASS. Not yet hardware-tested/authorized.
+  PASS; input regression/fuzz PASS. Hardware test now running above.
   User additionally requests faster boot (5–6min) and explicitly requested
   Sol agent boot_speed completed sweet_early.c performance work: opt-in
   nord2fastlog=1 clears two circular console rows instead of copying31 rows,
@@ -56,8 +85,8 @@
   Independent unpack verifies original Linux, both DT representations and
   tested rescue RAMdisk byte-exact. Private wifi/power/{manifest.json,
   verify-image.py,image-build.log,run-approved-boot.py} prepared.
-  Guarded runner --authorized-wifi-power-fastlog-boot syntax-checked;
-  NOT EXECUTED. Request exact boot-only authorization and fastboot next.
+  Guarded runner --authorized-wifi-power-fastlog-boot EXECUTED after exact
+  user authorization; flash/reboot success recorded above.
   Capture uses5s timeout/5 retries; preserve current snapshot logs/baseline.
   Success requires power ID20010101/restored=1, GUI presents and working
   touch/buttons. Use raw NORD2 BOOT counters for measured console/elapsed

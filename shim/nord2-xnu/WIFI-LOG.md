@@ -1,5 +1,29 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-20: conninfra power probe passed; console/display regression
+
+Authorized power/fastlog image5d917ab1…5d773f06d flashed to boot and rebooted
+at21:39:18CEST. Native USB appeared at21:40:13. The probe reached stage3:
+HW ID20010101, configuration3, success1 and restored1. All8 SMP workers
+passed; FT3518 and PMIC keys initialized correctly. This proves guarded
+conninfra power/access/restoration; firmware/networking remain unimplemented.
+
+GUI ownership took100.0895s from stage6, including58.4852s framebuffer work,
+with zero scrolls and2343 pushes. Usermanagerd interval fell65.8542->7.4368s.
+However first3 presents failed (done0); user confirms lower-screen corruption
+and no lockscreen. Do not count this as a successful fast GUI boot. Private
+initial log/hardware-result under wifi/power/; capture continues. Known-good
+iOS fallback is already authorized; prepared restore runner awaits fastboot.
+
+Old console push clears INTSTA with the wrong W1C convention, unlike GUI
+refresh which correctly uses W0C, and starts even after a BUSY timeout.
+Faster rendering may expose the stale-DONE/retrigger defect. Sol prepared
+proper W0C/idle sequencing with bounded waits,10Hz fast-console throttling
+and completion/timeout/skip counters. Default/panic output stays unthrottled.
+Exact-C sanitizer tests, local compile and updated display regression pass;
+patch0082 reproduces source. Full CI/image/hardware validation pending.
+
+
 ## 2026-10-20: snapshot hardware success, cold power probe prepared
 
 The user authorized the exact snapshot image `bf0ea8bb…ba34fa88`. Boot-only

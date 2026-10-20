@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,709 @@
+@@ -1,16 +1,755 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -93,6 +93,9 @@
 +static uint32_t nord2_fastlog;
 +static uint64_t nord2_fb_begin_ticks, nord2_fb_draw_ticks;
 +static uint64_t nord2_fb_scrolls, nord2_fb_pushes;
++static uint64_t nord2_fb_completed, nord2_fb_busy_timeouts, nord2_fb_frame_timeouts;
++static uint64_t nord2_fb_throttle_skips, nord2_fb_last_push;
++static bool nord2_fb_have_push;
 +static uint32_t nord2_gui_owned;
 +static void nord2_stream_init(void);
 +static unsigned int nord2_fb_row, nord2_fb_col;
@@ -289,32 +292,74 @@
 +	}
 +}
 +
-+/*
-+ * One frame per line, exactly as the command-mode panel needs it: bounded
-+ * waits only, so a misbehaving engine can never turn the log into a hang.
++/* Register helpers keep the production transaction testable with MMIO mocks. */
++static uint32_t
++nord2_fb_reg_read(uintptr_t pa)
++{
++	return *(volatile uint32_t *)nord2_phys(pa);
++}
++
++static void
++nord2_fb_reg_write(uintptr_t pa, uint32_t value)
++{
++	*(volatile uint32_t *)nord2_phys(pa) = value;
++}
++
++/* Command-mode console updates. Fast logging sends at most ten frames/second;
++ * default and panic output remain unthrottled. Polls have both counter deadlines
++ * and iteration ceilings, so even an early/stalled timer cannot hang logging.
++ * MT6893 INTSTA is W0C: clear only FRAME_DONE before starting and after completion.
 + */
 +static void
 +nord2_fb_push(void)
 +{
++	uint64_t freq = __builtin_arm_rsr64("CNTFRQ_EL0");
++	uint64_t now = __builtin_arm_rsr64("CNTVCT_EL0");
++	if (nord2_fastlog && !panic_active() && nord2_fb_have_push && freq &&
++	    now - nord2_fb_last_push < (freq + 9) / 10) {
++		nord2_fb_throttle_skips++;
++		return;
++	}
 +	nord2_fb_pushes++;
-+	volatile uint32_t *dsi = (volatile uint32_t *)nord2_phys(NORD2_DSI0);
-+	volatile uint32_t *mtx = (volatile uint32_t *)nord2_phys(NORD2_DISP_MUTEX);
-+
-+	for (unsigned int i = 0; i < 100000; i++) {
-+		if (!(dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_BUSY)) {
++	nord2_fb_last_push = now;
++	nord2_fb_have_push = true;
++	/* Refuse a transaction without a usable bounded time base. */
++	if (!freq) {
++		nord2_fb_busy_timeouts++;
++		return;
++	}
++	uint64_t begin = now;
++	bool idle = false;
++	for (unsigned int i = 0; i < 1000000; i++) {
++		if (!(nord2_fb_reg_read(NORD2_DSI0 + NORD2_DSI_INTSTA) & NORD2_DSI_BUSY)) {
++			idle = true;
++			break;
++		}
++		if (__builtin_arm_rsr64("CNTVCT_EL0") - begin >= (freq + 99) / 100) {
 +			break;
 +		}
 +	}
-+	mtx[NORD2_MUTEX_EN0 / 4] = 1;
-+	dsi[NORD2_DSI_START / 4] = 0;
-+	__asm__ volatile("dsb sy" ::: "memory");
-+	dsi[NORD2_DSI_START / 4] = 1;
-+	for (unsigned int i = 0; i < 200000; i++) {
-+		if (dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_FRAME_DONE) {
++	if (!idle) {
++		nord2_fb_busy_timeouts++;
++		return; /* Never retrigger START while the inherited transfer is busy. */
++	}
++	nord2_fb_reg_write(NORD2_DSI0 + NORD2_DSI_INTSTA, ~NORD2_DSI_FRAME_DONE);
++	nord2_fb_reg_write(NORD2_DISP_MUTEX + NORD2_MUTEX_EN0, 1);
++	nord2_fb_reg_write(NORD2_DSI0 + NORD2_DSI_START, 0);
++	__builtin_arm_dsb(0xf);
++	nord2_fb_reg_write(NORD2_DSI0 + NORD2_DSI_START, 1);
++	begin = __builtin_arm_rsr64("CNTVCT_EL0");
++	for (unsigned int i = 0; i < 1000000; i++) {
++		if (nord2_fb_reg_read(NORD2_DSI0 + NORD2_DSI_INTSTA) & NORD2_DSI_FRAME_DONE) {
++			nord2_fb_reg_write(NORD2_DSI0 + NORD2_DSI_INTSTA, ~NORD2_DSI_FRAME_DONE);
++			nord2_fb_completed++;
++			return;
++		}
++		if (__builtin_arm_rsr64("CNTVCT_EL0") - begin >= (freq + 49) / 50) {
 +			break;
 +		}
 +	}
-+	dsi[NORD2_DSI_INTSTA / 4] = NORD2_DSI_FRAME_DONE;
++	nord2_fb_frame_timeouts++;
 +}
 +
 +static void
@@ -613,10 +658,11 @@
 +	if (first) {
 +		/* GUI owns pixels now, so reporting cannot recursively draw. Raw
 +		 * counter deltas exclude USB capture/drain time and need no clock epoch. */
-+		printf("NORD2 BOOT: first-GUI fastlog=%u elapsed_ticks=%llu fb_ticks=%llu freq=%llu scrolls=%llu pushes=%llu\n",
++		printf("NORD2 BOOT: first-GUI fastlog=%u elapsed_ticks=%llu fb_ticks=%llu freq=%llu scrolls=%llu pushes=%llu completed=%llu busy_timeouts=%llu frame_timeouts=%llu throttle_skips=%llu\n",
 +		    nord2_fastlog, __builtin_arm_rsr64("CNTVCT_EL0") - nord2_fb_begin_ticks,
 +		    nord2_fb_draw_ticks, __builtin_arm_rsr64("CNTFRQ_EL0"),
-+		    nord2_fb_scrolls, nord2_fb_pushes);
++		    nord2_fb_scrolls, nord2_fb_pushes, nord2_fb_completed,
++		    nord2_fb_busy_timeouts, nord2_fb_frame_timeouts, nord2_fb_throttle_skips);
 +	}
 +	return ok;
 +}
@@ -715,7 +761,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +716,7 @@
+@@ -23,6 +762,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -723,7 +769,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +732,32 @@
+@@ -38,10 +778,32 @@
  		}
  	}
  }
@@ -756,7 +802,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +792,7 @@
+@@ -76,6 +838,7 @@
  		}
  	}
  	early_col++;
@@ -764,7 +810,7 @@
  }
  
  static void
-@@ -86,9 +803,177 @@
+@@ -86,9 +849,177 @@
  	}
  }
  
@@ -942,7 +988,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +992,36 @@
+@@ -107,11 +1038,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -979,7 +1025,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +1033,10 @@
+@@ -123,8 +1079,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -990,7 +1036,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +1045,975 @@
+@@ -133,11 +1091,975 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
