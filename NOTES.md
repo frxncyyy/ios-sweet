@@ -3,48 +3,55 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT WORK: prepare point22, first Apple iOS userland attempt from UFS.**
-  Point21 passed; continue toward original full-iOS objective. No userdata
-  write has occurred. User permits deleting Android data, but exact install
-  and point22 boot still need the destructive-step confirmation.
-  Mode22 now requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=0,rootrw=0
-  at SMP startup; all8 scheduler PASS required before USB and UFS takeover.
-  Reuses tested CPU0 USB thread/45-second bound and coordinated shutdown.
-  UFS22 forces read-only even if its write flag is requested and refuses
-  initialization without SMP readiness. Other modes retain their guards.
-  First attempt intentionally reads the complete Apple filesystem but does
-  not allow iOS filesystem writes; this may stop launchd/services requiring
-  writable /private/var. Purpose: observe actual dyld/launchd execution and
-  first failure over live USB before enabling writes.
-  Local three-C-file compilation and exact-source SMP/USB/UFS host tests
-  PASS, including wrong partition, missing/truncated config, wrong CPU
-  count/write flags, UFS pre-MMIO denial and forced read-only. RCpc2 clean.
-  Patch applies and matches source. Full CI39446150677 PASSED/sourcec992fd5:
+- **CURRENT WORK: point23, direct full Apple iOS userland boot.**
+  User requests going directly to userland; confirmed the transient ADB loss
+  was an accidentally moved fragile cable. ADB root RAM rescue is back.
+  Point21 remains installed; userdata still untouched. Actual read-only
+  installer preflight PASSED, exact userdata geometry/no block mounts/root
+  rescue marker/backups and full16GiB image SHA verified. Evidence:
+  research/nord2/ios-userland/install-preflight/result.json and
+  install-preflight-cable-stable.log. No write requested or started.
+  User already permits erasing Android data. Prepare/freeze the exact root+
+  point23 boot artifacts before requesting the final destructive-step approval.
+  Point23 requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=1,rootrw=1;
+  all8 scheduler PASS still precedes USB and UFS takeover. Existing bounded
+  partition writes are enabled for this mode; full iOS needs writable /var.
+  CPU0 USB polling is continuous ONLY for background mode23; diagnostic
+  modes16/21/22 retain45 seconds. No forced return after45 seconds. Panic
+  retains all-secondary-OFF, USB/UFS restore, and RAM ADB rescue fallback.
+  Console transport remains EP0 vendor IN, first65524 log bytes (saturating),
+  not an unlimited stream or filesystem-transfer interface. ADB is used to
+  install the16GiB root, then full boot proceeds directly to Apple launchd.
+  No Apple launchd or hardware UFS writes have yet been tested on Nord2.
+  Local three-C-file generic ARMv8.2 compilation PASSED. Exact-source host
+  checks PASS: point23 config rejection, all8 readiness before USB/UFS MMIO,
+  WRITE10 direction/LUN/first+last userdata block and out-of-range rejection,
+  mode22 remains forced RO, continuous mode23 versus bounded diagnostics,
+  CPU0 migration and existing coordinated shutdown. Full CI/build pending.
+  Evidence research/nord2/ios-userland-rw/. Keep prior frozen images intact.
+  tools/nord2-install-root.py defaults to READ-ONLY preflight; --write-userdata
+  streams only the16GiB prefix through dd (nocreat,notrunc,fsync), then hashes
+  the complete prefix on-device. No GPT edits, reboot or boot flash in this
+  installer. Partial writes are recorded; never continue to boot after a
+  failed transfer/readback. Root16GiB SHA-256:
+  `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
+  After userdata becomes HFS, fallback is the tested ADB rescue boot, NOT
+  normal Android boot. Original boot/recovery backups stay for reinstall.
+
+- **Point22 prepared and frozen, SUPERSEDED by user request; never flashed.**
+  Full CI39446150677 PASSED/sourcec992fd5:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39446150677
   Kernel17263080B SHA-256
   `8a610dcca545a8c5d96b2ea8fd73dd396c99e5cb8086af59ac1dc59e55c9c5d9`;
-  downloaded checksum verified; all1097 captured SWEET compile commands use
-  generic ARMv8.2+crypto. Linked stop22 config and UFS write-flag/readiness
-  checks inspected: forced zero write flag/readiness precede MMIO mapping.
-  Candidate compression in progress; next freeze/verify it and request exact
-  installation+boot authorization.
-  tools/nord2-install-root.py defaults to READ-ONLY preflight, pins this
-  image size/hash, verifies original/rescue backups, root rescue marker,
-  exact userdata path/start/size and absence of any block/data mount.
-  Explicit --write-userdata streams only the16GiB prefix through shell-v2
-  dd (nocreat,notrunc,fsync), then hashes the complete prefix on-device.
-  No reboot/boot flash/GPT writes. Failed/partial writes remain recorded as
-  started but incomplete, and readback mismatch is never marked verified.
-  tools/nord2-check-install.py passes with a fake local ADB: default no-write,
-  binary stream integrity, wrong geometry/mount/device/image refusal,
-  partial-write and corrupt-readback failures. Real preflight initially
-  found the phone back in fastboot; rebooted the existing point21 image
-  without flashing to regain ADB rescue, then retry preflight only.
-  Root16GiB SHA reverified:
-  `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
-  Evidence research/nord2/ios-userland/. After userdata becomes HFS, fallback
-  is the tested ADB rescue boot, NOT normal Android boot (Android data will
-  be gone). Keep original boot/recovery backups for later Android reinstall.
+  checksum verified, all1097 captured commands generic ARMv8.2+crypto;
+  RCpc2 scan and linked config/readiness/write-flag checks passed.
+  Frozen shim/out/nord2-xnu/nord2-ios-readonly-stop22.img,33542144B,
+  SHA-256 `9ad9b5384b4f980b6cebe1f5d830d8bb78d20b3f1f4e56345d28a31bf754f3a8`.
+  Payload SHA `a2881f651b39845f4c5dd4171ed526a6c7ce0ca4161bb6c490f7d0718ade6ddd`.
+  Both DT representations/original Linux/tested rescue RAMdisk byte-exact;
+  static checks passed. cpus8,read-only userdata,45-second USB. No exact
+  flash authorization requested; do NOT run this additional RO test now.
+  Evidence research/nord2/ios-userland/{manifest.json,payload.bin,image-build.log}.
 
 - **CURRENT RESULT: point21 eight-core XNU + native USB + RAM PID1 PASSED.**
   Exact authorized imagec5ce4445…f368e86a flashed only to boot; returned to

@@ -57,7 +57,7 @@ static volatile uint32_t nord2_kernel_smp_active;
 static uint32_t nord2_console_owner, nord2_console_dropped;
 static unsigned core, requested, stop_point;
 static const char *root_arg, *part_arg;
-static int write_flags;
+static int write_flags, root_flags;
 static int32_t affinity[8], off_rc;
 static unsigned signals[8], signal_count, affinity_calls, clean_count;
 static unsigned timer_disabled, masked, acknowledged, off_called, returned;
@@ -115,7 +115,8 @@ static void PE_parse_boot_argn(const char *s,void *p,size_t len) {
     if (!strcmp(s,"rd") || !strcmp(s,"ufsroot")) { assert(len==16); strncpy(p,!strcmp(s,"rd")?root_arg:part_arg,len); return; }
     assert(len==sizeof(unsigned));
     if (!strcmp(s,"cpus")) *(unsigned*)p=requested;
-    else if (!strcmp(s,"ufsrw") || !strcmp(s,"rootrw")) *(int*)p=write_flags;
+    else if (!strcmp(s,"ufsrw")) *(int*)p=write_flags;
+    else if (!strcmp(s,"rootrw")) *(int*)p=root_flags == -999 ? write_flags : root_flags;
     else { assert(!strcmp(s,"nord2stopat")); *(unsigned*)p=stop_point; }
 }
 static void __attribute__((noreturn)) panic(const char *fmt,...) { (void)fmt; escape(2); }
@@ -127,7 +128,7 @@ cases = r'''
 static void reset(void) {
     nord2_kernel_smp_active=0; nord2_smp_stop_requested=0; core=0;
     requested=2; stop_point=20; off_rc=-3; now=0; transition=0;
-    root_arg="md0"; part_arg="userdata"; write_flags=0; nord2_smp_userland_passed=0;
+    root_arg="md0"; part_arg="userdata"; write_flags=0; root_flags=-999; nord2_smp_userland_passed=0;
     nord2_console_owner=nord2_console_dropped=0;
     signal_count=affinity_calls=clean_count=timer_disabled=masked=acknowledged=off_called=returned=0;
     memset(nord2_smp_off_error,0,sizeof(nord2_smp_off_error));
@@ -185,6 +186,24 @@ int main(void) {
         if (mode==4) part_arg="userdataxxxxxxxxxxxxx";
         if (mode==5) write_flags=1;
         if (mode==6) write_flags=-1;
+        if (!setjmp(jump)) { nord2_smp_start_prepare(1); assert(false); }
+        assert(!nord2_kernel_smp_active);
+    }
+    reset(); requested=8; stop_point=23; root_arg="ufsroot0"; write_flags=1;
+    nord2_smp_start_prepare(1); assert(nord2_kernel_smp_active);
+    for (unsigned mode=0;mode<11;mode++) {
+        reset(); requested=8; stop_point=23; root_arg="ufsroot0"; write_flags=1;
+        if (mode==0) requested=4;
+        if (mode==1) root_arg="md0";
+        if (mode==2) part_arg="boot";
+        if (mode==3) part_arg="";
+        if (mode==4) part_arg="userdataxxxxxxxxxxxxx";
+        if (mode==5) write_flags=0;
+        if (mode==6) write_flags=-1;
+        if (mode==7) write_flags=2;
+        if (mode==8) root_arg="ufsroot0xxxxxxxxxxxxx";
+        if (mode==9) root_flags=0;
+        if (mode==10) root_flags=-1;
         if (!setjmp(jump)) { nord2_smp_start_prepare(1); assert(false); }
         assert(!nord2_kernel_smp_active);
     }

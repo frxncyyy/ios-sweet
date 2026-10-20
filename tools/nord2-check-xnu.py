@@ -299,6 +299,21 @@ class Checker:
                        [a for a in args if a.startswith('ufsroot=')] == ['ufsroot=userdata'] and
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
+        if 'nord2stopat=23' in args:
+            self.check('point 23 gates writable iOS on all8 SMP and continuous CPU0 USB',
+                       b'NORD2 SMP: all8 passed; continuing to USB and writable iOS root' in kernel and
+                       b'NORD2 UFS: all8 SMP pass required before iOS root' in kernel and
+                       b'NORD2 USB: native console continuous; EP0 PIO, no DMA' in kernel and
+                       b'NORD2 USB: service bound to CPU0' in kernel and
+                       b'NORD2 SMP: XNU secondaries all OFF; CPU0 return permitted' in kernel and
+                       b'NORD2 USB: controller restored before kernel return' in kernel and
+                       b'NORD2 UFS: root host restored before kernel return' in kernel)
+            self.check('point 23 selects only userdata with explicit write enable',
+                       [a for a in args if a.startswith('cpus=')] == ['cpus=8'] and
+                       [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
+                       [a for a in args if a.startswith('ufsroot=')] == ['ufsroot=userdata'] and
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=1'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=1'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

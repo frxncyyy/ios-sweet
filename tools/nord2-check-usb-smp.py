@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the exact background USB thread's CPU binding and bounded exit."""
+"""Check the exact background USB thread's CPU binding, deadlines and guarded exit."""
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +17,10 @@ assert leave.index('nord2_kernel_smp_prepare_return()') < leave.index('nord2_usb
 assert 'if (usb_restored < 0)' in leave
 body = usb.split('static void\nnusb_background_thread(', 1)[1].split(
     '#else /* Qualcomm', 1)[0]
-code = 'static void\nnusb_background_thread(' + body
+code = 'static bool\nnusb_poll_continue(' + usb.split(
+    'static bool\nnusb_poll_continue(', 1)[1].split('static void\nnord2_usb_enumerate(', 1)[0]
+code += 'static void\nnusb_background_thread(' + body
+assert 'while (nusb_poll_continue(background, nusb_background_stop,' in usb
 model = r'''
 #include <assert.h>
 #include <stdint.h>
@@ -49,7 +52,7 @@ static void nord2_usb_enumerate(vm_offset_t mac,bool phy,bool bg) {
     polls++; nusb_background_state=1;
 }
 static void nord2_stop_at(unsigned stop,const char *label) {
-    assert(stop==nusb_background_stop && (stop==16 || stop==21 || stop==22) && label);
+    assert(stop==nusb_background_stop && (stop==16 || stop==21 || stop==22 || stop==23) && label);
     assert(core==0 && nusb_background_state==2 && polls==1);
     longjmp(escape,1);
 }
@@ -58,7 +61,12 @@ static int thread_terminate(void *p) { (void)p; assert(false); return 0; }
 '''
 cases = r'''
 int main(void) {
-    for(unsigned start=0;start<8;start++) for(unsigned i=0;i<3;i++) {
+    for (unsigned stop=0;stop<25;stop++) for (unsigned bg=0;bg<2;bg++) {
+        assert(nusb_poll_continue(bg,stop,44,45));
+        assert(nusb_poll_continue(bg,stop,45,45)==(bg && stop==23));
+        assert(nusb_poll_continue(bg,stop,UINT64_MAX,45)==(bg && stop==23));
+    }
+    for(unsigned start=0;start<8;start++) for(unsigned i=0;i<4;i++) {
         core=start; binding=polls=blocks=nusb_background_state=0;
         wrong_migration=false; nusb_background_stop=i?20+i:16;
         int result=setjmp(escape);
@@ -70,7 +78,7 @@ int main(void) {
     if (!result) nusb_background_thread((void*)0x1000,0);
     assert(result==2 && !polls && !nusb_background_state);
     puts("PASS: USB service migrates to CPU0 before MMIO from all8 CPUs;"
-         " migration failure refuses MMIO; bounded mode16/21/22 exit;"
+         " migration failure refuses MMIO; bounded modes16/21/22; mode23 continuous only in background; setup-failure exit;"
          " SMP shutdown precedes guarded USB cleanup");
 }
 '''

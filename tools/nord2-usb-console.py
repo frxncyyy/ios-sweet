@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read the bounded native XNU USB diagnostic console using system libusb.
+"""Read the native XNU USB console (first 65524 log bytes) using system libusb.
 
 Usage: nord2-usb-console.py OUTPUT_DIRECTORY [--wait SECONDS]
 Selects product "Nord2 XNU console", never the Android ADB recovery interface.
@@ -127,11 +127,14 @@ try:
             break
         if not chunk:
             time.sleep(0.25)
-    if b'NORD2 USB: native console for 45 seconds' not in log:
+    if not any(marker in log for marker in (
+            b'NORD2 USB: native console for 45 seconds',
+            b'NORD2 USB: native console continuous')):
         raise SystemExit('USB answered, but the current native-console boot marker is missing')
     result = dict(native_usb=True, log_bytes=len(log),
                   log_sha256=hashlib.sha256(log).hexdigest(),
-                  status_samples=samples, userdata_commands_sent=False)
+                  status_samples=samples, userdata_commands_sent=False,
+                  log_capacity_reached=len(log) == 65524)
     (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f'Saved {len(log)} bytes of XNU log over native USB.', flush=True)
 finally:
