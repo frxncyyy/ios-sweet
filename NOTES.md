@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **Next candidate: point20 real XNU SMP with cpus=2, preparing.**
+- **Next candidates: point20 real XNU SMP with cpus=2/4/8, READY; awaiting batch authorization.**
   Point19 proved all7 firmware entries/shutdowns, including high PA, but no
   secondary XNU scheduler execution yet. Now arm SMP return from cpu_start()
   immediately before PE_cpu_start(); accept only stop20 and cpus2/4/8.
@@ -35,11 +35,37 @@
   concurrent8-thread writes; prior PSCI probe regression tests pass.
   Patch applies cleanly and matches sources. Evidence research/nord2/smp/xnu2;
   kernel 21964208 bytes SHA-256 `828661510ad5a7eb92095f2fef6e46ae9bfbb5aabf80c93dd07b7dcb039f5c60`.
-  Image `shim/out/nord2-xnu/nord2-smp-xnu2-stop20.img` is being packed;
-  not authorized/flashed. Initial unfinished compression was canceled to
-  remove printf from failure diagnostics; no candidate image existed then.
-  Next validate packed layout, original Linux/DT/rescue bytes, exact hash;
-  dispatch full Apple-clang CI and request new exact boot-image authorization.
+  Three frozen images, each33316864B, all static checks PASS:
+  - `shim/out/nord2-xnu/nord2-smp-xnu2-stop20.img`
+    SHA-256 `806c8cb82a4909b78a5f57947bc5e302fedbef7c85bbf758ae88007f8ad9eaf0`;
+    payload `fb88343dc504a438ba58b64580c3f7001402dea4bf163bfe0c43e0bd36e3a466`.
+  - `shim/out/nord2-xnu/nord2-smp-xnu4-stop20.img`
+    SHA-256 `26f16a77aaa50cb1a92d431dc0193fbb6a4e4b823cbd3aa35f65c8e89c295894`;
+    payload `1e0e7cfd4105f6389c98c9855b32c638f10479d7b19ca4c28d5f34e6af287eb1`.
+  - `shim/out/nord2-xnu/nord2-smp-xnu8-stop20.img`
+    SHA-256 `b34dc4a45ad4b6616d14ebe3c5829d433617c456bfdc348ad1a4f4ac6ed2f59d`;
+    payload `4b44378b372f256a9ddb64736a1b938395f799f0e0186b73ba16127078230c21`.
+  Original Linux kernel and both DT representations match original backup;
+  rescue ramdisk matches tested image byte-for-byte. Decoded payloads differ
+  ONLY in the single cpus=2/4/8 argument byte. No root mount/disk-write flags.
+  Verification manifests and extracted payloads under research/nord2/smp/xnu2.
+  Initial unfinished compression was canceled before any candidate existed
+  to remove printf from shutdown failure diagnostics; these are final images.
+  Linked disassembly confirms MMU/DAIF console guards and coordinated shutdown
+  before USB cleanup (static prepare_return was inlined into nord2_leave_to).
+  Source9b881eb pushed; full Apple-clang CI running:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39422376218
+  Wait for successful CI before the next flash. Request ONE authorization
+  listing all3 exact images and conditional2→4→8 order. None authorized yet.
+  For each: verify device/product/boot size/hash/backup, flash boot only,
+  reboot, immediately run tools/nord2-pull-logs.sh --rescue smp-xnuN-stop20.
+  Require scheduler result N/N, counter=N*4096, PASS=1, per-core ticks and
+  correct IPI replies, all-secondary-OFF marker, and verified root rescue
+  before advancing. Stop at first failure. Original Android boot restore is
+  included in requested authorization if rescue fails; manual fastboot may
+  be needed. Phone already fastboot. Between successful tests, ask only for
+  manual fastboot (not renewed permission if all3 were explicitly approved).
+
 
 - **CURRENT DEVICE: point19 PASSED low+high, all7 secondaries; ADB rescue returned.**
   This follows the observed point18 context_id=0. Only mode19 treats context
