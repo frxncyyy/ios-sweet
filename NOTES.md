@@ -4,6 +4,43 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **LIVE-X2 HARDWARE SUCCESS; USER CLOSES UFS / BOOT WORK FOR NOW.**
+  Human confirms lockscreen and touch/buttons on 3b2e7ecb…14204434, then says
+  "per quanto ufs e tempi di avvio va bene così, non serve altro per ora".
+  Preserve this working two-lane UFS / boot behavior exactly; focus Wi-Fi.
+  Authorized runner EXECUTED, never rerun. Flash and reboot passed; native
+  USB 180 s exit0. Final 237,321 B log SHA-256
+  7f49789768a30441a1413849ba63f2d2bfa54721d1fe023c533958af1489e42a.
+  Live proof phase5, active/root1/handoff0, 60 commands / 18 SET / 2 reads,
+  no rollback; retained x2 verified. No UFS errors/timeouts or runtime panic
+  in final capture. Human GUI/input confirmation separate from timed evidence.
+  First ownership 48.425269 s vs previous 47.672765 s; unequal workloads and
+  no demonstrated boot gain. Final private ufs-cost-comparison.{json,md} and
+  hardware-report-final.json verify capture bytes/hash and preserve limits.
+  Wi-Fi AP gate failure precisely identified: owner_ok1ff/owner_fail0,
+  valid1f/failed4, prot=e70c500e => status bit14 set. RX/host raw zero UNREAD.
+  Outer power stage3/ID20010101/cfg3 success1/restored1; no common40 writes.
+  Selected Android POS intentionally disables bit14 release-ACK check;
+  persistent readability tests bit13 plus bank2 bit2. Three source audits
+  agree minimal persistent mask6000->2000 is justified; leave power sequence
+  and all other guards intact. Sol Wi-Fi agent prepares private correction
+  and assesses existing scoped CHIP_ID stage integration; no new active edits
+  yet, no extra force-wake workaround. Any next image requires exact approval.
+  Current phone remains working 3b2e iOS, capture ended, no USB client active.
+  Conditional recovery for current authorized test remains permitted through
+  physical fastboot/rescue or prior 2e4f image; do not boot stock Android.
+
+
+- **LIVE-X2 / AP TEST AUTHORIZED; RUNNER STARTING NOW.**
+  Human: "Autorizzo, pronto in fastboot" for exact 3b2e7ecb…14204434.
+  Private authorization.json records boot-only scope and conditional rescue /
+  current 2e4f iOS restore. Parent owns USB. Run the prepared runner once;
+  never rerun after flash.log exists. Capture 180 s, parse live proof plus AP
+  failure evidence and UFS costs. Permanent Linux-return block means failure
+  recovery requires physical reset/fastboot. No duplicate permission needed
+  for the already-authorized conditional rescue/current-image restoration.
+
+
 - **NEW LIVE-X2 / WI-FI AP IMAGE VERIFIED; AWAIT EXACT FLASH AUTHORIZATION.**
   `shim/out/nord2-xnu/nord2-ios-ufs2-wifi-ap-stop23.img`, 33,277,952 B;
   SHA-256 3b2e7ecb2a8dfeecfda38615229aa6d9f5327a0ede2bfb6424ee355d14204434.
