@@ -43,7 +43,8 @@ if s.get('geometry'): answers['cat /sys/class/block/sdc57/start']='0'
 if s.get('mounted'): answers['cat /proc/mounts']='/dev/block/dm-13 /data f2fs rw 0 0'
 if s.get('wrong_device'): answers['readlink -f /dev/block/by-name/userdata']='/dev/block/sdc1'
 if cmd in answers: print(answers[cmd])
-elif cmd=='dd of=/dev/block/by-name/userdata bs=1048576 conv=nocreat,notrunc,fsync status=none':
+elif cmd=='test -b /dev/block/by-name/userdata && test "$(readlink -f /dev/block/by-name/userdata)" = /dev/block/sdc57 && dd of=/dev/block/by-name/userdata bs=1048576 conv=notrunc,fsync status=none':
+ if s.get('changed_before_write'): sys.exit(1)
  data=sys.stdin.buffer.read()
  (b/'target').write_bytes(data[:100] if s.get('write_error') else data)
  if s.get('write_error'): sys.exit(1)
@@ -82,6 +83,9 @@ else: raise RuntimeError('unexpected command: '+cmd)
     for bad in ("geometry", "mounted", "wrong_device"):
         _, commands = run(bad, {bad: True}, ["--write-userdata"], True)
         assert "dd of=" not in commands and (base / "target").read_bytes() == b"unchanged"
+    out, _ = run("changed-before-write", {"changed_before_write": True}, ["--write-userdata"], True)
+    assert (base / "target").read_bytes() == b"unchanged"
+    assert not json.loads((out / "result.json").read_text())["userdata_write_completed"]
     out, _ = run("corrupt", {"corrupt": True}, ["--write-userdata"], True)
     assert not json.loads((out / "result.json").read_text())["full_readback_verified"]
     out, commands = run("write-error", {"write_error": True}, ["--write-userdata"], True)

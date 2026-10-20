@@ -67,9 +67,12 @@ def preflight(adb, serial):
 
 def write_root(adb, serial, file, output):
     # No dd count: a pipe may produce short reads. EOF is the exact verified
-    # image end. nocreat/notrunc prevent creating a wrong path or truncation.
-    command = (f"dd of={BY_NAME} bs=1048576 "
-               "conv=nocreat,notrunc,fsync status=none")
+    # image end. This rescue advertises nocreat but rejects it at runtime.
+    # Repeat the block-node/identity guards in the same shell before opening
+    # it; notrunc/fsync were verified on a harmless RAM file in this rescue.
+    command = (f'test -b {BY_NAME} && '
+               f'test "$(readlink -f {BY_NAME})" = {DEVICE} && '
+               f'dd of={BY_NAME} bs=1048576 conv=notrunc,fsync status=none')
     file.seek(0)
     with (output / "write.stdout").open("xb") as stdout, \
          (output / "write.stderr").open("xb") as stderr:

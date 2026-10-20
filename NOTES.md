@@ -6,13 +6,26 @@
 - **CURRENT WORK: point23, direct full Apple iOS userland boot.**
   User requests going directly to userland; confirmed the transient ADB loss
   was an accidentally moved fragile cable. ADB root RAM rescue is back.
+  User then explicitly requested a Sol subagent to FLASH THE FILESYSTEM now;
+  this authorizes installing the frozen16GiB root into existing userdata.
+  Delegated transfer+full readback to /root/install_ios_root (gpt-6.1-sol).
+  Exact point23 boot-flash approval still pending artifact verification.
+  First installer attempt failed before transfer: rescue Toybox advertises
+  conv=nocreat but rejects it (even alone). No image readback completed.
+  Preserved install/{result.json,write.stderr,dd-runtime-probes.txt,
+  dd-ram-probe.txt}; started=true is conservative, completed=false.
+  Runtime RAM-only check proved conv=notrunc,fsync works and preserves tail.
+  Installer corrected to use it after same-shell test -b/readlink identity
+  guards. Fake-ADB checks include an identity failure just before opening.
+  Retry will use new private install-retry/ evidence; no reboot/mount/boot
+  changes until full SHA readback is verified. ADB remained root rescue.
   Point21 remains installed; userdata still untouched. Actual read-only
   installer preflight PASSED, exact userdata geometry/no block mounts/root
   rescue marker/backups and full16GiB image SHA verified. Evidence:
   research/nord2/ios-userland/install-preflight/result.json and
   install-preflight-cable-stable.log. No write requested or started.
-  User already permits erasing Android data. Prepare/freeze the exact root+
-  point23 boot artifacts before requesting the final destructive-step approval.
+  Filesystem installation is now explicitly authorized as above. Prepare/freeze
+  point23 boot before requesting that remaining destructive-step approval.
   Point23 requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=1,rootrw=1;
   all8 scheduler PASS still precedes USB and UFS takeover. Existing bounded
   partition writes are enabled for this mode; full iOS needs writable /var.
@@ -27,10 +40,12 @@
   checks PASS: point23 config rejection, all8 readiness before USB/UFS MMIO,
   WRITE10 direction/LUN/first+last userdata block and out-of-range rejection,
   mode22 remains forced RO, continuous mode23 versus bounded diagnostics,
-  CPU0 migration and existing coordinated shutdown. Full CI/build pending.
+  CPU0 migration and existing coordinated shutdown. Exact strategy test also
+  passes partial4K read/modify/write, multi-bounce I/O,500 varied cases and
+  refusal of overflow/RO/read failure. Full CI39450476117/source4e3f651 pending.
   Evidence research/nord2/ios-userland-rw/. Keep prior frozen images intact.
   tools/nord2-install-root.py defaults to READ-ONLY preflight; --write-userdata
-  streams only the16GiB prefix through dd (nocreat,notrunc,fsync), then hashes
+  streams only the16GiB prefix through dd (notrunc,fsync; live block-node and identity guards), then hashes
   the complete prefix on-device. No GPT edits, reboot or boot flash in this
   installer. Partial writes are recorded; never continue to boot after a
   failed transfer/readback. Root16GiB SHA-256:
