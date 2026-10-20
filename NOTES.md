@@ -10,7 +10,8 @@
   and UFS mutex release. Allocates about1.4MiB with Z_NOPAGEWAIT, validates
   four files, logs metadata/timing, wipes/frees and terminates. No EMI/CPU/RF
   writes. API/loader/probe sanitizer tests, three local C compiles and peer
-  review PASS; backup GPT fixture caveat remains. Full CI not dispatched yet.
+  review PASS; backup GPT fixture caveat remains. Full CI39490076167/sourcee3a9afa dispatched/running.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39490076167
   Display source/model proves first ownership failure consumed fDirty: now
   restore dirty under fLock without replacing any newer pending record;
   timer cadence retries. Bounded nord2fbdiag=1 reports eight swap records
@@ -22,7 +23,17 @@
   research/nord2/{ufs-vendor,fb-diagnostics,wifi/kernel-extraction}/.
   Profile-only CI39488497958/source242e41f PASSED (separate candidate): kernel
   SHA feb127944a6f3a867ede0aa703518aded39080729e8e31ca79bd8dc0bc56efe9,
-  17266104B, all1096 compile-command lines genericARMv8.2+crypto. Image packing.
+  17266104B, all1096 compile-command lines genericARMv8.2+crypto. Frozen image
+  shim/out/nord2-xnu/nord2-ios-ufs-profile-fastlog-stop23.img:33550336B,
+  SHA8eb3f47705826255fb8841327ce8dd504caf7b5f90e89eb05f6c2864ec01dfe8,
+ 4096B spare. Static checker/RCpc2/independent unpack PASS; originalLinux,
+  bothDTs and testedrescue unchanged. Private ufs-profile/{manifest.json,
+  verify-image.py,run-approved-boot.py}; runner NOT EXECUTED, exact new user
+  authorization needed. This first image includes UFS measurement and console
+  W0C/10Hz fix, NOT later GUI-retry/firmware probe (CIe3a9afa).
+  Latest fallback capture restored-ios-followup470975B: present1done0 then
+  present2done1/overlay removed afterphysicalpower, no enabled swaplayerlogs;
+  userstillseesconsole, no lockscreen confirmation.
 
 - **USER PRIORITY: UFS/WI-FI AND FAST BOOT; UFS PROFILE PREPARED.**
   User explicitly authorizes parallel Sol agents. boot_speed implemented
