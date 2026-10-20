@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **WI-FI SNAPSHOT PASSED ON HARDWARE; POWER PROBE IN DEVELOPMENT.**
+- **WI-FI SNAPSHOT PASSED; POWER/FASTLOG IMAGE VERIFIED, AWAITING AUTHORIZATION.**
   User authorized bf0ea8bb…ba34fa88; boot-only flash and reboot succeeded
   21:05:38CEST. Private wifi/snapshot/run-approved-boot.py EXECUTED; do not
   rerun exclusive flash log. Phone now runs that snapshot image, not fd6d75ca.
@@ -24,7 +24,7 @@
   Preserves voltage settings, refuses non-cold/RC/1.3V state, restores only
   owned bits. Failed power-off/protection restoration retains rails and
   prevents Linux return. Exact-C ASan/UBSan fault tests and local C compile
-  PASS; input regression/fuzz PASS. Not yet CI-built/flashed/authorized.
+  PASS; input regression/fuzz PASS. Not yet hardware-tested/authorized.
   User additionally requests faster boot (5–6min) and explicitly requested
   Sol agent boot_speed completed sweet_early.c performance work: opt-in
   nord2fastlog=1 clears two circular console rows instead of copying31 rows,
@@ -33,10 +33,38 @@
   first-GUI marker reports elapsed_ticks/fb_ticks/freq/scrolls/pushes at
   GUI ownership, before first successful present; this is NOT a lockscreen
   completion timestamp. Counts begin at stage6 fb_init. No measured speedup
-  yet: historical launchd begins~94s, another~66s usermanagerd gap remains.
+  yet: usermanagerd task spans65.854s in calendar-relative logs, which
+  do not establish hardware uptime or a fixed timeout.
   Exact-C fastlog sanitizer test20000 lines and local compile PASS. Root
   regenerated0082 against pristine tree and verified exact reproduction.
-  Full combined CI/image/approval next. Tolerant final snapshot capture
+  Combined CI39482559337/source67496ae PASSED.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39482559337
+  Kernel17265160bytes SHA-256
+  74e135136ab6421887155f3396c5328a990d411d7c761aa0e8676004c506b10c
+  matches artifact SHA256SUMS. All1096 captured compile-command lines use
+  generic ARMv8.2+crypto. Linked spot checks confirm PMIF command/slot bounds,
+  restoration refusal, fastlog circular rows/panic fallback and GUI timing
+  after console release; private wifi/power/critical-functions-check.json.
+  Linked RCpc2 scan2190749 instructions clean. Frozen image:
+  shim/out/nord2-xnu/nord2-ios-wifi-power-fastlog-stop23.img
+  33546240bytes (8192bytes spare), SHA-256
+  5d917ab14ea2412321026906a078d1b71de255f564afffca89974995d773f06d.
+  Payload14505936bytes SHA-256
+  bc44cc61598c64611ca88606a08cfd6497ca0f7a6597b90f22da1efefb7d784b.
+  Same full iOS23/display/input/eight-core command line with nord2wifi=2
+  and nord2fastlog=1; default15-iteration Zopfli. Static checker all PASS.
+  Independent unpack verifies original Linux, both DT representations and
+  tested rescue RAMdisk byte-exact. Private wifi/power/{manifest.json,
+  verify-image.py,image-build.log,run-approved-boot.py} prepared.
+  Guarded runner --authorized-wifi-power-fastlog-boot syntax-checked;
+  NOT EXECUTED. Request exact boot-only authorization and fastboot next.
+  Capture uses5s timeout/5 retries; preserve current snapshot logs/baseline.
+  Success requires power ID20010101/restored=1, GUI presents and working
+  touch/buttons. Use raw NORD2 BOOT counters for measured console/elapsed
+  time; user still needs to confirm lockscreen time. Radio networking is
+  not implemented yet. On failure use tested rescue/working iOS fallback,
+  never normal Android because userdata is the installed iOS filesystem.
+  Tolerant final snapshot capture
   229445bytes SHA718cc62aee9d764ed05248974000e1d838f7159a23bc34859c9ee2fe4026d8c1
   ended at deadline without USB error; historical small captures remain.
 

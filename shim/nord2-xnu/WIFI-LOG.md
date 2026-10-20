@@ -21,7 +21,7 @@ then ended on EP0 timeout while iOS continued. Host client now has optional
 bounded timeout/retry settings; tolerant capture uses5s ×6 attempts maximum,
 at the same immutable read offsets. No new device write commands were added.
 
-Next probe `nord2wifi=2` is implemented but not yet CI-built/hardware-tested:
+Next probe `nord2wifi=2` is implemented and CI-built, but not hardware-tested:
 from a guarded cold RC-mode state, enable only VCN18/VCN13 at inherited
 voltage, set radio GPIO172..182, enable GALS/CONN and check power/protection
 acknowledgements before reading CONN sleep status/HW ID. Then isolate the bus,
@@ -37,8 +37,29 @@ row clearing replaces expensive scrolling while preserving USB/pmsg logs.
 New timing at GUI ownership distinguishes framebuffer processing from elapsed
 time since stage6. The first-GUI marker precedes the first successful present;
 it is not a lockscreen completion measurement. Exact-C20k-line sanitizer tests
-and local compilation pass. No hardware speedup claim yet. Combined CI/image
-is the next step. Final tolerant snapshot capture saved229445bytes with
+and local compilation pass. No hardware speedup claim yet. Combined
+[CI39482559337](https://github.com/frxncyyy/ios-sweet/actions/runs/39482559337)
+passed at source67496ae. Kernel17265160bytes SHA-256
+`74e135136ab6421887155f3396c5328a990d411d7c761aa0e8676004c506b10c`
+matches artifact SHA256SUMS; all1096 captured compile-command lines use
+generic ARMv8.2+crypto. Linked spot checks confirm PMIF writes/guards,
+restoration refusal, circular console/panic fallback and timer placement.
+RCpc2 scan2190749 instructions clean. Frozen image
+`shim/out/nord2-xnu/nord2-ios-wifi-power-fastlog-stop23.img`:
+33546240bytes,8192bytes below32MiB, SHA-256
+`5d917ab14ea2412321026906a078d1b71de255f564afffca89974995d773f06d`.
+Payload14505936bytes SHA-256
+`bc44cc61598c64611ca88606a08cfd6497ca0f7a6597b90f22da1efefb7d784b`.
+Same iOS23/display/input/eight-core arguments plus `nord2wifi=2 nord2fastlog=1`;
+default15-iteration Zopfli. Static checks pass; independent unpacking confirms
+original Linux/DT and tested RAM rescue are byte-exact. Manifest, verifier,
+build log and syntax-checked exact-hash runner are private under `wifi/power/`.
+Runner `--authorized-wifi-power-fastlog-boot` has NOT been executed.
+Exact boot-only test authorization/fastboot is the next step. Capture uses
+5s timeout and5 retries. Check HW ID20010101, restoration=1, GUI present/input
+and raw timing counters; the marker precedes lockscreen completion.
+This remains a domain-power test, not working Wi-Fi networking.
+Final tolerant snapshot capture saved229445bytes with
 no USB error; exact digest/results under private hardware-tolerant/.
 
 ## 2026-10-20: firmware acquired; first XNU diagnostic implemented
