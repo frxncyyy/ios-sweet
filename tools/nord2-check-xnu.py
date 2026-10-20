@@ -258,6 +258,19 @@ class Checker:
                        b'NORD2 SMP: fixed mailbox ignores context_id; low then high entry' in kernel and
                        b'after fixed-mailbox PSCI low/high probe' in kernel and
                        b'NORD2 SMP: high-entry pass refused; secondary not OFF' in kernel)
+        if 'nord2stopat=20' in args:
+            self.check('point 20 has coordinated shutdown and scheduler diagnostics',
+                       b'NORD2 SMP: coordinated return armed;' in kernel and
+                       b'NORD2 SMP: XNU secondaries all OFF; CPU0 return permitted' in kernel and
+                       b'NORD2 SMP: XNU secondary still active; manual reboot required' in kernel and
+                       b'NORD2 SMP: scheduler result' in kernel and
+                       b'after bounded XNU SMP scheduler probe' in kernel)
+            self.check('point 20 uses a bounded SMP configuration without disk access',
+                       [a for a in args if a.startswith('cpus=')] in
+                       [['cpus=2'], ['cpus=4'], ['cpus=8']] and
+                       [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

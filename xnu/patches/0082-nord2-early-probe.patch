@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,458 @@
+@@ -1,16 +1,501 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -36,6 +36,11 @@
 +#include <vm/vm_kern.h>
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
++#include <kern/clock.h>
++#include <kern/cpu_number.h>
++#include <kern/processor.h>
++#include <kern/sched_prim.h>
++#include <kern/thread.h>
 +#endif
  
 +#if defined(NORD2)
@@ -412,6 +417,43 @@
 +/* Chain-back parameters read while the device tree was still reachable. */
 +static uint64_t nord2_cb_entry, nord2_cb_dtb, nord2_cb_start, nord2_cb_end;
 +static int nord2_cb_valid;
++/* Enabled only immediately before the first secondary enters XNU, with MMU
++ * and coherent kernel mappings established. Early physical console stays
++ * free of atomic read-modify-write instructions. */
++static volatile uint32_t nord2_kernel_smp_active;
++static uint32_t nord2_console_owner, nord2_console_dropped;
++static uint64_t nord2_cpu_ticks[8], nord2_cpu_ipis[8];
++static int nord2_kernel_smp_prepare_return(void);
++static void nord2_kernel_smp_probe(void);
++
++static unsigned
++nord2_raw_core(void)
++{
++	return (unsigned)((__builtin_arm_rsr64("MPIDR_EL1") >> 8) & 0xff);
++}
++
++static bool
++nord2_console_acquire(unsigned owner, bool *outer)
++{
++	*outer = false;
++	uint64_t deadline = __builtin_arm_rsr64("CNTVCT_EL0") +
++	    __builtin_arm_rsr64("CNTFRQ_EL0") / 20;
++	do {
++		uint32_t expected = 0;
++		if (__atomic_compare_exchange_n(&nord2_console_owner, &expected,
++		    owner, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
++			*outer = true;
++			return true;
++		}
++		if (expected == owner) {
++			return true; /* Same-core recursion, interrupts already masked. */
++		}
++		__asm__ volatile("yield");
++	} while (__builtin_arm_rsr64("CNTVCT_EL0") < deadline);
++	/* A faulting owner must not deadlock another core's panic/return. */
++	__atomic_fetch_add(&nord2_console_dropped, 1, __ATOMIC_RELAXED);
++	return false;
++}
 +
 +static void
 +nord2_flush(void)
@@ -442,7 +484,8 @@
 +	if (nord2_wdt) {
 +		nord2_wdt[2] = 0x1971;	/* WDT_RST on console traffic too */
 +	}
-+	if (((++nord2_chars) & 0xff) == 0 && nord2_stall_reports < 6) {
++	if (((++nord2_chars) & 0xff) == 0 && !nord2_kernel_smp_active &&
++	    nord2_stall_reports < 6) {
 +		if (nord2_ticks == nord2_tick_snapshot) {
 +			uint64_t ctl = __builtin_arm_rsr64("CNTV_CTL_EL0");
 +			uint64_t tval = __builtin_arm_rsr64("CNTV_TVAL_EL0");
@@ -464,7 +507,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +465,7 @@
+@@ -23,6 +508,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -472,7 +515,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +481,14 @@
+@@ -38,10 +524,32 @@
  		}
  	}
  }
@@ -482,12 +525,30 @@
  sweet_early_putc(char c)
  {
 +#if defined(NORD2)
-+	nord2_putc(c);
++	/* Only CPU0 owns the physical early console. A secondary must reach
++	 * coherent virtual mappings before touching any shared lock or buffer. */
++	if (!(__builtin_arm_rsr64("SCTLR_EL1") & 1) && nord2_raw_core() != 0) {
++		return;
++	}
++	if (!nord2_kernel_smp_active) {
++		nord2_putc(c);
++		return;
++	}
++	uint64_t daif = __builtin_arm_rsr64("DAIF");
++	__builtin_arm_wsr("DAIFSet", 0xf);
++	bool outer;
++	if (nord2_console_acquire(nord2_raw_core() + 1, &outer)) {
++		nord2_putc(c);
++		if (outer) {
++			__atomic_store_n(&nord2_console_owner, 0, __ATOMIC_RELEASE);
++		}
++	}
++	__builtin_arm_wsr64("DAIF", daif);
 +#else
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +523,7 @@
+@@ -76,6 +584,7 @@
  		}
  	}
  	early_col++;
@@ -495,7 +556,7 @@
  }
  
  static void
-@@ -86,9 +534,177 @@
+@@ -86,9 +595,177 @@
  	}
  }
  
@@ -673,7 +734,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +723,36 @@
+@@ -107,11 +784,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -710,7 +771,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +764,10 @@
+@@ -123,8 +825,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -721,7 +782,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +776,613 @@
+@@ -133,11 +837,904 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -759,10 +820,20 @@
 +	uint64_t entry = 0, dtb = 0;
 +	uint64_t region_start = 0, region_end = 0;
 +
-+	nord2_leaving = 1;
 +	/* Mask everything now: a context switch would reload TTBR0 below. */
 +	__builtin_arm_wsr("DAIFSet", 0xf);
 +	__builtin_arm_isb(ISB_SY);
++
++	/* Any non-boot caller requests CPU0 to return, then powers itself off.
++	 * CPU0 must observe every secondary OFF before USB/UFS or memory reuse. */
++	if (nord2_kernel_smp_prepare_return() < 0) {
++		sweet_early_string("NORD2 SMP: XNU secondary still active; manual reboot required\n");
++		nord2_flush();
++		for (;;) {
++			__asm__ volatile("wfe");
++		}
++	}
++	nord2_leaving = 1;
 +
 +	/* A PSCI probe core must be OFF before Linux can reuse XNU memory. */
 +	if (nord2_smp_prepare_return() < 0) {
@@ -897,6 +968,17 @@
 +{
 +	if (nord2_wdt) {
 +		nord2_wdt[2] = 0x1971;	/* WDT_RST: keep the SoC alive */
++	}
++	if (nord2_kernel_smp_active) {
++		unsigned core = nord2_raw_core();
++		if (core < 8) {
++			if (intid == sweet_vtimer_intid) {
++				__atomic_fetch_add(&nord2_cpu_ticks[core], 1, __ATOMIC_RELAXED);
++			} else if (intid < 16) {
++				__atomic_fetch_add(&nord2_cpu_ipis[core], 1, __ATOMIC_RELAXED);
++			}
++		}
++		return; /* Per-core counts replace the single-CPU verbose diagnostics. */
 +	}
 +	if (intid == sweet_vtimer_intid) {
 +		nord2_ticks++;
@@ -1059,6 +1141,10 @@
 +{
 +	unsigned stop = 0, cpus = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (stop == 20) {
++		nord2_kernel_smp_probe();
++		return;
++	}
 +	if (stop != 17 && stop != 18 && stop != 19) {
 +		return;
 +	}
@@ -1215,6 +1301,272 @@
 +}
 +/* END NORD2 PSCI PROBE */
 +
++/* NORD2 XNU SMP: bounded scheduler test and coordinated final shutdown.
++ * No CPU hotplug/resume is implemented; CPU_OFF is only for leaving XNU. */
++static uint32_t nord2_smp_stop_requested;
++static int32_t nord2_smp_off_error[8];
++
++static void
++nord2_smp_send_stop(unsigned core)
++{
++	/* Nord2 MPIDR Aff1=core, Aff0=0; the existing driver enables SGI1. */
++	__builtin_arm_dsb(DSB_ISHST);
++	__builtin_arm_wsr64("ICC_SGI1R_EL1",
++	    (1ULL << 24) | ((uint64_t)core << 16) | 1);
++	__builtin_arm_isb(ISB_SY);
++}
++
++static void __attribute__((noreturn))
++nord2_smp_off_self(void)
++{
++	unsigned core = nord2_raw_core();
++	__builtin_arm_wsr("DAIFSet", 0xf);
++	__builtin_arm_wsr64("CNTV_CTL_EL0", 0);
++	__builtin_arm_isb(ISB_SY);
++	/* A panic inside console output must not leave its lock owned forever. */
++	if (__atomic_load_n(&nord2_console_owner, __ATOMIC_RELAXED) == core + 1) {
++		__atomic_store_n(&nord2_console_owner, 0, __ATOMIC_RELEASE);
++	}
++	/* Like the existing XNU shutdown path, clean before firmware power-off.
++	 * PSCI handles the final coherent-domain exit; MMU stays on for the call. */
++	CleanPoC_Dcache();
++	__builtin_arm_dsb(DSB_SY);
++	int32_t rc = nord2_psci_call(0x84000002, 0, 0, 0);
++	if (core < 8) {
++		__atomic_store_n(&nord2_smp_off_error[core], rc ? rc : -1, __ATOMIC_RELEASE);
++	}
++	for (;;) {
++		__asm__ volatile("wfe"); /* Failed OFF never returns to XNU or Linux. */
++	}
++}
++
++void
++nord2_smp_start_prepare(unsigned cpu)
++{
++	unsigned cpus = 0, stop = 0;
++	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if ((cpus != 2 && cpus != 4 && cpus != 8) || cpu == 0 || cpu >= cpus ||
++	    stop != 20 || __atomic_load_n(&nord2_smp_stop_requested, __ATOMIC_ACQUIRE)) {
++		panic("NORD2 SMP: unsupported startup configuration cpu=%u cpus=%u stop=%u",
++		    cpu, cpus, stop);
++	}
++	if (!nord2_kernel_smp_active) {
++		/* This executes on CPU0 before the first secondary CPU_ON. */
++		if (nord2_raw_core() != 0) {
++			panic("NORD2 SMP: first startup requires CPU0");
++		}
++		__atomic_store_n(&nord2_kernel_smp_active, 1, __ATOMIC_RELEASE);
++		if (!nord2_psci_all_off()) {
++			panic("NORD2 SMP: inherited secondary not OFF");
++		}
++		printf("NORD2 SMP: coordinated return armed; requested=%u\n", cpus);
++	}
++}
++
++static int
++nord2_kernel_smp_prepare_return(void)
++{
++	if (!nord2_kernel_smp_active) {
++		return 0;
++	}
++	__atomic_store_n(&nord2_smp_stop_requested, 1, __ATOMIC_RELEASE);
++	unsigned core = nord2_raw_core();
++	if (core != 0) {
++		nord2_smp_send_stop(0);
++		nord2_smp_off_self();
++	}
++	/* CPU0 alone may reuse the kernel memory for Linux. No scheduler locks
++	 * or callbacks: a secondary may have panicked before its startup finished. */
++	for (unsigned i = 1; i < 8; i++) {
++		nord2_smp_send_stop(i);
++	}
++	uint64_t deadline = nord2_psci_now() +
++	    __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
++	do {
++		if (nord2_psci_all_off()) {
++			sweet_early_string("NORD2 SMP: XNU secondaries all OFF; CPU0 return permitted\n");
++			return 1;
++		}
++		nord2_psci_poll();
++	} while (nord2_psci_now() < deadline);
++	for (unsigned i = 1; i < 8; i++) {
++		int32_t affinity = nord2_psci_call(0xc4000004, i << 8, 0, 0);
++		if (affinity != 1) {
++			/* A stopped CPU may own a normal printf/console lock. */
++			sweet_early_string("NORD2 SMP: shutdown core=");
++			nord2_hex64(i);
++			sweet_early_string(" affinity=");
++			nord2_hex64((uint32_t)affinity);
++			sweet_early_string(" CPU_OFF_rc=");
++			nord2_hex64((uint32_t)__atomic_load_n(&nord2_smp_off_error[i], __ATOMIC_ACQUIRE));
++			sweet_early_string("\n");
++		}
++	}
++	return -1;
++}
++
++void
++nord2_smp_irq_stop(uint64_t iar)
++{
++	if (!nord2_kernel_smp_active ||
++	    !__atomic_load_n(&nord2_smp_stop_requested, __ATOMIC_ACQUIRE)) {
++		return;
++	}
++	/* IAR has already acknowledged this interrupt. Complete it before OFF
++	 * or before replacing the running kernel, regardless of its INTID. */
++	__builtin_arm_wsr("DAIFSet", 0xf);
++	__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++	__builtin_arm_isb(ISB_SY);
++	if (nord2_raw_core() != 0) {
++		nord2_smp_off_self();
++	}
++	nord2_return_to_stock();
++}
++
++struct nord2_smp_work {
++	uint32_t ready, done, actual, ipi_reply;
++	uint64_t midr, before, after;
++};
++static struct nord2_smp_work nord2_smp_work[8];
++static uint32_t nord2_smp_go;
++static uint64_t nord2_smp_counter;
++static int nord2_smp_sleep_chan;
++extern kern_return_t thread_terminate(thread_t);
++
++static void
++nord2_smp_sleep(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&nord2_smp_sleep_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static void
++nord2_smp_worker(void *arg, wait_result_t result __unused)
++{
++	unsigned core = (unsigned)(uintptr_t)arg;
++	struct nord2_smp_work *work = &nord2_smp_work[core];
++	(void)thread_bind(cpu_to_processor((int)core));
++	thread_block(THREAD_CONTINUE_NULL); /* Migrate to the bound processor. */
++	work->actual = (uint32_t)cpu_number();
++	work->midr = __builtin_arm_rsr64("MIDR_EL1");
++	work->before = __atomic_load_n(&nord2_cpu_ticks[core], __ATOMIC_RELAXED);
++	__atomic_store_n(&work->ready, 1, __ATOMIC_RELEASE);
++	uint64_t deadline = nord2_psci_now() +
++	    __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
++	while (!__atomic_load_n(&nord2_smp_go, __ATOMIC_ACQUIRE) &&
++	    nord2_psci_now() < deadline) {
++		nord2_smp_sleep(1);
++	}
++	if (__atomic_load_n(&nord2_smp_go, __ATOMIC_ACQUIRE) && work->actual == core) {
++		for (unsigned round = 0; round < 16; round++) {
++			for (unsigned n = 0; n < 256; n++) {
++				__atomic_fetch_add(&nord2_smp_counter, 1, __ATOMIC_RELAXED);
++			}
++			nord2_smp_sleep(2); /* Exercise local timer wakeups repeatedly. */
++		}
++		work->after = __atomic_load_n(&nord2_cpu_ticks[core], __ATOMIC_RELAXED);
++		__atomic_store_n(&work->done, 1, __ATOMIC_RELEASE);
++	} else {
++		__atomic_store_n(&work->done, 2, __ATOMIC_RELEASE);
++	}
++	(void)thread_terminate(current_thread());
++	thread_block(THREAD_CONTINUE_NULL);
++	panic("NORD2 SMP: terminated worker returned");
++}
++
++static void
++nord2_smp_xcall(void *arg)
++{
++	struct nord2_smp_work *work = arg;
++	__atomic_store_n(&work->ipi_reply, (uint32_t)cpu_number() + 1, __ATOMIC_RELEASE);
++}
++
++static void
++nord2_kernel_smp_probe(void)
++{
++	unsigned cpus = 0;
++	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
++	if (!nord2_kernel_smp_active || (cpus != 2 && cpus != 4 && cpus != 8) ||
++	    ml_get_cpu_count() != cpus) {
++		printf("NORD2 SMP: scheduler probe configuration refused\n");
++		goto done;
++	}
++	(void)thread_bind(cpu_to_processor(0));
++	thread_block(THREAD_CONTINUE_NULL);
++	if (cpu_number() != 0 || nord2_raw_core() != 0) {
++		panic("NORD2 SMP: diagnostic coordinator did not reach CPU0");
++	}
++	printf("NORD2 SMP: XNU scheduler probe begin; cpus=%u\n", cpus);
++	for (unsigned i = 0; i < cpus; i++) {
++		thread_t thread;
++		if (kernel_thread_start(nord2_smp_worker, (void *)(uintptr_t)i, &thread) != KERN_SUCCESS) {
++			printf("NORD2 SMP: worker creation failed core=%u\n", i);
++			goto done;
++		}
++		thread_deallocate(thread);
++	}
++	uint64_t deadline = nord2_psci_now() +
++	    __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
++	bool ready;
++	do {
++		ready = true;
++		for (unsigned i = 0; i < cpus; i++) {
++			ready &= __atomic_load_n(&nord2_smp_work[i].ready, __ATOMIC_ACQUIRE) == 1;
++		}
++		if (!ready) {
++			nord2_smp_sleep(1);
++		}
++	} while (!ready && nord2_psci_now() < deadline);
++	if (!ready) {
++		printf("NORD2 SMP: worker readiness timeout\n");
++		goto done;
++	}
++	__atomic_store_n(&nord2_smp_go, 1, __ATOMIC_RELEASE);
++	for (unsigned i = 0; i < cpus; i++) {
++		if (cpu_xcall((int)i, nord2_smp_xcall, &nord2_smp_work[i]) != KERN_SUCCESS) {
++			printf("NORD2 SMP: cross-call failed core=%u\n", i);
++			goto done;
++		}
++	}
++	deadline = nord2_psci_now() + __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
++	bool complete;
++	do {
++		complete = true;
++		for (unsigned i = 0; i < cpus; i++) {
++			complete &= __atomic_load_n(&nord2_smp_work[i].done, __ATOMIC_ACQUIRE) != 0 &&
++			    __atomic_load_n(&nord2_smp_work[i].ipi_reply, __ATOMIC_ACQUIRE) != 0;
++		}
++		if (!complete) {
++			nord2_smp_sleep(1);
++		}
++	} while (!complete && nord2_psci_now() < deadline);
++	unsigned passed = 0;
++	for (unsigned i = 0; i < cpus; i++) {
++		struct nord2_smp_work *w = &nord2_smp_work[i];
++		uint32_t finished = __atomic_load_n(&w->done, __ATOMIC_ACQUIRE);
++		uint32_t reply = __atomic_load_n(&w->ipi_reply, __ATOMIC_ACQUIRE);
++		uint64_t ticks = finished == 1 ? w->after - w->before : 0;
++		bool ok = finished == 1 && w->actual == i && reply == i + 1 && ticks > 0 &&
++		    ((w->midr >> 4) & 0xfff) == (i < 4 ? 0xd05 : 0xd41);
++		passed += ok;
++		printf("NORD2 SMP: worker=%u actual=%u MIDR=%llx done=%u ticks=%llu "
++		    "ipi_reply=%u ipi_irqs=%llu ok=%u\n", i, w->actual, w->midr,
++		    finished, ticks, reply,
++		    __atomic_load_n(&nord2_cpu_ipis[i], __ATOMIC_RELAXED), ok);
++	}
++	uint64_t total = __atomic_load_n(&nord2_smp_counter, __ATOMIC_ACQUIRE);
++	uint32_t dropped = __atomic_load_n(&nord2_console_dropped, __ATOMIC_RELAXED);
++	printf("NORD2 SMP: scheduler result %u/%u counter=%llu expected=%u "
++	    "console_dropped=%u PASS=%u\n", passed, cpus, total, cpus * 4096,
++	    dropped, complete && passed == cpus && total == cpus * 4096 && !dropped);
++ done:
++	nord2_stop_at(20, "after bounded XNU SMP scheduler probe");
++}
++/* END NORD2 XNU SMP */
++
 +void
 +nord2_ufs_snapshot(void)
 +{
@@ -1343,7 +1695,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,52 @@
+@@ -10,8 +10,56 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1370,6 +1722,10 @@
 +/* Point17: sequential stackless PSCI CPU_ON/OFF; XNU remains single CPU. */
 +void nord2_smp_probe(void);
 +int nord2_smp_prepare_return(void);
++/* Arm coordinated return and console serialization before any XNU secondary. */
++void nord2_smp_start_prepare(unsigned cpu);
++/* Called after IAR read, before the normal IRQ handler; may not return. */
++void nord2_smp_irq_stop(uint64_t iar);
 +uint32_t nord2_log_read(uint32_t offset, uint8_t *out, uint32_t max);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
@@ -1638,6 +1994,26 @@
  /*
   * V=P to KVA trampoline.
   *	x0 - KVA of cpu data pointer
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -32,6 +32,7 @@
+  */
+ 
+ #include <pexpert/arm64/board_config.h>
++#include <arm64/sweet_early.h>
+ #include <kern/kalloc.h>
+ #include <kern/machine.h>
+ #include <kern/cpu_number.h>
+@@ -956,6 +957,9 @@
+ 			break;
+ 		}
+ #endif
++#if defined(NORD2)
++		nord2_smp_start_prepare((unsigned)cpu);
++#endif
+ 		(void) PE_cpu_start(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
+ 	}
+ 
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
 @@ -57,6 +57,9 @@
@@ -3130,12 +3506,14 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -1867,6 +1867,10 @@
+@@ -1867,6 +1867,12 @@
  	if (intid >= 1020 && intid <= 1023) {
  		return; /* spurious */
  	}
 +#if defined(NORD2)
 +	extern void nord2_irq_seen(uint32_t intid, uint64_t pc);
++	extern void nord2_smp_irq_stop(uint64_t iar);
++	nord2_smp_irq_stop(iar);
 +	nord2_irq_seen(intid, (uint64_t)get_saved_state_pc(state));
 +#endif
  	if (intid == sweet_vtimer_intid) {

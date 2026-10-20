@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 BT=research/ci-39158169212/buildtree/xnu
 TGZ=research/ci-39158169212/xnu-buildtree/buildtree.tgz
 PATCH=xnu/patches/0082-nord2-early-probe.patch
-FILES="osfmk/arm64/sweet_early.c osfmk/arm64/sweet_early.h osfmk/arm64/start.s \
+FILES="osfmk/arm64/sweet_early.c osfmk/arm64/sweet_early.h osfmk/arm64/start.s osfmk/arm64/cpu.c \
 osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c \
 bsd/kern/bsd_init.c bsd/dev/sweet_ufs.c bsd/dev/sweet_usb.c osfmk/arm64/sleh.c osfmk/kern/startup.c \
 iokit/Kernel/arm/SweetBattery.cpp iokit/Kernel/IOStartIOKit.cpp iokit/KernelConfigTables.cpp \

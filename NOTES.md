@@ -3,6 +3,44 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Next candidate: point20 real XNU SMP with cpus=2, preparing.**
+  Point19 proved all7 firmware entries/shutdowns, including high PA, but no
+  secondary XNU scheduler execution yet. Now arm SMP return from cpu_start()
+  immediately before PE_cpu_start(); accept only stop20 and cpus2/4/8.
+  IRQ hook checks a global stop request after IAR and before normal handlers,
+  EOIs the interrupt, disables the local timer and calls CPU_OFF on secondary
+  CPUs after cache cleaning. A nonboot panic/return signals CPU0 then powers
+  itself off; CPU0 sends SGI1 to all7, requires every AFFINITY_INFO64=OFF
+  within5s, and only then permits USB/UFS cleanup and Linux memory reuse.
+  Failed OFF parks; failed quiescence halts, requiring manual fastboot.
+  No printf/scheduler locks in the final shutdown guard, only bounded early
+  logging. ARM TF-A reference follows cache maintenance before OFF publication:
+  https://github.com/ARM-software/arm-trusted-firmware/blob/master/lib/psci/psci_off.c
+  Linux arch/arm64/kernel/psci.c also calls CPU_OFF with the normal MMU active;
+  this vendor firmware's cached XNU shutdown is still untested until point20.
+  Early console remains atomic-free before MMU; pre-MMU secondary writes are
+  suppressed. After first CPU startup, IRQ-masked recursive per-core ownership
+  serializes pmsg/framebuffer, with50ms contention timeout to prevent panic
+  deadlock. Per-core timer/IPI counters replace verbose global tick logging.
+  BSD point20 binds coordinator to CPU0, launches one bound worker per core,
+  validates actual CPU/MIDR,16 timed wakeups, shared atomic4096 increments per
+  core and cpu_xcall replies. Require ticks>0 per core, exact total8192 for2,
+  zero dropped console bytes, PASS=1, then all secondaries OFF before return.
+  This stops BEFORE root selection; no USB/UFS takeover or userdata mount.
+  Source changes sweet_early.c/.h,cpu.c,sleh.c; only three C objects replaced
+  in a copy of tested point19 archive. No assembly change or fake Apple C++
+  builtins. Local compilation/link and exact-source ASan/UBSan guards pass,
+  including all7 affinities, ON/PENDING/errors/timeouts, secondary→CPU0 route,
+  EOI/clean/OFF ordering, failed OFF park, console timeout/recursion and
+  concurrent8-thread writes; prior PSCI probe regression tests pass.
+  Patch applies cleanly and matches sources. Evidence research/nord2/smp/xnu2;
+  kernel 21964208 bytes SHA-256 `828661510ad5a7eb92095f2fef6e46ae9bfbb5aabf80c93dd07b7dcb039f5c60`.
+  Image `shim/out/nord2-xnu/nord2-smp-xnu2-stop20.img` is being packed;
+  not authorized/flashed. Initial unfinished compression was canceled to
+  remove printf from failure diagnostics; no candidate image existed then.
+  Next validate packed layout, original Linux/DT/rescue bytes, exact hash;
+  dispatch full Apple-clang CI and request new exact boot-image authorization.
+
 - **CURRENT DEVICE: point19 PASSED low+high, all7 secondaries; ADB rescue returned.**
   This follows the observed point18 context_id=0. Only mode19 treats context
   as diagnostic; slot is derived from MPIDR in the unchanged stackless stub.
