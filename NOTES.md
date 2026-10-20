@@ -3,7 +3,48 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **NEXT INTEGRATED SOURCE READY FOR CI: SMP GATE, GPT, ZOOM RESET.**
+- **TWO NEW IMAGES VERIFIED; AWAIT EXACT HUMAN AUTHORIZATION.**
+  CI39499794889/c25b788, both33,271,808B with282,624B boot spare.
+  `shim/out/nord2-xnu/nord2-ufs-two-lane-fixed-stop23.img` SHA-256
+  72ad734dc5ed4a3216088bbb46aff6ebe1336d40efb9fd15c963be11f8194821,
+  payload f85c7c7bda6b53f7f46f0dcd3652d142afb9c7a1e9300b48f5c014c190a49cb4.
+  RO pre-root x2 trial, verifies GPT and x1 rollback, always halts; physical
+  fastboot needed afterward. No disk writes/root publication/Linux handoff.
+  `shim/out/nord2-xnu/nord2-ios-zoom-wifi-stop23.img` SHA-256
+  0956173bfa821fc8a5721b7b0ebcc38bb86b89f3a4ff71881eca3df32235c89a,
+  payload57eb12e073caf063e2d86c1dc64e77eb77992daf1aeddcff176ea229fa2d859a.
+  RW iOS, 8cores/input/USB, RTC skip, firmware RAM verification, EMI reads and
+  exact opt-in VFS preference reset960x2079 ->1125x2436 with verified backup.
+  No Wi-Fi firmware execution/networking or UFS lane tuning in this observer.
+  Static checks/independent unpack/header ID/Linux+DT+rescue contents and
+  focused actual-linked SMP gate/zoom-before-launchd/vendor geometry PASS.
+  Private hardware-fixed and zoom-wifi manifests/runners are prepared ONLY;
+  neither new runner executed or flash authorized. Flags respectively
+  --authorized-ufs-two-lane-fixed-boot and --authorized-zoom-wifi-boot.
+  Capture120s/600s; no automatic reboot/restore. Phone confirmed ADB recovery.
+  Request sequence authorization including explicit Zoom preference mutation;
+  user must physically enter fastboot for each image. Keep original tested
+  RAM rescue available; never boot normal Android over installed iOS userdata.
+
+- **CI39499794889 PASSED; TWO NEW IMAGES PACKING.**
+  Source c25b788dd0294436fd3e2dcb3260e993bdc02f06, kernel17,319,008B,
+  SHA-256 b011efbe19316f85779bca6b7204a6b92bdeec28da5afdc6e9a402b085fe2c83.
+  Artifact checksum and all1,102 C/C++ genericARMv8.2+crypto compile lines
+  verified. Focused linked SMP/zoom/vendor reviews underway. Independent new
+  fixed-stop-only UFS and RW zoom/Wi-Fi observers pack in parallel under1GiB
+  per-process virtual-memory limits; no device operation or new approval yet.
+  Phone remains RAM ADB rescue, userdata unmounted. New images will require
+  explicit exact-image authorization; zoom image also resets two preference
+  values via mounted VFS and creates a verified original-content backup.
+  Private ufs-performance instrumentation candidate is intentionally NOT in
+  this build. It measures caller sizes/map/mutex wait+hold/copies; exact VFS
+  tests show GETFEATURES0 alone still leaves later limit queries unsupported.
+  Existing default request/queue limits are nonzero. No UFS speed gain claimed.
+  CPU DT2.0/2.6GHz is declared, not measured; read-only telemetry plan saved.
+
+- **CI39499794889 RUNNING: SMP GATE, GPT, ZOOM RESET.**
+  Source c25b788dd0294436fd3e2dcb3260e993bdc02f06, full macOS kernel build.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39499794889
   Narrow RO23 SMP gate now validates the explicit diagnostic bundle. Review
   caught a mock/API mismatch before CI: PE_boot_args already returns the
   command-line pointer, NOT boot_args; scanner and tests now use actual ARM
