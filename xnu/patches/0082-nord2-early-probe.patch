@@ -1034,7 +1034,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,45 @@
+@@ -10,8 +10,47 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1055,6 +1055,8 @@
 +void nord2_stop_at(unsigned int point, const char *label);
 +/* Point 10: inspect inherited MT6893 UFSHCI state, without register writes. */
 +void nord2_ufs_snapshot(void);
++/* Point 13: read-only inherited MTU3/clock snapshot before root selection. */
++void nord2_usb_probe(void);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
@@ -1539,7 +1541,7 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -868,12 +880,22 @@
+@@ -868,12 +880,23 @@
  	bsd_init_kprintf("calling inittodr\n");
  	inittodr(0);
  
@@ -1548,6 +1550,7 @@
 +	nord2_stop_at(9, "before root filesystem selection");
 +	nord2_ufs_snapshot();
 +	nord2_ufs_probe();
++	nord2_usb_probe();
 +#endif
 +
  	/* Mount the root file system. */
@@ -1562,7 +1565,7 @@
  #if CONFIG_NETBOOT
  		netboot = (mountroot == netboot_mountroot);
  #endif
-@@ -1119,7 +1141,13 @@
+@@ -1119,7 +1142,13 @@
  		}
  	}
  
@@ -2145,6 +2148,105 @@
  }
  
  /*
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -37,6 +37,90 @@
+ #include <net/dlil.h>
+ #include <sys/kern_event.h>
+ 
++#include <arm64/sweet_early.h>
++
++#if defined(NORD2)
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++/*
++ * MT6893 MTU3 bring-up. Register layout: the device's Linux mtu3_hw_regs.h;
++ * clock gates: clk-mt6885.c (also used by MT6893). Live DT confirms MAC
++ * 0x11201000, IPPC 0x11203e00, SPI96 and high-speed maximum. Point13 only
++ * reads state; it never enables clocks, clears status, touches FIFO, starts
++ * DMA or changes the USB connection. Check clock/power gates before MAC.
++ */
++static uint32_t
++nord2_usb_read(vm_offset_t base, uint32_t offset)
++{
++	uint32_t value = *(volatile uint32_t *)(base + offset);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return value;
++}
++
++void
++nord2_usb_probe(void)
++{
++	int stop = 0;
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (stop != 13) {
++		return;
++	}
++	printf("NORD2 USB: MTU3 snapshot begin (read-only)\n");
++	vm_offset_t infra = ml_io_map(0x10001000, 0x1000);
++	vm_offset_t top = ml_io_map(0x10000000, 0x1000);
++	if (!infra || !top) {
++		printf("NORD2 USB: clock mapping failed\n");
++		goto done;
++	}
++	uint32_t cg = nord2_usb_read(infra, 0xac);
++	uint32_t cfg9 = nord2_usb_read(top, 0xa0);
++	uint32_t cfg10 = nord2_usb_read(top, 0xb0);
++	printf("NORD2 USB: INFRA_CG3=%08x TOP_CFG9=%08x TOP_CFG10=%08x\n",
++	    cg, cfg9, cfg10);
++	if ((cg & ((1u << 1) | (1u << 31))) || (cfg9 & (1u << 31)) ||
++	    (cfg10 & (1u << 7))) {
++		printf("NORD2 USB: clock gated; IPPC/MAC not read\n");
++		goto done;
++	}
++	vm_offset_t ippc = ml_io_map(0x11203e00, 0x100);
++	if (!ippc) {
++		printf("NORD2 USB: IPPC mapping failed\n");
++		goto done;
++	}
++	const uint16_t ipregs[] = {0, 4, 8, 0x10, 0x14, 0x18, 0x28,
++	    0x30, 0x50, 0x8c, 0x98, 0xa0, 0xa4};
++	for (unsigned i = 0; i < sizeof(ipregs) / sizeof(ipregs[0]); i++) {
++		printf("NORD2 USB: IPPC[%03x]=%08x\n", ipregs[i],
++		    nord2_usb_read(ippc, ipregs[i]));
++	}
++	uint32_t power = nord2_usb_read(ippc, 8);
++	uint32_t status = nord2_usb_read(ippc, 0x14);
++	uint32_t port = nord2_usb_read(ippc, 0x50);
++	if ((power & 1) || !(status & 1) || (port & 7)) {
++		printf("NORD2 USB: device inactive; MAC not read\n");
++		goto done;
++	}
++	vm_offset_t mac = ml_io_map(0x11201000, 0x2e00);
++	if (!mac) {
++		printf("NORD2 USB: MAC mapping failed\n");
++		goto done;
++	}
++	/* Status registers are W1C, not read-to-clear. Never read the FIFOs. */
++	const uint16_t regs[] = {0, 4, 0x80, 0x84, 0x100, 0x108,
++	    0x110, 0x114, 0x118, 0x210, 0x214, 0x218,
++	    0x400, 0x510, 0x514, 0x518, 0x610, 0x614, 0x618,
++	    0x700, 0x704, 0x800, 0x850, 0x854, 0xc04, 0xc08,
++	    0xc0c, 0xc10, 0xc84, 0x141c, 0x2404, 0x240c,
++	    0x2418, 0x241c, 0x243c, 0x2460};
++	for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
++		printf("NORD2 USB: MAC[%04x]=%08x\n", regs[i],
++		    nord2_usb_read(mac, regs[i]));
++	}
++ done:
++	printf("NORD2 USB: MTU3 snapshot end\n");
++	nord2_stop_at(13, "after read-only MTU3 snapshot");
++}
++#else /* Qualcomm DWC3; never accessed on Nord2. */
++
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ void sweet_usb_probe(void);
+ static void sweet_usb_gadget_start(vm_offset_t dwc);
+@@ -928,4 +1012,5 @@
+ 		thread_deallocate(thread);
+ 	}
+ }
++#endif /* NORD2 */
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1867,6 +1867,10 @@

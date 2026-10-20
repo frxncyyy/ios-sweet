@@ -43,6 +43,28 @@ mount evidence and Android return, not just a reboot. All these markers
 were observed on the Nord2 on 2026-10-20, followed by verified restoration
 of the original Android boot. Apple launchd has not yet run on this device.
 
+### ADB recovery without Android userdata
+
+`tools/nord2-mkrescue.py` builds a minimal recovery ramdisk from the device's
+existing recovery backup, keeping the original boot's Linux kernel and DT.
+It runs authenticated, root USB ADB and mounts no block filesystem. The host
+public key is embedded in the private output image; no private key is copied.
+The standalone image has passed on hardware: root shell, kernel log collection,
+unmounted userdata and exact boot-image readback were verified.
+
+ADB reports this environment as `recovery`; use `adb wait-for-recovery` or
+direct `adb shell` commands, not `wait-for-device` or `sys.boot_completed`.
+The marker is `/nord2-rescue`. Check that a pstore file exists using `adb shell`
+before reading it with `exec-out`: the latter can return exit0 while emitting
+an error message. A cold reset can leave pstore empty.
+
+The XNU image helper accepts `--base-boot RESCUE.img --zopfli ZOPFLI_BINARY`.
+Zopfli produces a smaller standard gzip stream, verified byte-for-byte after
+decompression, so XNU and the unmodified rescue ramdisk fit in the 32 MiB boot
+partition. The combined return-to-rescue image awaits hardware testing.
+Generic panic return also restores any owned UFS request list before Linux
+runs; an unsafe DMA state halts instead of handing it to the next kernel.
+
 ## Artifact layout
 
 `tools/nord2-pack-xnu.py` reuses the stock Android boot v2 header, ramdisk
@@ -62,7 +84,8 @@ preserved byte for byte at this relocated address, and the chain-back needs
 no copying. The payload address is derived from the stock Image's
 `image_size` (including BSS); it is not a hard-coded offset in the packer.
 The decompressed end varies with the payload. The image checker reports it
-and verifies that the blob stays below the ramdisk at `0x51100000`.
+and verifies both the ramdisk bound and the loader's stricter source-end bound
+at `0x46280000`.
 
 The loader places the payload's Mach-O segments in a 992 MiB window in the
 upper DDR bank:
@@ -136,6 +159,7 @@ also writes zero-padded decimal and must be corrected before reuse.
 | 10 | Same location as point 9, after a read-only UFSHCI register snapshot |
 | 11 | Same location, after a bounded LUN2 capacity/GPT read probe and controller-state restoration |
 | 12 | After publishing/selecting `ufsroot0`, before mounting; restores the UFS host and returns |
+| 13 | Before root selection, read-only MTU3 USB/clock snapshot; returns to the supplied Linux ramdisk |
 
 Point numbers are identifiers, not execution order. Never infer success
 from a reboot alone: inspect the stop marker and the Android return marker.

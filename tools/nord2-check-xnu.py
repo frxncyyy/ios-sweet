@@ -209,6 +209,14 @@ class Checker:
                    all(re.fullmatch(r'[^=]+=(?:0|[1-9][0-9]*|0x[0-9a-fA-F]+)', arg)
                        for arg in stops), ', '.join(stops))
         args = cmdline.split()
+        if 'nord2stopat=13' in args:
+            self.check('point 13 has the bounded MediaTek USB snapshot',
+                       b'NORD2 USB: MTU3 snapshot begin (read-only)' in kernel and
+                       b'after read-only MTU3 snapshot' in kernel and
+                       b'NORD2 USB: clock gated; IPPC/MAC not read' in kernel)
+            self.check('point 13 keeps both disk write flags disabled',
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

@@ -3,7 +3,8 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE: ADB RAM rescue, tested successfully; userdata unchanged.**
+- **CURRENT DEVICE: USB point13 test flashed/rebooted; awaiting ADB rescue return.
+  Userdata unchanged.** Standalone ADB RAM rescue was tested successfully.
   User explicitly authorized boot-only `nord2-adb-rescue.img`, SHA-256
   `d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5`,
   and original-boot restoration if it failed. Flash/reboot passed. ADB reports
@@ -49,6 +50,52 @@
     then data endpoints for console/transfers; Linux EP0 is PIO, QMU handles
     data DMA. Need inspect inherited clock/PHY/controller state on XNU.
     USB port is not implemented or hardware-tested yet.
+    First source milestone: `nord2_usb_probe()` in `bsd/dev/sweet_usb.c`
+    is compiled only on Nord2, completely excludes the Qualcomm DWC3 code,
+    and runs only at `nord2stopat=13` before root selection. It checks
+    INFRA_CG3 bits1/31 and TOP_CFG9 bit31/TOP_CFG10 bit7 before IPPC access,
+    then device power/reset/port state before MAC access. No register writes,
+    FIFO reads, DMA, clock changes or disk access. It returns to the Linux
+    ramdisk via the normal stop hook. Local C builds passed; exact-code
+    ASan/UBSan harness uses read-only mappings and covers inactive selection,
+    all mapping failures, four clock gates, five device gates and full
+    register reads (`tools/nord2-check-usb-probe.py`, evidence `research/nord2/usb/`).
+    - Reuse candidate for later MTU3 implementation: existing Sweet USB CDC-ECM
+      descriptors, XNU ifnet integration and UDP log sender (192.168.7.1:5140).
+      Replace DWC3 hardware operations with MTU3 EP0/QMU operations. Existing
+      Nord2 `_cnputs` feeds only pmsg, not sweet_log_append; wire a RAM log
+      reader/feed before claiming the existing UDP sender will contain logs.
+      Keep UFS persistent log writer disabled. QMU 36-bit DMA capability is
+      MISC_CTRL bit31; check it before using buffers in XNU's >4GiB region.
+      IPPC offset0xa4 selects GPD generation in Linux. Full USB device data
+      transport, clock/PHY activation and safe QMU teardown remain unimplemented.
+    - Hardware source is `../nord2-current-kernel`, commit
+      `04d00c2565764c3922c9b4826b5acff1106e533f` (MT6893 uses clk-mt6885.c).
+      Live DT raw properties saved under `research/nord2/usb/` confirm the
+      register ranges, SPI96, sys_ck/ref_ck and high-speed maximum.
+      Debugfs is disabled in the current Linux kernel; a temporary debugfs
+      mount attempt in `/tmp` failed with ENODEV and changed no disk state.
+    - New local kernel with USB snapshot:
+      `research/ci-39398655023/return-rescue/kernel.nord2-usb-snapshot`,
+      SHA-256 `abbfb05ef2a39728df892e491f94445780220ed6e48b6bc80f14b60f0138d518`.
+      Candidate `shim/out/nord2-xnu/nord2-usb-snapshot-stop13.img`:
+      33,308,672 bytes, SHA-256
+      `19b1aa82a361331ee94fc014295e5acdcdfe2bb1b42f1dede8a166ea47f5eb7b`.
+      Payload SHA-256
+      `a4582e51cb9f0f3a37a04ea066a03f9d6ccb5043074145610cf21e99acedf8c6`.
+      All static checks passed, including unchanged original Linux kernel/DT,
+      exact tested rescue ramdisk, source-end bound, USB probe marker and
+      ufsrw=0/rootrw=0. No root filesystem is selected before the stop.
+      **User authorized** this exact boot-only test and brought the phone
+      to fastboot. Product/partition/hash checks passed, flash/reboot passed;
+      evidence `research/nord2/usb/stop13-test/flash.log`. Awaiting ADB rescue
+      and collecting logs. Original Android boot restoration is authorized
+      if return fails; manual fastboot may then be needed.
+      Rescue log collector now supports `tools/nord2-pull-logs.sh --rescue LABEL`;
+      hardware read-only check passed and saved
+      `backup/nord2/logs/20261020-115541-standalone-rescue/`.
+      Its boot reason confirms PMIC_cold_reboot, explaining empty pstore.
+      Uses shell-v2 exit status and bounded wait-for-recovery, no su/getprop.
 
 - **Completed point12: original Android boot restored and verified.**
   User authorized the exact boot-only test/restore. Flash and reboot succeeded;
