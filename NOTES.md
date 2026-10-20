@@ -7,9 +7,13 @@
   Includes opt-inRTCskip+extendedreadonlyUFSlimits+priorGUIretry/diagnostics
   andfirmwareRAMverification. Intendedimage nord2-ios-rtc-ufs-wifi-stop23.img;
   private rtc-ufs-wifi build/verify prepared, notpacked/flashed/authorized.
-  Originaltestedrescuebase selected; Zopfli30iterations planned forsize.
-  Optional private recompression of exact rescue CPIO being evaluated only
-  ifimageexceeds32MiB; testedrescuefile remainsunchanged. Noimageclaims yet.
+  Private recompressedrescuebase nowselected; defaultZopfli15kernelcompression.
+  base.img28594176B SHAed05ea02d0499fe4109e6498a6852e769c346226aa4a56a220338673f8a2f5bf,
+  gains290816B aligned. ExactCPIO19476076B SHA
+ 95989a2ddff7d3fad8c63df9916a7d2510e09499f0b1710ac9fbf078ce60979f.
+  Independentheader/ID/parser verifiesLinux/bothDTs/allCPIOcontentsunchanged;
+  only gzipcontainer/headerRAMdisksize+ID differ. ContainerhardwareUNTESTED,
+  originaltestedrescuefilepreservedforfallback. Imagepending, noimageclaims.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39491596110
   Isolated wifi_emi_snapshot.{c,h} prepared withhosttests/nativeARMcompile:
   exactSMCstructuredREAD, preservesrawreturns, validatesselectors/groups/
@@ -26,7 +30,9 @@
   Console W0C/rate fix:423completedpushes,0busy/frame timeouts,2183skips;
   framebuffer4.82882s vs58.4852s prior; GUIownership93.68362s (notlockscreen).
   First2presentsdone1; userstillseesconsole andpowerdims. No enabledlayerlogs.
-  Hardware snapshot+SHA/result under ufs-profile/, livecapturestillrunning.
+  Hardware snapshot+SHA/result under ufs-profile/. Final600scapture956649B,
+  SHA1fefffbc13910364f013d287b2f22d1884acfe83e782a03aa0b40f431e7178ec; clientexit0.
+  Phone leftinXNU; no nextflash/rollbackexecuted.
   MissingIORTC sourcewait30s found beforeuserspace. New opt-in nord2nortc=1
   skips only that wait, retains clock_initialize_calendar andlogsrawtiming.
   ExactC++hostmodel/default/skip/timeout/callorder +localcompile PASS.
