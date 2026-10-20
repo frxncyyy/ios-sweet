@@ -17,13 +17,35 @@
   Runtime RAM-only check proved conv=notrunc,fsync works and preserves tail.
   Installer corrected to use it after same-shell test -b/readlink identity
   guards. Fake-ADB checks include an identity failure just before opening.
-  Retry will use new private install-retry/ evidence; no reboot/mount/boot
-  changes until full SHA readback is verified. ADB remained root rescue.
-  Point21 remains installed; userdata still untouched. Actual read-only
-  installer preflight PASSED, exact userdata geometry/no block mounts/root
-  rescue marker/backups and full16GiB image SHA verified. Evidence:
-  research/nord2/ios-userland/install-preflight/result.json and
-  install-preflight-cable-stable.log. No write requested or started.
+  Retry install-retry/ began writing, then HOST CRASH interrupted it at
+  last consumption5485074901/17179869184bytes (~32%). Completion/readback
+  were NOT verified; userdata now contains an INCOMPLETE iOS image and
+  must not be booted. The user explicitly requested resuming the transfer.
+  After restart permissions briefly read-only, now restored full access.
+  Old agent could not inherit restored permissions; fresh gpt-6.1-sol agent
+  /root/install_ios_resume handles the authorized restart FROM BYTE ZERO,
+  new install-after-crash/ + install-after-crash.log. Do not run parallel writers.
+  User reconnected fragile USB cable; root rescue/no residual dd confirmed.
+  SECOND OOM interrupted install-after-crash/ at consumption7578022617bytes
+  (~44%), without completed transfer/readback. User added12GiB zram+16GiB
+  disk swap and explicitly requested resume. Kernel log identified killed
+  adb65482 with4.2GiB anonymous RSS/7.6GiB virtual memory: unlimited stdin
+  queuing caused the memory pressure. Do NOT use the old single-stream path.
+  A tentative install-after-swap was stopped during LOCAL HASH, before dd;
+  its empty log is preserved. Old remote shell712 vanished after disconnect;
+  no old writer remained. Installer now sends64MiB per separate adb shell,
+  dd bs1MiB seek=chunk_offset, no count (short pipe reads), notrunc/fsync,
+  waiting for successful exit before the next. New write-progress.json
+  records device-acknowledged bytes; old ADB-consumed numbers were NOT
+  proof of bytes written. Final16GiB SHA readback still mandatory.
+  Host fake-ADB tests passed distinct multi-chunk offsets, binary integrity,
+  guard failures, first/second chunk failure without false completion/hash.
+  Actual rescue RAM-only seek test PASS: XY at1MiB,2MiB file length retained.
+  Current authorized retry: install-bounded/ and install-bounded.log,
+  agent /root/install_ios_resume; monitor ADB RSS as well as real progress.
+  Point21 remains in boot. No reboot/mount/boot changes before full readback.
+  Earlier read-only preflight evidence: ios-userland/install-preflight/.
+  Never describe userdata as untouched after these interrupted transfers.
   Filesystem installation is now explicitly authorized as above. Prepare/freeze
   point23 boot before requesting that remaining destructive-step approval.
   Point23 requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=1,rootrw=1;
@@ -42,11 +64,21 @@
   mode22 remains forced RO, continuous mode23 versus bounded diagnostics,
   CPU0 migration and existing coordinated shutdown. Exact strategy test also
   passes partial4K read/modify/write, multi-bounce I/O,500 varied cases and
-  refusal of overflow/RO/read failure. Full CI39450476117/source4e3f651 pending.
+  refusal of overflow/RO/read failure. Full CI39450476117/source4e3f651 PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39450476117
+  Kernel17279464B SHA-256
+  `f0a5accca1c5462f37b33b9a8e1f7f33098905a95cd7c907da9a38db71148259`.
+  Download checksum and hash rechecked after host crash. All1090 captured
+  C/C++ SWEET compile commands explicitly generic ARMv8.2+crypto; linked
+  RCpc2 scan2188555 instructions clean. Linked mode23 write-flag==1 config,
+  mode22 forcedRO/readiness before MMIO, USB CPU0 binding and continuous
+  mode23 loop comparisons inspected. Packaging restarted after host crash;
+  no final point23 boot image yet. Preserve image-build-before-crash.log
+  and image-build-second-crash.log; third packaging attempt in progress.
   Evidence research/nord2/ios-userland-rw/. Keep prior frozen images intact.
   tools/nord2-install-root.py defaults to READ-ONLY preflight; --write-userdata
-  streams only the16GiB prefix through dd (notrunc,fsync; live block-node and identity guards), then hashes
-  the complete prefix on-device. No GPT edits, reboot or boot flash in this
+  writes the16GiB prefix in bounded64MiB chunks through dd (notrunc,fsync;
+  live block-node/identity guards), then hashes the complete prefix on-device. No GPT edits, reboot or boot flash in this
   installer. Partial writes are recorded; never continue to boot after a
   failed transfer/readback. Root16GiB SHA-256:
   `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
@@ -72,7 +104,8 @@
   Exact authorized imagec5ce4445…f368e86a flashed only to boot; returned to
   authenticated root ADB RAM rescue without any block/data filesystem mount.
   Original boot restoration was not needed. Current boot remains point21;
-  current phone is ADB recovery. Userdata has not been changed.
+  At point21 completion phone was ADB recovery and userdata unchanged;
+  later installation/crash state is recorded above.
   All8 scheduler workers passed on their actual cores, correct A55/A78 MIDR,
   ticks33/18/18/18/18/18/18/17, IPI replies1..8; counter32768 and PASS1.
   USB service bound to CPU0; HFS md0 mounted; diagnostic PID1 verified HFS

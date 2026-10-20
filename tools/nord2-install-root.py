@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import time
 
+CHUNK_SIZE = 64 << 20  # Bound ADB stdin queues; wait for remote fsync per chunk.
 ROOT_SIZE = 17179869184
 ROOT_SHA = "8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3"
 PART_START = 25231360  # Linux sysfs uses 512-byte sectors.
@@ -66,39 +67,42 @@ def preflight(adb, serial):
 
 
 def write_root(adb, serial, file, output):
-    # No dd count: a pipe may produce short reads. EOF is the exact verified
-    # image end. This rescue advertises nocreat but rejects it at runtime.
-    # Repeat the block-node/identity guards in the same shell before opening
-    # it; notrunc/fsync were verified on a harmless RAM file in this rescue.
-    command = (f'test -b {BY_NAME} && '
-               f'test "$(readlink -f {BY_NAME})" = {DEVICE} && '
-               f'dd of={BY_NAME} bs=1048576 conv=notrunc,fsync status=none')
+    # A single16GiB shell stdin grew ADB's queue to4GiB RSS and caused OOM.
+    # Each shell receives at most64MiB, reaches EOF, fsyncs and exits before
+    # the next starts. Do not use dd count: pipe reads may be short.
+    assert CHUNK_SIZE > 0 and CHUNK_SIZE % 1048576 == 0
     file.seek(0)
+    offset = 0
+    deadline = time.monotonic() + 1800
+    progress = output / "write-progress.json"
+    progress.write_text(json.dumps(dict(acknowledged_bytes=0, total_bytes=ROOT_SIZE)) + "\n")
     with (output / "write.stdout").open("xb") as stdout, \
          (output / "write.stderr").open("xb") as stderr:
-        proc = subprocess.Popen([adb, "-s", serial, "shell", "-T", command],
-                                stdin=file, stdout=stdout, stderr=stderr)
-        last = -1
-        deadline = time.monotonic() + 1800
-        while proc.poll() is None:
-            if time.monotonic() >= deadline:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-                raise RuntimeError("userdata transfer timed out; image may be partial")
-            sent = os.lseek(file.fileno(), 0, os.SEEK_CUR)
-            gib = sent // (1 << 30)
-            if gib != last:
-                print(f"ADB consumed {sent}/{ROOT_SIZE} image bytes", flush=True)
-                last = gib
-            time.sleep(1)
-        if proc.returncode:
-            raise RuntimeError("userdata write failed; retain RAM recovery and inspect write.stderr")
-        if os.lseek(file.fileno(), 0, os.SEEK_CUR) != ROOT_SIZE:
-            raise RuntimeError("ADB did not consume the complete image")
+        while offset < ROOT_SIZE:
+            size = min(CHUNK_SIZE, ROOT_SIZE - offset)
+            chunk = file.read(size)
+            if len(chunk) != size:
+                raise RuntimeError("Local image became short; userdata may be partial")
+            # Rescue advertises nocreat but rejects it. Check block node and
+            # identity in the same shell before each bounded write instead.
+            command = (f'test -b {BY_NAME} && '
+                       f'test "$(readlink -f {BY_NAME})" = {DEVICE} && '
+                       f'dd of={BY_NAME} bs=1048576 seek={offset // 1048576} '
+                       'conv=notrunc,fsync status=none')
+            timeout = min(180, deadline - time.monotonic())
+            if timeout <= 0:
+                raise RuntimeError("userdata transfer deadline exceeded; image may be partial")
+            try:
+                subprocess.run([adb, "-s", serial, "shell", "-T", command],
+                               input=chunk, stdout=stdout, stderr=stderr,
+                               check=True, timeout=timeout)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError("userdata chunk failed; retain RAM recovery and inspect write.stderr") from exc
+            offset += size
+            progress.write_text(json.dumps(dict(acknowledged_bytes=offset,
+                                               total_bytes=ROOT_SIZE)) + "\n")
+            print(f"Device acknowledged and synced {offset}/{ROOT_SIZE} image bytes", flush=True)
+            del chunk
 
 
 def verify_device(adb, serial, output):
