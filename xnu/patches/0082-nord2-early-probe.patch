@@ -721,7 +721,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +776,514 @@
+@@ -133,11 +776,569 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -938,8 +938,13 @@
 +
 +/* NORD2 PSCI PROBE: no secondary enters XNU, no stack or disk access. */
 +extern void nord2_psci_probe_entry(void);
++extern void nord2_psci_low_probe_entry(void);
 +extern void nord2_psci_probe_end(void);
 +static bool nord2_psci_probe_active;
++static volatile uint8_t *nord2_psci_low_alias;
++#define NORD2_PSCI_LOW_CODE 0x40180000UL
++#define NORD2_PSCI_LOW_BOX  0x40184000UL
++#define NORD2_PSCI_LOW_SIZE 0x8000UL
 +
 +static int32_t
 +nord2_psci_call(uint64_t fn, uint64_t arg1, uint64_t arg2, uint64_t arg3)
@@ -991,6 +996,14 @@
 +	    __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
 +	do {
 +		if (nord2_psci_all_off()) {
++			/* Restore the zero padding only after every secondary is OFF. */
++			if (nord2_psci_low_alias) {
++				for (unsigned i = 0; i < NORD2_PSCI_LOW_SIZE; i++) {
++					nord2_psci_low_alias[i] = 0;
++				}
++				__builtin_arm_dsb(DSB_SY);
++				nord2_psci_low_alias = NULL;
++			}
 +			nord2_psci_probe_active = false;
 +			return 1;
 +		}
@@ -1030,7 +1043,7 @@
 +{
 +	unsigned stop = 0, cpus = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop != 17) {
++	if (stop != 17 && stop != 18) {
 +		return;
 +	}
 +	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
@@ -1057,28 +1070,66 @@
 +		nord2_psci_probe_active = true;
 +		goto done;
 +	}
-+	vm_offset_t memory = 0;
-+	if (kmem_alloc_contig(kernel_map, &memory, PAGE_SIZE, PAGE_MASK, 0, 0,
-+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-+		printf("NORD2 SMP: mailbox allocation failed\n");
-+		goto done;
++	uint64_t pa, entry;
++	volatile struct nord2_psci_mailbox *boxes;
++	if (stop == 18) {
++		/* Reserved loader prefix: code/BSS/stack end below40180000, original
++		 * Linux starts40280000. Checker also requires this entire hole zero. */
++		size_t stub_size = (uintptr_t)nord2_psci_probe_end -
++		    (uintptr_t)nord2_psci_low_probe_entry;
++		volatile uint8_t *alias = (volatile uint8_t *)ml_io_map(
++		    NORD2_PSCI_LOW_CODE, NORD2_PSCI_LOW_SIZE);
++		if (!alias || !stub_size || stub_size > 0x4000) {
++			printf("NORD2 SMP: low trampoline mapping/size refused\n");
++			goto done;
++		}
++		for (unsigned i = 0; i < NORD2_PSCI_LOW_SIZE; i++) {
++			if (alias[i]) {
++				printf("NORD2 SMP: loader scratch is not zero; refused\n");
++				goto done;
++			}
++		}
++		nord2_psci_low_alias = alias;
++		nord2_psci_probe_active = true;
++		const uint8_t *stub = (const uint8_t *)nord2_psci_low_probe_entry;
++		for (size_t i = 0; i < stub_size; i++) {
++			alias[i] = stub[i];
++		}
++		__asm__ volatile("dsb sy; ic ialluis; dsb sy; isb" ::: "memory");
++		for (size_t i = 0; i < stub_size; i++) {
++			if (alias[i] != stub[i]) {
++				printf("NORD2 SMP: low trampoline readback mismatch\n");
++				goto done;
++			}
++		}
++		pa = NORD2_PSCI_LOW_BOX;
++		entry = NORD2_PSCI_LOW_CODE;
++		boxes = (volatile struct nord2_psci_mailbox *)(alias + 0x4000);
++		printf("NORD2 SMP: low32 trampoline copied and verified; fixed mailbox\n");
++	} else {
++		vm_offset_t memory = 0;
++		if (kmem_alloc_contig(kernel_map, &memory, PAGE_SIZE, PAGE_MASK, 0, 0,
++		    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++			printf("NORD2 SMP: mailbox allocation failed\n");
++			goto done;
++		}
++		pa = ptoa_64(pmap_find_phys(kernel_pmap, memory));
++		entry = ml_static_vtop((vm_offset_t)nord2_psci_probe_entry);
++		if (!pa || !entry) {
++			printf("NORD2 SMP: physical translation failed\n");
++			goto done;
++		}
++		/* Clean the cached zeroed allocation, then use only the uncached alias. */
++		CleanPoC_DcacheRegion_Force(memory, PAGE_SIZE);
++		CleanPoC_DcacheRegion_Force((vm_offset_t)nord2_psci_probe_entry,
++		    (uintptr_t)nord2_psci_probe_end - (uintptr_t)nord2_psci_probe_entry);
++		boxes = (volatile struct nord2_psci_mailbox *)ml_io_map(pa, PAGE_SIZE);
++		if (!boxes) {
++			printf("NORD2 SMP: mailbox mapping failed\n");
++			goto done;
++		}
 +	}
-+	uint64_t pa = ptoa_64(pmap_find_phys(kernel_pmap, memory));
-+	uint64_t entry = ml_static_vtop((vm_offset_t)nord2_psci_probe_entry);
-+	if (!pa || !entry) {
-+		printf("NORD2 SMP: physical translation failed\n");
-+		goto done;
-+	}
-+	/* Clean the cached zeroed allocation, then use only the uncached alias. */
-+	CleanPoC_DcacheRegion_Force(memory, PAGE_SIZE);
-+	CleanPoC_DcacheRegion_Force((vm_offset_t)nord2_psci_probe_entry,
-+	    (uintptr_t)nord2_psci_probe_end - (uintptr_t)nord2_psci_probe_entry);
-+	volatile struct nord2_psci_mailbox *boxes =
-+	    (volatile struct nord2_psci_mailbox *)ml_io_map(pa, PAGE_SIZE);
-+	if (!boxes) {
-+		printf("NORD2 SMP: mailbox mapping failed\n");
-+		goto done;
-+	}
++	printf("NORD2 SMP: entry_pa=%llx mailbox_pa=%llx mode=%u\n", entry, pa, stop);
 +	__builtin_arm_dsb(DSB_SY);
 +	nord2_psci_probe_active = true; /* Also protects every panic return. */
 +	unsigned passed = 0;
@@ -1096,6 +1147,9 @@
 +		    "SCTLR=%llx CNTFRQ=%llu OFF=%u off_rc=%lld\n",
 +		    core, box->state, box->el >> 2, box->mpidr, box->midr,
 +		    box->sctlr, box->frequency, off, (int64_t)box->off_result);
++		printf("NORD2 SMP: core=%u magic=%llx context=%llx expected=%llx affinity=%d\n",
++		    core, box->magic, box->context, context,
++		    nord2_psci_call(0xc4000004, core << 8, 0, 0));
 +		if (!off || box->magic != 0x4e32534d ||
 +		    box->context != context || (box->mpidr & 0xffff) != (core << 8) ||
 +		    ((box->midr >> 4) & 0xfff) != (core < 4 ? 0xd05 : 0xd41) ||
@@ -1112,7 +1166,8 @@
 +		printf("NORD2 SMP: all secondary affinities OFF; return permitted\n");
 +	}
 + done:
-+	nord2_stop_at(17, "after bounded PSCI CPU_ON/OFF probe");
++	nord2_stop_at(stop, stop == 18 ? "after low32 PSCI CPU_ON/OFF probe" :
++	    "after bounded PSCI CPU_ON/OFF probe");
 +}
 +/* END NORD2 PSCI PROBE */
 +
@@ -1300,7 +1355,7 @@
  {
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -327,6 +327,57 @@
+@@ -327,6 +327,75 @@
  	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
  	msr		SPSel, #1
  	b		EXT(LowResetVectorBase)
@@ -1313,6 +1368,23 @@
 +LEXT(nord2_psci_probe_entry)
 +	msr		DAIFSet, #0xf
 +	mov		x19, x0
++	b		Lnord2_probe_record
++	.globl EXT(nord2_psci_low_probe_entry)
++LEXT(nord2_psci_low_probe_entry)
++	msr		DAIFSet, #0xf
++	/* Relocatable entry: fixed low-RAM mailbox, independent of context_id.
++	 * This is copied to unused loader padding at PA0x40180000. */
++	mrs		x1, MPIDR_EL1
++	ubfx	x2, x1, #8, #8
++	mov		x19, #0
++	cbz		x2, Lnord2_probe_cpu_off
++	cmp		x2, #7
++	b.hi	Lnord2_probe_cpu_off
++	movz	x19, #0x4000
++	movk	x19, #0x4018, lsl #16
++	add		x19, x19, x2, lsl #7
++Lnord2_probe_record:
++	str		x0, [x19, #56]		// Actual firmware context_id, before touching x0
 +	movz	x1, #0x534d
 +	movk	x1, #0x4e32, lsl #16
 +	str		x1, [x19, #0]
@@ -1334,17 +1406,18 @@
 +	str		x2, [x19, #40]
 +	mrs		x2, CNTVCT_EL0
 +	str		x2, [x19, #48]
-+	str		x19, [x19, #56]
 +	mov		x2, #1
 +	dsb		sy
 +	str		x2, [x19, #72]
 +	dsb		sy
++Lnord2_probe_cpu_off:
 +	movz	w0, #2
 +	movk	w0, #0x8400, lsl #16
 +	mov		x1, #0
 +	mov		x2, #0
 +	mov		x3, #0
 +	smc		#0
++	cbz		x19, Lnord2_probe_off_failed
 +	str		x0, [x19, #64]
 +	mov		x2, #2
 +	str		x2, [x19, #72]
@@ -1358,7 +1431,7 @@
  #endif /* SWEET */
  
  	.align 2
-@@ -513,7 +564,7 @@
+@@ -513,7 +582,7 @@
  	mov		x20, x0
  	mov		x21, #0
  
@@ -1367,7 +1440,7 @@
  	/* Stage 0: white 64x32 band, no stack or page tables needed. */
  	MOV64	x0, (0x9c000000 + 2368 * 4320)
  	mov		w1, #-1
-@@ -680,19 +731,65 @@
+@@ -680,19 +749,65 @@
  
  #if defined(SWEET)
  	/*
@@ -1438,7 +1511,7 @@
  #endif
  
  	/* Ensure TTEs are visible */
-@@ -912,6 +1009,82 @@
+@@ -912,6 +1027,82 @@
  	// Branch to the trampoline
  	br		x0
  

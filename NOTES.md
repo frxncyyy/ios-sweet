@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Next SMP candidate: point18 low32 PSCI probe, READY; not authorized.**
+  Point17 did not verify even core1 execution; entry and context were above
+  4GiB and context_id was the only mailbox pointer. Neither high-address nor
+  context handoff support is established. Do not call either the cause yet.
+  Point18 copies a188B position-independent stackless entry to PA40180000,
+  with fixed per-core128B mailboxes at40184000. Both are inside zero padding
+  of the2MiB loader prefix40080000..40280000, outside loader code/BSS/stack
+  and below the original Android kernel40280000. Runtime refuses nonzero
+  scratch before any write; image checker independently checks loader size
+  and entire32KiB scratch hole. Stub derives mailbox slot from MPIDR Aff1
+  (1..7), recording actual firmware x0 context without dereferencing it.
+  It then records EL/MPIDR/MIDR/SCTLR/CNTFRQ and requests CPU_OFF as before.
+  New logs include entry/mailbox PA, magic, context and affinity state.
+  Scratch is cleared only after ALL seven affinities are OFF; generic
+  panic return uses the same guard. Failed quiescence retains scratch and
+  refuses Linux return. Disk writes/root mounting/USB remain disabled.
+  Same exact-code host guard tests pass plus scratch-retention/clear cases;
+  C/assembly compile; objdump verification: no stack or external PC-relative
+  references, every branch inside the188B copied range, only mailbox stores.
+  Kernel21967832B SHA
+  `4a674612ecd28baef3bc170e0a4517524e177a30e8b81effd7de7c8f4faa8d27`.
+  Evidence `research/nord2/smp/low32/`. Image built and all static checks pass:
+  `shim/out/nord2-xnu/nord2-smp-low32-stop18.img`,33312768B, SHA-256
+  `d6ae9e2f9ec78b5b854ce8d2f2f58506eefb526ba27eae8316d7990616fdb5f4`.
+  Payload SHA `13d92d735f36caf6b0b68cf336cf8eb80db922f02526d97b337087052b644610`.
+  Original Linux kernel, both DT representations and tested rescue ramdisk
+  independently compared: unchanged. Manifest saved, candidate frozen.
+  NOT YET AUTHORIZED/FLASHED. Phone already fastboot at13:39 CEST.
+  Point17 full Apple-clang CI PASSED at ff8d66e:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39414925445
+  Run/log/artifact download under `research/ci-39414925445/` in progress.
+
 - **Current user priority: enable all eight CPU cores (or as many as practical)
   BEFORE installing/starting full iOS userland. No userdata install yet.**
   Point16 USB/userland diagnostic passed (details below). User then requested
@@ -38,8 +70,9 @@
   test; flash/reboot PASSED at13:26:28 CEST after hash/device/product/size checks.
   Evidence `research/nord2/smp/psci/hardware-test/flash.log`. ADB rescue log
   collector completed: firmware probe FAILED SAFELY, rescue return PASSED.
-  Firmware PSCI1.1, CPU_ON core1/affinity100 returned0, but its entire mailbox
-  stayed zero across5s. Probe stopped, reported0/7. All seven affinities were
+  Firmware PSCI1.1, CPU_ON core1/affinity100 returned0, but its completion state
+  and printed mailbox fields stayed zero across5s. Point17 did not print
+  magic/context, so their values are unknown. Probe stopped, reported0/7. All seven affinities were
   OFF before chain-back; authenticated root rescue returned, no blockfs/data
   mounts. Do not infer the secondary executed our entry or that SMP works.
   Pmsg15449B SHA `c0301be03cb6dbad4b55d785d55cd93d7b5d7416de50d18ef19d52efe30231f6`,

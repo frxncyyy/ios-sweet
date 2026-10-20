@@ -26,7 +26,13 @@ prelude = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#define NORD2_PSCI_LOW_SIZE 0x8000
+#define DSB_SY 15
+#define __builtin_arm_dsb(v) ((void)(v))
 static bool nord2_psci_probe_active;
+static volatile uint8_t *nord2_psci_low_alias;
+static uint8_t scratch[NORD2_PSCI_LOW_SIZE];
 static uint64_t now;
 static unsigned calls, polls, transition_at;
 static int32_t state[8];
@@ -49,7 +55,7 @@ static void nord2_psci_poll(void) {
 cases = r'''
 static void reset(void) {
     nord2_psci_probe_active=true; now=0; calls=polls=transition_at=0;
-    mail_state=NULL;
+    mail_state=NULL; nord2_psci_low_alias=NULL;
     for (unsigned i=0; i<8; i++) state[i]=1;
 }
 int main(void) {
@@ -67,6 +73,13 @@ int main(void) {
     }
     reset(); state[7]=2; transition_at=3;
     assert(nord2_smp_prepare_return()==1 && now==3 && !nord2_psci_probe_active);
+    reset(); memset(scratch,0xa5,sizeof(scratch)); nord2_psci_low_alias=scratch;
+    state[2]=0;
+    assert(nord2_smp_prepare_return()==-1 && nord2_psci_low_alias==scratch);
+    for (unsigned i=0;i<sizeof(scratch);i++) assert(scratch[i]==0xa5);
+    state[2]=1;
+    assert(nord2_smp_prepare_return()==1 && !nord2_psci_low_alias);
+    for (unsigned i=0;i<sizeof(scratch);i++) assert(scratch[i]==0);
     struct nord2_psci_mailbox box={0};
     reset(); box.state=1;
     assert(nord2_psci_wait_off(&box,3,5) && !polls);
@@ -82,7 +95,8 @@ int main(void) {
     reset(); box.state=0; state[3]=2; transition_at=2; mail_state=&box.state;
     assert(nord2_psci_wait_off(&box,3,5) && now==2 && box.state==1);
     puts("PASS: exact PSCI guards; all seven targets; ON/PENDING/errors refuse "
-         "return; timeout; late OFF; failed CPU_OFF; empty mailbox; inactive no-op");
+         "return; timeout; late OFF; failed CPU_OFF; empty mailbox; inactive no-op; "
+         "low scratch retained until all cores OFF, then fully cleared");
 }
 '''
 cfile = out / 'smp-probe-host.c'
