@@ -3,7 +3,26 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **Next candidates: point20 real XNU SMP with cpus=2/4/8, READY; awaiting batch authorization.**
+- **CURRENT RESULT: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
+  User authorized the exact three images conditionally,2→4→8; do not flash
+  remaining4/8 images after this failure. Boot-only flash/reboot of2 succeeded
+  at14:40 CEST. XNU panicked before the coordinated-start marker or scheduler
+  probe: PCfffffe00074824fc, instruction99448108, in
+  sweet_cpu_signal_is_enabled. Decode is LDAPUR w8,[x8,#72] (FEAT_LRCPC2).
+  Root ADB RAM rescue returned, marker verified and no block/data mounts.
+  No original restore was needed. Pmsg10616B SHA-256
+  `a02873cffdd3fd4950a2ef4d64995fbe9ed70e7d1568a17799e7abdeb3ebf54c`,
+  `backup/nord2/logs/20261020-144059-smp-xnu2-stop20/pstore/pmsg-ramoops-0`.
+  Evidence research/nord2/smp/xnu2/hardware-test-2/{flash.log,rescue.txt,verified.json}.
+  Local clang23.1.1 selects target-cpu apple-m1 for arm64-apple-macos14.0
+  despite -march=armv8.2-a+crypto; this can inherit unsupported extensions.
+  Explicit -mcpu=generic removes this CPU default. Full CI39422376218 passed,
+  downloaded kernel hash verified; its same observer uses LDAPR rather than
+  LDAPUR, so successful CI alone did not validate the local relink's ISA.
+  Next fix explicit CPU target in local and CI flags, verify generated atomics
+  and rebuild a candidate before requesting a new boot-only hardware test.
+
+- **Previous authorization/build: point20 images, conditional2→4→8 (stopped at2).**
   Point19 proved all7 firmware entries/shutdowns, including high PA, but no
   secondary XNU scheduler execution yet. Now arm SMP return from cpu_start()
   immediately before PE_cpu_start(); accept only stop20 and cpus2/4/8.
@@ -53,10 +72,12 @@
   to remove printf from shutdown failure diagnostics; these are final images.
   Linked disassembly confirms MMU/DAIF console guards and coordinated shutdown
   before USB cleanup (static prepare_return was inlined into nord2_leave_to).
-  Source9b881eb pushed; full Apple-clang CI running:
+  Source9b881eb pushed; full Apple-clang CI PASSED:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39422376218
-  Wait for successful CI before the next flash. Request ONE authorization
-  listing all3 exact images and conditional2→4→8 order. None authorized yet.
+  User explicitly authorized ALL THREE exact images in conditional2→4→8
+  sequence, plus original-boot restoration if rescue fails. Do not request
+  permission again for these unchanged images. Wait for successful CI before
+  first flash (CI success now confirmed). Manual fastboot is still needed between successful tests.
   For each: verify device/product/boot size/hash/backup, flash boot only,
   reboot, immediately run tools/nord2-pull-logs.sh --rescue smp-xnuN-stop20.
   Require scheduler result N/N, counter=N*4096, PASS=1, per-core ticks and
@@ -67,7 +88,7 @@
   manual fastboot (not renewed permission if all3 were explicitly approved).
 
 
-- **CURRENT DEVICE: point19 PASSED low+high, all7 secondaries; ADB rescue returned.**
+- **Previous result: point19 PASSED low+high, all7 secondaries; ADB rescue returned.**
   This follows the observed point18 context_id=0. Only mode19 treats context
   as diagnostic; slot is derived from MPIDR in the unchanged stackless stub.
   Completion, CPU identity/type, EL, MMU/cache-off, timer frequency and CPU_OFF
