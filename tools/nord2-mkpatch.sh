@@ -15,9 +15,21 @@ TGZ=research/ci-39158169212/xnu-buildtree/buildtree.tgz
 PATCH=xnu/patches/0082-nord2-early-probe.patch
 FILES="osfmk/arm64/sweet_early.c osfmk/arm64/sweet_early.h osfmk/arm64/start.s osfmk/arm64/cpu.c \
 osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c \
-bsd/kern/bsd_init.c bsd/dev/sweet_ufs.c bsd/dev/sweet_usb.c bsd/dev/sweet_touch.c osfmk/arm64/sleh.c osfmk/kern/startup.c \
+bsd/conf/files bsd/kern/bsd_init.c bsd/dev/sweet_ufs.c bsd/dev/sweet_usb.c bsd/dev/sweet_touch.c osfmk/arm64/sleh.c osfmk/kern/startup.c \
 iokit/Kernel/arm/SweetBattery.cpp iokit/Kernel/arm/SweetFramebuffer.cpp iokit/Kernel/IOStartIOKit.cpp iokit/KernelConfigTables.cpp \
 pexpert/pexpert/arm64/SWEET.h makedefs/MakeInc.def"
+
+# Canonical firmware sources live beside the shim for focused host tests.
+# Generate guarded XNU copies so this patch also links without NORD2.
+NEW_FILES="bsd/dev/wifi_firmware.c bsd/dev/wifi_firmware.h bsd/dev/wifi_firmware_probe.c bsd/dev/wifi_firmware_probe.h"
+for name in wifi_firmware wifi_firmware_probe; do
+    cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
+    {
+        printf '#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'
+        cat "shim/nord2-xnu/$name.c"
+        printf '\n#endif /* NORD2 */\n'
+    } > "$BT/bsd/dev/$name.c"
+done
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -29,9 +41,13 @@ for f in $FILES; do
 	diff -u --label "a/$f" --label "b/$f" "$tmp/xnu/$f" "$BT/$f" >> "$tmp/new.patch" || true
 done
 
+for f in $NEW_FILES; do
+    diff -u --label /dev/null --label "b/$f" /dev/null "$BT/$f" >> "$tmp/new.patch" || true
+done
+
 cp -r "$tmp/xnu" "$tmp/check"
 (cd "$tmp/check" && patch -p1 -s < "$tmp/new.patch")
-for f in $FILES; do
+for f in $FILES $NEW_FILES; do
 	cmp -s "$tmp/check/$f" "$BT/$f" || { echo "MISMATCH $f" >&2; exit 1; }
 done
 cp "$tmp/new.patch" "$PATCH"

@@ -3,6 +3,27 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **NEXT SOURCE: VENDOR FIRMWARE VERIFY + GUI OWNERSHIP RETRY.**
+  Canonical loader committed b7af65b. Vendor API and isolated probe now wired
+  into XNU through generated guarded sources in patch0082/bsd/conf/files.
+  nord2wififw=1 starts a separate thread only after su.ready/root publication
+  and UFS mutex release. Allocates about1.4MiB with Z_NOPAGEWAIT, validates
+  four files, logs metadata/timing, wipes/frees and terminates. No EMI/CPU/RF
+  writes. API/loader/probe sanitizer tests, three local C compiles and peer
+  review PASS; backup GPT fixture caveat remains. Full CI not dispatched yet.
+  Display source/model proves first ownership failure consumed fDirty: now
+  restore dirty under fLock without replacing any newer pending record;
+  timer cadence retries. Bounded nord2fbdiag=1 reports eight swap records
+  and limited counters (copy/empty/missing/ownership/timer/power), defaultoff.
+  Model covers retry with no new swap and concurrent newer frame; local C++
+  compile+display regression PASS. This does NOT prove cause of empty GUI.
+  b3a8 is uncompressed RGB10 + alpha plane, not BGRA; no conversion added.
+  Root regenerated0082 (5808lines), exact reproduction PASS. Evidence under
+  research/nord2/{ufs-vendor,fb-diagnostics,wifi/kernel-extraction}/.
+  Profile-only CI39488497958/source242e41f PASSED (separate candidate): kernel
+  SHA feb127944a6f3a867ede0aa703518aded39080729e8e31ca79bd8dc0bc56efe9,
+  17266104B, all1096 compile-command lines genericARMv8.2+crypto. Image packing.
+
 - **USER PRIORITY: UFS/WI-FI AND FAST BOOT; UFS PROFILE PREPARED.**
   User explicitly authorizes parallel Sol agents. boot_speed implemented
   opt-in nord2ufsprofile=1: six allowlisted local DME_GETs report actual

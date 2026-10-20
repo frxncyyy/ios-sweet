@@ -16,7 +16,7 @@ code = 'static volatile uint32_t *nord2_ovl[4];' + early.split(
 code = code.replace('__asm__ volatile("dsb sy" ::: "memory");', 'barriers++;')
 assert 'sweet_early_putc(c[i]);' in early
 assert 'nord2_gui_owned && !panic_active()' in early
-assert 'if (!nord2_display_begin()) { return; }' in fb
+assert 'if (!nord2_display_begin()) {' in fb  # Retry semantics are exercised by test-nord2-fb-diag.py.
 assert fb.index('nord2_display_begin()') < fb.index('int done = nord2_display_refresh()')
 assert 'if (step <= 6) { (void)nord2_display_refresh(); }' in fb
 model = r'''

@@ -2021,7 +2021,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,67 @@
+@@ -10,8 +10,69 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -2066,6 +2066,8 @@
 +void nord2_ufs_probe(void);
 +/* Opt-in boot I/O/link measurement; reports after releasing the UFS lock. */
 +void nord2_ufs_profile_report(void);
++/* Opt-in, validated vendor-relative reads; no writes/root rebinding. */
++int sweet_ufs_read_vendor(uint64_t offset, void *buffer, uint32_t bytes);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
 +void nord2_ufs_root_stop(void);
 +/* Final chain-back, including panics: 0 untouched, 1 restored, -1 unsafe. */
@@ -2602,6 +2604,17 @@
  #endif
  
  	if (disableConsoleOutput) {
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -108,6 +108,8 @@
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
++bsd/dev/wifi_firmware.c			standard
++bsd/dev/wifi_firmware_probe.c		standard
+ bsd/dev/sweet_rpmh.c			standard
+ bsd/dev/sweet_spmi.c			standard
+ bsd/dev/sweet_usb.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,9 @@
@@ -2686,17 +2699,19 @@
  
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -39,6 +39,9 @@
+@@ -39,6 +39,11 @@
  #include <pexpert/device_tree.h>
  #include <libkern/libkern.h>
  #include <machine/atomic.h>
 +#if defined(NORD2)
 +#include <arm64/sweet_early.h>
++#include <libkern/crypto/sha2.h>
++#include "wifi_firmware_probe.h"
 +#endif
  
  extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  /* osfmk/arm/machine_routines.h, not exported to the BSD layer */
-@@ -112,6 +115,9 @@
+@@ -112,6 +117,9 @@
  	int bmajor, cmajor;
  	dev_t bdev;
  	bool ready;
@@ -2706,7 +2721,7 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,13 +147,209 @@
+@@ -141,13 +149,209 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
@@ -2917,7 +2932,7 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -204,6 +406,9 @@
+@@ -204,6 +408,9 @@
  	}
  	__builtin_arm_dsb(0xf);
  
@@ -2927,7 +2942,7 @@
  	ufs_wr(REG_UTRLDBR, 1);
  	uint64_t deadline;
  	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
-@@ -219,6 +424,9 @@
+@@ -219,6 +426,9 @@
  	while (ufs_rd(REG_UTRLDBR) & 1) {
  		uint64_t now = mach_absolute_time();
  		if (now > deadline) {
@@ -2937,7 +2952,7 @@
  			ufs_wr(REG_UTRLCLR, ~1u);
  			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
  			return ETIMEDOUT;
-@@ -234,8 +442,19 @@
+@@ -234,8 +444,19 @@
  			delay(1);
  		}
  	}
@@ -2957,7 +2972,7 @@
  
  	dma_sync(DMA_UTRL, sizeof(*utrd));
  	if (su.cache) {
-@@ -253,9 +472,44 @@
+@@ -253,9 +474,44 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
@@ -3002,7 +3017,7 @@
  /* READ(10) of count device blocks at lba into the bounce buffer. */
  static int
  ufs_read_blocks(uint64_t lba, uint32_t count)
-@@ -374,6 +628,12 @@
+@@ -374,6 +630,12 @@
  	ufs_wr(REG_IE, 0);                      /* polled operation */
  	ufs_wr(REG_IS, ufs_rd(REG_IS));
  	ufs_wr(REG_UTRLRSR, 0);
@@ -3015,7 +3030,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +647,334 @@
+@@ -387,6 +649,488 @@
  	return 0;
  }
  
@@ -3136,6 +3151,160 @@
 +		su.nblocks = userdata_blocks;
 +	}
 +	return 0;
++}
++
++/* Immutable read-only vendor mapping. SHA-256 identities bind the complete
++ * GPT entry array and both LP geometry/slot0 metadata copies, including their
++ * embedded checksums and padding, to the independently verified rescue dump.
++ * No generic LP layout, alternate slot, changed geometry, or stale backup is
++ * accepted. This does not authenticate vendor contents; the firmware loader
++ * separately checks its pinned extents/digests before consuming those bytes.
++ */
++static bool nord2_ufs_vendor_enabled, nord2_ufs_vendor_checked;
++static int nord2_ufs_vendor_error;
++#define N2_VENDOR_LUN_BLOCKS 31240192ull
++#define N2_SUPER_FIRST 344064ull
++#define N2_SUPER_BYTES 11039408128ull
++#define N2_VENDOR_OFFSET 7708082176ull
++#define N2_VENDOR_BYTES 544354304ull
++#define N2_VENDOR_MAX_READ 65536u
++static const uint8_t nord2_vendor_gpt_sha[32] = { 0xb4, 0xc8, 0x42, 0xa9, 0x58, 0xf7, 0xa8, 0x5a, 0xad, 0x6d, 0xea, 0x4f, 0xa2, 0xb3, 0x77, 0xe9, 0x34, 0x61, 0xca, 0x87, 0x08, 0x32, 0xfe, 0x0a, 0x3c, 0x76, 0xb0, 0xd7, 0xff, 0x7f, 0xab, 0xe4 };
++static const uint8_t nord2_vendor_geometry_sha[32] = { 0xf7, 0x96, 0x25, 0x85, 0xff, 0x73, 0xe9, 0x34, 0xe1, 0x8b, 0xba, 0x02, 0x79, 0xce, 0x1c, 0xb5, 0x06, 0xf9, 0x70, 0x3c, 0x96, 0x9a, 0x9d, 0xbb, 0xb4, 0x67, 0x50, 0xbc, 0x45, 0xcb, 0x02, 0x24 };
++static const uint8_t nord2_vendor_lp_sha[32] = { 0x10, 0xc9, 0xf4, 0xda, 0xd0, 0x96, 0xce, 0xff, 0x32, 0x09, 0x45, 0x63, 0x4b, 0x0d, 0x31, 0xfe, 0x86, 0x7b, 0xa6, 0x7b, 0xb6, 0x85, 0x7c, 0x85, 0xc5, 0x20, 0xb3, 0xab, 0x20, 0xa8, 0x4f, 0xf2 };
++
++static bool
++nord2_vendor_hash(const void *data, uint32_t bytes, const uint8_t expected[32])
++{
++	SHA256_CTX ctx;
++	uint8_t digest[32];
++	SHA256_Init(&ctx);
++	SHA256_Update(&ctx, data, bytes);
++	SHA256_Final(digest, &ctx);
++	return memcmp(digest, expected, sizeof(digest)) == 0;
++}
++
++/* Standalone GPT validation: never calls select_userdata or rebinds any root
++ * state. Both headers/arrays must agree with the verified LUN2 layout. */
++static int
++nord2_vendor_gpt_copy(bool backup)
++{
++	uint8_t *b = (uint8_t *)(su.dma + DMA_BOUNCE);
++	uint64_t current, other, first, last, entry_lba;
++	uint32_t size, stored_crc, count, entry_size, entries_crc, reserved;
++	uint64_t header_lba = backup ? N2_VENDOR_LUN_BLOCKS - 1 : 1;
++	int error = ufs_read_blocks(header_lba, 1);
++	if (error) { return error; }
++	if (memcmp(b, "EFI PART", 8) || memcmp(b + 8, "\0\0\1\0", 4)) { return EINVAL; }
++	memcpy(&size, b + 12, 4);
++	memcpy(&stored_crc, b + 16, 4);
++	memcpy(&reserved, b + 20, 4);
++	if (size != 92 || reserved) { return EINVAL; }
++	bzero(b + 16, 4);
++	uint32_t actual_crc = nord2_ufs_crc32(b, size);
++	memcpy(b + 16, &stored_crc, 4);
++	if (actual_crc != stored_crc) { return EIO; }
++	memcpy(&current, b + 24, 8);
++	memcpy(&other, b + 32, 8);
++	memcpy(&first, b + 40, 8);
++	memcpy(&last, b + 48, 8);
++	memcpy(&entry_lba, b + 72, 8);
++	memcpy(&count, b + 80, 4);
++	memcpy(&entry_size, b + 84, 4);
++	memcpy(&entries_crc, b + 88, 4);
++	static const uint8_t disk_guid[16] = { 0 }; /* exact saved GPT identity */
++	if (current != header_lba || other != (backup ? 1 : N2_VENDOR_LUN_BLOCKS - 1) ||
++	    first != 34 || last != 31240183ull || memcmp(b + 56, disk_guid, 16) ||
++	    entry_lba != (backup ? N2_VENDOR_LUN_BLOCKS - 5 : 2) || count != 128 ||
++	    entry_size != 128 || entries_crc != 0x97de707eu) { return EINVAL; }
++	error = ufs_read_blocks(entry_lba, 4);
++	if (error) { return error; }
++	if (nord2_ufs_crc32(b, 16384) != entries_crc ||
++	    !nord2_vendor_hash(b, 16384, nord2_vendor_gpt_sha)) { return EIO; }
++	/* Super is entry54 in the pinned table. Independently check its named
++	 * extent, not su.first_block/nblocks (which describe iOS userdata). */
++	const uint8_t *e = b + 54u * 128u;
++	static const uint8_t name[12] = { 's',0,'u',0,'p',0,'e',0,'r',0,0,0 };
++	memcpy(&first, e + 32, 8);
++	memcpy(&last, e + 40, 8);
++	if (memcmp(e + 56, name, sizeof(name)) || first != N2_SUPER_FIRST ||
++	    last < first || last - first + 1 != N2_SUPER_BYTES / UFS_BLOCK) { return EINVAL; }
++	return 0;
++}
++
++static int
++nord2_vendor_super_hash(uint64_t offset, uint32_t bytes, const uint8_t expected[32])
++{
++	if ((offset | bytes) % UFS_BLOCK || !bytes || bytes > N2_VENDOR_MAX_READ ||
++	    offset > N2_SUPER_BYTES || bytes > N2_SUPER_BYTES - offset) { return EINVAL; }
++	int error = ufs_read_blocks(N2_SUPER_FIRST + offset / UFS_BLOCK, bytes / UFS_BLOCK);
++	if (error) { return error; }
++	return nord2_vendor_hash((void *)(su.dma + DMA_BOUNCE), bytes, expected) ? 0 : EIO;
++}
++
++static int
++nord2_vendor_validate(void)
++{
++	/* Controller mutex is held throughout; use inherited LUN2 without changing
++	 * it or root partition bounds. READ CAPACITY does not write media. */
++	static const uint8_t capacity[10] = { 0x25 };
++	int error = ufs_scsi(capacity, sizeof(capacity), 8, false);
++	if (error) { return error; }
++	const uint8_t *b = (const uint8_t *)(su.dma + DMA_BOUNCE);
++	if ((uint64_t)nord2_ufs_be32(b) + 1 != N2_VENDOR_LUN_BLOCKS ||
++	    nord2_ufs_be32(b + 4) != UFS_BLOCK) { return EINVAL; }
++	error = nord2_vendor_gpt_copy(false);
++	if (!error) { error = nord2_vendor_gpt_copy(true); }
++	if (!error) { error = nord2_vendor_super_hash(4096, 4096, nord2_vendor_geometry_sha); }
++	if (!error) { error = nord2_vendor_super_hash(8192, 4096, nord2_vendor_geometry_sha); }
++	if (!error) { error = nord2_vendor_super_hash(12288, 65536, nord2_vendor_lp_sha); }
++	/* metadata_max65536, slots2, slot0: backup base12288+2*65536. */
++	if (!error) { error = nord2_vendor_super_hash(143360, 65536, nord2_vendor_lp_sha); }
++	return error;
++}
++
++/* Kernel-only API. Zero means the complete requested byte range was copied;
++ * every failure leaves the caller buffer untouched. Validation is cached only
++ * for this boot: root writes are confined to userdata, disjoint from super.
++ * Neither this API nor validation changes LUN, root bounds, or write policy.
++ */
++int
++sweet_ufs_read_vendor(uint64_t offset, void *buffer, uint32_t bytes)
++{
++	uintptr_t addr = (uintptr_t)buffer;
++	if (!buffer || !bytes || bytes > N2_VENDOR_MAX_READ || offset > N2_VENDOR_BYTES ||
++	    bytes > N2_VENDOR_BYTES - offset || addr > ~(uintptr_t)0 - bytes) { return EINVAL; }
++	if (!nord2_ufs_vendor_enabled) { return EPERM; }
++	if (!su.ready || !su.dma || !nord2_root_owned || su.lun != 2 || su.probe_only ||
++	    !ml_get_interrupts_enabled() || ml_at_interrupt_context() ||
++	    get_preemption_level() != 0) { return EBUSY; }
++	/* Do not allow a caller to overwrite the shared descriptors/bounce memory. */
++	if (su.dma && addr < su.dma + DMA_SIZE && addr + bytes > su.dma) { return EINVAL; }
++	lck_mtx_lock(&sweet_ufs_lock);
++	int error = EBUSY;
++	if (!su.ready || !nord2_root_owned || su.lun != 2 || su.probe_only ||
++	    nord2_ufs_uic_pending || ufs_rd(REG_UTRLDBR) || ufs_rd(0x78) ||
++	    !(ufs_rd(REG_HCE) & 1) ||
++	    (ufs_rd(REG_HCS) & (HCS_DP | HCS_UTRLRDY)) != (HCS_DP | HCS_UTRLRDY) ||
++	    ufs_rd(REG_UTRLBA) != (uint32_t)(su.dma_pa + DMA_UTRL) ||
++	    ufs_rd(REG_UTRLBAU) != (uint32_t)((su.dma_pa + DMA_UTRL) >> 32) ||
++	    !(ufs_rd(REG_UTRLRSR) & 1)) { goto done; }
++	if (!nord2_ufs_vendor_checked) {
++		nord2_ufs_vendor_checked = true;
++		nord2_ufs_vendor_error = nord2_vendor_validate();
++	}
++	error = nord2_ufs_vendor_error;
++	if (error) { goto done; }
++	uint64_t physical = N2_VENDOR_OFFSET + offset;
++	uint32_t skip = (uint32_t)(physical % UFS_BLOCK);
++	uint32_t blocks = (skip + bytes + UFS_BLOCK - 1) / UFS_BLOCK;
++	if (physical > N2_SUPER_BYTES || bytes > N2_SUPER_BYTES - physical ||
++	    N2_SUPER_FIRST + physical / UFS_BLOCK > UINT32_MAX ||
++	    blocks > BOUNCE_SIZE / UFS_BLOCK) { error = EINVAL; goto done; }
++	error = ufs_read_blocks(N2_SUPER_FIRST + physical / UFS_BLOCK, blocks);
++	if (!error) { memcpy(buffer, (const void *)(su.dma + DMA_BOUNCE + skip), bytes); }
++ done:
++	lck_mtx_unlock(&sweet_ufs_lock);
++	return error;
 +}
 +
 +static bool
@@ -3350,7 +3519,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -599,15 +1187,40 @@
+@@ -599,15 +1343,43 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3382,6 +3551,9 @@
 +	uint32_t profile = 0;
 +	PE_parse_boot_argn("nord2ufsprofile", &profile, sizeof(profile));
 +	nord2_ufs_profile_enabled = (profile == 1);
++	uint32_t firmware = 0;
++	PE_parse_boot_argn("nord2wififw", &firmware, sizeof(firmware));
++	nord2_ufs_vendor_enabled = (firmware == 1);
 +#endif
  
  	su.regs = ml_io_map(reg[0], reg[1]);
@@ -3391,7 +3563,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1232,72 @@
+@@ -619,31 +1391,72 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3468,7 +3640,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1308,25 @@
+@@ -654,13 +1467,27 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -3481,6 +3653,8 @@
  	sweet_usb_probe();
 +#else
 +	nord2_input_init();
++	/* Separate sleepable thread, root published and UFS mutex released. */
++	(void)nord2_wifi_firmware_start();
 +#endif
  	return 0;
 +failed:
@@ -5063,7 +5237,36 @@
  
  enum {
  	kSweetFBGetLayerDefaultSurface  = 3,
-@@ -152,16 +157,25 @@
+@@ -90,6 +95,19 @@
+ 
+ class IOMobileFramebufferUserClient;
+ 
++struct SweetFBDiagnostics {
++	bool enabled;
++	uint64_t vsync, swaps, off, flushes, alloc_failed, presents, begin_failed;
++	uint64_t empty_records, active_layers, missing_surfaces, copied_layers, non_bgra;
++};
++
++/* A finite set of callback checkpoints; no per-frame logging after these. */
++static bool
++sweet_fb_diag_checkpoint(uint64_t count)
++{
++	return count == 1 || count == 60 || count == 600 || count == 3600;
++}
++
+ class AppleCLCD : public IOMobileFramebuffer {
+ 	OSDeclareDefaultStructors(AppleCLCD);
+ 
+@@ -111,6 +129,8 @@
+ 	OSArray      *fClients;
+ 	uint32_t      fSwapID;
+ 	bool          fConsolePaused;
++	SweetFBDiagnostics fDiag;
++	void reportDiagnostics(const char *reason);
+ 	uint8_t       fPending[SWEET_FB_SWAP_REC_SIZE];     /* latest swap, not yet shown */
+ 	bool          fDirty;
+ 	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
+@@ -152,16 +172,25 @@
  bool
  AppleCLCD::start(IOService *provider)
  {
@@ -5089,30 +5292,170 @@
  	if (fPhys == 0 || fWidth == 0 || fHeight == 0 || fRowBytes < fWidth * 4) {
  		IOLog("SWEET FB: no boot framebuffer\n");
  		return false;
-@@ -239,6 +253,9 @@
+@@ -192,6 +221,12 @@
+ 		IOLog("SWEET FB: no vsync timer\n");
+ 		return false;
+ 	}
++	bzero(&fDiag, sizeof(fDiag));
++#if defined(NORD2)
++	uint32_t diagnostics = 0;
++	PE_parse_boot_argn("nord2fbdiag", &diagnostics, sizeof(diagnostics));
++	fDiag.enabled = (diagnostics == 1);
++#endif
+ 	uint32_t hz = 10;
+ 	PE_parse_boot_argn("sweetfb_hz", &hz, sizeof(hz));
+ 	fFlushTicks = (hz == 0 || hz >= 60) ? 1 : 60 / hz;
+@@ -206,12 +241,35 @@
+ 	return true;
+ }
+ 
++/* All counters are relaxed observations; report only after releasing fLock.
++ * Finite boot checkpoints and four ownership failures bound console overhead. */
++void
++AppleCLCD::reportDiagnostics(const char *reason)
++{
++#define FB_DIAG_LOAD(field) __atomic_load_n(&fDiag.field, __ATOMIC_RELAXED)
++	IOLockLock(fLock);
++	bool dirty = fDirty, off = fPowerOff, paused = fConsolePaused;
++	IOLockUnlock(fLock);
++	IOLog("NORD2 FB DIAG: %s dirty=%u poweroff=%u console_paused=%u ticks=%llu vsync=%llu swaps=%llu off_ticks=%llu flushes=%llu alloc_failed=%llu presents=%llu begin_failed=%llu empty=%llu active_layers=%llu missing=%llu copied=%llu non_bgra=%llu\n",
++	    reason, dirty, off, paused, mach_absolute_time(), FB_DIAG_LOAD(vsync), FB_DIAG_LOAD(swaps),
++	    FB_DIAG_LOAD(off), FB_DIAG_LOAD(flushes), FB_DIAG_LOAD(alloc_failed),
++	    FB_DIAG_LOAD(presents), FB_DIAG_LOAD(begin_failed), FB_DIAG_LOAD(empty_records),
++	    FB_DIAG_LOAD(active_layers), FB_DIAG_LOAD(missing_surfaces),
++	    FB_DIAG_LOAD(copied_layers), FB_DIAG_LOAD(non_bgra));
++#undef FB_DIAG_LOAD
++}
++
+ void
+ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ {
+ 	AppleCLCD *fb = (AppleCLCD *)owner;
+ 	uint64_t now = mach_absolute_time();
+ 	uint64_t count = ++fb->fVsyncCount;
++	bool diag_report = false;
++	if (fb->fDiag.enabled) {
++		uint64_t ticks = __atomic_add_fetch(&fb->fDiag.vsync, 1, __ATOMIC_RELAXED);
++		diag_report = sweet_fb_diag_checkpoint(ticks);
++	}
+ 	uint64_t values[6] = {
+ 		(uint32_t)count, (uint32_t)(count >> 32),
+ 		(uint32_t)now, (uint32_t)(now >> 32),
+@@ -225,6 +283,7 @@
+ 		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
+ 	}
+ 	if (fb->fPowerOff) {
++		if (fb->fDiag.enabled) { __atomic_fetch_add(&fb->fDiag.off, 1, __ATOMIC_RELAXED); }
+ 		/* Fade out: halve every channel each vsync, then black, then idle. */
+ 		uint32_t step = fb->fFadeStep;
+ 		if (step <= 6) {
+@@ -239,16 +298,23 @@
  				}
  			}
  		}
 +#if defined(NORD2)
 +		if (step <= 6) { (void)nord2_display_refresh(); }
 +#endif
++		if (diag_report) { fb->reportDiagnostics("timer-off"); }
  		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
  		return;
  	}
-@@ -315,6 +332,9 @@
+ 	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
+ 	uint8_t *rec = NULL;
+ 	if (flush) {
++		if (fb->fDiag.enabled) { __atomic_fetch_add(&fb->fDiag.flushes, 1, __ATOMIC_RELAXED); }
+ 		rec = (uint8_t *)IOMallocData(SWEET_FB_SWAP_REC_SIZE);
+ 		if (rec != NULL) {
+ 			memcpy(rec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
+ 			fb->fDirty = false;
++		} else if (fb->fDiag.enabled) {
++			__atomic_fetch_add(&fb->fDiag.alloc_failed, 1, __ATOMIC_RELAXED);
+ 		}
+ 	}
+ 	IOLockUnlock(fb->fLock);
+@@ -256,6 +322,7 @@
+ 		fb->present(rec);
+ 		IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
+ 	}
++	if (diag_report) { fb->reportDiagnostics("timer-on"); }
+ 	sender->setTimeoutUS(SWEET_FB_VSYNC_US);
+ }
  
+@@ -303,6 +370,14 @@
+ 	memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
+ 	fDirty = true;
+ 	IOLockUnlock(fLock);
++	if (fDiag.enabled) {
++		uint64_t accepted = __atomic_add_fetch(&fDiag.swaps, 1, __ATOMIC_RELAXED);
++		if (accepted <= 8) {
++			IOLog("NORD2 FB SWAP: accepted=%llu seq=%u mask=%#x ids=%u,%u,%u,%u\n",
++			    accepted, get32(rec, 0x50), get32(rec, 0x104), get32(rec, 0x54),
++			    get32(rec, 0x58), get32(rec, 0x5c), get32(rec, 0x60));
++		}
++	}
+ 	if ((++sweet_fb_swap_count % 1000) == 0) {
+ 		IOLog("SWEET FB: %llu swaps\n", sweet_fb_swap_count);
+ 	}
+@@ -312,9 +387,30 @@
+ AppleCLCD::present(const uint8_t *rec)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
+-
++	uint64_t diag_present = 0;
++	if (fDiag.enabled) {
++		diag_present = __atomic_add_fetch(&fDiag.presents, 1, __ATOMIC_RELAXED);
++		bool active = false;
++		for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
++			if ((mask & (1u << layer)) && get32(rec, 0x54 + 4 * layer)) { active = true; }
++		}
++		if (!active) { __atomic_fetch_add(&fDiag.empty_records, 1, __ATOMIC_RELAXED); }
++	}
  
  	if (!fConsolePaused) {
 +#if defined(NORD2)
-+		if (!nord2_display_begin()) { return; }
++		if (!nord2_display_begin()) {
++			/* vsync consumed fDirty before calling us. Retry at the normal
++			 * flush cadence; never replace a newer fPending with this record. */
++			IOLockLock(fLock);
++			fDirty = true;
++			IOLockUnlock(fLock);
++			if (fDiag.enabled && __atomic_add_fetch(&fDiag.begin_failed, 1, __ATOMIC_RELAXED) <= 4) {
++				reportDiagnostics("ownership-failed");
++			}
++			return;
++		}
 +#endif
  		int quiet = 0;
  		fConsolePaused = true;
  		if (PE_parse_boot_argn("sweetfb_noconsole", &quiet, sizeof(quiet)) && quiet != 0) {
-@@ -399,6 +419,14 @@
+@@ -335,7 +431,12 @@
+ 		if (!(mask & (1u << layer)) || id == 0) {
+ 			continue;
+ 		}
++		if (fDiag.enabled) { __atomic_fetch_add(&fDiag.active_layers, 1, __ATOMIC_RELAXED); }
+ 		SweetSurface *s = sweet_surface_copy(id);
++		if (fDiag.enabled && s == NULL) { __atomic_fetch_add(&fDiag.missing_surfaces, 1, __ATOMIC_RELAXED); }
++		if (fDiag.enabled && s != NULL && (s->pixelFormat != SWEET_FB_FORMAT_BGRA || s->planeCount != 0)) {
++			__atomic_fetch_add(&fDiag.non_bgra, 1, __ATOMIC_RELAXED);
++		}
+ 		if (sweet_fb_swaps_logged < 16) {
+ 			sweet_fb_swaps_logged++;
+ 			IOLog("SWEET FB: swap %u layer %u surface %u %ux%u fmt 0x%x bpr %u a %d,%d %ux%u b %d,%d %dx%d\n",
+@@ -391,6 +492,7 @@
+ 			src = 0;
+ 		}
+ 		if (src != 0 && bpe == 4) {
++			if (fDiag.enabled) { __atomic_fetch_add(&fDiag.copied_layers, 1, __ATOMIC_RELAXED); }
+ 			for (int32_t y = 0; y < h; y++) {
+ 				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+ 				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+@@ -399,6 +501,17 @@
  		}
  		s->release();
  	}
++	if (diag_present && diag_present == __atomic_load_n(&fDiag.begin_failed, __ATOMIC_RELAXED) + 1) {
++		reportDiagnostics("first-present");
++	}
 +#if defined(NORD2)
 +	int done = nord2_display_refresh();
 +	static unsigned logged;
@@ -5196,3 +5539,270 @@
  
  
  #
+--- /dev/null
++++ b/bsd/dev/wifi_firmware.c
+@@ -0,0 +1,103 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Original implementation: bounded read-only extraction of fixed verified
++ * EROFS extents. Firmware bytes remain private and are never embedded here. */
++#include "wifi_firmware.h"
++#ifdef NWF_HOST_TEST
++#include <openssl/sha.h>
++#include <string.h>
++#else
++#include <libkern/crypto/sha2.h>
++#include <libkern/libkern.h>
++#endif
++struct extent { uint32_t logical, bytes, offset, stored, padding, plain; unsigned char hash[32]; };
++struct image { const char *name; uint32_t bytes, first, count; unsigned char hash[32]; };
++static const struct extent extents[] = {
++{0u,105948u,101359616u,65536u,0u,0u,{0xca,0x20,0x85,0xda,0x35,0xe8,0x7b,0xc3,0xdf,0xda,0x40,0x77,0xd1,0xb9,0x9a,0x36,0x50,0x08,0x00,0xba,0x93,0xf8,0xc4,0xa6,0x00,0x78,0x52,0x12,0xc9,0x80,0xc1,0xa8}},
++{105948u,88644u,101425152u,65536u,0u,0u,{0x80,0xbf,0x04,0x30,0xc3,0x48,0x2a,0x58,0x38,0x69,0x13,0xfb,0xb7,0xad,0x9d,0x10,0xe8,0xde,0xee,0x93,0x92,0xb2,0x46,0x0d,0x93,0xb1,0x51,0x91,0x19,0xbe,0xa9,0x13}},
++{194592u,89091u,101490688u,65536u,0u,0u,{0x63,0xf0,0x27,0xfb,0x74,0x58,0xfa,0x49,0xae,0xb8,0x7a,0x17,0xca,0xd7,0x80,0x2a,0x56,0x2c,0x12,0x12,0x99,0x03,0x7e,0x71,0xbb,0x83,0xa2,0x4e,0xee,0x71,0x28,0x4f}},
++{283683u,93627u,101556224u,65536u,0u,0u,{0x35,0x7e,0x2d,0x7d,0x73,0xaa,0xe3,0x21,0x43,0x9c,0x65,0x4f,0xac,0xa3,0x76,0xc6,0x84,0x14,0xa3,0x2b,0xb6,0x0b,0x0e,0xbe,0x74,0x34,0x55,0x91,0xc5,0x46,0x8a,0x6c}},
++{377310u,88252u,101621760u,65536u,0u,0u,{0xff,0x2f,0x1e,0x58,0x81,0x7d,0x04,0x04,0x6b,0xc4,0x32,0x3a,0x8f,0xd2,0xf6,0xa3,0x50,0xbc,0x35,0x64,0x35,0x96,0xbc,0x7a,0xef,0xe3,0xcf,0xbe,0x64,0xbd,0x53,0x4f}},
++{465562u,92168u,101687296u,65536u,0u,0u,{0x47,0x53,0x8b,0xff,0xbd,0x28,0xf6,0x1d,0xb7,0x80,0x90,0x81,0x8a,0x50,0xc7,0x8b,0x1d,0xec,0x5e,0x56,0x5b,0x82,0x00,0xd5,0x20,0xfe,0x71,0x0b,0xf6,0x59,0xb5,0xc3}},
++{557730u,89484u,101752832u,65536u,0u,0u,{0x17,0x48,0x03,0x89,0xae,0x93,0xfb,0x09,0xbf,0x8e,0x5b,0xb1,0x6e,0x55,0x93,0xfc,0x70,0xa6,0x41,0x8a,0x7c,0x90,0x6e,0x89,0xe6,0x8d,0x83,0x8d,0x00,0x7b,0x22,0x1d}},
++{647214u,107923u,101818368u,65536u,0u,0u,{0x22,0x81,0xed,0xce,0x53,0x71,0x76,0xca,0xad,0x14,0x87,0xcd,0xef,0xcb,0xbb,0x23,0xd3,0x08,0xfa,0xb8,0xba,0xb9,0x16,0xfc,0x16,0xc3,0xd9,0x3e,0xcb,0x22,0xf0,0x0f}},
++{755137u,148711u,101883904u,65536u,0u,0u,{0x71,0xba,0xbc,0xa6,0xdd,0xfb,0x48,0x0b,0xc5,0xb5,0xaf,0x60,0x72,0xf4,0x8e,0x47,0x73,0x9e,0xb3,0x48,0x98,0x9f,0x6a,0x76,0x95,0x9f,0x61,0x55,0x78,0xb6,0xa1,0x1e}},
++{903848u,69800u,101949440u,28672u,932u,0u,{0x47,0xeb,0xb8,0xa7,0xa8,0x41,0x48,0x5f,0x46,0x42,0xb2,0xeb,0xe5,0x04,0xfd,0x2e,0x07,0xc5,0xb3,0x04,0xa1,0xa7,0x95,0xa5,0xfb,0xb0,0xf2,0xc3,0x72,0xbb,0x27,0x99}},
++{0u,5726u,105443328u,4096u,236u,0u,{0xf4,0x86,0x2b,0xf0,0x70,0xd8,0x2e,0xc2,0x22,0x4d,0xbe,0x10,0x2b,0xb5,0xde,0xc5,0x9f,0xdb,0xe9,0xc6,0xe7,0x02,0x70,0x16,0x30,0x2a,0x4c,0xde,0xf3,0xf1,0x58,0x6a}},
++{0u,104530u,106483712u,65536u,0u,0u,{0xe3,0x7b,0x80,0xfc,0x6e,0x4b,0x2b,0xb3,0x37,0x3c,0x45,0x57,0x33,0x2f,0x02,0x27,0xd9,0xf2,0x4b,0x03,0xed,0x7e,0xd0,0x21,0xec,0xb2,0x71,0x23,0x3d,0x19,0x71,0xd6}},
++{104530u,184798u,106549248u,65536u,0u,0u,{0x09,0x9d,0xfe,0xc4,0x4f,0x44,0x5a,0x6c,0x05,0x74,0x40,0xa9,0x7c,0xab,0x8b,0xf9,0x5b,0xa5,0x32,0x35,0x93,0x9d,0x56,0x5c,0xd0,0x4f,0xa2,0x0b,0x14,0xa2,0x7c,0x1d}},
++{289328u,4096u,106614784u,4096u,0u,1u,{0xef,0xa8,0x51,0xfd,0xa2,0x93,0xbd,0xbb,0x69,0x5e,0x9f,0xf5,0x74,0xe3,0x71,0x59,0xf5,0x98,0xdb,0xc8,0x61,0x9b,0x84,0x8a,0xfd,0x3a,0x2b,0xa9,0x04,0x5a,0x85,0x49}},
++{293424u,3492u,106618880u,4096u,0u,1u,{0x9b,0xa5,0xbd,0xd0,0x1d,0x5d,0x68,0x2c,0xf2,0x64,0x14,0xf5,0x0e,0xcb,0x84,0x2b,0x03,0xe0,0xd2,0xbc,0x66,0x30,0xca,0x25,0x16,0xb0,0xbc,0x60,0xdc,0x8f,0x24,0x53}},
++{0u,49868u,106622976u,32768u,2857u,0u,{0x40,0xf2,0x1d,0x5c,0x09,0x76,0x5d,0x3e,0x88,0x49,0xaa,0x23,0xe1,0x78,0x2d,0xc3,0x14,0x78,0xa1,0xc0,0xe1,0xc3,0x45,0xfd,0xbf,0xdf,0x09,0x05,0x8f,0x0a,0xac,0x8a}},
++};
++static const struct image images[] = {
++{"WIFI_RAM_CODE_soc3_0_1a_1.bin",973648u,0u,10u,{0xc8,0x68,0x9a,0xac,0xe6,0xc3,0xb2,0xf8,0xd9,0xee,0x49,0xbe,0x35,0x84,0x52,0xe4,0xd7,0x35,0x97,0x48,0xba,0x2d,0x56,0x49,0x35,0xe3,0x8c,0xff,0x0f,0xaa,0xfb,0xf2}},
++{"soc3_0_patch_wmmcu_1a_1_hdr.bin",5726u,10u,1u,{0x4f,0xc5,0xa6,0xbc,0xbb,0xdd,0x0a,0x12,0xc4,0x8a,0x61,0xa2,0x67,0x68,0xbc,0x48,0xc8,0x2d,0xa6,0x1f,0x60,0x83,0x48,0x17,0x71,0xd8,0x17,0x57,0xe2,0x1b,0x37,0x50}},
++{"soc3_0_ram_wifi_1a_1_hdr.bin",296916u,11u,4u,{0x16,0xe8,0xc8,0xd5,0xfb,0xf4,0x74,0x95,0x71,0x10,0x19,0xb0,0xcd,0xae,0x6e,0x68,0x5d,0x53,0xcb,0xbe,0x53,0xbc,0x19,0x69,0xce,0x34,0xdb,0x33,0x16,0x39,0x55,0xac}},
++{"soc3_0_ram_wmmcu_1a_1_hdr.bin",49868u,15u,1u,{0xf9,0x5d,0xd9,0x56,0xa0,0x50,0xf3,0xc8,0x2c,0x70,0x5d,0x3b,0x16,0xa2,0x67,0xc8,0xfe,0xa0,0xb3,0x7d,0x8c,0x6e,0xff,0x4a,0x02,0x00,0xb4,0x35,0xa5,0xe4,0x2e,0x12}},
++};
++static void wipe(unsigned char *p, size_t n) { volatile unsigned char *v=p; while(n--) *v++=0; }
++static int hash_ok(const unsigned char *p, size_t n, const unsigned char expected[32]) {
++ unsigned char sum[32]; unsigned diff=0; SHA256_CTX ctx;
++ SHA256_Init(&ctx); SHA256_Update(&ctx,p,n); SHA256_Final(sum,&ctx);
++ for (unsigned i=0;i<32;i++) diff|=sum[i]^expected[i];
++ wipe(sum,sizeof(sum)); return diff==0;
++}
++/* LZ4 block grammar, exact output, no unchecked speculative reads/copies.
++ * Every iteration consumes input or output; all lengths bounded before add. */
++int nwf_lz4(const unsigned char *s,size_t n,unsigned char *d,size_t cap) {
++ size_t ip=0,op=0;
++ if (!s || !d) return -1;
++ while(ip<n) {
++  unsigned token=s[ip++]; size_t lit=token>>4,match=(token&15)+4;
++  if(lit==15) { unsigned x; do { if(ip==n) return -1; x=s[ip++]; if(x>cap || lit>cap-x) return -1; lit+=x; } while(x==255); }
++  if(lit>n-ip || lit>cap-op) return -1;
++  memcpy(d+op,s+ip,lit); ip+=lit; op+=lit;
++  if(ip==n) return op==cap?0:-1;
++  if(n-ip<2) return -1;
++  size_t off=s[ip]|((size_t)s[ip+1]<<8); ip+=2;
++  if(!off || off>op) return -1;
++  if((token&15)==15) { unsigned x; do { if(ip==n) return -1; x=s[ip++]; if(x>cap || match>cap-x) return -1; match+=x; } while(x==255); }
++  if(match>cap-op) return -1;
++  for(size_t j=0;j<match;j++) { d[op]=d[op-off]; op++; }
++ }
++ return op==cap?0:-1;
++}
++int nwf_load(nwf_read_fn read,void *ctx,unsigned char *out,size_t outcap,
++ unsigned char *scratch,size_t scratchcap,struct nwf_blob blobs[NWF_FILE_COUNT]) {
++ size_t base=0; int rc=-1;
++ if(!blobs) return -1;
++ memset(blobs,0,sizeof(*blobs)*NWF_FILE_COUNT);
++ if(!read || !out || !scratch || outcap<NWF_OUTPUT_BYTES || scratchcap<NWF_SCRATCH_BYTES) return -1;
++ /* Distinct buffers required; reject overlap and pointer-end wrap. */
++ uintptr_t a=(uintptr_t)out,b=(uintptr_t)scratch;
++ if(a>UINTPTR_MAX-NWF_OUTPUT_BYTES || b>UINTPTR_MAX-NWF_SCRATCH_BYTES ||
++    (a<b+NWF_SCRATCH_BYTES && b<a+NWF_OUTPUT_BYTES)) return -1;
++ for(unsigned i=0;i<NWF_FILE_COUNT;i++) {
++  const struct image *f=&images[i]; uint32_t logical=0;
++  if(f->bytes>NWF_OUTPUT_BYTES-base || f->first>16 || f->count>16-f->first) goto fail;
++  for(unsigned j=0;j<f->count;j++) {
++   const struct extent *e=&extents[f->first+j];
++   if(e->logical!=logical || e->bytes>f->bytes-logical || !e->stored ||
++      e->stored>NWF_SCRATCH_BYTES || e->offset>NWF_VENDOR_BYTES ||
++      e->stored>NWF_VENDOR_BYTES-e->offset || e->padding>=e->stored) goto fail;
++   if(read(ctx,e->offset,scratch,e->stored) || !hash_ok(scratch,e->stored,e->hash)) goto fail;
++   for(unsigned k=0;k<e->padding;k++) if(scratch[k]) goto fail;
++   if(e->plain) { if(e->padding || e->bytes>e->stored) goto fail; memcpy(out+base+logical,scratch,e->bytes); }
++   else if(nwf_lz4(scratch+e->padding,e->stored-e->padding,out+base+logical,e->bytes)) goto fail;
++   logical+=e->bytes;
++  }
++  if(logical!=f->bytes || !hash_ok(out+base,f->bytes,f->hash)) goto fail;
++  base+=f->bytes;
++ }
++ if(base!=NWF_OUTPUT_BYTES) goto fail;
++ base=0;
++ for(unsigned i=0;i<NWF_FILE_COUNT;i++) { blobs[i].name=images[i].name; blobs[i].data=out+base; blobs[i].size=images[i].bytes; base+=images[i].bytes; }
++ rc=0;
++fail:
++ wipe(scratch,NWF_SCRATCH_BYTES);
++ if(rc) wipe(out,NWF_OUTPUT_BYTES);
++ return rc;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_firmware.h
+@@ -0,0 +1,25 @@
++/* Memory-only, opt-in verified Nord 2 firmware reader. No hardware writes. */
++#ifndef NORD2_WIFI_FIRMWARE_H
++#define NORD2_WIFI_FIRMWARE_H
++#include <stdint.h>
++#include <stddef.h>
++#define NWF_VENDOR_BYTES UINT64_C(544354304)
++#define NWF_SCRATCH_BYTES 65536u
++#define NWF_OUTPUT_BYTES 1326158u
++#define NWF_FILE_COUNT 4u
++/* Reader returns zero only after filling the entire vendor-relative range.
++ * Adapter must validate GPT/super geometry and serialize with the root UFS
++ * driver without changing its partition binding. No device adapter is wired. */
++typedef int (*nwf_read_fn)(void *, uint64_t, void *, uint32_t);
++struct nwf_blob { const char *name; unsigned char *data; uint32_t size; };
++/* Caller owns all memory. Only success publishes blob pointers; failure wipes
++ * all accepted output and scratch buffers after extraction starts. Invalid
++ * argument rejection does not touch caller buffers. The blobs array must be
++ * separate from both buffers. Caller serializes calls and does not consume output
++ * until success. This function has no boot hook, allocation or MMIO access. */
++int nwf_load(nwf_read_fn, void *, unsigned char *, size_t,
++    unsigned char *, size_t, struct nwf_blob [NWF_FILE_COUNT]);
++/* Standalone decoder requires non-overlapping source/destination ranges.
++ * Destination must contain at least the advertised capacity bytes. */
++int nwf_lz4(const unsigned char *, size_t, unsigned char *, size_t);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_firmware_probe.c
+@@ -0,0 +1,107 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Opt-in XNU diagnostic: load/verify in RAM, log metadata, erase and free.
++ * No firmware execution, EMI access, radio CPU, PMIC or MMIO operations. */
++#include "wifi_firmware.h"
++#include "wifi_firmware_probe.h"
++#ifdef NWF_PROBE_HOST_TEST
++#include "wifi_firmware_probe_test_platform.h"
++#else
++#include <sys/errno.h>
++#include <sys/systm.h>
++#include <kern/kalloc.h>
++#include <kern/zalloc.h>
++#include <kern/clock.h>
++#include <kern/sched_prim.h>
++#include <pexpert/pexpert.h>
++#include <os/atomic_private.h>
++#endif
++
++#ifndef NWF_PROBE_HOST_TEST
++/* Kernel-private declarations used by existing BSD sweet_ufs.c as well. */
++extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
++extern void thread_deallocate(thread_t);
++extern void thread_terminate_self(void);
++#endif
++extern int sweet_ufs_read_vendor(uint64_t, void *, uint32_t);
++static unsigned int nwf_probe_attempted;
++struct nwf_probe_read_context { int error; };
++static int
++nwf_probe_read(void *context, uint64_t offset, void *buffer, uint32_t length)
++{
++ struct nwf_probe_read_context *state=context;
++ int error=sweet_ufs_read_vendor(offset,buffer,length);
++ if(error) state->error=error;
++ return error;
++}
++static void
++nwf_probe_erase(unsigned char *data,size_t size)
++{
++ volatile unsigned char *p=data;
++ while(size--) *p++=0;
++}
++int
++nord2_wifi_firmware_probe(void)
++{
++ int enabled=0,error=ENOMEM;
++ unsigned char *output=NULL,*scratch=NULL;
++ struct nwf_blob blobs[NWF_FILE_COUNT]={{0}};
++ struct nwf_probe_read_context context={0};
++ uint64_t start,end;
++ if(!PE_parse_boot_argn("nord2wififw",&enabled,sizeof(enabled)) || enabled!=1)
++  return EPERM;
++ if(!os_atomic_cmpxchg(&nwf_probe_attempted,0u,1u,relaxed)) return EALREADY;
++ clock_get_uptime(&start);
++ /* kalloc.c:kalloc_large rejects Z_NOWAIT; NOPAGEWAIT allows lock contention
++  * but avoids waiting for VM pages. Never use Z_NOFAIL for these large sizes. */
++ output=kalloc_data(NWF_OUTPUT_BYTES,Z_WAITOK | Z_NOPAGEWAIT);
++ if(!output) goto done;
++ scratch=kalloc_data(NWF_SCRATCH_BYTES,Z_WAITOK | Z_NOPAGEWAIT);
++ if(!scratch) goto done;
++ if(nwf_load(nwf_probe_read,&context,output,NWF_OUTPUT_BYTES,
++     scratch,NWF_SCRATCH_BYTES,blobs)) {
++  error=context.error?context.error:EIO;
++  goto done;
++ }
++ error=0;
++ for(unsigned i=0;i<NWF_FILE_COUNT;i++)
++  printf("NORD2 WIFI FW verified name=%s bytes=%u\n",blobs[i].name,blobs[i].size);
++done:
++ /* Always erase: also covers alloc failure, failed loader and future changes
++  * to the loader's own failure cleanup. Nothing is retained or activated. */
++ if(scratch) { nwf_probe_erase(scratch,NWF_SCRATCH_BYTES); kfree_data(scratch,NWF_SCRATCH_BYTES); }
++ if(output) { nwf_probe_erase(output,NWF_OUTPUT_BYTES); kfree_data(output,NWF_OUTPUT_BYTES); }
++ nwf_probe_erase((unsigned char *)blobs,sizeof(blobs));
++ clock_get_uptime(&end);
++ printf("NORD2 WIFI FW probe status=%d elapsed_ticks=%llu\n",error,
++     (unsigned long long)(end-start));
++ return error;
++}
++
++static unsigned int nwf_probe_start_attempted;
++static void
++nwf_probe_thread(void *argument,wait_result_t wait_result)
++{
++ (void)argument; (void)wait_result;
++ (void)nord2_wifi_firmware_probe();
++ thread_terminate_self();
++}
++int
++nord2_wifi_firmware_start(void)
++{
++ int enabled=0;
++ thread_t thread;
++ if(!PE_parse_boot_argn("nord2wififw",&enabled,sizeof(enabled)) || enabled!=1)
++  return EPERM;
++ if(!os_atomic_cmpxchg(&nwf_probe_start_attempted,0u,1u,relaxed))
++  return EALREADY;
++ kern_return_t status=kernel_thread_start(nwf_probe_thread,NULL,&thread);
++ if(status!=KERN_SUCCESS) {
++  printf("NORD2 WIFI FW thread status=%d\n",status);
++  return EAGAIN;
++ }
++ thread_deallocate(thread);
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_firmware_probe.h
+@@ -0,0 +1,20 @@
++/* Memory-only diagnostic; no boot hook is installed by this interface. */
++#ifndef NORD2_WIFI_FIRMWARE_PROBE_H
++#define NORD2_WIFI_FIRMWARE_PROBE_H
++/* Caller must run on a dedicated, sleepable kernel thread after UFS root is
++ * ready, with no UFS/input/PMIF locks held. Never call from input polling or
++ * interrupt context. No readiness retries are attempted. The UFS adapter's
++ * per-command timeouts bound IO; allocator mutex contention is still possible.
++ * Bootarg must be exactly nord2wififw=1. A single enabled attempt is consumed
++ * even on failure; concurrent/repeated attempts return EALREADY. Disabled
++ * calls return EPERM and do not consume the attempt. No blobs are retained.
++ */
++int nord2_wifi_firmware_probe(void);
++/* Call once after UFS becomes ready, outside all driver/input locks. Starts a
++ * dedicated thread and releases its creation reference. Strict opt-in as above;
++ * returns EPERM disabled, EALREADY after one start attempt, EAGAIN on creation
++ * failure (no retry), or zero after successful creation. Thread runs the probe
++ * then terminates itself; successful creation is not successful verification.
++ */
++int nord2_wifi_firmware_start(void);
++#endif
