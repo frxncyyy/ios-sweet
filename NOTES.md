@@ -3,6 +3,72 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CI39503015652: BOTH NEW UFS IMAGES VERIFIED; AWAIT AUTHORIZATION.**
+  Source870271596eb0a09bd5b2920981681bf8cca200fc, full CI success and focused
+  linked gate/cost review PASS. Both images33,273,856B, boot spare280,576B.
+  `shim/out/nord2-xnu/nord2-ufs-preflight-stop23.img` SHA-256
+  2ec05f7f7cf986e024334a1346fa002175d38d13e83756d0ead614b481fc47a4.
+  RO pre-root x2 trial with20-line exact gate evidence; if gates pass it tries
+  x2, validates GPT reads and restores x1, then always halts. Physical fastboot
+  required afterwards; no root publication/mount or Linux handoff.
+  `shim/out/nord2-xnu/nord2-ios-ufs-cost-stop23.img` SHA-256
+  ce84a4f313184c89973f65bd95e12dc3c23ac9fb17af4c58690d0ab9bc6dfb49.
+  RW iOS observer, eight cores/input/USB, RTC skip, optimized console,
+  firmware RAM verification and reversible radio power probe. Strategy request
+  sizes/map/mutex/copy timings measured; no lane/queue/capability tuning. Omits
+  already-applied zoomreset and ambiguous EMI queries. Both independent image
+  checks PASS including exact embedded fixed-up kernel segments, Android header
+  ID, Linux/bothDTs/tested rescue raw contents and command-line guards.
+  Private ufs-preflight-cost/{diagnostic,ios-profile}/run-approved-boot.py
+  prepared ONLY; exact flags --authorized-ufs-preflight-boot and
+  --authorized-ufs-cost-boot, captures120s/600s. Neither authorized or executed.
+  Phone remains working0956173b iOS with human-confirmed lockscreen. Need exact
+  new sequence approval and physical fastboot for each image. Native candidate
+  Wi-Fi common transaction now has source-backed14-field idle guard,40-reg
+  reversible transaction and dirty-restore permanent handoff block; sanitizer,
+  ARM64compile and independent review PASS. It remains private/unintegrated,
+  not part of these images and not hardware tested. CPU configured-clock
+  decoder/read collector tests PASS; isolated, no native hook/device access.
+
+- **CI39503015652 PASSED; NEXT TWO IMAGES PACKING.**
+  Source870271596eb0a09bd5b2920981681bf8cca200fc, kernel17,319,048B SHA-256
+  05c97b14898b52691b39c1fefcd53c8ff461c0ccc282d1b52a13ff111182d8ce.
+  Artifact checksum verified;1,102compiler invocations have genericARMv8.2+
+  crypto flags. Parallel make interleaved two echoed commands into one physical
+  logline; initial one-command-per-line verifier rejected this. Verifier now
+  requires exactcount/matching CPU+arch pairs percompiler; preserves interleave
+  evidence (1,101physical commandlines). No compiler-target/source change.
+  Private ufs-preflight-cost diagnostic and ios-profile packing concurrently
+  with1GiB perprocess limit. New fullpayload segment verification added.
+  Linked newgate/counter review underway. No newimage authorized/flashed.
+  Phone remains on0956173b with confirmedlockscreen; both previous runners done.
+
+- **ZOOM/WIFI CAPTURE COMPLETE; PHONE LEFT ON WORKING IOS.**
+  NativeUSB600s exit0, no transport error/capacity hit. Log381,019B SHA-256
+  05556e92b7e0eda4b617dfa5e4eb46afac6b00f98f9d8526bf7967c6deeac31e.
+  Final parser + hardware-result.json in private zoom-wifi record human
+  lockscreen confirmation separately from log-only graphics evidence. Do not
+  rerun either executed CI39499794889 runner. No rollback requested/needed.
+  User re-supplied Android kernel URL: local branch and remote ref independently
+  match04d00c2565764c3922c9b4826b5acff1106e533f. Existing README modification
+  in that separate repo preserved. Exact MT6893 config remains reference.
+  Isolated wifi/next-stage/cold-snapshot3register helper+adapter tests/ARMcompile
+  pass. Isolated common-transaction snapshots/restores4retention+36SPI-table
+  source-exact controls; fault/source-extraction/ARMcompile pass, no hook.
+  Native common-client idle predicate still being derived from selected source;
+  do not count these private candidates as implemented or hardware validated.
+
+- **NEXT UFS CI39503015652 RUNNING.**
+  Source870271596eb0a09bd5b2920981681bf8cca200fc pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39503015652
+  Adds gate observations and strategy costs only; exact guards/link settings/
+  queue/ioctl/transfer limits unchanged. Private CI verifier/watch prepared.
+  Agent prepares two offline templates: RO nord2-ufs-preflight-stop23.img and
+  RW nord2-ios-ufs-cost-stop23.img. Observer omits zoomreset (already applied)
+  and disables ambiguous EMI queries; keeps verified firmware probe, input,
+  eightcores/USB/fastlog/RTC skip. Not built or authorized yet.
+  Current0956173b stillrunning, userconfirmedlockscreen; USB600s capture ongoing.
+
 - **LOCKSCREEN RESTORED; ALL4 WIFI FILES VERIFIED; NEXT UFS SOURCE READY.**
   Current0956173b flash/reboot OKAY at23:41:45CEST. User confirms lockscreen.
   Zoom stage3 error0 attempted1 backup1 verified1 already0 restore_error0.
