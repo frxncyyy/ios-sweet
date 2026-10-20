@@ -70,6 +70,27 @@ def unmatched_cpus(kernel, root):
     return names, missing if cpus else ['/cpus absent or empty']
 
 
+def point23_root_checks(args, kernel):
+    """Ordinary iOS needs RW; the explicit pre-root lane experiment needs RO."""
+    def exact(key, value):
+        return [arg for arg in args if arg.startswith(key + '=')] == [key + '=' + value]
+    common = all(exact(key, value) for key, value in
+                 (('cpus', '8'), ('rd', 'ufsroot0'), ('ufsroot', 'userdata')))
+    optin = [arg for arg in args if arg.startswith('nord2ufs2lane=')]
+    if not optin:
+        return [('point 23 selects only userdata with explicit write enable',
+                 common and exact('ufsrw', '1') and exact('rootrw', '1'))]
+    diagnostic = {'nord2ufs2lane': '1', 'ufsrw': '0', 'rootrw': '0',
+                  'nord2input': '0', 'nord2wifi': '0', 'nord2wififw': '0',
+                  'nord2wifiemi': '0', 'nord2fbdiag': '0', 'nord2ufsprofile': '1'}
+    markers = (b'NORD2 UFS X2 STOP:', b'NORD2 UFS X2 STATE:',
+               b'root_published=0 return_blocked=1', b'NORD2 UFS X2 SNAP C:')
+    return [('point 23 lane diagnostic is explicit, read-only and stops before root',
+             common and all(exact(key, value) for key, value in diagnostic.items())),
+            ('kernel contains the dedicated lane diagnostic stop and state reports',
+             all(marker in kernel for marker in markers))]
+
+
 class Checker:
     def __init__(self, payload):
         self.payload = payload
@@ -300,7 +321,7 @@ class Checker:
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         if 'nord2stopat=23' in args:
-            self.check('point 23 gates writable iOS on all8 SMP and continuous CPU0 USB',
+            self.check('point 23 requires all8 SMP and continuous CPU0 USB',
                        b'NORD2 SMP: all8 passed; continuing to USB and writable iOS root' in kernel and
                        b'NORD2 UFS: all8 SMP pass required before iOS root' in kernel and
                        b'NORD2 USB: native console continuous; EP0 PIO, no DMA' in kernel and
@@ -308,12 +329,8 @@ class Checker:
                        b'NORD2 SMP: XNU secondaries all OFF; CPU0 return permitted' in kernel and
                        b'NORD2 USB: controller restored before kernel return' in kernel and
                        b'NORD2 UFS: root host restored before kernel return' in kernel)
-            self.check('point 23 selects only userdata with explicit write enable',
-                       [a for a in args if a.startswith('cpus=')] == ['cpus=8'] and
-                       [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
-                       [a for a in args if a.startswith('ufsroot=')] == ['ufsroot=userdata'] and
-                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=1'] and
-                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=1'])
+            for label, valid in point23_root_checks(args, kernel):
+                self.check(label, valid)
         if 'nord2display=1' in args:
             arm_io = next((n for n in root.children if n.name == 'arm-io'), None)
             disp = next((n for n in arm_io.children if n.name == 'disp0'), None) if arm_io else None
