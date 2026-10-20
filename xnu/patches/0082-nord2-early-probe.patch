@@ -1507,7 +1507,15 @@
  		cdp->cpu_decrementer = -1; /* Large */
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -221,6 +221,10 @@
+@@ -91,6 +91,7 @@
+ #include <kern/sfi.h>
+ #endif
+ #include <kern/startup.h>
++#include <arm64/sweet_early.h>
+ #include <kern/task.h>
+ #include <kern/thread.h>
+ #include <kern/timer.h>
+@@ -221,6 +222,10 @@
  static inline void
  kernel_bootstrap_log(const char *message)
  {
@@ -1518,7 +1526,7 @@
  	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  	    startup_phase >= STARTUP_SUB_KPRINTF) {
  		kprintf("kernel_bootstrap: %s\n", message);
-@@ -231,6 +235,10 @@
+@@ -231,6 +236,10 @@
  static inline void
  kernel_bootstrap_thread_log(const char *message)
  {
@@ -1529,6 +1537,24 @@
  	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  	    startup_phase >= STARTUP_SUB_KPRINTF) {
  		kprintf("kernel_bootstrap_thread: %s\n", message);
+@@ -777,11 +786,17 @@
+ 	 * at the latest
+ 	 */
+ 	vm_set_restrictions(machine_info.max_cpus);
++#if defined(NORD2)
++	nord2_stop_at(7, "after vm_set_restrictions");
++#endif
+ 
+ 
+ #if KPERF
+ 	kperf_init_early();
+ #endif
++#if defined(NORD2)
++	nord2_stop_at(8, "before bsd_init");
++#endif
+ 
+ 	/*
+ 	 *	Start the user bootstrap.
 --- a/iokit/Kernel/arm/SweetBattery.cpp
 +++ b/iokit/Kernel/arm/SweetBattery.cpp
 @@ -11,6 +11,9 @@

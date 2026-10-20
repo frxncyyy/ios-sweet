@@ -1514,3 +1514,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   - Next: build with a point 7 hook **after `vm_set_restrictions`** and a point 8
     **after `kperf_init_early`** (or simply after `kperf_init_early` before
     `bsd_init`) to split the last two candidates; both are C and local.
+
+- 2026-10-20 (session 7, Opencode): **hooks 7/8 built (local).** `startup.c` got
+  (unconditional) `<arm64/sweet_early.h>`, `nord2_stop_at(7, "after
+  vm_set_restrictions")` and `nord2_stop_at(8, "before bsd_init")`. Image
+  `shim/out/nord2-xnu/nord2-l7.img` **30.570.496 bytes** SHA-256
+  `8013ad20dac68c58d9bf8a0a69492b4900884ba1ff67d70e8fbe2900f1318d59`,
+  payload `555aa0e0…`, `FAILURES: none`.
+  - Expected: if 0007 hangs, the stall is in `PE_lockdown_iokit`'s return path
+    (after `StartIOKitMatching` returned) or `vm_set_restrictions`; if it
+    returns, the stall is `kperf_init_early()` and 0008 pins it.
