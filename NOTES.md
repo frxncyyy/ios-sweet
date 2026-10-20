@@ -3,6 +3,28 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **ACTIVE TASK: WI-FI. Hardware/source identified; firmware collection pending.**
+  Exact driver is MT6893 CONNAC2X2/SOC3_0 over AXI, conninfra HW20010101,
+  A-die66358a11 in RC mode. Selected Android source includes full conninfra and
+  gen4m driver; XNU currently lacks the radio and iOS Wi-Fi control interface.
+  Calibration WIFI6146/WIFI_CUSTOM6 bytes extracted read-only from existing
+  nvdata backup into private research/nord2/wifi/calibration; not committed.
+  Exact four firmware names and power-on order in shim/nord2-xnu/WIFI-LOG.md.
+  Preserved Android vendor in super must be read; no local vendor backup.
+  New tools/nord2-read-vendor.py validates LP checksums/copies/bounds and
+  streams vendor/odm from RAM rescue without phone writes or mounts.
+  Six corruption/boundary tests PASS. Known rescue d78bf9fe…3d03bac5 and
+  working iOS fd6d75ca…49995f20 hashes reverified. Private two-stage
+  research/nord2/wifi/run-approved-collection.py syntax-checked, NOT EXECUTED.
+  Asked user to authorize boot-only rescue -> firmware reads -> working iOS
+  restoration. Await reply/fastboot; do not flash before approval. No Wi-Fi
+  kernel changes or new hardware test yet; phone left at working iOS baseline.
+  Static inspection of local iOS wifid confirms required IO80211.framework
+  and Apple80211 scan/associate/power/event API imports; no selectors recovered.
+  Private ios-abi/ holds exact identity/import/string evidence. REA native
+  engine unavailable per existing doctor; used existing LLVM tools only.
+
+
 - **MILESTONE: TOUCH, POWER, BOTH VOLUME BUTTONS WORK; ORANGE OVERLAY GONE.**
   User confirms "all work" after testing swipe/taps, volume-up/down and short
   power press/wake on nord2-ios-input-power-stop23.img. This is the current
