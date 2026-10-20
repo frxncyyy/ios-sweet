@@ -236,6 +236,16 @@ class Checker:
                        b'after background MTU3 USB console' in kernel)
             self.check('point 16 uses only the diagnostic RAM root',
                        [a for a in args if a.startswith('rd=')] == ['rd=md0'])
+        if 'nord2stopat=17' in args:
+            self.check('point 17 has bounded PSCI startup and OFF-before-return checks',
+                       b'NORD2 SMP: PSCI probe begin;' in kernel and
+                       b'after bounded PSCI CPU_ON/OFF probe' in kernel and
+                       b'NORD2 SMP: secondary still active; manual reboot required' in kernel)
+            self.check('point 17 keeps XNU single CPU and stops before disk mount',
+                       [a for a in args if a.startswith('cpus=')] == ['cpus=1'] and
+                       [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

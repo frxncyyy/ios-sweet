@@ -3,6 +3,51 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Current user priority: enable all eight CPU cores (or as many as practical)
+  BEFORE installing/starting full iOS userland. No userdata install yet.**
+  Point16 USB/userland diagnostic passed (details below). User then requested
+  SMP first. Live DT confirms four Cortex-A55 + four Cortex-A78; actual reg
+  affinities are 0x000..0x700 in steps0x100, despite cpu@ node labels. PSCI1.0,
+  SMC conduit. ADT and legacy SweetCPU already accept these affinities/eight
+  CPUs; this is not proof of Nord2 secondary startup, GIC/timers or scheduling.
+  Existing Linux return and early console assume a single active CPU.
+  USB point16 explicitly rejects cpus!=1; do not remove that guard blindly.
+  **Preparing point17 firmware prerequisite**, XNU still cpus1: sequentially
+  CPU_ON each of seven secondaries into a stackless physical assembly entry.
+  Each writes only its own 128-byte mailbox (uncached alias in XNU), records
+  CurrentEL/MPIDR/MIDR/SCTLR/CNTFRQ and context, then calls PSCI CPU_OFF.
+  Require OFF from AFFINITY_INFO plus complete/matching mailbox; timeout5s.
+  Read-only PSCI feature/affinity preflight, all seven initially OFF required.
+  Return guard checks all seven OFF before any USB/UFS cleanup or Linux jump;
+  failed OFF refuses chain-back and requires manual reboot. No UFS takeover,
+  root mount or USB probe in this test. Logs recovered through ADB rescue.
+  Sources sweet_early.c/.h,start.s,bsd_init.c; exact return/wait guards pass
+  host ASan/UBSan (ON/PENDING/unknown/error/timeout/late-OFF/empty mailbox).
+  C and assembly compile, patch applies/matches; disassembly confirms mailbox
+  offsets, no stack, CPU_OFF0x84000002, and park on failed OFF.
+  Local relink replaces only those three objects in the verified point16
+  archive. Kernel21965608B SHA
+  `405767f0bb59920cca89e792994f2ce3ef72015890d56fcefc7bee76fdb3b2db`.
+  Evidence `research/nord2/smp/psci/`; image built and statically verified:
+  `shim/out/nord2-xnu/nord2-smp-psci-stop17.img`,33312768B, SHA-256
+  `e3974352333f4db100f7af5eb8cf189b7910095df8a283e3e0510881aea62620`.
+  Payload SHA `0a1900bdc747773788f6a7714fdfe6c9bd504c01d904566512051d5682c8364a`.
+  Static checks and independent comparison to original Linux kernel/both DT
+  representations and tested rescue ramdisk all pass. Manifest and extracted
+  payload in `research/nord2/smp/psci/`. Candidate frozen, NOT AUTHORIZED OR
+  FLASHED YET. Phone now in fastboot (read-only check at13:24 CEST);
+  the earlier attempt to read Linux CPU baseline found no ADB, changed nothing.
+  Passing this only proves firmware startup/shutdown, NOT XNU SMP. After it,
+  add coordinated secondary shutdown for kernel return, serialize diagnostic
+  logging, then validate XNU with2/4/8 CPUs, per-core timer/IPI and workload
+  evidence. Integrate concurrent USB only once its cleanup/reader is safe.
+  Point16 full Apple-clang CI PASSED at f12b7d0:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39413072917
+  Artifact/log download in progress under `research/ci-39413072917/`.
+  First run39412479509 failed due to my incorrect machine_config=NORD2;
+  this branch uses machine_config=SWEET with NORD2 defined by patch0082.
+  The rerun used SWEET and passed; this was a dispatch error, not a C failure.
+
 - **CURRENT DEVICE: point16 concurrent USB + HFS diagnostic PID1 PASSED;
   authenticated root ADB RAM rescue returned. Userdata unchanged.**
   Boot currently contains the exact authorized image
@@ -31,8 +76,8 @@
   successful reader restarted before XNU enumeration.
   This proves concurrent native EP0 logging, not bulk/CDC-ECM/full USB or
   Apple launchd. /sbin/launchd in the RAM image is our static diagnostic.
-  **Next: full Apple-clang CI of point16, then move from RAM diagnostics
-  toward the prepared iOS root on UFS with this live console retained.**
+  Full Apple-clang CI of point16 passed; user now prioritizes SMP before
+  moving from RAM diagnostics to the prepared iOS root on UFS.
   Do not write userdata until the exact install/boot artifacts are reviewed
   and the destructive write confirmed (broad deletion already authorized).
 

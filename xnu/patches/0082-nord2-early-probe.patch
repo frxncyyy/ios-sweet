@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,455 @@
+@@ -1,16 +1,458 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -31,6 +31,9 @@
 +#include <arm/pmap/pmap.h>
 +#include <arm/machine_routines.h>
 +#include <arm64/tlb.h>
++#include <arm/caches_internal.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
 +#endif
@@ -461,7 +464,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +462,7 @@
+@@ -23,6 +465,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -469,7 +472,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +478,14 @@
+@@ -38,10 +481,14 @@
  		}
  	}
  }
@@ -484,7 +487,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +520,7 @@
+@@ -76,6 +523,7 @@
  		}
  	}
  	early_col++;
@@ -492,7 +495,7 @@
  }
  
  static void
-@@ -86,9 +531,177 @@
+@@ -86,9 +534,177 @@
  	}
  }
  
@@ -670,7 +673,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +720,36 @@
+@@ -107,11 +723,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -707,7 +710,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +761,10 @@
+@@ -123,8 +764,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -718,7 +721,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +773,325 @@
+@@ -133,11 +776,514 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -760,6 +763,15 @@
 +	/* Mask everything now: a context switch would reload TTBR0 below. */
 +	__builtin_arm_wsr("DAIFSet", 0xf);
 +	__builtin_arm_isb(ISB_SY);
++
++	/* A PSCI probe core must be OFF before Linux can reuse XNU memory. */
++	if (nord2_smp_prepare_return() < 0) {
++		sweet_early_string("NORD2 SMP: secondary still active; manual reboot required\n");
++		nord2_flush();
++		for (;;) {
++			__asm__ volatile("wfe");
++		}
++	}
 +
 +	/*
 +	 * A later filesystem/userspace panic can arrive while the UFS root
@@ -924,6 +936,186 @@
 +	nord2_leave_to(0);
 +}
 +
++/* NORD2 PSCI PROBE: no secondary enters XNU, no stack or disk access. */
++extern void nord2_psci_probe_entry(void);
++extern void nord2_psci_probe_end(void);
++static bool nord2_psci_probe_active;
++
++static int32_t
++nord2_psci_call(uint64_t fn, uint64_t arg1, uint64_t arg2, uint64_t arg3)
++{
++	register uint64_t x0 __asm__("x0") = fn;
++	register uint64_t x1 __asm__("x1") = arg1;
++	register uint64_t x2 __asm__("x2") = arg2;
++	register uint64_t x3 __asm__("x3") = arg3;
++	__asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : :
++	    "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
++	    "x14", "x15", "x16", "x17", "cc", "memory");
++	return (int32_t)x0;
++}
++
++static uint64_t
++nord2_psci_now(void)
++{
++	return __builtin_arm_rsr64("CNTVCT_EL0");
++}
++
++static void
++nord2_psci_poll(void)
++{
++	if (nord2_wdt) {
++		nord2_wdt[2] = 0x1971;
++	}
++	__asm__ volatile("yield" ::: "memory");
++}
++
++static bool
++nord2_psci_all_off(void)
++{
++	for (unsigned core = 1; core < 8; core++) {
++		/* PSCI AFFINITY_INFO64, lowest_affinity_level=0; OFF is 1. */
++		if (nord2_psci_call(0xc4000004, core << 8, 0, 0) != 1) {
++			return false;
++		}
++	}
++	return true;
++}
++
++int
++nord2_smp_prepare_return(void)
++{
++	if (!nord2_psci_probe_active) {
++		return 0;
++	}
++	uint64_t deadline = nord2_psci_now() +
++	    __builtin_arm_rsr64("CNTFRQ_EL0") * 5;
++	do {
++		if (nord2_psci_all_off()) {
++			nord2_psci_probe_active = false;
++			return 1;
++		}
++		nord2_psci_poll();
++	} while (nord2_psci_now() < deadline);
++	return -1; /* Do not release memory or chain back with a running core. */
++}
++
++/* 128-byte slots; offsets 0..72 match the stackless physical entry in start.s. */
++struct nord2_psci_mailbox {
++	uint64_t magic, el, mpidr, midr, sctlr, frequency, ticks, context;
++	uint64_t off_result, state;
++	uint64_t padding[6];
++};
++_Static_assert(sizeof(struct nord2_psci_mailbox) == 128, "PSCI mailbox layout");
++
++static bool
++nord2_psci_wait_off(volatile struct nord2_psci_mailbox *box,
++    unsigned core, uint64_t deadline)
++{
++	do {
++		int32_t affinity = nord2_psci_call(0xc4000004, core << 8, 0, 0);
++		__asm__ volatile("dmb oshld" ::: "memory");
++		if (affinity == 1 && box->state == 1) {
++			return true;
++		}
++		if (affinity < 0 || box->state == 2) {
++			return false;
++		}
++		nord2_psci_poll();
++	} while (nord2_psci_now() < deadline);
++	return false;
++}
++
++void
++nord2_smp_probe(void)
++{
++	unsigned stop = 0, cpus = 0;
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (stop != 17) {
++		return;
++	}
++	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
++	if (cpus != 1 || (__builtin_arm_rsr64("MPIDR_EL1") & 0xffff) != 0) {
++		printf("NORD2 SMP: firmware probe requires one XNU CPU, MPIDR0\n");
++		goto done;
++	}
++	printf("NORD2 SMP: PSCI probe begin; seven secondaries, sequential CPU_ON/OFF\n");
++	int32_t version = nord2_psci_call(0x84000000, 0, 0, 0);
++	printf("NORD2 SMP: PSCI version=%08x boot MIDR=%llx\n",
++	    version, __builtin_arm_rsr64("MIDR_EL1"));
++	/* The live DT advertises PSCI1.0. Refuse unknown feature behavior. */
++	if (version < 0x10000 ||
++	    nord2_psci_call(0x8400000a, 0xc4000003, 0, 0) < 0 ||
++	    nord2_psci_call(0x8400000a, 0x84000002, 0, 0) < 0 ||
++	    nord2_psci_call(0x8400000a, 0xc4000004, 0, 0) < 0 ||
++	    nord2_psci_call(0xc4000004, 0, 0, 0) != 0) {
++		printf("NORD2 SMP: required PSCI features unavailable\n");
++		goto done;
++	}
++	if (!nord2_psci_all_off()) {
++		printf("NORD2 SMP: inherited secondary is not OFF; refused\n");
++		/* Even an inherited active core makes a chain-back unsafe. */
++		nord2_psci_probe_active = true;
++		goto done;
++	}
++	vm_offset_t memory = 0;
++	if (kmem_alloc_contig(kernel_map, &memory, PAGE_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("NORD2 SMP: mailbox allocation failed\n");
++		goto done;
++	}
++	uint64_t pa = ptoa_64(pmap_find_phys(kernel_pmap, memory));
++	uint64_t entry = ml_static_vtop((vm_offset_t)nord2_psci_probe_entry);
++	if (!pa || !entry) {
++		printf("NORD2 SMP: physical translation failed\n");
++		goto done;
++	}
++	/* Clean the cached zeroed allocation, then use only the uncached alias. */
++	CleanPoC_DcacheRegion_Force(memory, PAGE_SIZE);
++	CleanPoC_DcacheRegion_Force((vm_offset_t)nord2_psci_probe_entry,
++	    (uintptr_t)nord2_psci_probe_end - (uintptr_t)nord2_psci_probe_entry);
++	volatile struct nord2_psci_mailbox *boxes =
++	    (volatile struct nord2_psci_mailbox *)ml_io_map(pa, PAGE_SIZE);
++	if (!boxes) {
++		printf("NORD2 SMP: mailbox mapping failed\n");
++		goto done;
++	}
++	__builtin_arm_dsb(DSB_SY);
++	nord2_psci_probe_active = true; /* Also protects every panic return. */
++	unsigned passed = 0;
++	for (unsigned core = 1; core < 8; core++) {
++		uint64_t context = pa + core * sizeof(*boxes);
++		volatile struct nord2_psci_mailbox *box = &boxes[core];
++		int32_t rc = nord2_psci_call(0xc4000003, core << 8, entry, context);
++		printf("NORD2 SMP: CPU_ON core=%u target=%03x rc=%d\n", core, core << 8, rc);
++		if (rc != 0) {
++			break;
++		}
++		bool off = nord2_psci_wait_off(box, core, nord2_psci_now() +
++		    __builtin_arm_rsr64("CNTFRQ_EL0") * 5);
++		printf("NORD2 SMP: core=%u state=%llu EL=%llu MPIDR=%llx MIDR=%llx "
++		    "SCTLR=%llx CNTFRQ=%llu OFF=%u off_rc=%lld\n",
++		    core, box->state, box->el >> 2, box->mpidr, box->midr,
++		    box->sctlr, box->frequency, off, (int64_t)box->off_result);
++		if (!off || box->magic != 0x4e32534d ||
++		    box->context != context || (box->mpidr & 0xffff) != (core << 8) ||
++		    ((box->midr >> 4) & 0xfff) != (core < 4 ? 0xd05 : 0xd41) ||
++		    (box->el != 4 && box->el != 8) || (box->sctlr & 5) ||
++		    box->frequency != __builtin_arm_rsr64("CNTFRQ_EL0")) {
++			printf("NORD2 SMP: core=%u result mismatch; stopped\n", core);
++			break;
++		}
++		passed++;
++	}
++	printf("NORD2 SMP: firmware probe %u/7 secondaries passed; XNU scheduler still single CPU\n",
++	    passed);
++	if (nord2_smp_prepare_return() == 1) {
++		printf("NORD2 SMP: all secondary affinities OFF; return permitted\n");
++	}
++ done:
++	nord2_stop_at(17, "after bounded PSCI CPU_ON/OFF probe");
++}
++/* END NORD2 PSCI PROBE */
++
 +void
 +nord2_ufs_snapshot(void)
 +{
@@ -1052,7 +1244,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,49 @@
+@@ -10,8 +10,52 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1076,6 +1268,9 @@
 +/* Point 13: read-only inherited MTU3/clock snapshot before root selection. */
 +void nord2_usb_probe(void);
 +int nord2_usb_prepare_return(void);
++/* Point17: sequential stackless PSCI CPU_ON/OFF; XNU remains single CPU. */
++void nord2_smp_probe(void);
++int nord2_smp_prepare_return(void);
 +uint32_t nord2_log_read(uint32_t offset, uint8_t *out, uint32_t max);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
@@ -1105,7 +1300,65 @@
  {
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -513,7 +513,7 @@
+@@ -327,6 +327,57 @@
+ 	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
+ 	msr		SPSel, #1
+ 	b		EXT(LowResetVectorBase)
++#if defined(NORD2)
++/* PSCI firmware probe only: x0 is a physical 128-byte mailbox.
++ * No stack, MMU setup, XNU reset path or shared console. CPU_OFF must not
++ * return; if it does, publish the error and park for manual recovery. */
++	.align 6
++	.globl EXT(nord2_psci_probe_entry)
++LEXT(nord2_psci_probe_entry)
++	msr		DAIFSet, #0xf
++	mov		x19, x0
++	movz	x1, #0x534d
++	movk	x1, #0x4e32, lsl #16
++	str		x1, [x19, #0]
++	mrs		x1, CurrentEL
++	str		x1, [x19, #8]
++	mrs		x2, MPIDR_EL1
++	str		x2, [x19, #16]
++	mrs		x2, MIDR_EL1
++	str		x2, [x19, #24]
++	cmp		x1, #8
++	b.eq	Lnord2_probe_el2
++	mrs		x2, SCTLR_EL1
++	b		Lnord2_probe_sctlr
++Lnord2_probe_el2:
++	mrs		x2, SCTLR_EL2
++Lnord2_probe_sctlr:
++	str		x2, [x19, #32]
++	mrs		x2, CNTFRQ_EL0
++	str		x2, [x19, #40]
++	mrs		x2, CNTVCT_EL0
++	str		x2, [x19, #48]
++	str		x19, [x19, #56]
++	mov		x2, #1
++	dsb		sy
++	str		x2, [x19, #72]
++	dsb		sy
++	movz	w0, #2
++	movk	w0, #0x8400, lsl #16
++	mov		x1, #0
++	mov		x2, #0
++	mov		x3, #0
++	smc		#0
++	str		x0, [x19, #64]
++	mov		x2, #2
++	str		x2, [x19, #72]
++	dsb		sy
++Lnord2_probe_off_failed:
++	wfe
++	b		Lnord2_probe_off_failed
++	.globl EXT(nord2_psci_probe_end)
++LEXT(nord2_psci_probe_end)
++#endif /* NORD2 */
+ #endif /* SWEET */
+ 
+ 	.align 2
+@@ -513,7 +564,7 @@
  	mov		x20, x0
  	mov		x21, #0
  
@@ -1114,7 +1367,7 @@
  	/* Stage 0: white 64x32 band, no stack or page tables needed. */
  	MOV64	x0, (0x9c000000 + 2368 * 4320)
  	mov		w1, #-1
-@@ -680,19 +680,65 @@
+@@ -680,19 +731,65 @@
  
  #if defined(SWEET)
  	/*
@@ -1185,7 +1438,7 @@
  #endif
  
  	/* Ensure TTEs are visible */
-@@ -912,6 +958,82 @@
+@@ -912,6 +1009,82 @@
  	// Branch to the trampoline
  	br		x0
  
@@ -1561,7 +1814,7 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -868,12 +880,23 @@
+@@ -868,12 +880,24 @@
  	bsd_init_kprintf("calling inittodr\n");
  	inittodr(0);
  
@@ -1571,6 +1824,7 @@
 +	nord2_ufs_snapshot();
 +	nord2_ufs_probe();
 +	nord2_usb_probe();
++	nord2_smp_probe();
 +#endif
 +
  	/* Mount the root file system. */
@@ -1585,7 +1839,7 @@
  #if CONFIG_NETBOOT
  		netboot = (mountroot == netboot_mountroot);
  #endif
-@@ -1119,7 +1142,13 @@
+@@ -1119,7 +1143,13 @@
  		}
  	}
  
