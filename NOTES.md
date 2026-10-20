@@ -3,7 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT RESULT: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
+- **CURRENT CANDIDATES: generic2/4/8 stop20 built/verified; awaiting NEW authorization.**
+  Prior sequence was stopped after2 failed; its permission does not cover
+  these changed images. Phone last observed in manual fastboot at14:57 CEST.
+  New full Apple-clang kernel from successful CI39424762428/source98efcd7,
+  with explicit generic CPU target to remove the observed RCpc2 fault.
+  Each image33542144B fits boot33554432B with12288B margin. Static checker
+  PASS; original Linux kernel/both DT representations and tested root ADB
+  rescue ramdisk independently byte-identical. Payloads differ ONLY in the
+  cpus=2/4/8 argument. No userdata mount, no root mount, no disk writes,
+  no USB takeover. Same bounded worker/timer/IPI/atomic-counter test and
+  coordinated all-secondary-OFF guard. Linked code checked: observer LDAR,
+  IRQ EOI before OFF, timer disable/cache clean (alias clean_mmu_dcache)
+  before SMC CPU_OFF; failed OFF parks; primary SGI/AFF check before cleanup.
+  Evidence research/nord2/smp/generic: manifests,payloads,kernel.json,
+  image-N-build.log,critical-functions-check.json,atomic-regression.json.
+  - `shim/out/nord2-xnu/nord2-smp-generic2-stop20.img`
+    SHA-256 `4fba039538f45f62bdc929c9691ce3e310e4567f65e479936bf51765c6294c25`;
+    payload `cba0f5bb3e82c848c505e293cb1ee71b809b65a4f70cabe61d65da881de372a5`.
+  - `shim/out/nord2-xnu/nord2-smp-generic4-stop20.img`
+    SHA-256 `f0db75801b4cbef20a8341d53808a691914e675e9e9e0e2d17acfe1ebcda513b`;
+    payload `22610ea62dac38eb5e42c3694001bed6ba4946f5c19db6352b972445d06b95b3`.
+  - `shim/out/nord2-xnu/nord2-smp-generic8-stop20.img`
+    SHA-256 `cb172efbfe4c059c8a9c1f7ade25feac758b051847f84602f0669f8251ffc276`;
+    payload `843f86ec2e28e15993837ac3c377341a59d92a943ea1e29fcd8a47a51c86335b`.
+  Request new authorization for conditional2→4→8 boot-only tests, with
+  rescue after each and original boot restoration if rescue fails. Manual
+  fastboot may be needed between tests/recovery. Do not flash before approval.
+  After approval, do not re-ask for these unchanged exact images; flash only
+  the next one once previous test fully passes and root rescue is verified.
+  Backup boot SHA04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01.
+  Collect immediately: tools/nord2-pull-logs.sh --rescue smp-genericN-stop20.
+  Require N/N workers, correct CPU/MIDR,done1,ticks>0,IPI replies core+1,
+  shared counter=N*4096,console_dropped0,PASS1,all-secondary-OFF marker,
+  authenticated root rescue marker and no block/data filesystem mounts.
+  Stop sequence at any failure. No new image has been flashed yet.
+
+- **Previous result: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
   User authorized the exact three images conditionally,2→4→8; do not flash
   remaining4/8 images after this failure. Boot-only flash/reboot of2 succeeded
   at14:40 CEST. XNU panicked before the coordinated-start marker or scheduler
@@ -24,7 +60,7 @@
   no LDAPR/LDAPUR/STLUR in that object. Evidence research/nord2/smp/generic.
   Patch applies and reproduces sources. Next run full Apple-clang CI with
   this target and use its complete kernel to avoid stale local objects.
-  Source98efcd7 pushed; full rebuild running:
+  Source98efcd7 pushed; full rebuild PASSED:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39424762428
   Small atomic acquire/release regression reproduces LDAPUR/STLUR with the
   implicit Apple CPU and LDAR/STLR with generic; saved under same evidence dir.
@@ -32,6 +68,12 @@
   disassembly before packing. This is a targeted regression guard, not a
   complete ISA audit. It rejects the failed cpu.o and kernel, accepts the
   generic cpu.o, and refuses decoder errors/empty output.
+  CI kernel17262800B SHA-256
+  `4a0b54f783b87488870ebe45ca78962403c2c62f81469eceed9ab820b1c4df0f`.
+  Downloaded SHA256SUMS verified;965 SWEET compile commands all explicitly
+  generic ARMv8.2+crypto;2,188,178 decoded instructions contain no LDAPUR/STLUR.
+  Complete CI kernel used for new images (no local archive relink).
+  Built generic2/generic4/generic8 stop20 with unchanged diagnostic scope.
   New candidates will require fresh approval; old three images stay frozen.
 
 - **Previous authorization/build: point20 images, conditional2→4→8 (stopped at2).**
