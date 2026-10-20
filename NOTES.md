@@ -19,8 +19,12 @@
   Explicit -mcpu=generic removes this CPU default. Full CI39422376218 passed,
   downloaded kernel hash verified; its same observer uses LDAPR rather than
   LDAPUR, so successful CI alone did not validate the local relink's ISA.
-  Next fix explicit CPU target in local and CI flags, verify generated atomics
-  and rebuild a candidate before requesting a new boot-only hardware test.
+  Fix prepared: both local helper and MakeInc.def now use -mcpu=generic
+  -march=armv8.2-a+crypto. Recompiled actual cpu.c: observer now ADD+LDAR;
+  no LDAPR/LDAPUR/STLUR in that object. Evidence research/nord2/smp/generic.
+  Patch applies and reproduces sources. Next run full Apple-clang CI with
+  this target and use its complete kernel to avoid stale local objects.
+  New candidates will require fresh approval; old three images stay frozen.
 
 - **Previous authorization/build: point20 images, conditional2→4→8 (stopped at2).**
   Point19 proved all7 firmware entries/shutdowns, including high PA, but no

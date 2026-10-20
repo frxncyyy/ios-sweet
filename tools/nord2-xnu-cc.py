@@ -61,7 +61,10 @@ def argv(bt, comp, src, out, extra):
 	arm64 = ['-Darm64', '-DARM64', '-D__ARM64__', '-DLP64', '-DPAGE_SIZE_FIXED',
 		'-DVM_KERNEL_LINK_ADDRESS=' + LINK_ADDR, '-DARM_LARGE_MEMORY=1',
 		'-momit-leaf-frame-pointer', '-fno-strict-aliasing', '-D__API__=v4', '-mkernel']
-	machine = ['-DARM64_BOARD_CONFIG_SWEET', '-march=armv8.2-a+crypto']
+	# Darwin defaults to an Apple CPU even with -march. Clang 23 then emits
+	# M1 RCpc2 instructions (LDAPUR), which fault on the Nord2 Cortex-A55.
+	# Match MakeInc.def and select the baseline CPU explicitly.
+	machine = ['-DARM64_BOARD_CONFIG_SWEET', '-mcpu=generic', '-march=armv8.2-a+crypto']
 	deploy = ['-target', 'arm64-apple-macos14.0', '-DXNU_TARGET_OS_OSX', '-DXNU_PLATFORM_MacOSX']
 	defines = ['-DAPPLE', '-DKERNEL', '-DKERNEL_PRIVATE', '-DXNU_KERNEL_PRIVATE',
 		'-DPRIVATE', '-D__MACHO__=1', '-Dvolatile=__volatile', '-DXNU_KERN_EVENT_DATA_IS_VLA',
