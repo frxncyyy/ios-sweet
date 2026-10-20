@@ -3,9 +3,11 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT RESULT: generic2 and generic4 PASSED XNU SMP; generic8 next, already authorized.**
-  User explicitly authorized the NEW exact generic2/4/8 sequence.
-  Previous original-image sequence remains stopped. Phone in fastboot.
+- **CURRENT RESULT: all8 cores VERIFIED running XNU; full2→4→8 sequence PASSED.**
+  User explicitly authorized the NEW exact generic2/4/8 sequence; completed.
+  Previous original-image sequence remains stopped. Current phone: root ADB
+  RAM recovery after successful8-core test, diagnostic8 image still in boot.
+  No original boot restoration needed because all recovery returns succeeded.
   New full Apple-clang kernel from successful CI39424762428/source98efcd7,
   with explicit generic CPU target to remove the observed RCpc2 fault.
   Each image33542144B fits boot33554432B with12288B margin. Static checker
@@ -30,8 +32,8 @@
   Authorized: conditional2→4→8 boot-only tests, rescue after each and
   original boot restoration if rescue fails. Manual fastboot may be needed
   between tests/recovery. No renewed permission for these unchanged images.
-  After approval, do not re-ask for these unchanged exact images; flash only
-  the next one once previous test fully passes and root rescue is verified.
+  The three exact authorized tests are now completed; no further test is
+  pending in that sequence. Preserve all frozen images and raw evidence.
   Backup boot SHA04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01.
   Collect immediately: tools/nord2-pull-logs.sh --rescue smp-genericN-stop20.
   Require N/N workers, correct CPU/MIDR,done1,ticks>0,IPI replies core+1,
@@ -49,8 +51,32 @@
   scheduler4/4 PASS1. All secondaries OFF; root ADB/no block-data mounts
   verified. Pmsg14256B SHA-256 `55a8933ce58643597739573cbcbc501e233eb714babc1d557e19515dafdd7bcc`,
   `backup/nord2/logs/20261020-150624-smp-generic4-stop20/pstore/pmsg-ramoops-0`.
-  Evidence generic/hardware-test-4/verified.json. Next: ask only manual
-  fastboot for already-authorized generic8. No new permission required.
+  Evidence generic/hardware-test-4/verified.json.
+  Test8 PASSED at16:00 CEST: all8 workers on actual CPUs0..7; cores0..3
+  Cortex-A55 MIDR412fd050,cores4..7 Cortex-A78 MIDR411fd410. Each completed
+  sixteen timed sleeps and4096 shared atomic increments; ticks33/18/18/18/
+  18/18/18/17, correct IPI replies1..8, observed IPI IRQs50/70/41/12/3/3/3/3.
+  Scheduler8/8 PASS1; exact shared counter32768, console_dropped0. All7
+  secondary affinities confirmed OFF before chain-back; authenticated root
+  ADB rescue marker and no block/data mounts independently verified.
+  Pmsg15208B SHA-256 `b093c6203206815b42395be60a3ff4f5952fa23a2e131451bf0d90165327ba40`,
+  `backup/nord2/logs/20261020-155848-smp-generic8-stop20/pstore/pmsg-ramoops-0`.
+  Evidence generic/hardware-test-8/verified.json; full sequence aggregate
+  generic/sequence-verified.json. Successful kernel SMP execution now proven
+  for all8, beyond the earlier firmware-only CPU_ON/OFF tests. This remains
+  a bounded diagnostic before root selection, not long-duration validation.
+
+  NEXT PHASE: integrate8-core operation with RAM HFS/PID1 and live USB,
+  before installing/running the prepared full iOS root. Current safety
+  guards deliberately accept multi-CPU startup ONLY for nord2stopat=20;
+  USB background service still requires cpus=1. Do NOT just change cpus=8
+  on old USB/userland images or remove both guards without reviewing
+  concurrent USB access and coordinated shutdown/cleanup. Extend those
+  paths deliberately, prepare/verify a combined bounded candidate and
+  request authorization for its exact boot image. Existing full iOS16
+  HFS root is still local only; userdata untouched by this entire sequence.
+  Actual Apple launchd/full iOS, graphics/touch and sustained SMP load are
+  not verified by these tests. Preserve original boot/recovery backups.
 
 - **Previous result: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
   User authorized the exact three images conditionally,2→4→8; do not flash
