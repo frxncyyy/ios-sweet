@@ -22,6 +22,7 @@ writer = early.split('nord2_putc(char c)', 1)[1].split('#else', 1)[0]
 assert writer.index('ring()->data[') < writer.index('__builtin_arm_dmb(DMB_SY)') < writer.index('ring()->size =')
 prelude = r'''
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,7 +87,23 @@ int main(void) {
     assert(req(0xc0,0x51,0,1,1024)==0);
     assert(req(0x40,0x51,0,0,1024)==0); /* Reject host-to-device data. */
     assert(req(0xc0,0x52,0,0,65535)==1 && length==28 && !memcmp(data,"NUSB",4));
-    assert(req(0xc0,0x53,0,0,8)==0);
+    assert(req(0xc0,0x52,0,0,28)==1 && data[4]==2);
+    nord2_stream_init();
+    assert(nord2_stream_ready && nord2_stream_size==65524);
+    assert(nord2_log_stream_read(65520,data,1024)==4);
+    assert(nord2_log_stream_read(UINT32_MAX,data,1024)==0);
+    for (uint32_t i=65524;i<NORD2_STREAM_CAPACITY;i++) nord2_stream[i]=(uint8_t)(i*7);
+    __atomic_store_n(&nord2_stream_size,NORD2_STREAM_CAPACITY,__ATOMIC_RELEASE);
+    assert(req(0xc0,0x53,0,0,65535)==1 && length==8);
+    uint32_t cap,size; memcpy(&cap,data,4); memcpy(&size,data+4,4);
+    assert(cap==NORD2_STREAM_CAPACITY && size==cap);
+    assert(req(0xc0,0x53,1,0,8)==0 && req(0xc0,0x53,0,1,8)==0);
+    assert(req(0x40,0x54,0,0,1024)==0);
+    assert(req(0xc0,0x54,17,1,65535)==1 && length==1024 && data[0]==119);
+    unsigned tail=NORD2_STREAM_CAPACITY-3;
+    assert(req(0xc0,0x54,tail&65535,tail>>16,1024)==1 && length==3);
+    assert(req(0xc0,0x54,0,64,1024)==1 && length==0);
+    assert(req(0xc0,0x54,65535,65535,1024)==1 && length==0);
     uint32_t rng=1;
     for (unsigned i=0;i<100000;i++) {
         uint8_t s[8];
@@ -105,14 +122,15 @@ int main(void) {
 '''
 cfile = out / 'usb-control-host.c'
 exe = out / 'usb-control-host'
-cfile.write_text(prelude + reader + decoder + cases)
+stream = '#define NORD2_STREAM_CAPACITY' + early.split('#define NORD2_STREAM_CAPACITY', 1)[1].split('/* The GUI reuses', 1)[0]
+cfile.write_text(prelude + reader + stream + decoder + cases)
 subprocess.run(['clang', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-g', str(cfile), '-o', str(exe)],
                check=True)
 subprocess.run([str(exe.resolve())], check=True)
 
 cleanup = usb.split('int\nnord2_usb_prepare_return', 1)[1]
-cleanup = 'int\nnord2_usb_prepare_return' + cleanup.split('static void\nnord2_usb_enumerate', 1)[0]
+cleanup = 'int\nnord2_usb_prepare_return' + cleanup.split('static bool\nnusb_poll_continue', 1)[0]
 model = r'''
 #include <assert.h>
 #include <stdbool.h>

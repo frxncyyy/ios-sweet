@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Read the native XNU USB console (first 65524 log bytes) using system libusb.
+"""Read the native XNU USB console using system libusb.
+
+Protocol1 captures the first65524 persistent bytes. Protocol2 reads the
+separate4MiB append-only live buffer; both are bounded, not unlimited streams.
 
 Usage: nord2-usb-console.py OUTPUT_DIRECTORY [--wait SECONDS]
 Selects product "Nord2 XNU console", never the Android ADB recovery interface.
@@ -46,9 +49,9 @@ if lib.libusb_init(C.byref(ctx)) != 0:
     raise SystemExit('libusb initialization failed')
 
 
-def request(code, value, size):
+def request(code, value, size, index=0):
     buffer = C.create_string_buffer(size)
-    n = lib.libusb_control_transfer(handle, 0xc0, code, value, 0,
+    n = lib.libusb_control_transfer(handle, 0xc0, code, value, index,
                                    buffer, size, 1500)
     if n < 0:
         raise OSError(f'USB request {code:#x} failed: libusb {n}')
@@ -60,7 +63,7 @@ def read_status():
     if len(raw) != 28:
         raise OSError('Truncated native console status')
     status = struct.unpack('<7I', raw)
-    if status[:2] != (0x4253554e, 1):
+    if status[0] != 0x4253554e or status[1] not in (1, 2):
         raise ValueError('Unexpected native console protocol')
     return status
 
@@ -112,14 +115,29 @@ try:
         raise SystemExit('Enumerated USB console disappeared')
     status = read_status()
     print('XNU USB connected; reading pmsg while XNU is running.', flush=True)
+    protocol = status[1]
+    capacity = 65524
+    if protocol == 2:
+        info = request(0x53, 0, 8)
+        if len(info) != 8:
+            raise SystemExit('Truncated live-log metadata')
+        capacity, published = struct.unpack('<2I', info)
+        if not 65524 <= capacity <= 16 * 1024 * 1024 or published > capacity:
+            raise SystemExit('Invalid live-log bounds')
     log = bytearray()
     samples = [status]
     until = time.monotonic() + args.read_seconds
-    while time.monotonic() < until and len(log) < 65524:
+    while time.monotonic() < until and len(log) < capacity:
         try:
-            chunk = request(0x51, len(log), min(1024, 65524 - len(log)))
+            offset = len(log)
+            chunk = request(0x54 if protocol == 2 else 0x51, offset & 0xffff,
+                            min(1024, capacity - offset), index=offset >> 16)
             log += chunk
-            (args.output / 'xnu-live.log').write_bytes(log)
+            if offset == 0:
+                (args.output / 'xnu-live.log').write_bytes(chunk)
+            elif chunk:
+                with (args.output / 'xnu-live.log').open('ab') as output:
+                    output.write(chunk)
             samples.append(read_status())
         except OSError:
             if not log:
@@ -131,10 +149,10 @@ try:
             b'NORD2 USB: native console for 45 seconds',
             b'NORD2 USB: native console continuous')):
         raise SystemExit('USB answered, but the current native-console boot marker is missing')
-    result = dict(native_usb=True, log_bytes=len(log),
+    result = dict(native_usb=True, protocol=protocol, log_capacity=capacity, log_bytes=len(log),
                   log_sha256=hashlib.sha256(log).hexdigest(),
                   status_samples=samples, userdata_commands_sent=False,
-                  log_capacity_reached=len(log) == 65524)
+                  log_capacity_reached=len(log) == capacity)
     (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f'Saved {len(log)} bytes of XNU log over native USB.', flush=True)
 finally:

@@ -133,7 +133,14 @@ def build():
     ], [gic,
         # watchdogd: the MT6893 watchdog is not ported; "no-pmu" keeps the
         # boot CPU driver from touching it.
-        node('wdt', [phandle(), ('no-pmu', u32(1))])])
+        node('wdt', [phandle(), ('no-pmu', u32(1))]),
+        # AppleCLCD publishes only with nord2display=1 in full-userland mode23.
+        # The driver uses the verified MT6893 buffer, not Qualcomm MMIO.
+        node('disp0', [phandle(),
+            ('device_type', cstr('display-subsystem')),
+            ('compatible', cstr('nord2,display')),
+            ('canvas-width', u32(1125)),
+            ('canvas-height', u32(2436))])])
 
     defaults = node('defaults', [phandle(), ('no-effaceable-storage', u32(1))])
 

@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,506 @@
+@@ -1,16 +1,612 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -37,6 +37,7 @@
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
 +#include <kern/clock.h>
++#include <kern/debug.h>
 +#include <kern/cpu_number.h>
 +#include <kern/processor.h>
 +#include <kern/sched_prim.h>
@@ -88,6 +89,8 @@
 +
 +static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
 +static int nord2_fb_started;
++static uint32_t nord2_gui_owned;
++static void nord2_stream_init(void);
 +static unsigned int nord2_fb_row, nord2_fb_col;
 +
 +static int
@@ -205,6 +208,7 @@
 +	nord2_va_mutex = mtx;
 +	nord2_va_fb = fb;
 +	nord2_va_pmsg = pmsg;
++	nord2_stream_init();
 +	__asm__ volatile("dsb sy" ::: "memory");
 +	sweet_early_string("NORD2-XNU: console remapped to kernel VA, pmsg=0x");
 +	nord2_hex64(pmsg);
@@ -340,7 +344,7 @@
 +static void
 +nord2_fb_putc(char c)
 +{
-+	if (!nord2_fb_on()) {
++	if (!nord2_fb_on() || (nord2_gui_owned && !panic_active())) {
 +		return;
 +	}
 +	if (c == '\r') {
@@ -457,6 +461,101 @@
 +	return false;
 +}
 +
++/* Extended live log in ordinary coherent RAM; persistent pmsg stays unchanged.
++ * Writers use the console lock, readers see only immutable published bytes.
++ * Initialized after the final mappings exist, before any secondary starts. */
++#define NORD2_STREAM_CAPACITY (4u * 1024u * 1024u)
++static uint8_t nord2_stream[NORD2_STREAM_CAPACITY];
++static uint32_t nord2_stream_size;
++static bool nord2_stream_ready;
++
++static void
++nord2_stream_init(void)
++{
++	uint32_t n = nord2_log_read(0, nord2_stream, NORD2_PMSG_SIZE - NORD2_RING_HDR);
++	__atomic_store_n(&nord2_stream_size, n, __ATOMIC_RELEASE);
++	nord2_stream_ready = true;
++}
++
++void
++nord2_log_stream_info(uint32_t info[2])
++{
++	info[0] = NORD2_STREAM_CAPACITY;
++	info[1] = __atomic_load_n(&nord2_stream_size, __ATOMIC_ACQUIRE);
++}
++
++uint32_t
++nord2_log_stream_read(uint32_t offset, uint8_t *out, uint32_t max)
++{
++	uint32_t size = __atomic_load_n(&nord2_stream_size, __ATOMIC_ACQUIRE);
++	if (offset >= size) { return 0; }
++	uint32_t n = size - offset < max ? size - offset : max;
++	for (uint32_t i = 0; i < n; i++) { out[i] = nord2_stream[offset + i]; }
++	return n;
++}
++
++/* The GUI reuses the verified LK buffer and command-mode pipeline. No panel
++ * initialization, Qualcomm MMIO or boot_args video mapping is involved. */
++int
++nord2_display_info(uint64_t *phys, uint32_t *width, uint32_t *height, uint32_t *pitch)
++{
++	int enabled = 0, stop = 0;
++	PE_parse_boot_argn("nord2display", &enabled, sizeof(enabled));
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (enabled != 1 || stop != 23 || !nord2_va_fb || !nord2_va_dsi || !nord2_va_mutex) {
++		return 0;
++	}
++	*phys = NORD2_FB_PA;
++	*width = NORD2_FB_WIDTH;
++	*height = NORD2_FB_HEIGHT;
++	*pitch = NORD2_FB_PITCH;
++	return 1;
++}
++
++/* Drain any console drawing before the first GUI copy. Later logs remain in
++ * both buffers but stop modifying pixels; panic output can draw again. */
++int
++nord2_display_begin(void)
++{
++	uint64_t daif = __builtin_arm_rsr64("DAIF");
++	__builtin_arm_wsr("DAIFSet", 0xf);
++	bool outer;
++	bool ok = nord2_console_acquire(nord2_raw_core() + 1, &outer);
++	if (ok) {
++		nord2_gui_owned = 1;
++		if (outer) { __atomic_store_n(&nord2_console_owner, 0, __ATOMIC_RELEASE); }
++	}
++	__builtin_arm_wsr64("DAIF", daif);
++	return ok;
++}
++
++int
++nord2_display_refresh(void)
++{
++	if (!nord2_gui_owned || panic_active()) { return 0; }
++	volatile uint32_t *dsi = (volatile uint32_t *)nord2_va_dsi;
++	volatile uint32_t *mtx = (volatile uint32_t *)nord2_va_mutex;
++	if (!dsi || !mtx) { return 0; }
++	uint64_t freq = __builtin_arm_rsr64("CNTFRQ_EL0");
++	if (!freq) { return 0; }
++	uint64_t deadline = __builtin_arm_rsr64("CNTVCT_EL0") + freq / 100;
++	while (dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_BUSY) {
++		if (__builtin_arm_rsr64("CNTVCT_EL0") >= deadline) { return 0; }
++	}
++	/* MT6893 INTSTA is write-zero-to-clear (mtk_dsi.c IRQ handler). */
++	dsi[NORD2_DSI_INTSTA / 4] = ~NORD2_DSI_FRAME_DONE;
++	mtx[NORD2_MUTEX_EN0 / 4] = 1;
++	dsi[NORD2_DSI_START / 4] = 0;
++	__asm__ volatile("dsb sy" ::: "memory");
++	dsi[NORD2_DSI_START / 4] = 1;
++	deadline = __builtin_arm_rsr64("CNTVCT_EL0") + freq / 50;
++	while (!(dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_FRAME_DONE)) {
++		if (__builtin_arm_rsr64("CNTVCT_EL0") >= deadline) { return 0; }
++	}
++	dsi[NORD2_DSI_INTSTA / 4] = ~NORD2_DSI_FRAME_DONE;
++	return 1;
++}
++
 +static void
 +nord2_flush(void)
 +{
@@ -478,11 +577,18 @@
 +	if (c == '\r') {
 +		return;
 +	}
-+	/* A full ring stops recording; 64 KiB is far more than this path emits. */
-+	if (nord2_pos >= NORD2_PMSG_SIZE - NORD2_RING_HDR) {
-+		return;
++	if (nord2_stream_ready) {
++		uint32_t n = nord2_stream_size;
++		if (n < NORD2_STREAM_CAPACITY) {
++			nord2_stream[n] = (uint8_t)c;
++			__atomic_store_n(&nord2_stream_size, n + 1, __ATOMIC_RELEASE);
++		}
 +	}
-+	nord2_ring()->data[nord2_pos++] = c;
++	/* Preserve the first 64 KiB for rescue; full pmsg must not stop live
++	 * logging, watchdog kicks, or panic drawing. */
++	if (nord2_pos < NORD2_PMSG_SIZE - NORD2_RING_HDR) {
++		nord2_ring()->data[nord2_pos++] = c;
++	}
 +	if (nord2_wdt) {
 +		nord2_wdt[2] = 0x1971;	/* WDT_RST on console traffic too */
 +	}
@@ -512,7 +618,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +513,7 @@
+@@ -23,6 +619,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -520,7 +626,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +529,32 @@
+@@ -38,10 +635,32 @@
  		}
  	}
  }
@@ -553,7 +659,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +589,7 @@
+@@ -76,6 +695,7 @@
  		}
  	}
  	early_col++;
@@ -561,7 +667,7 @@
  }
  
  static void
-@@ -86,9 +600,177 @@
+@@ -86,9 +706,177 @@
  	}
  }
  
@@ -576,7 +682,7 @@
 +sweet_early_console_write(const char *c, int size)
 +{
 +	for (int i = 0; i < size; i++) {
-+		nord2_putc(c[i]);
++		sweet_early_putc(c[i]);
 +	}
 +}
 +
@@ -739,7 +845,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +789,36 @@
+@@ -107,11 +895,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -776,7 +882,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +830,10 @@
+@@ -123,8 +936,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -787,7 +893,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +842,969 @@
+@@ -133,11 +948,969 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -1765,7 +1871,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,58 @@
+@@ -10,8 +10,63 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1799,6 +1905,11 @@
 +/* Called after IAR read, before the normal IRQ handler; may not return. */
 +void nord2_smp_irq_stop(uint64_t iar);
 +uint32_t nord2_log_read(uint32_t offset, uint8_t *out, uint32_t max);
++void nord2_log_stream_info(uint32_t info[2]);
++uint32_t nord2_log_stream_read(uint32_t offset, uint8_t *out, uint32_t max);
++int nord2_display_info(uint64_t *phys, uint32_t *width, uint32_t *height, uint32_t *pitch);
++int nord2_display_begin(void);
++int nord2_display_refresh(void);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
@@ -3002,7 +3113,7 @@
  #include <kern/sched_prim.h>
  #include <machine/machine_routines.h>
  #include <arm/caches_internal.h>
-@@ -37,6 +39,616 @@
+@@ -37,6 +39,625 @@
  #include <net/dlil.h>
  #include <sys/kern_event.h>
  
@@ -3238,10 +3349,19 @@
 +		n = nord2_log_read(value, data, MIN((uint32_t)wanted, 1024u));
 +		nusb.log_reads++;
 +	} else if (type == 0xc0 && request == 0x52 && value == 0 && index == 0) {
-+		const uint32_t status[] = {0x4253554e, 1, nusb.requests,
++		const uint32_t status[] = {0x4253554e, 2, nusb.requests,
 +		    nusb.resets, nusb.log_reads, nusb.stalls, nusb.configuration};
 +		memcpy(data, status, sizeof(status));
 +		n = sizeof(status);
++	} else if (type == 0xc0 && request == 0x53 && value == 0 && index == 0) {
++		uint32_t info[2];
++		nord2_log_stream_info(info);
++		memcpy(data, info, sizeof(info));
++		n = sizeof(info);
++	} else if (type == 0xc0 && request == 0x54) {
++		n = nord2_log_stream_read((uint32_t)value | (uint32_t)index << 16,
++		    data, MIN((uint32_t)wanted, 1024u));
++		nusb.log_reads++;
 +	} else if (type == 0x80 && request == 6) {
 +		unsigned kind = value >> 8, number = value & 0xff;
 +		if (kind != 3 && (index || number)) {
@@ -3619,7 +3739,7 @@
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  void sweet_usb_probe(void);
  static void sweet_usb_gadget_start(vm_offset_t dwc);
-@@ -928,4 +1540,5 @@
+@@ -928,4 +1549,5 @@
  		thread_deallocate(thread);
  	}
  }
@@ -3718,6 +3838,81 @@
  	return true;
  }
  
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -50,6 +50,11 @@
+ #include <pexpert/pexpert.h>
+ #include <kern/clock.h>
+ #include <sys/proc.h>
++#if defined(NORD2)
++extern "C" {
++#include <arm64/sweet_early.h>
++}
++#endif
+ 
+ enum {
+ 	kSweetFBGetLayerDefaultSurface  = 3,
+@@ -152,16 +157,25 @@
+ bool
+ AppleCLCD::start(IOService *provider)
+ {
++#if !defined(NORD2)
+ 	PE_Video video;
++#endif
+ 
+ 	if (!IOService::start(provider)) {
+ 		return false;
+ 	}
++#if defined(NORD2)
++	if (!nord2_display_info(&fPhys, &fWidth, &fHeight, &fRowBytes)) {
++		IOLog("NORD2 FB: display configuration refused\n");
++		return false;
++	}
++#else
+ 	PE_current_console(&video);
+ 	fPhys = video.v_baseAddr;
+ 	fWidth = (uint32_t)video.v_width;
+ 	fHeight = (uint32_t)video.v_height;
+ 	fRowBytes = (uint32_t)video.v_rowBytes;
++#endif
+ 	if (fPhys == 0 || fWidth == 0 || fHeight == 0 || fRowBytes < fWidth * 4) {
+ 		IOLog("SWEET FB: no boot framebuffer\n");
+ 		return false;
+@@ -239,6 +253,9 @@
+ 				}
+ 			}
+ 		}
++#if defined(NORD2)
++		if (step <= 6) { (void)nord2_display_refresh(); }
++#endif
+ 		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 		return;
+ 	}
+@@ -315,6 +332,9 @@
+ 
+ 
+ 	if (!fConsolePaused) {
++#if defined(NORD2)
++		if (!nord2_display_begin()) { return; }
++#endif
+ 		int quiet = 0;
+ 		fConsolePaused = true;
+ 		if (PE_parse_boot_argn("sweetfb_noconsole", &quiet, sizeof(quiet)) && quiet != 0) {
+@@ -399,6 +419,14 @@
+ 		}
+ 		s->release();
+ 	}
++#if defined(NORD2)
++	int done = nord2_display_refresh();
++	static unsigned logged;
++	if (logged < 8) {
++		logged++;
++		IOLog("NORD2 FB: command-mode present %u done=%d\n", logged, done);
++	}
++#endif
+ }
+ 
+ bool
 --- a/iokit/Kernel/IOStartIOKit.cpp
 +++ b/iokit/Kernel/IOStartIOKit.cpp
 @@ -57,6 +57,9 @@
@@ -3756,6 +3951,15 @@
      "   {"
      "     'IOClass'         = AppleKeyStore;"
      "     'IOProviderClass' = IOResources;"
+@@ -65,7 +72,7 @@
+     "   {"
+     "     'IOClass'         = AppleCLCD;"
+     "     'IOProviderClass' = IOPlatformDevice;"
+-    "     'IONameMatch'     = 'sweet,display';"
++    "     'IONameMatch'     = ('sweet,display', 'nord2,display');"
+     "   },"
+     "   {"
+     "     'IOClass'         = SweetHIDButtons;"
 --- a/pexpert/pexpert/arm64/SWEET.h
 +++ b/pexpert/pexpert/arm64/SWEET.h
 @@ -16,6 +16,10 @@

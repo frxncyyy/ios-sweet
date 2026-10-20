@@ -3,120 +3,103 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT RESULT: full iOS16 root INSTALLED and VERIFIED on userdata.**
-  Authorized bounded transfer completed with exit0; all17179869184bytes
-  acknowledged/fsynced, then full device readback SHA-256 matched:
-  `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
-  Evidence research/nord2/ios-userland-rw/install-bounded/{result.json,
-  device-readback.sha256,write-progress.json,final-rescue-state.txt} and
-  install-bounded.log. ADB memory stayed roughly38-60MiB; previous OOM
-  failure resolved by sequential64MiB writes, not only by added swap.
-  Phone remains authenticated UID0 ADB RAM rescue with no block/data mounts;
-  no reboot or boot flash occurred during installation. Current boot point21.
-  Android data has now been replaced by HFS iOS; preserve rescue/original
-  backups, NEVER boot normal Android expecting usable userdata.
-  Boot23 frozen662285c2…34bd5c91 is ready (details below), NOT YET FLASHED.
-  Next request exact boot23 authorization + manual fastboot, then run private
-  run-approved-boot.py --authorized-boot23. USB live log first65524bytes;
-  stop23 runs continuously, root writable. Panic returns to RAM ADB rescue;
-  manual recovery must use tested rescuebootd78bf9fe…3d03bac5 if needed.
-  First Apple launchd/full iOS runtime remains UNTESTED until this boot.
+- **CURRENT HARDWARE RESULT: REAL APPLE USERLAND RUNS; GUI NOT YET SHOWN.**
+  Exact authorized `nord2-ios-userland-stop23.img` flashed only to boot and
+  rebooted on 2026-10-20 18:16:56 CEST. SHA-256
+  `662285c21b8bcd2a5294b4be7175fce69b2d7b47e45aebf4286dd63434bd5c91`.
+  All8 scheduler workers/timers/IPIs passed, counter32768, then native USB
+  became active, UFS userdata opened read/write and HFS iOSRoot mounted.
+  ORIGINAL APPLE launchd reached its ignition sequence, initialized first-boot
+  data and exec'd SpringBoard, backboardd, IOMFB_FDR_Loader and many daemons.
+  This is the first real Apple userland boot, unlike the earlier diagnostic PID1.
+  User reports scrolling XNU text, not a GUI. No kernel panic in captured log;
+  driverkitd sig9 reason namespace1/code7 was observed (not evidence that the
+  whole boot failed). backboardd enumerated arm-io children. No AppleCLCD
+  registration or surface swap occurred in the capture.
+  First reader exited0 at300seconds with49143bytes; a later read reached the
+  persistent capacity65524, SHA-256
+  `10d0c9f3cf66ec88427d38ca76c9b5fbf4f838a42d53b3d4032f2e22820ebb3a`.
+  Captures: research/nord2/ios-userland-rw/{hardware-live,hardware-live-late}/;
+  flash.log and client-hardware.log alongside. Private raw logs contain IDs:
+  do not commit them. Current boot remains mode23, iOS running; no reboot or
+  recovery attempted. USB status remains responsive; log saturation is not a
+  kernel hang. No shell, unrestricted memory or disk commands are available
+  through this USB interface.
 
-- **CURRENT WORK: point23, direct full Apple iOS userland boot.**
-  User requests going directly to userland; confirmed the transient ADB loss
-  was an accidentally moved fragile cable. ADB root RAM rescue is back.
-  User then explicitly requested a Sol subagent to FLASH THE FILESYSTEM now;
-  this authorizes installing the frozen16GiB root into existing userdata.
-  Delegated transfer+full readback to /root/install_ios_root (gpt-6.1-sol).
-  Exact point23 boot-flash approval still pending artifact verification.
-  First installer attempt failed before transfer: rescue Toybox advertises
-  conv=nocreat but rejects it (even alone). No image readback completed.
-  Preserved install/{result.json,write.stderr,dd-runtime-probes.txt,
-  dd-ram-probe.txt}; started=true is conservative, completed=false.
-  Runtime RAM-only check proved conv=notrunc,fsync works and preserves tail.
-  Installer corrected to use it after same-shell test -b/readlink identity
-  guards. Fake-ADB checks include an identity failure just before opening.
-  Retry install-retry/ began writing, then HOST CRASH interrupted it at
-  last consumption5485074901/17179869184bytes (~32%). Completion/readback
-  were NOT verified; userdata now contains an INCOMPLETE iOS image and
-  must not be booted. The user explicitly requested resuming the transfer.
-  After restart permissions briefly read-only, now restored full access.
-  Old agent could not inherit restored permissions; fresh gpt-6.1-sol agent
-  /root/install_ios_resume handles the authorized restart FROM BYTE ZERO,
-  new install-after-crash/ + install-after-crash.log. Do not run parallel writers.
-  User reconnected fragile USB cable; root rescue/no residual dd confirmed.
-  SECOND OOM interrupted install-after-crash/ at consumption7578022617bytes
-  (~44%), without completed transfer/readback. User added12GiB zram+16GiB
-  disk swap and explicitly requested resume. Kernel log identified killed
-  adb65482 with4.2GiB anonymous RSS/7.6GiB virtual memory: unlimited stdin
-  queuing caused the memory pressure. Do NOT use the old single-stream path.
-  A tentative install-after-swap was stopped during LOCAL HASH, before dd;
-  its empty log is preserved. Old remote shell712 vanished after disconnect;
-  no old writer remained. Installer now sends64MiB per separate adb shell,
-  dd bs1MiB seek=chunk_offset, no count (short pipe reads), notrunc/fsync,
-  waiting for successful exit before the next. New write-progress.json
-  records device-acknowledged bytes; old ADB-consumed numbers were NOT
-  proof of bytes written. Final16GiB SHA readback still mandatory.
-  Host fake-ADB tests passed distinct multi-chunk offsets, binary integrity,
-  guard failures, first/second chunk failure without false completion/hash.
-  Actual rescue RAM-only seek test PASS: XY at1MiB,2MiB file length retained.
-  Successful authorized retry: install-bounded/ and install-bounded.log,
-  agent /root/install_ios_resume; completed with full readback (result above).
-  Point21 remains in boot. No reboot/mount/boot changes before full readback.
-  Earlier read-only preflight evidence: ios-userland/install-preflight/.
-  Never describe userdata as untouched after these interrupted transfers.
-  Filesystem installation is now explicitly authorized as above. Prepare/freeze
-  point23 boot before requesting that remaining destructive-step approval.
-  Point23 requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=1,rootrw=1;
-  all8 scheduler PASS still precedes USB and UFS takeover. Existing bounded
-  partition writes are enabled for this mode; full iOS needs writable /var.
-  CPU0 USB polling is continuous ONLY for background mode23; diagnostic
-  modes16/21/22 retain45 seconds. No forced return after45 seconds. Panic
-  retains all-secondary-OFF, USB/UFS restore, and RAM ADB rescue fallback.
-  Console transport remains EP0 vendor IN, first65524 log bytes (saturating),
-  not an unlimited stream or filesystem-transfer interface. ADB is used to
-  install the16GiB root, then full boot proceeds directly to Apple launchd.
-  No Apple launchd or hardware UFS writes have yet been tested on Nord2.
-  Local three-C-file generic ARMv8.2 compilation PASSED. Exact-source host
-  checks PASS: point23 config rejection, all8 readiness before USB/UFS MMIO,
-  WRITE10 direction/LUN/first+last userdata block and out-of-range rejection,
-  mode22 remains forced RO, continuous mode23 versus bounded diagnostics,
-  CPU0 migration and existing coordinated shutdown. Exact strategy test also
-  passes partial4K read/modify/write, multi-bounce I/O,500 varied cases and
-  refusal of overflow/RO/read failure. Full CI39450476117/source4e3f651 PASSED:
-  https://github.com/frxncyyy/ios-sweet/actions/runs/39450476117
-  Kernel17279464B SHA-256
-  `f0a5accca1c5462f37b33b9a8e1f7f33098905a95cd7c907da9a38db71148259`.
-  Download checksum and hash rechecked after host crash. All1090 captured
-  C/C++ SWEET compile commands explicitly generic ARMv8.2+crypto; linked
-  RCpc2 scan2188555 instructions clean. Linked mode23 write-flag==1 config,
-  mode22 forcedRO/readiness before MMIO, USB CPU0 binding and continuous
-  mode23 loop comparisons inspected. Packaging restarted after host crash;
-  third packaging attempt PASSED. Frozen image:
-  shim/out/nord2-xnu/nord2-ios-userland-stop23.img,33542144B (12288B spare),
-  SHA-256 `662285c21b8bcd2a5294b4be7175fce69b2d7b47e45aebf4286dd63434bd5c91`.
-  Payload14502688B SHA-256
-  `b0ae1984d2e57e17009c9f47afc90d197a04c69b769cfb9a4167d14807eba819`.
-  Full CI kernel directly packed; default15-iteration Zopfli. Static checker
-  PASS and independent original Linux/both DT representations/tested rescue
-  RAMdisk byte comparisons PASS. Exact cmdline in private manifest/payload.
-  Private run-approved-boot.py prepared (syntax checked, NEVER EXECUTED);
-  requires --authorized-boot23, frozen hashes, successful full root readback
-  and correct fastboot product/size/non-userspace. Flashes only boot, starts
-  USB reader before reboot (wait300/read300). No timed reboot/auto restore.
-  Boot23 is NOT YET AUTHORIZED or flashed; wait for successful install-bounded
-  full readback, then request exact boot approval and manual fastboot.
-  Preserve both interrupted build logs. Normal Android cannot use HFS data;
-  if recovery is required, use tested ADB rescue bootd78bf9fe…3d03bac5.
-  Evidence research/nord2/ios-userland-rw/. Keep prior frozen images intact.
-  tools/nord2-install-root.py defaults to READ-ONLY preflight; --write-userdata
-  writes the16GiB prefix in bounded64MiB chunks through dd (notrunc,fsync;
-  live block-node/identity guards), then hashes the complete prefix on-device. No GPT edits, reboot or boot flash in this
-  installer. Partial writes are recorded; never continue to boot after a
-  failed transfer/readback. Root16GiB SHA-256:
+- **NEXT WORK: opt-in Nord2 GUI and extended live log, not yet flashed.**
+  Confirmed code-level display blocker: Nord2 ADT omitted disp0 and the
+  loader intentionally supplies zero boot_video fields. Sweet's framebuffer
+  expects continuous scanout, while Nord2 requires a DSI command trigger.
+  New nord2display=1 (mode23 only) publishes disp0/nord2,display, reuses the
+  verified physical buffer0x76e10000,1080x2400,stride4352, advertises iPhoneX
+  canvas1125x2436, and refreshes the inherited MT6893 pipeline after presents.
+  Bootloader/Linux/boot_args video stay unchanged. No Qualcomm display MMIO.
+  First GUI copy drains console drawing; subsequent logs keep recording while
+  pixels belong to the GUI, panic may draw again. Refresh is bounded10ms busy
+  wait+20ms FRAME_DONE wait. INTSTA W0C confirmed in user's mtk_dsi.c IRQ code.
+  Existing text-console DSI path unchanged. A host check models config/mapping
+  gates, handoff, panic exclusion, timeout and completion/acknowledgement.
+  Found `_cnputs` previously called raw nord2_putc, bypassing the SMP lock;
+  now every byte goes through sweet_early_putc. pmsg remains first65524 bytes
+  for rescue. A separate coherent4MiB append-only RAM log starts after console
+  remapping and continues past pmsg saturation. Native USB protocol2 retains
+  old requests and adds bounded read-only metadata/data with32-bit offsets;
+  client supports both protocols and reports capacity explicitly.
+  Host decoder/ASan/UBSan checks, SMP startup/shutdown/8-thread serialization,
+  display timeout tests, local two-C-file compiles and RCpc2 checks passed.
+  Local C++ is unavailable due to Apple's __builtin_xnu_type_* extensions;
+  full Apple-clang CI is required. No fake builtins or local kernel relink.
+  Evidence research/nord2/display-userland/. New kernel/image/CI/authorization
+  still pending. Preserve frozen23 and all earlier images; prepare and verify
+  the new image before requesting its exact boot-only approval.
+
+- **FULL iOS ROOT INSTALLED AND VERIFIED before first boot.**
+  Source research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img,
+  17179869184bytes, SHA-256
   `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
-  After userdata becomes HFS, fallback is the tested ADB rescue boot, NOT
-  normal Android boot. Original boot/recovery backups stay for reinstall.
+  User authorized replacing Android data without backup and asked a Sol
+  agent to flash it. /root/install_ios_resume completed the entire bounded
+  transfer and full16GiB device SHA-256 readback, exact match. Evidence:
+  research/nord2/ios-userland-rw/install-bounded/{result.json,
+  device-readback.sha256,write-progress.json,final-rescue-state.txt} and
+  install-bounded.log. Only userdata prefix was changed, no GPT edits.
+  iOS has now initialized writable /var; the original full image hash is
+  therefore NOT expected to match the running filesystem. Do not reinstall.
+  Earlier attempts install-retry (~5.5GB consumed) and install-after-crash
+  (~7.6GB consumed) were interrupted by host OOM; those figures were NOT
+  confirmed writes. Kernel journal identified adb65482 at4.2GiB anonymous
+  RSS. Installer fixed with sequential64MiB requests, waiting for each remote
+  dd conv=notrunc,fsync exit before the next. Actual ADB stayed38-60MiB.
+  Toybox nocreat is advertised but rejected, hence block-node/identity guards
+  plus notrunc/fsync instead. RAM seek and fake-ADB fault/boundary tests pass.
+  Never return to the old unbounded stdin writer. Historical failed logs
+  remain private in install/,install-retry/,install-after-crash/.
+
+- **Frozen mode23 provenance and recovery (currently on phone).**
+  Full Apple-clang CI39450476117/source4e3f65181f0ac08dd1f524d0da405bf676c49c9b
+  PASSED: https://github.com/frxncyyy/ios-sweet/actions/runs/39450476117
+  Kernel research/ci-39450476117/xnu-kernel/kernel.development.sweet,
+  17279464B, SHA-256
+  `f0a5accca1c5462f37b33b9a8e1f7f33098905a95cd7c907da9a38db71148259`.
+  All1090 captured commands generic ARMv8.2+crypto, RCpc2 scan clean.
+  Frozen shim/out/nord2-xnu/nord2-ios-userland-stop23.img,33542144B,
+  12288bytes below32MiB boot limit. Payload14502688B, SHA-256
+  `b0ae1984d2e57e17009c9f47afc90d197a04c69b769cfb9a4167d14807eba819`.
+  Original Linux, both DT representations and tested rescue RAMdisk verified
+  byte-for-byte. Full CI kernel packed directly with default15-iteration Zopfli.
+  Args: debug=0xc cpus=8 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
+  nord2fb=1 nord2stopat=23 rd=ufsroot0 ufsroot=userdata ufsrw=1 rootrw=1
+  unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin
+  launchd_unsecure_cache=1 wdt=-1. All8 gate precedes USB/UFS; only23 runs USB
+  continuously. Panic still quiesces all7 secondaries before hardware restore
+  and return to RAM ADB rescue. Exact frozen23 + fallback already authorized.
+  Private run-approved-boot.py has EXECUTED, flash.log exists: do not rerun it
+  blindly. For failure/recovery use tested research/nord2/rescue/nord2-adb-rescue.img
+  SHA d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5;
+  bootloader/manual fastboot might be needed. Do NOT boot normal Android with
+  HFS userdata. Keep original boot/recovery backups for future reinstall.
+  Frozen23 static config/UFS partial-block strategy/write-bound tests all pass.
+  Installation and artifact records committed785462f,c63449f,291dda2,550c644.
 
 - **Point22 prepared and frozen, SUPERSEDED by user request; never flashed.**
   Full CI39446150677 PASSED/sourcec992fd5:

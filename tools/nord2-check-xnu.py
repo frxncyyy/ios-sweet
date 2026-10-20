@@ -314,6 +314,18 @@ class Checker:
                        [a for a in args if a.startswith('ufsroot=')] == ['ufsroot=userdata'] and
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=1'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=1'])
+        if 'nord2display=1' in args:
+            arm_io = next((n for n in root.children if n.name == 'arm-io'), None)
+            disp = next((n for n in arm_io.children if n.name == 'disp0'), None) if arm_io else None
+            self.check('Nord2 GUI uses verified display node and full-userland mode',
+                       'nord2stopat=23' in args and disp is not None and
+                       disp.prop('compatible') == b'nord2,display\0' and
+                       disp.prop('device_type') == b'display-subsystem\0' and
+                       disp.prop('canvas-width') == struct.pack('<I', 1125) and
+                       disp.prop('canvas-height') == struct.pack('<I', 2436))
+            self.check('kernel contains Nord2 command-mode presentation',
+                       b'NORD2 FB: command-mode present' in kernel and
+                       b'NORD2 FB: display configuration refused' in kernel)
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None
