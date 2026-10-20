@@ -3,23 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **COMBINED NEXT CANDIDATE CI39491596110/sourcece25bf3 RUNNING.**
-  Includes opt-inRTCskip+extendedreadonlyUFSlimits+priorGUIretry/diagnostics
-  andfirmwareRAMverification. Intendedimage nord2-ios-rtc-ufs-wifi-stop23.img;
-  private rtc-ufs-wifi build/verify prepared, notpacked/flashed/authorized.
-  Private recompressedrescuebase nowselected; defaultZopfli15kernelcompression.
-  base.img28594176B SHAed05ea02d0499fe4109e6498a6852e769c346226aa4a56a220338673f8a2f5bf,
-  gains290816B aligned. ExactCPIO19476076B SHA
- 95989a2ddff7d3fad8c63df9916a7d2510e09499f0b1710ac9fbf078ce60979f.
-  Independentheader/ID/parser verifiesLinux/bothDTs/allCPIOcontentsunchanged;
-  only gzipcontainer/headerRAMdisksize+ID differ. ContainerhardwareUNTESTED,
-  originaltestedrescuefilepreservedforfallback. Imagepending, noimageclaims.
+- **COMBINED CANDIDATE VERIFIED; NEW FLASH AUTHORIZATION PENDING.**
+  CI39491596110/source ce25bf39098c1be91cc8d929c4e6b2dd4959088c passed.
+  Kernel: 17,300,400 bytes, SHA-256
+  a917ad29f47f9099cc239fe2b5f6fc3693dec5ec913fc01e531f9265c94ff101;
+  all 1,099 captured compile commands use generic ARMv8.2+crypto.
+  Frozen `shim/out/nord2-xnu/nord2-ios-rtc-ufs-wifi-stop23.img`:
+  33,263,616 bytes (290,816 spare), SHA-256
+  e5f91de5f0f25af0d89b700ebe52f3912a4dcc5c1387e2c474702a74e6e2741b.
+  Payload SHA-256 cecd954e2e677f01f46182f7d87df5ff315c86aae9bc64796cf5a4630f62431a.
+  Includes opt-in RTC wait skip, extended read-only UFS limits, GUI ownership
+  retry/diagnostics and four-file firmware verification in RAM. No UFS tuning,
+  firmware execution or Wi-Fi networking. Uses installed iOS root read/write.
+  Static checks, independent unpack and linked GUI retry/RTC spot checks pass.
+  Private `rtc-ufs-wifi/{manifest.json,verify-image.py,run-approved-boot.py}`;
+  runner prepared, NOT EXECUTED. Phone remains on profile image 8eb3f477.
+  User confirms console remains visible; a power press dims the screen.
+  Rescue base is recompressed: 28,594,176 bytes, SHA-256
+  ed05ea02d0499fe4109e6498a6852e769c346226aa4a56a220338673f8a2f5bf.
+  Linux/both DTs/all uncompressed CPIO contents are identical; raw CPIO SHA
+  95989a2ddff7d3fad8c63df9916a7d2510e09499f0b1710ac9fbf078ce60979f.
+  Only gzip container/header RAMdisk size+ID differ. This container has not
+  been hardware tested. Original tested rescue d78bf9fe is kept for fallback.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39491596110
-  Isolated wifi_emi_snapshot.{c,h} prepared withhosttests/nativeARMcompile:
-  exactSMCstructuredREAD, preservesrawreturns, validatesselectors/groups/
-  regions, maximum128queries, stopsunsupported, neverSET/CLEAR/MMIO writes.
-  Notlinked/intoboot, noSMCexecuted, noeffectivepermissionclaim/deadlineclaim.
-  Private emi-permission-plan.md documentslimitations. RootreviewPASS.
+  Isolated `wifi_emi_snapshot.{c,h}` is tested/reviewed but NOT linked into
+  this image: structured read-only SMC, no SET/CLEAR/MMIO writes. No SMC has
+  been executed and effective permissions are still unknown. Parallel work
+  prepares a separate opt-in snapshot bridge and a pre-root two-lane UFS
+  diagnostic; neither changes this frozen candidate.
 
 - **MEASURED: UFS G4x1 RATE B; NEXT RTC-SKIP/LIMITS SOURCE READY.**
   Authorized8eb3f477 boot reports all6DME_GET valid0x3f: RX/TXgear4,1laneeach,
