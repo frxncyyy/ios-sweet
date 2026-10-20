@@ -3,7 +3,53 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE — Android restored and verified after session 8.**
+- **CURRENT DEVICE STATE — point-10 test in progress, restore pending.**
+  User explicitly authorized the third boot-only test and subsequent
+  original-boot restore and confirmed fastboot readiness. Device and both
+  hashes checked, flash/reboot successful; evidence in
+  `research/ci-39388874797/stop10/flash.log`.
+
+- **Completed point-9 test — original Android boot restored and verified.**
+  Point 9 **passed**, including `SWEET CPU: requested=1 selected=1`,
+  `cpu=0 mpidr=0x0 came alive; SGI1 OK`,
+  `1/1 CPUs initialized, SGI1 verified`, BSD initialization, network threads
+  being scheduled, `calling inittodr`, then
+  `stop at before root filesystem selection` → `RETURN TO STOCK ANDROID KERNEL`.
+  Android took longer than 90 seconds; user confirmed it was up, and ADB
+  `sys.boot_completed=1` confirmed. Do not classify these verbose probes
+  as hangs at 90 seconds.
+  - Pmsg: `backup/nord2/logs/20261020-100725-cpu-match-stop9/`, 14,519 bytes,
+    SHA-256 `25c55ce36efbc2d01f283a30e9a698d2214dca4f2a42031840994fad4f22435e`.
+  - This second test was explicitly authorized, completed, and restored via
+    fastboot. Full boot hash again
+    `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`,
+    Android boot completed. Evidence in
+    `research/ci-39388874797/stop9/{flash.log,restore.log,restore-verified.json}`.
+    No userdata modification authorized or done.
+  - Point-10 candidate (authorized and under test as recorded above):
+    `shim/out/nord2-xnu/nord2-ufs-snapshot-stop10.img`, 30,570,496 bytes,
+    SHA-256 `0a50a1ae5c5548ab716d5093478c67beb99c8380f49621c37eb05eaa8f91db1e`.
+    All image checks passed. Read-only UFSHCI register snapshot
+    at the same pre-root location. Base `0x11270000`, extent `0x2300` from
+    live DT; standard offsets from the user's Linux `drivers/scsi/ufs/ufshci.h`.
+    No controller reset, register writes, DMA or SCSI commands. Only runs
+    with `nord2stopat=10`. Host check of the exact helper with an mmap page
+    protected `PROT_READ`: zero accesses at point 9, exact 14 register reads
+    at point 10, mapping-failure path still reaches the return hook.
+    Evidence and local C-only relink (new CI archive, only `bsd_init.o` and
+    `sweet_early.o` replaced): `research/ci-39388874797/stop10/`.
+    The working new-CI buildtree's `sweet_early.h` was updated with the helper
+    declaration; its original tar archive is unchanged.
+    Storage transport and root mounting remain unported.
+  - IPSW OS/SystemOS/AppOS images extracted on the HOST only, using the
+    selected d22ap BuildIdentity, ZIP CRC verified while streaming and SHA-256
+    recorded in `research/nord2/ipsw/root-images/extraction.json`.
+    Files: `OS.dmg` (4,730,814,044 bytes), `SystemOS.dmg` (2,743,074,816),
+    `AppOS.dmg` (10,485,760). Full HFS root has NOT been built. Host lacks
+    apfs-fuse/hfsprogs and `sudo -n` requires a password; no system changes
+    or privileged host mounts attempted.
+
+- **Completed point-8 test — Android restored and verified afterwards.**
   Stop 8 **passed**: the saved log contains `irq intid 0x...0001`, then
   `stop at before bsd_init` → `RETURN TO STOCK ANDROID KERNEL` →
   `entry=0000000040280000`. Android reached `sys.boot_completed=1`.
@@ -21,7 +67,7 @@
     and `sys.boot_completed=1` verified. Evidence:
     `research/ci-39388874797/stop8-restore{.log,-verified.json}`.
     This test's flash/restore authorization is completed.
-  - Next candidate **built, not yet authorized/flashed**:
+  - Point-9 image (test and restore completed above):
     `shim/out/nord2-xnu/nord2-cpu-match-stop9.img`, 30,570,496 bytes, SHA-256
     `d57e8f097f005e6e13533f9d94bd40923f6797015b22302bc3a61cc4c639ae13`.
     Adds point 9 after `inittodr(0)`, before the root filesystem mount loop

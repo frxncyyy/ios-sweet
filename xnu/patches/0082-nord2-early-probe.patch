@@ -701,7 +701,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +756,270 @@
+@@ -133,11 +756,307 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -889,6 +889,43 @@
 +	nord2_leave_to(0);
 +}
 +
++void
++nord2_ufs_snapshot(void)
++{
++	uint32_t want = 0;
++	(void)PE_parse_boot_argn("nord2stopat", &want, sizeof(want));
++	if (want != 10) {
++		return;
++	}
++	/*
++	 * Live Nord 2 DT: ufshci@11270000, reg size 0x2300.
++	 * Offsets from this phone's Linux drivers/scsi/ufs/ufshci.h.
++	 * Read standard status/configuration registers only; no controller
++	 * reset, interrupt acknowledgement, request submission or media write.
++	 */
++	static const struct { const char *name; uint32_t offset; } regs[] = {
++		{ "ufs_cap", 0x00 }, { "ufs_version", 0x08 },
++		{ "ufs_is", 0x20 }, { "ufs_ie", 0x24 },
++		{ "ufs_hcs", 0x30 }, { "ufs_hce", 0x34 },
++		{ "ufs_utrlba", 0x50 }, { "ufs_utrlbau", 0x54 },
++		{ "ufs_utrldbr", 0x58 }, { "ufs_utrlrsr", 0x60 },
++		{ "ufs_utmrlba", 0x70 }, { "ufs_utmrlbau", 0x74 },
++		{ "ufs_utmrldbr", 0x78 }, { "ufs_utmrlrsr", 0x80 },
++	};
++	uintptr_t base = ml_io_map(0x11270000UL, 0x2300);
++	if (base == 0) {
++		sweet_early_string("NORD2-XNU: UFS snapshot mapping failed\n");
++	} else {
++		sweet_early_string("NORD2-XNU: UFS snapshot begin (read-only)\n");
++		for (unsigned int i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
++			uint32_t value = *(volatile const uint32_t *)(base + regs[i].offset);
++			nord2_wdt_log(regs[i].name, value);
++		}
++		sweet_early_string("NORD2-XNU: UFS snapshot end\n");
++	}
++	nord2_stop_at(10, "after read-only UFS host snapshot");
++}
++
 +/*
 + * Remember the chain-back properties while the device tree is still
 + * reachable. arm_vm_init() switches the kernel page tables, after which the
@@ -980,7 +1017,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,37 @@
+@@ -10,8 +10,39 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -999,6 +1036,8 @@
 +void nord2_display_dump(void);
 +/* Optional later stop point, returns to Android with the pmsg log. */
 +void nord2_stop_at(unsigned int point, const char *label);
++/* Point 10: inspect inherited MT6893 UFSHCI state, without register writes. */
++void nord2_ufs_snapshot(void);
 +/* Private identity tables for pmsg/framebuffer/RAM window (stage 6). */
 +extern uint64_t nord2_l1_pa;
 +void nord2_identity_init(void);
@@ -1477,19 +1516,20 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -868,6 +880,11 @@
+@@ -868,6 +880,12 @@
  	bsd_init_kprintf("calling inittodr\n");
  	inittodr(0);
  
 +#if defined(NORD2)
 +	/* Diagnose BSD initialization without waiting for an unported root device. */
 +	nord2_stop_at(9, "before root filesystem selection");
++	nord2_ufs_snapshot();
 +#endif
 +
  	/* Mount the root file system. */
  	while (TRUE) {
  		int err;
-@@ -1119,7 +1136,13 @@
+@@ -1119,7 +1137,13 @@
  		}
  	}
  

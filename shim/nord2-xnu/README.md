@@ -12,8 +12,10 @@ The current blocker and exact test results are in the active handoff at the
 top of `NOTES.md`. As of 2026-10-20, the corrected CPU-driver matching and
 unambiguous `nord2stopat=8` argument have passed on hardware: XNU returns
 from `kperf_init_early`, reaches the stop before BSD, and chains back to
-Android with pmsg intact. Point 9 (before root filesystem selection) is
-prepared for the next test.
+Android with pmsg intact. Point 9 has also passed: BSD reaches root
+filesystem selection, including network-thread scheduling. The next test,
+point 10, only reads standard UFSHCI registers to inspect the MT6893
+controller state inherited from LK.
 
 The probe does not write storage or load an iOS ramdisk. It does write the
 pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
@@ -110,6 +112,7 @@ also writes zero-padded decimal and must be corrected before reuse.
 | 7 | After `vm_set_restrictions`, before kperf |
 | 8 | After `kperf_init_early`, before `bsd_init` |
 | 9 | In `bsd_init`, after `inittodr`, before selecting/mounting the root filesystem |
+| 10 | Same location as point 9, after a read-only UFSHCI register snapshot |
 
 Point numbers are identifiers, not execution order. Never infer success
 from a reboot alone: inspect the stop marker and the Android return marker.
