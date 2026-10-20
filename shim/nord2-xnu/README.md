@@ -119,8 +119,9 @@ Point numbers are identifiers, not execution order. Never infer success
 from a reboot alone: inspect the stop marker and the Android return marker.
 
 Point 10 has passed on the Nord 2: UFSHCI 2.0 is enabled, supports 64-bit
-addressing, and has no pending requests. Point 11 is prepared but has not
-been tested on hardware. It accepts only TUR, READ CAPACITY(10) and READ(10)
+addressing, and has no pending requests. Point 11 also passed: capacity, boot/userdata extents and both GPT CRCs
+match the Android baseline, followed by controller restoration and a normal
+return to Android. It accepts only TUR, READ CAPACITY(10) and READ(10)
 of GPT metadata in LBAs 1–63; checks GPT CRCs and bounds; then restores the
 inherited request list and interrupt state before returning to Android.
 If a timeout cannot be cleared or restoration fails, it retains its DMA

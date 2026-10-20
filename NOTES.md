@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE — point 10 passed; original Android boot restored
+- **Completed point-10 test — original Android boot restored
   and verified.** `sys.boot_completed=1`; full boot partition SHA-256
   `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
   User explicitly authorized the third boot-only test and original-boot
@@ -23,7 +23,22 @@
     `stop at after read-only UFS host snapshot`,
     `RETURN TO STOCK ANDROID KERNEL`. Android log collector completed normally.
 
-- **Next candidate — point 11 prepared, NOT flashed or authorized yet.**
+- **CURRENT DEVICE STATE — point 11 PASSED; original Android boot restored and verified.**
+  User authorized this image and boot-only flash/restore. Test flash/reboot
+  succeeded; Android returned and log collection completed. Original boot
+  subsequently restored via fastboot; full boot hash matches the original
+  `04e84c4a…6e1f01`, Android `sys.boot_completed=1`. Evidence in
+  `research/ci-39388874797/stop11/{restore.log,restore-verified.json}`.
+  This fourth test authorization is completed. No userdata changes.
+  - Pmsg: `backup/nord2/logs/20261020-103234-ufs-read-stop11/`,
+    15057 bytes, SHA-256
+    `cfc0e9098dc842d4c315e71f00d4b06eb68e412c8a15dd5f6fbc2f3f8256ea89`.
+    DMA at `0x145024000` accepted; capacity31,240,192 x4096;
+    boot309504/8192 and userdata3153920/28082168; GPT128 entries and CRCs
+    `ab8324bc`/`97de707e` exactly match Android baseline.
+    `inherited request list and interrupts restored`, `read probe result=0`,
+    point11 stop and Android return markers all present. UFS DMA and
+    read transport are now VERIFIED; root publication/mount remain undone.
   `shim/out/nord2-xnu/nord2-ufs-read-stop11.img`, 30,572,544 bytes,
   SHA-256 `2027c467d8162966d9ba7cbb20bd8b1cf550960d48ebec94d4fa53619b00f8f6`.
   Cmdline uses `cpus=1 nord2stopat=11`; all image checks pass.
