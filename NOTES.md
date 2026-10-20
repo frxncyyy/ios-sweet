@@ -3,7 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT WORK: point21 integrates8-core XNU + USB + diagnostic HFS RAM PID1.**
+- **CURRENT RESULT: point21 eight-core XNU + native USB + RAM PID1 PASSED.**
+  Exact authorized imagec5ce4445…f368e86a flashed only to boot; returned to
+  authenticated root ADB RAM rescue without any block/data filesystem mount.
+  Original boot restoration was not needed. Current boot remains point21;
+  current phone is ADB recovery. Userdata has not been changed.
+  All8 scheduler workers passed on their actual cores, correct A55/A78 MIDR,
+  ticks33/18/18/18/18/18/18/17, IPI replies1..8; counter32768 and PASS1.
+  USB service bound to CPU0; HFS md0 mounted; diagnostic PID1 verified HFS
+  read/getpid1/EL0 syscalls and emitted all10 timed ticks over native USB.
+  PID1 intentional exit66 caused the expected sole panic on CPU1, routed
+  return to CPU0; all7 secondaries confirmed OFF before USB restoration.
+  Both final cleanup markers and Linux return marker are complete.
+  One observation: CPU0 return-caller line starts "RD2 SMP" (first2 characters
+  missing during cross-core handoff). This does not affect the complete
+  shutdown/restoration markers. Do not claim zero console drops throughout;
+  the zero-dropped counter is measured before USB/root/userland begins.
+  Native live log17145B SHA-256
+  `fe58fdc519aa8c17f476597cbbc6a29c908f67a4a2458b958e5b513384c3d499`,
+  exactly matches the pmsg prefix and includes HFS, all10 ticks and exit66.
+  88 USB status samples; last requests185,resets2,logreads87,stalls0,configured1.
+  Pmsg17425B SHA-256
+  `635faa4aa1daa2b7f309f7361eb00e13fdf5bc455e9f12d914a5d8c503e2339f`,
+  backup/nord2/logs/20261020-170250-smp-usb-userland-stop21/pstore/pmsg-ramoops-0.
+  Evidence research/nord2/smp/userland/verified.json,hardware-live/,rescue.txt,
+  flash.log,rescue-collector.log. Both capture processes exited0.
+  This validates bounded SMP+RAM userland+live USB together, including a
+  secondary-core panic return. Apple launchd/full iOS are still untested.
+  Next prepare the first full iOS root boot deliberately: current mode21
+  requires rd=md0 and disables disk writes. Preserve this tested image and
+  backups; do not merely change rd=ufsroot0. Exact installation/boot artifacts
+  and recovery procedure must be ready before the next destructive approval.
+
+- **Point21 build and authorization record (hardware result above).**
   User said "vai" after the8-core milestone; implementation/preparation is
   authorized. No new boot image has been flashed in this phase. Phone last
   observed in manual fastboot. Preserve all prior images and backups.
@@ -55,13 +87,14 @@
   Static checker PASS; original Linux and both DT representations exact;
   tested ADB rescue ramdisk exact; embedded8MiB diagnostic HFS image exact.
   Manifest/extracted payload/image-build.log and private verification scripts
-  under research/nord2/smp/userland/. No point21 hardware test authorized yet.
-  Phone last observed disconnected from both ADB and fastboot. Next obtain
-  exact boot-only test approval and manual fastboot; preserve this image.
-  After approval verify hashes/device/boot size, flash only boot, reboot and
-  immediately start native USB reader (wait240/read60) and rescue collector
-  (label smp-usb-userland-stop21) in parallel. If rescue fails restore original
-  Android boot under test authorization, with manual fastboot if needed.
+  under research/nord2/smp/userland/. User explicitly authorized this exact
+  boot-only test and original Android boot restoration if rescue fails.
+  Verified hashes/device/boot size; boot-only flash and reboot succeeded.
+  Native USB reader (wait240/read60) and rescue collector (label
+  smp-usb-userland-stop21) started before reboot. Hardware result PASSED above.
+  Preserve image and raw logs. Do not request renewed approval for this test
+  or its recovery. If rescue fails restore original Android boot under the
+  existing authorization, with manual fastboot if needed.
   No additional user-data access required. Hardware success must show all8
   SMP PASS, USB live HFS/PID1 success +10 timer ticks, expected PID1 exit66,
   coordinated all7 OFF, USB restoration and authenticated root ADB rescue.
