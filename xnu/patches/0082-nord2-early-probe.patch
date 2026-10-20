@@ -701,7 +701,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +756,307 @@
+@@ -133,11 +756,324 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -743,6 +743,23 @@
 +	/* Mask everything now: a context switch would reload TTBR0 below. */
 +	__builtin_arm_wsr("DAIFSet", 0xf);
 +	__builtin_arm_isb(ISB_SY);
++
++	/*
++	 * A later filesystem/userspace panic can arrive while the UFS root
++	 * driver still owns the inherited controller. Do not hand its active
++	 * DMA list to the next kernel. This is a no-op before UFS initialization.
++	 */
++	int ufs_restored = nord2_ufs_prepare_return();
++	if (ufs_restored < 0) {
++		sweet_early_string("NORD2 UFS: unsafe DMA at kernel return; manual reboot required\n");
++		nord2_flush();
++		for (;;) {
++			__asm__ volatile("wfe");
++		}
++	}
++	if (ufs_restored > 0) {
++		sweet_early_string("NORD2 UFS: root host restored before kernel return\n");
++	}
 +
 +	/*
 +	 * Prefer the parameters cached at the cpu_init stop: once arm_vm_init()
@@ -1017,7 +1034,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,43 @@
+@@ -10,8 +10,45 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1042,6 +1059,8 @@
 +void nord2_ufs_probe(void);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
 +void nord2_ufs_root_stop(void);
++/* Final chain-back, including panics: 0 untouched, 1 restored, -1 unsafe. */
++int nord2_ufs_prepare_return(void);
 +/* Private identity tables for pmsg/framebuffer/RAM window (stage 6). */
 +extern uint64_t nord2_l1_pa;
 +void nord2_identity_init(void);
@@ -1661,7 +1680,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +446,315 @@
+@@ -387,6 +446,334 @@
  	return 0;
  }
  
@@ -1943,17 +1962,36 @@
 +	nord2_stop_at(11, "after bounded UFS read probe");
 +}
 +
++/*
++ * Final return path: interrupts are masked and the caller will never resume
++ * XNU. No allocation or mutex acquisition is safe here (a panic may hold the
++ * UFS mutex). Keep DMA memory and ownership intact if the controller cannot
++ * be quiesced. Zero means no takeover happened, one means state restored.
++ */
++int
++nord2_ufs_prepare_return(void)
++{
++	if (!nord2_root_owned) {
++		return 0;
++	}
++	if (!nord2_ufs_restore(&nord2_root_saved)) {
++		return -1;
++	}
++	nord2_root_owned = false;
++	return 1;
++}
++
 +static void
 +nord2_ufs_release_root(void)
 +{
-+	if (nord2_root_owned) {
-+		if (!nord2_ufs_restore(&nord2_root_saved)) {
-+			printf("NORD2 UFS: root host restore failed; manual reboot required\n");
-+			for (;;) {
-+				__asm__ volatile("wfe");
-+			}
++	int restored = nord2_ufs_prepare_return();
++	if (restored < 0) {
++		printf("NORD2 UFS: root host restore failed; manual reboot required\n");
++		for (;;) {
++			__asm__ volatile("wfe");
 +		}
-+		nord2_root_owned = false;
++	}
++	if (restored > 0) {
 +		printf("NORD2 UFS: root probe host restored, ready=%u writable=%u\n",
 +		    su.ready, su.writable);
 +	}
@@ -1977,7 +2015,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -599,8 +967,21 @@
+@@ -599,8 +986,21 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -1999,7 +2037,7 @@
  	uint32_t cache = 0, wait = 0;
  	PE_parse_boot_argn("ufscache", &cache, sizeof(cache));
  	PE_parse_boot_argn("ufswait", &wait, sizeof(wait));
-@@ -608,6 +989,9 @@
+@@ -608,6 +1008,9 @@
  	su.wait = (wait == 1);
  
  	su.regs = ml_io_map(reg[0], reg[1]);
@@ -2009,7 +2047,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1003,69 @@
+@@ -619,31 +1022,69 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -2083,7 +2121,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1076,23 @@
+@@ -654,13 +1095,23 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);

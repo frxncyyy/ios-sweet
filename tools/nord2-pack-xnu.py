@@ -24,7 +24,9 @@ import argparse
 import gzip
 import hashlib
 import struct
+import subprocess
 import sys
+import tempfile
 import zlib
 from pathlib import Path
 
@@ -33,6 +35,7 @@ LOADER_RESERVE = 0x200000
 PAYLOAD_ALIGN = 0x4000
 RAMDISK_PA = 0x51100000
 KERNEL_PA = 0x40080000
+LOADER_SOURCE_END = KERNEL_PA + LOADER_RESERVE + 0x6000000
 
 
 def u32(buf, off):
@@ -79,7 +82,7 @@ def payload_span(payload):
                 adt_size=adt_size, kernel_end=kernel_end)
 
 
-def pack(stock, loader, payload):
+def pack(stock, loader, payload, zopfli=None):
     page, stock_gz, ramdisk, dtb = stock_parts(stock)
     stock_image, appended = unpack_stock_kernel(stock_gz)
     image_size = struct.unpack_from('<Q', stock_image, 16)[0]
@@ -107,6 +110,8 @@ def pack(stock, loader, payload):
     payload_off = (payload_off + PAYLOAD_ALIGN - 1) & ~(PAYLOAD_ALIGN - 1)
     if payload_off + len(payload) > RAMDISK_PA - KERNEL_PA:
         raise SystemExit('payload would reach the ramdisk load address')
+    if KERNEL_PA + payload_off + len(payload) > LOADER_SOURCE_END:
+        raise SystemExit('payload exceeds the loader source scan bound')
 
     blob = bytearray(loader.ljust(LOADER_RESERVE, b'\0'))
     blob += stock_image
@@ -117,7 +122,19 @@ def pack(stock, loader, payload):
     if struct.unpack_from('<Q', blob, LOADER_RESERVE + 8)[0] != 0x80000:
         raise SystemExit('unexpected stock text_offset')
 
-    kernel_gz = gzip.compress(bytes(blob), 9, mtime=0) + appended
+    if zopfli:
+        # Same gzip format and decompressed bytes as the default path. The
+        # smaller stream leaves room for the ADB rescue ramdisk in 32 MiB.
+        with tempfile.TemporaryDirectory() as temp:
+            raw = Path(temp) / 'kernel'
+            raw.write_bytes(blob)
+            subprocess.run([str(Path(zopfli).resolve()), '--gzip', str(raw)], check=True)
+            compressed = raw.with_suffix('.gz').read_bytes()
+        if gzip.decompress(compressed) != blob:
+            raise SystemExit('compressed kernel round-trip mismatch')
+    else:
+        compressed = gzip.compress(bytes(blob), 9, mtime=0)
+    kernel_gz = compressed + appended
     align = lambda n: (n + page - 1) // page * page
     if page + align(len(kernel_gz)) + align(len(ramdisk)) + align(len(dtb)) > PARTITION_SIZE:
         raise SystemExit('compressed kernel does not fit next to the ramdisk')
@@ -149,8 +166,11 @@ def main():
     ap.add_argument('loader', type=Path)
     ap.add_argument('payload', type=Path)
     ap.add_argument('output', type=Path)
+    ap.add_argument('--zopfli', type=Path, help='optional local Zopfli executable')
     a = ap.parse_args()
-    data, info = pack(a.stock.read_bytes(), a.loader.read_bytes(), a.payload.read_bytes())
+    if a.output.exists():
+        raise SystemExit('output already exists')
+    data, info = pack(a.stock.read_bytes(), a.loader.read_bytes(), a.payload.read_bytes(), a.zopfli)
     with a.output.open('xb') as f:
         f.write(data)
     for k, v in info.items():

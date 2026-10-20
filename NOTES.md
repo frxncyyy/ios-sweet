@@ -3,6 +3,53 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT DEVICE: ADB RAM rescue, tested successfully; userdata unchanged.**
+  User explicitly authorized boot-only `nord2-adb-rescue.img`, SHA-256
+  `d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5`,
+  and original-boot restoration if it failed. Flash/reboot passed. ADB reports
+  `recovery` (use direct shell or wait-for-recovery, NOT wait-for-device).
+  Root shell works; `/nord2-rescue` marker and original Linux kernel match.
+  No block-backed filesystem or `/data` is mounted. Exact image prefix was
+  read back from boot and matched; full partition hash differs because of
+  remaining partition padding. Evidence:
+  `research/nord2/rescue/test/{flash.log,verified.json,boot-readback.img,mounts.txt,dmesg.txt}`.
+  Pstore is mounted but contains no previous record after bootloader reset;
+  do not claim an XNU pmsg was retrieved in this standalone rescue test.
+  `adb exec-out` can return exit0 with an error in stdout: check existence
+  with `adb shell` before collecting a binary log. `getprop` is absent in the
+  minimal rescue; this does not prevent root shell/dd/dmesg access.
+  Userdata is `/dev/block/sdc57`, start25231360 and size224657344 in 512-byte
+  sectors, exactly LUN2 LBA3153920/count28082168 at 4096 bytes.
+  The recovery partition and userdata have not been written.
+  Source builder `tools/nord2-mkrescue.py` retains authenticated USB ADB and
+  embeds only the host public key in private output artifacts. Linux kernel
+  and DT remain byte-identical to the original boot. Unstripped rescue size
+  28,884,992 bytes; optional metadata-only stripping produces a different,
+  UNTESTED compact image (`648b295c…40447e`), not currently used.
+  - Generic XNU return now quiesces/restores the UFS host if it owns it,
+    before changing translation state. Failed cleanup halts with DMA memory
+    retained. No locks/allocations in panic cleanup. C compiles and exact-code
+    ASan/UBSan checks passed (inactive/idempotent/writable-root/pending-clear/
+    unsafe-DMA cases). Patch0082 regenerated and applied cleanly.
+    Evidence/local relink: `research/ci-39398655023/return-rescue/`.
+    Kernel SHA `433e767f57c8e76ddce2e5ed11600eee0fdb6106744701bebd30eb1d966fe84f`.
+  - Preparing XNU+rescue combined boot: default gzip exceeds the 32MiB boot
+    limit. Packer now accepts local Zopfli and checks decompressed bytes
+    exactly; helper accepts --base-boot/--zopfli. Local Zopfli from
+    https://github.com/google/zopfli commit
+    `df1517dd8518113a245e4d203a04b8a0e02ab493`; no global installation.
+    `nord2-rescue-stop12.img` built and all static checks passed: 33,314,816B,
+    SHA-256 `7ec48eb45e4533fae5b40a0438153c6c31b4c7d9ee14a6c1cd8a336843503d4e`.
+    Unstripped, already-tested rescue ramdisk is preserved exactly.
+    No combined image or userdata installation has been flashed.
+  - User proposed native XNU USB and encouraged a complete implementation.
+    Local MT6893 driver and live DT identify MediaTek MTU3, MAC11201000,
+    IPPC11203e00, USB2 PHY11e40000, high-speed. Existing Sweet driver is
+    Qualcomm DWC3 and remains excluded. Plan: MTU3 enumeration/control,
+    then data endpoints for console/transfers; Linux EP0 is PIO, QMU handles
+    data DMA. Need inspect inherited clock/PHY/controller state on XNU.
+    USB port is not implemented or hardware-tested yet.
+
 - **Completed point12: original Android boot restored and verified.**
   User authorized the exact boot-only test/restore. Flash and reboot succeeded;
   saved pmsg is `backup/nord2/logs/20261020-110041-ufs-root-stop12/pstore/pmsg-ramoops-0`,
@@ -19,7 +66,7 @@
   (head0401f81; build PASSED, evidence `research/ci-39398655023/`).
   This CI is a source-reproducibility check; the prepared candidate below uses
   the already tested local point12 relink. Its bytes/hash will not be replaced.
-  **CURRENT DEVICE STATE: HFS/PID1 passed; original Android boot restored and verified.**
+  **Earlier device state: HFS/PID1 passed; original Android boot restored and verified.**
   User authorized this exact boot-only test/restore. Saved pmsg:
   `backup/nord2/logs/20261020-111243-hfs-pid1/pstore/pmsg-ramoops-0`, 15759 bytes,
   SHA-256 `ec60ff389f0868f4b68b52a91f2349d84e6dc972f83d3bb75475caab8f118a44`.

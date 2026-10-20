@@ -2,11 +2,13 @@
 # Build the Nord 2 probe boot image from a kernel built by the CI workflow
 # (the README path: GitHub macOS runner, Apple clang, xnu/patches applied).
 #
-#   tools/nord2-image-from-kernel.sh KERNEL_MACHO OUT.img [--ramdisk IMAGE] [CMDLINE...]
+#   tools/nord2-image-from-kernel.sh KERNEL_MACHO OUT.img [OPTIONS] [CMDLINE...]
 #
 # KERNEL_MACHO  out-XXXX/kernel.development.sweet (unstripped is fine)
 # OUT.img       boot image to create (must not exist)
 # --ramdisk     optional root image carried in RAM; supply rd=md0 in CMDLINE
+# --base-boot   boot image providing the Linux kernel/ramdisk/DT (default backup)
+# --zopfli      local Zopfli executable, for a smaller kernel gzip stream
 # CMDLINE       optional override of the payload boot arguments
 #
 # Steps: strip the symbols, build the ADT, build the SWEETXNU payload, pack the
@@ -23,14 +25,24 @@ kernel=$1
 out=$2
 shift 2
 ramdisk=
-if [ "${1:-}" = --ramdisk ]; then
-    if [ $# -lt 2 ] || [ ! -f "$2" ]; then
-        echo "--ramdisk requires an existing image file" >&2
-        exit 2
-    fi
-    ramdisk=$2
-    shift 2
-fi
+base=backup/nord2/boot.img
+zopfli=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --ramdisk|--base-boot|--zopfli)
+            if [ $# -lt 2 ] || [ ! -f "$2" ]; then
+                echo "$1 requires an existing file" >&2
+                exit 2
+            fi
+            case "$1" in
+                --ramdisk) ramdisk=$2 ;;
+                --base-boot) base=$2 ;;
+                --zopfli) zopfli=$2 ;;
+            esac
+            shift 2 ;;
+        *) break ;;
+    esac
+done
 if [ -e "$out" ]; then
     echo "$out exists; remove it explicitly" >&2
     exit 1
@@ -50,6 +62,9 @@ else
     python3 tools/mkpayload.py "$tmp/kernel.strip" "$tmp/nord2.adt" "$tmp/payload.bin" \
         --cmdline "$cmdline"
 fi
-python3 tools/nord2-pack-xnu.py backup/nord2/boot.img shim/out/nord2-xnu/loader-Image \
-    "$tmp/payload.bin" "$out"
-python3 tools/nord2-check-xnu.py "$out" "$tmp/payload.bin"
+set -- "$base" shim/out/nord2-xnu/loader-Image "$tmp/payload.bin" "$out"
+if [ -n "$zopfli" ]; then
+    set -- "$@" --zopfli "$zopfli"
+fi
+python3 tools/nord2-pack-xnu.py "$@"
+python3 tools/nord2-check-xnu.py "$out" "$tmp/payload.bin" --stock "$base"

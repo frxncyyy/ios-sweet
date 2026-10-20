@@ -140,6 +140,8 @@ class Checker:
         self.check('blob stays below the ramdisk load address',
                    KERNEL_PA + len(blob) <= RAMDISK_PA,
                    f'blob end {KERNEL_PA + len(blob):#x}')
+        self.check('payload fits the loader source scan bound',
+                   len(blob) <= LOADER_RESERVE + 0x6000000)
 
         magic, version, nsegs = struct.unpack_from('<8sII', p, 0)
         vb, entry, adt_off, adt_size, kend, pbase, msize = \
