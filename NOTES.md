@@ -24,6 +24,25 @@
   Linux `phy-mtk-tphy.c` uses generic-tphy-v2 COM at11e40300 and explicitly
   clears suspend/termination/pulldown/UART overrides, BC1.1 switch and GPIO
   mode during power-on. These have not been read or restored by XNU yet.
+  Point14 implementation and failed-attachment evidence committed as5278c0a.
+  **Next candidate: point15, USB2 PHY activation plus the same EP0 console.**
+  Source adds a guarded snapshot of seven COM registers (base11e40300;
+  offsets0,14,18,1c,20,68,6c), Linux's suspend pulse/delays, release of pin
+  overrides, BC1.1/GPIO/test-pullup overrides and device-mode values.
+  Analog calibration, supply/clock registers, charger IC and Type-C routing
+  are preserved. Generic return disconnects MAC before restoring all seven
+  saved PHY registers, with suspend/termination controls last.
+  Logs include inherited PHY values and post-test MAC/PHY readback.
+  Point14 remains available without PHY writes; point13 remains read-only.
+  Exact-code ASan/UBSan tests passed for failed map/read, allowed bit scope,
+  pulse order, delays, full rollback after disconnect, 1000 inherited states.
+  Request decoder/pmsg and read-only probe regression tests still pass.
+  Tool `tools/nord2-check-usb-phy.py`; evidence
+  `research/nord2/usb/{phy-host-check.log,phy-compile.log,phy-console/}`.
+  C compile and patch apply/match passed. Local relink replaces only
+  sweet_usb.o in a copy of the tested point14 archive; kernel SHA-256
+  `05dc0fc424d826b7196ab6b429a5857bf92567a05ccab348b43ea7a3f1d8daff`.
+  Image `nord2-usb-phy-stop15.img` Zopfli build running. Not authorized/flashed.
   Image `shim/out/nord2-xnu/nord2-usb-console-stop14.img`,33312768B, SHA-256
   `80d3b5f0e3b428f5036784e924082e419f933bd95d59ef088f4dd239df159c6f`;
   payload `48fde2c0e404f2d45f53f08e08bd9f53a41c436774ace1358c633ac9bcc30800`.

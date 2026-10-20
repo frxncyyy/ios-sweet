@@ -119,6 +119,7 @@ static struct {
     uint32_t power, lv1ie, epie, commonie, linkie, devconf;
 } nusb;
 static uint32_t regs[0x2e00/4], writes;
+static void nusb_phy_restore(void) {} /* Point14 does not take PHY ownership. */
 static uint32_t nusb_rd(uint32_t off) { assert(off==0x2404); return regs[off/4]; }
 static void nusb_wr(uint32_t off, uint32_t val) {
     if (writes++==0) assert(off==0x2404 && !(val & NUSB_SOFTCON));

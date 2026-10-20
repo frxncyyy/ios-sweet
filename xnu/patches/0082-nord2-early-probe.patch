@@ -2170,7 +2170,7 @@
  /*
 --- a/bsd/dev/sweet_usb.c
 +++ b/bsd/dev/sweet_usb.c
-@@ -37,6 +37,402 @@
+@@ -37,6 +37,513 @@
  #include <net/dlil.h>
  #include <sys/kern_event.h>
  
@@ -2193,17 +2193,21 @@
 +	return value;
 +}
 +
-+static void nord2_usb_enumerate(vm_offset_t mac);
++static void nord2_usb_enumerate(vm_offset_t mac, bool prepare_phy);
 +
 +void
 +nord2_usb_probe(void)
 +{
 +	int stop = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop != 13 && stop != 14) {
++	if (stop != 13 && stop != 14 && stop != 15) {
 +		return;
 +	}
-+	printf("NORD2 USB: MTU3 snapshot begin (read-only)\n");
++	if (stop == 13) {
++		printf("NORD2 USB: MTU3 snapshot begin (read-only)\n");
++	} else {
++		printf("NORD2 USB: MTU3 probe begin, point%d\n", stop);
++	}
 +	vm_offset_t infra = ml_io_map(0x10001000, 0x1000);
 +	vm_offset_t top = ml_io_map(0x10000000, 0x1000);
 +	if (!infra || !top) {
@@ -2243,8 +2247,8 @@
 +		printf("NORD2 USB: MAC mapping failed\n");
 +		goto done;
 +	}
-+	if (stop == 14) {
-+		nord2_usb_enumerate(mac);
++	if (stop == 14 || stop == 15) {
++		nord2_usb_enumerate(mac, stop == 15);
 +		goto done;
 +	}
 +	/* Status registers are W1C, not read-to-clear. Never read the FIFOs. */
@@ -2261,7 +2265,8 @@
 + done:
 +	printf("NORD2 USB: MTU3 snapshot end\n");
 +	nord2_stop_at((unsigned)stop, stop == 13 ? "after read-only MTU3 snapshot" :
-+	    "after bounded MTU3 USB console");
++	    stop == 14 ? "after bounded MTU3 USB console" :
++	    "after bounded MTU3 PHY USB console");
 +}
 +/* NORD2 USB CONTROL: bounded EP0 PIO transport, no DMA or data endpoints. */
 +#define NUSB_CSR_W1C ((1u << 16) | (1u << 17) | (1u << 22))
@@ -2279,6 +2284,14 @@
 +	uint32_t requests, resets, log_reads, stalls;
 +	uint8_t configuration;
 +} nusb;
++
++/* TPHY v2 COM offsets, from this device's phy-mtk-tphy.c and live DT. */
++static const uint16_t nusb_phy_offsets[] = {0, 0x14, 0x18, 0x1c, 0x20, 0x68, 0x6c};
++static struct {
++	vm_offset_t com;
++	bool owned;
++	uint32_t saved[7];
++} nusb_phy;
 +
 +/*
 + * Reuse the local recovery's VID/PID so its existing host access rule also
@@ -2417,7 +2430,86 @@
 +	__asm__ volatile("dmb oshst" ::: "memory");
 +}
 +
-+/* No DMA was started. Disconnect and restore only the owned MAC state. */
++static uint32_t
++nusb_phy_rd(uint32_t offset)
++{
++	return nord2_usb_read(nusb_phy.com, offset);
++}
++
++static void
++nusb_phy_wr(uint32_t offset, uint32_t value)
++{
++	*(volatile uint32_t *)(nusb_phy.com + offset) = value;
++	__asm__ volatile("dmb oshst" ::: "memory");
++}
++
++static bool
++nusb_phy_snapshot(void)
++{
++	/* Called only after the existing clock and active-device MAC guards. */
++	vm_offset_t base = ml_io_map(0x11e40000, 0x700);
++	if (!base) { return false; }
++	nusb_phy.com = base + 0x300;  /* generic-tphy-v2, not the v1 layout */
++	for (unsigned i = 0; i < 7; i++) {
++		nusb_phy.saved[i] = nusb_phy_rd(nusb_phy_offsets[i]);
++		printf("NORD2 USB: PHY[%03x]=%08x\n",
++		    0x300 + nusb_phy_offsets[i], nusb_phy.saved[i]);
++		if (nusb_phy.saved[i] == ~0u) { return false; }
++	}
++	return true;
++}
++
++/*
++ * Restore MAC control of the USB2 pins, following MT6893's TPHY power-on
++ * and device-mode path. Keep analog calibration, clocks, supplies, the
++ * charger IC and Type-C routing unchanged. All seven modified registers
++ * are saved before the first write and restored after MAC disconnect.
++ */
++static void
++nusb_phy_enable(void)
++{
++	nusb_phy.owned = true;
++	/* Leave UART mode; power-on suspend pulse used by MT6893 Linux. */
++	uint32_t dtm0 = nusb_phy_rd(0x68) & ~0xc4000000u;
++	nusb_phy_wr(0x68, dtm0 | (1u << 18));
++	nusb_phy_wr(0x68, (dtm0 | (1u << 18)) & ~(1u << 3));
++	nusb_phy_wr(0x68, dtm0 | (1u << 18) | (1u << 3));
++	delay(30);
++	/* Release forced data, pulldowns, transceiver, suspend and termination. */
++	uint32_t release = (1u << 23) | (1u << 21) | (1u << 20) |
++	    (1u << 19) | (1u << 18) | (1u << 17) | (0xfu << 10) |
++	    (1u << 7) | (1u << 6) | (3u << 4) | (1u << 3) | (1u << 2);
++	nusb_phy_wr(0x68, (dtm0 | (1u << 3)) & ~(1u << 18));
++	nusb_phy_wr(0x68, dtm0 & ~release);
++	/* USB PLL interrupt enable; disable 100uA SSUSB current and GPIO mode. */
++	nusb_phy_wr(0, nusb_phy_rd(0) | (1u << 5));
++	nusb_phy_wr(0x14, nusb_phy_rd(0x14) & ~(1u << 11));
++	nusb_phy_wr(0x20, nusb_phy_rd(0x20) & ~((1u << 9) | (1u << 8)));
++	/* Clear the explicit PHY pullup test override, as DPPULLUP_CLR does. */
++	nusb_phy_wr(0x1c, nusb_phy_rd(0x1c) & ~((1u << 12) | (1u << 9)));
++	/* Hand DP/DM back from BC1.1 detection; enable VBUS comparator. */
++	nusb_phy_wr(0x18, (nusb_phy_rd(0x18) & ~(1u << 23)) | (1u << 20));
++	uint32_t dtm1 = nusb_phy_rd(0x6c) & ~((1u << 16) | (1u << 4));
++	/* Device ID, VBUS/AVALID values, as Linux set_mode/device + power_on. */
++	nusb_phy_wr(0x6c, dtm1 | (1u << 9) | (1u << 1) | (1u << 5) | (1u << 2));
++	delay(800);
++}
++
++static void
++nusb_phy_restore(void)
++{
++	if (!nusb_phy.owned) { return; }
++	/* Restore suspend/termination overrides last, after the analog registers. */
++	for (unsigned i = 0; i < 7; i++) {
++		if (nusb_phy_offsets[i] != 0x68) {
++			nusb_phy_wr(nusb_phy_offsets[i], nusb_phy.saved[i]);
++		}
++	}
++	nusb_phy_wr(0x68, nusb_phy.saved[5]);
++	nusb_phy.owned = false;
++}
++
++/* No DMA was started. Disconnect before restoring owned PHY and MAC state. */
 +int
 +nord2_usb_prepare_return(void)
 +{
@@ -2430,6 +2522,7 @@
 +	nusb_wr(0x854, ~0u);
 +	nusb_wr(0x100, 64);
 +	nusb_wr(0x800, nusb.devconf);
++	nusb_phy_restore();
 +	nusb_wr(0x2418, nusb.commonie);
 +	nusb_wr(0x850, nusb.linkie);
 +	nusb_wr(0x2404, nusb.power);
@@ -2440,7 +2533,7 @@
 +}
 +
 +static void
-+nord2_usb_enumerate(vm_offset_t mac)
++nord2_usb_enumerate(vm_offset_t mac, bool prepare_phy)
 +{
 +	uint8_t data[1024], setup[8];
 +	uint32_t sent = 0, length = 0;
@@ -2466,6 +2559,11 @@
 +	if (!wdt || !frequency || frequency > 1000000000) {
 +		printf("NORD2 USB: no watchdog/timer; refused\n"); return;
 +	}
++	if (prepare_phy && !nusb_phy_snapshot()) {
++		printf("NORD2 USB: PHY snapshot unavailable; refused\n"); return;
++	}
++	printf("NORD2 USB: connect pre POWER=%08x DEV=%08x TEST=%08x USB3=%08x\n",
++	    nusb.power, nusb_rd(0x800), nusb_rd(0x2414), nusb_rd(0x141c));
 +	nusb.lv1ie = nusb_rd(4);
 +	nusb.epie = nusb_rd(0x84);
 +	nusb.commonie = nusb_rd(0x2418);
@@ -2485,7 +2583,14 @@
 +	nusb_wr(0x800, 0);
 +	nusb_wr(0x100, 64);
 +	nusb_wr(0x88, 0x10001);
++	if (prepare_phy) {
++		nusb_phy_enable();
++	}
 +	nusb_wr(0x2404, nusb.power | NUSB_SOFTCON | (1u << 5) | 1);
++	uint32_t connect_power = nusb_rd(0x2404);
++	uint32_t phy_dtm0 = prepare_phy ? nusb_phy_rd(0x68) : 0;
++	uint32_t phy_dtm1 = prepare_phy ? nusb_phy_rd(0x6c) : 0;
++	uint32_t phy_acr6 = prepare_phy ? nusb_phy_rd(0x18) : 0;
 +	uint64_t deadline = __builtin_arm_rsr64("CNTVCT_EL0") + frequency * 45;
 +	while (__builtin_arm_rsr64("CNTVCT_EL0") < deadline) {
 +		wdt[2] = 0x1971;
@@ -2563,8 +2668,14 @@
 +			}
 +		}
 +	}
++	uint32_t final_power = nusb_rd(0x2404), final_dev = nusb_rd(0x800);
++	uint32_t final_opstate = nusb_rd(0x2460), final_csr = nusb_rd(0x100);
 +	(void)nord2_usb_prepare_return();
 +	__asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
++	printf("NORD2 USB: connect POWER=%08x PHY active DTM0=%08x DTM1=%08x ACR6=%08x\n",
++	    connect_power, phy_dtm0, phy_dtm1, phy_acr6);
++	printf("NORD2 USB: final POWER=%08x DEV=%08x OPSTATE=%08x EP0=%08x\n",
++	    final_power, final_dev, final_opstate, final_csr);
 +	printf("NORD2 USB: native console done: resets=%u requests=%u log_reads=%u stalls=%u\n",
 +	    nusb.resets, nusb.requests, nusb.log_reads, nusb.stalls);
 +}
@@ -2573,7 +2684,7 @@
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  void sweet_usb_probe(void);
  static void sweet_usb_gadget_start(vm_offset_t dwc);
-@@ -928,4 +1324,5 @@
+@@ -928,4 +1435,5 @@
  		thread_deallocate(thread);
  	}
  }
