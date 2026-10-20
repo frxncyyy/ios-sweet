@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Next candidate: point19 fixed-mailbox low/high PSCI probe, building.**
+  This follows the observed point18 context_id=0. Only mode19 treats context
+  as diagnostic; slot is derived from MPIDR in the unchanged stackless stub.
+  Completion, CPU identity/type, EL, MMU/cache-off, timer frequency and CPU_OFF
+  remain mandatory. First starts/stops all seven cores using PA40180000;
+  only if all seven pass and all are OFF, clears every mailbox and repeats
+  with the same stub at its linked PA above4GiB. This separates entry-address
+  support from context delivery. A failure aborts remaining cores/passes.
+  XNU itself remains cpus1 and no disk/root/USB path is activated. Linux
+  return still requires every secondary OFF, then clears all32KiB scratch.
+  Exact-code ASan/UBSan tests cover all7 affinities and14 low/high startup
+  positions: bad identities, CPU_ON failure and never-OFF all stop correctly;
+  stale completion cannot pass the second round. Low/high result validation
+  and prior return guards pass. C compiles; patch applies and matches source.
+  Local relink replaces only sweet_early.o in a copy of frozen point18 archive;
+  stackless assembly is unchanged. Kernel21967712B SHA-256
+  `fd3e8f2b1ca1e0a66261fb925220a0c1f015d34fd6e9c613dc9bf055a87780e5`.
+  Evidence `research/nord2/smp/fixed/`. Candidate image being packed:
+  `shim/out/nord2-xnu/nord2-smp-fixed-stop19.img`. Not authorized/flashed.
+  Next finish packaging/static checks, record exact SHA and request approval
+  for this boot-only test with recovery fallback. Current phone is in root
+  ADB rescue after point18; no original restore was required.
+
 - **CURRENT DEVICE: point18 authorized/flashed; core1 executed, strict context check failed; ADB rescue returned.**
   Point17 did not verify even core1 execution; entry and context were above
   4GiB and context_id was the only mailbox pointer. Neither high-address nor

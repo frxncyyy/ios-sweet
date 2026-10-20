@@ -721,7 +721,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +776,569 @@
+@@ -133,11 +776,613 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -1038,12 +1038,28 @@
 +	return false;
 +}
 +
++static bool
++nord2_psci_result_valid(volatile struct nord2_psci_mailbox *box,
++    unsigned core, uint64_t context, unsigned mode, uint64_t frequency, bool off)
++{
++	/* Point18 proved that this firmware delivered x0=0. Point19 derives
++	 * its slot from MPIDR and never dereferences x0; keep it diagnostic.
++	 * Retain strict context checking for the original point17/18 probes. */
++	return off && box->state == 1 && box->off_result == 0 &&
++	       box->magic == 0x4e32534d &&
++	       (mode == 19 || box->context == context) &&
++	       (box->mpidr & 0xff00ffffffULL) == (core << 8) &&
++	       ((box->midr >> 4) & 0xfff) == (core < 4 ? 0xd05 : 0xd41) &&
++	       (box->el == 4 || box->el == 8) && !(box->sctlr & 5) &&
++	       box->frequency == frequency;
++}
++
 +void
 +nord2_smp_probe(void)
 +{
 +	unsigned stop = 0, cpus = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop != 17 && stop != 18) {
++	if (stop != 17 && stop != 18 && stop != 19) {
 +		return;
 +	}
 +	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
@@ -1072,7 +1088,7 @@
 +	}
 +	uint64_t pa, entry;
 +	volatile struct nord2_psci_mailbox *boxes;
-+	if (stop == 18) {
++	if (stop == 18 || stop == 19) {
 +		/* Reserved loader prefix: code/BSS/stack end below40180000, original
 +		 * Linux starts40280000. Checker also requires this entire hole zero. */
 +		size_t stub_size = (uintptr_t)nord2_psci_probe_end -
@@ -1132,41 +1148,69 @@
 +	printf("NORD2 SMP: entry_pa=%llx mailbox_pa=%llx mode=%u\n", entry, pa, stop);
 +	__builtin_arm_dsb(DSB_SY);
 +	nord2_psci_probe_active = true; /* Also protects every panic return. */
-+	unsigned passed = 0;
-+	for (unsigned core = 1; core < 8; core++) {
-+		uint64_t context = pa + core * sizeof(*boxes);
-+		volatile struct nord2_psci_mailbox *box = &boxes[core];
-+		int32_t rc = nord2_psci_call(0xc4000003, core << 8, entry, context);
-+		printf("NORD2 SMP: CPU_ON core=%u target=%03x rc=%d\n", core, core << 8, rc);
-+		if (rc != 0) {
-+			break;
-+		}
-+		bool off = nord2_psci_wait_off(box, core, nord2_psci_now() +
-+		    __builtin_arm_rsr64("CNTFRQ_EL0") * 5);
-+		printf("NORD2 SMP: core=%u state=%llu EL=%llu MPIDR=%llx MIDR=%llx "
-+		    "SCTLR=%llx CNTFRQ=%llu OFF=%u off_rc=%lld\n",
-+		    core, box->state, box->el >> 2, box->mpidr, box->midr,
-+		    box->sctlr, box->frequency, off, (int64_t)box->off_result);
-+		printf("NORD2 SMP: core=%u magic=%llx context=%llx expected=%llx affinity=%d\n",
-+		    core, box->magic, box->context, context,
-+		    nord2_psci_call(0xc4000004, core << 8, 0, 0));
-+		if (!off || box->magic != 0x4e32534d ||
-+		    box->context != context || (box->mpidr & 0xffff) != (core << 8) ||
-+		    ((box->midr >> 4) & 0xfff) != (core < 4 ? 0xd05 : 0xd41) ||
-+		    (box->el != 4 && box->el != 8) || (box->sctlr & 5) ||
-+		    box->frequency != __builtin_arm_rsr64("CNTFRQ_EL0")) {
-+			printf("NORD2 SMP: core=%u result mismatch; stopped\n", core);
-+			break;
-+		}
-+		passed++;
++	if (stop == 19) {
++		printf("NORD2 SMP: fixed mailbox ignores context_id; low then high entry\n");
 +	}
-+	printf("NORD2 SMP: firmware probe %u/7 secondaries passed; XNU scheduler still single CPU\n",
-+	    passed);
++	for (unsigned pass = 0; pass < (stop == 19 ? 2U : 1U); pass++) {
++		if (pass) {
++			/* Test the same fixed-mailbox stub at its linked high PA.
++			 * This separates entry address support from lost context_id.
++			 * Never recycle mailboxes while any secondary remains live. */
++			if (!nord2_psci_all_off()) {
++				printf("NORD2 SMP: high-entry pass refused; secondary not OFF\n");
++				break;
++			}
++			entry = ml_static_vtop((vm_offset_t)nord2_psci_low_probe_entry);
++			if (entry <= 0xffffffffULL) {
++				printf("NORD2 SMP: high entry translation refused\n");
++				break;
++			}
++			CleanPoC_DcacheRegion_Force((vm_offset_t)nord2_psci_low_probe_entry,
++			    (uintptr_t)nord2_psci_probe_end - (uintptr_t)nord2_psci_low_probe_entry);
++			volatile uint8_t *bytes = (volatile uint8_t *)boxes;
++			for (unsigned i = 0; i < 8 * sizeof(*boxes); i++) {
++				bytes[i] = 0;
++			}
++			__asm__ volatile("dsb sy; ic ialluis; dsb sy; isb" ::: "memory");
++		}
++		printf("NORD2 SMP: pass=%u entry_pa=%llx mailbox_pa=%llx\n", pass, entry, pa);
++		unsigned passed = 0;
++		for (unsigned core = 1; core < 8; core++) {
++			uint64_t context = pa + core * sizeof(*boxes);
++			volatile struct nord2_psci_mailbox *box = &boxes[core];
++			int32_t rc = nord2_psci_call(0xc4000003, core << 8, entry, context);
++			printf("NORD2 SMP: CPU_ON core=%u target=%03x rc=%d\n", core, core << 8, rc);
++			if (rc != 0) {
++				break;
++			}
++			bool off = nord2_psci_wait_off(box, core, nord2_psci_now() +
++			    __builtin_arm_rsr64("CNTFRQ_EL0") * 5);
++			printf("NORD2 SMP: core=%u state=%llu EL=%llu MPIDR=%llx MIDR=%llx "
++			    "SCTLR=%llx CNTFRQ=%llu OFF=%u off_rc=%lld\n",
++			    core, box->state, box->el >> 2, box->mpidr, box->midr,
++			    box->sctlr, box->frequency, off, (int64_t)box->off_result);
++			printf("NORD2 SMP: core=%u magic=%llx context=%llx expected=%llx affinity=%d\n",
++			    core, box->magic, box->context, context,
++			    nord2_psci_call(0xc4000004, core << 8, 0, 0));
++			if (!nord2_psci_result_valid(box, core, context, stop,
++			    __builtin_arm_rsr64("CNTFRQ_EL0"), off)) {
++				printf("NORD2 SMP: core=%u result mismatch; stopped\n", core);
++				break;
++			}
++			passed++;
++		}
++		printf("NORD2 SMP: pass=%u firmware probe %u/7 secondaries passed; "
++		    "XNU scheduler still single CPU\n", pass, passed);
++		if (passed != 7) {
++			break;
++		}
++	}
 +	if (nord2_smp_prepare_return() == 1) {
 +		printf("NORD2 SMP: all secondary affinities OFF; return permitted\n");
 +	}
 + done:
-+	nord2_stop_at(stop, stop == 18 ? "after low32 PSCI CPU_ON/OFF probe" :
++	nord2_stop_at(stop, stop == 19 ? "after fixed-mailbox PSCI low/high probe" :
++	    stop == 18 ? "after low32 PSCI CPU_ON/OFF probe" :
 +	    "after bounded PSCI CPU_ON/OFF probe");
 +}
 +/* END NORD2 PSCI PROBE */

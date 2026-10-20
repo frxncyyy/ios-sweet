@@ -236,7 +236,7 @@ class Checker:
                        b'after background MTU3 USB console' in kernel)
             self.check('point 16 uses only the diagnostic RAM root',
                        [a for a in args if a.startswith('rd=')] == ['rd=md0'])
-        if 'nord2stopat=17' in args or 'nord2stopat=18' in args:
+        if any(f'nord2stopat={p}' in args for p in (17, 18, 19)):
             self.check('PSCI probe has bounded startup and OFF-before-return checks',
                        b'NORD2 SMP: PSCI probe begin;' in kernel and
                        b'after bounded PSCI CPU_ON/OFF probe' in kernel and
@@ -246,13 +246,18 @@ class Checker:
                        [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
-        if 'nord2stopat=18' in args:
-            self.check('point 18 has the low32 fixed-mailbox probe',
+        if any(f'nord2stopat={p}' in args for p in (18, 19)):
+            self.check('PSCI low32 fixed-mailbox probe is present',
                        b'NORD2 SMP: low32 trampoline copied and verified; fixed mailbox' in kernel and
                        b'after low32 PSCI CPU_ON/OFF probe' in kernel)
             self.check('low trampoline/mailboxes use only zero loader padding',
                        struct.unpack_from('<Q', loader, 16)[0] <= 0x100000 and
                        loader[0x100000:0x108000] == bytes(0x8000))
+        if 'nord2stopat=19' in args:
+            self.check('point 19 tests fixed mailboxes with both entry addresses',
+                       b'NORD2 SMP: fixed mailbox ignores context_id; low then high entry' in kernel and
+                       b'after fixed-mailbox PSCI low/high probe' in kernel and
+                       b'NORD2 SMP: high-entry pass refused; secondary not OFF' in kernel)
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None
