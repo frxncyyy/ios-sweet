@@ -1,8 +1,9 @@
 # Nord 2 input and LK overlay handoff
 
-2026-10-20: first image tested; **volume-down works** by both user confirmation
-and captured press/release events. Power, volume-up and touch failed. Corrected
-PMIF/MT6360 implementation below passes local checks but awaits hardware test.
+2026-10-20: **touch, power and both volume buttons work**, confirmed by the
+user after testing the corrected PMIF/MT6360 image below. The stale LK orange
+warning is also confirmed gone. The first input image had only volume-down;
+the corrected image is the current working baseline.
 
 Source evidence is the captured live Nord 2 DT (`dtb/nord2/live.dts`) and
 the user's Android kernel checkout, branch
@@ -106,16 +107,24 @@ The frozen `nord2-ios-input-power-stop23.img` is33,544,192 bytes,
 SHA-256 `fd6d75caf4c7e95431bdb40eb50ca79650e8272824f54fd5f783cdec49995f20`.
 Static checks, instruction compatibility, partition size and byte-exact
 rescue-content verification pass. The user authorized this exact image; boot
-flash and reboot succeeded at20:09:33CEST on2026-10-20. Hardware validation is
-in progress. Preserve the first input-image evidence.
+flash and reboot succeeded at20:09:33CEST on2026-10-20. Hardware interaction
+tests passed and the phone remains running this image.
 
 Initial corrected-image hardware probes succeed: MT6360 ID0x53, inherited
 VTP disabled (`enable=0x80`, `selector=0x40`), enabled3.0V status0xc4;
 FT3518 ID54:52/ready1 and PMIF TOPSTATUS0xe/ok1. Eight-core scheduler test
 also passes. Idle touch-report rejections still occur and their packet
-contents are not logged; gestures and power/up actions await user testing.
+contents are not logged; valid gestures work despite those rejected packets.
 The initial USB capture ended at87,806 bytes with four EP0 timeouts; capture
 was restarted without rebooting. This is not evidence of a kernel panic.
+
+Final60-second GUI capture completed cleanly:243,188 bytes, SHA-256
+`07d4dd004741de23b7f10f19ff1656786e74ad83cc8e6d6a8c7986e148ad9e1f`.
+It contains sixteen finger transitions, HID dispatch, Settings launching
+after a tap, power/up press-release pairs, display off/on in response and
+all first eight GUI presents completing. The user confirms "all work" for
+touch, volume-up/down and power sleep/wake. This establishes basic physical
+interaction, not multitouch coverage or long-term stability.
 
 `tools/nord2-check-display.py` covers the original GUI gates and DSI timeouts
 plus two-pipe overlay validation, leaving unexpected layouts unchanged,

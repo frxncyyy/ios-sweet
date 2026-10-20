@@ -3,8 +3,27 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **INPUT CORRECTION FLASHED; hardware validation in progress.**
-  User confirms volume-down works; volume-up, power and touch do not.
+- **MILESTONE: TOUCH, POWER, BOTH VOLUME BUTTONS WORK; ORANGE OVERLAY GONE.**
+  User confirms "all work" after testing swipe/taps, volume-up/down and short
+  power press/wake on nord2-ios-input-power-stop23.img. This is the current
+  working baseline, left running on the phone. Preserve image and evidence;
+  do not restore/reboot/reinstall without a concrete next task.
+  Captured PMIC key0(power)/key1(up) down/up, display off/on in response,
+  16 touch transitions with changing coordinates, Sweet HID dispatch and
+  subsequent exec Preferences. All first8 GUI presents done=1; all8 cores
+  passed scheduler probe. Volume-down confirmed by user on both input images.
+  User separately confirms stale LK orange warning is gone from lockscreen.
+  Final60-second USB capture243188bytes ended at deadline, no transport error
+  or captured kernel panic. SHA-256
+  07d4dd004741de23b7f10f19ff1656786e74ad83cc8e6d6a8c7986e148ad9e1f.
+  Private research/nord2/input-power/hardware-result.json and hardware-gui/
+  capture record the completed interaction test. Earlier captures ended on
+  intermittent EP0 timeouts and were restarted without reboot. Idle touch
+  packet rejections still appear; valid gestures work, raw idle-packet cause
+  unknown. Multitouch/long-term stability were not established by this test.
+
+- **INPUT CORRECTION IMPLEMENTATION/PROVENANCE (hardware success above).**
+  On the first input image only volume-down worked; power/up/touch failed.
   First input boot d74b1b18…5a9e59f6 successfully runs iOS and reports GPIO155
   press/release events. FT3518 ID is00:00/not ready; PMIC reads fail/status0.
   Both inherited LK layers were disabled and first eight GUI presents done=1
@@ -50,14 +69,14 @@
   image and supplied fastboot. Runner --authorized-input-power-boot EXECUTED:
   flash boot and reboot OKAY,2026-10-20 20:09:33CEST. No other partition
   flashed; native USB capture starts in hardware-live/client-hardware.log.
-  Do not rerun exclusive runner or overwrite logs. Await hardware diagnostics
-  and user interaction before claiming corrected touch/power/up work.
+  Do not rerun exclusive runner or overwrite logs. Hardware interaction now
+  succeeds as recorded in the milestone above.
   Initial hardware evidence: all8 scheduler PASS; MT6360 ID0x53, inherited
   VTP enable0x80/selector0x40 (disabled), after setup status0xc4/3.0V ready.
   FT3518 now reports54:52 ready=1 powered=1, PMIF TOPSTATUS0xe ok=1.
   Some touch reports rejected, mostly IRQ high/idle; exact packet cause is
-  not yet known. User asked to test swipe, volume up/down, short power/wake
-  once lockscreen appears. No captured kernel panic at this checkpoint.
+  not yet known. User completed swipe, volume up/down and short power/wake
+  testing and confirmed all work. No captured kernel panic.
 
 - **FIRST INPUT/OVERLAY IMAGE PROVENANCE (results above).**
   User now requests touchscreen and buttons, and reports LK orange warning
