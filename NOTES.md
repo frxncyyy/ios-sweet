@@ -73,8 +73,22 @@
   RCpc2 scan2188555 instructions clean. Linked mode23 write-flag==1 config,
   mode22 forcedRO/readiness before MMIO, USB CPU0 binding and continuous
   mode23 loop comparisons inspected. Packaging restarted after host crash;
-  no final point23 boot image yet. Preserve image-build-before-crash.log
-  and image-build-second-crash.log; third packaging attempt in progress.
+  third packaging attempt PASSED. Frozen image:
+  shim/out/nord2-xnu/nord2-ios-userland-stop23.img,33542144B (12288B spare),
+  SHA-256 `662285c21b8bcd2a5294b4be7175fce69b2d7b47e45aebf4286dd63434bd5c91`.
+  Payload14502688B SHA-256
+  `b0ae1984d2e57e17009c9f47afc90d197a04c69b769cfb9a4167d14807eba819`.
+  Full CI kernel directly packed; default15-iteration Zopfli. Static checker
+  PASS and independent original Linux/both DT representations/tested rescue
+  RAMdisk byte comparisons PASS. Exact cmdline in private manifest/payload.
+  Private run-approved-boot.py prepared (syntax checked, NEVER EXECUTED);
+  requires --authorized-boot23, frozen hashes, successful full root readback
+  and correct fastboot product/size/non-userspace. Flashes only boot, starts
+  USB reader before reboot (wait300/read300). No timed reboot/auto restore.
+  Boot23 is NOT YET AUTHORIZED or flashed; wait for successful install-bounded
+  full readback, then request exact boot approval and manual fastboot.
+  Preserve both interrupted build logs. Normal Android cannot use HFS data;
+  if recovery is required, use tested ADB rescue bootd78bf9fe…3d03bac5.
   Evidence research/nord2/ios-userland-rw/. Keep prior frozen images intact.
   tools/nord2-install-root.py defaults to READ-ONLY preflight; --write-userdata
   writes the16GiB prefix in bounded64MiB chunks through dd (notrunc,fsync;
