@@ -3,6 +3,22 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **UFS PROFILE IMAGE FLASHED; HARDWARE CAPTURE RUNNING.**
+  User authorized exact8eb3f477…ec01dfe8 and suppliedfastboot. Guarded
+  ufs-profile/run-approved-boot.py EXECUTED: boot-only flash/reboot OKAY at
+ 22:17:12CEST. Never rerun this exclusive runner. WaitingnativeUSB then
+  captureshardware-live; do not assume lsusb fastboot label meansfastboot.
+  Later CI39490076167/sourcee3a9afa remains independent and includes vendor
+  extraction/GUIretry/diagnostics; not onphoneyet. No normalAndroid boot.
+  NextWiFi pureROMplanner prepared/tested/reviewed, not kernelintegrated:
+  shim/nord2-xnu/wifi_rom_plan.{c,h} +test. FullfileSHA+exact48Bheader targets,
+  fourbounded/disjoint payload/datecode spans; no destinationaccess or CRC
+  validityclaim. Separate private next-hardware-plan.md and
+  emi-permission-plan.md document remaining ownership/MPU/WFSYS prerequisites.
+  Selected Android emimpu_old uses structured READ SMC C200050B, not rawMPU
+  reads. Minimal8region27/31 reads are diagnosticonly; effectivepermission
+  proof needs overlappingregions/priority. No SMC implementation/hardwaretest.
+
 - **NEXT SOURCE: VENDOR FIRMWARE VERIFY + GUI OWNERSHIP RETRY.**
   Canonical loader committed b7af65b. Vendor API and isolated probe now wired
   into XNU through generated guarded sources in patch0082/bsd/conf/files.
