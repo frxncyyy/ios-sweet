@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **INPUT/OVERLAY WORK IN PROGRESS; PHONE STILL ON VERIFIED GUI IMAGE.**
+  User now requests touchscreen and buttons, and reports LK orange warning
+  remains over the UI. New opt-in nord2input=1 driver in sweet_touch.c reads
+  FT3518 via GPIO204/205 software I2C, reset20/IRQ21; decodes Oplus x4 reports
+  into existing Sweet HID. Power and volume-up are MT6359 TOPSTATUS bits1/3
+  through read-only WACS2; volume-down GPIO155. Do not use keypad DT's
+  misleading volume-up GPIO20 (Linux uses PMIC HOMEKEY instead).
+  No PMIC voltage/enable writes: inherited MT6360 LDO2 VTP availability still
+  needs a hardware ID read. GPIO/IES/PWRAP return cleanup added after SMP off.
+  Display validates saved dual-pipe layout and disables only LK's second
+  framebuffer layer when first GUI frame is ready; restores it before rescue.
+  Does not patch LK or remove the warning during bootloader execution.
+  Exact C host models pass ASan/UBSan, 100k malformed-report fuzz, I2C/PWRAP
+  timeout/ownership checks, display guard/preservation/restoration checks.
+  Three modified C translation units compile locally. Full CI/image build
+  and hardware input/overlay verification are pending. No flash this task yet.
+  See shim/nord2-xnu/INPUT-LOG.md and research/nord2/input-ui/.
+
 - **MILESTONE: iOS 16.7.16 LOCKSCREEN ON ONEPLUS NORD 2, eight XNU cores.**
   User explicitly reports "HA BOOTATO! VEDO LA LOCKSCREEN" on 2026-10-20
   around 18:54 CEST, about 7–8 minutes after the 18:46:54 reboot. Exact authorized

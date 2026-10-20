@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,612 @@
+@@ -1,16 +1,679 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -496,6 +496,71 @@
 +
 +/* The GUI reuses the verified LK buffer and command-mode pipeline. No panel
 + * initialization, Qualcomm MMIO or boot_args video mapping is involved. */
++static volatile uint32_t *nord2_ovl[4];
++static uint32_t nord2_ovl_src[2], nord2_ovl_rdma[2], nord2_ovl_path[2];
++static bool nord2_ovl_checked, nord2_ovl_saved, nord2_ovl_removed;
++
++static void
++nord2_display_overlay_init(void)
++{
++	if (nord2_ovl_checked) { return; }
++	nord2_ovl_checked = true;
++	const uint64_t pa[4] = {0x14000000, 0x14100000, 0x14001000, 0x14101000};
++	for (unsigned i = 0; i < 4; i++) {
++		nord2_ovl[i] = (volatile uint32_t *)ml_io_map(pa[i], 0x1000);
++		if (!nord2_ovl[i]) { return; }
++	}
++	/* Exact inherited dual-pipe composition from the saved hardware dump.
++	 * Keep the 2L GUI buffers and relay path; remove only LK's L1 overlay. */
++	for (unsigned i = 0; i < 2; i++) {
++		volatile uint32_t *o = nord2_ovl[i], *g = nord2_ovl[i + 2];
++		printf("NORD2 DISPLAY: pipe=%u LK src=%#x addr=%#x pitch=%#x GUI src=%#x addr=%#x\n",
++		    i, o[0x2c/4], o[0xf60/4], o[0x64/4], g[0x2c/4], g[0xf40/4]);
++		if (o[0x2c/4] != 2 || g[0x2c/4] != 1 ||
++		    o[0xf60/4] != 0x77806000u + i * 2160 ||
++		    g[0xf40/4] != NORD2_FB_PA + i * 2160 ||
++		    (o[0x64/4] & 0xffff) != 4320 ||
++		    (g[0x44/4] & 0xffff) != NORD2_FB_PITCH ||
++		    o[0x58/4] != 0x0960021c || g[0x38/4] != 0x0960021c) {
++			printf("NORD2 DISPLAY: unexpected overlay layout; leaving layers unchanged\n");
++			return;
++		}
++		nord2_ovl_src[i] = o[0x2c/4];
++		nord2_ovl_rdma[i] = o[0xe0/4];
++		nord2_ovl_path[i] = o[0x24/4];
++	}
++	nord2_ovl_saved = true;
++}
++
++static void
++nord2_display_overlay_remove(void)
++{
++	if (!nord2_ovl_saved || nord2_ovl_removed) { return; }
++	nord2_ovl_removed = true; /* return path can recover a partial update */
++	for (unsigned i = 0; i < 2; i++) {
++		volatile uint32_t *o = nord2_ovl[i];
++		o[0x24/4] = nord2_ovl_path[i] & ~(1u << 5);
++		o[0x2c/4] = nord2_ovl_src[i] & ~2u;
++		o[0xe0/4] = 0; /* same L1 RDMA disable as mtk_ovl_layer_off */
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("NORD2 DISPLAY: inherited LK warning overlay disabled on both pipes\n");
++}
++
++static void
++nord2_display_overlay_restore(void)
++{
++	if (!nord2_ovl_removed) { return; }
++	for (unsigned i = 0; i < 2; i++) {
++		volatile uint32_t *o = nord2_ovl[i];
++		o[0x24/4] = nord2_ovl_path[i];
++		o[0xe0/4] = nord2_ovl_rdma[i];
++		o[0x2c/4] = nord2_ovl_src[i];
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++	nord2_ovl_removed = false;
++}
++
 +int
 +nord2_display_info(uint64_t *phys, uint32_t *width, uint32_t *height, uint32_t *pitch)
 +{
@@ -505,6 +570,7 @@
 +	if (enabled != 1 || stop != 23 || !nord2_va_fb || !nord2_va_dsi || !nord2_va_mutex) {
 +		return 0;
 +	}
++	nord2_display_overlay_init();
 +	*phys = NORD2_FB_PA;
 +	*width = NORD2_FB_WIDTH;
 +	*height = NORD2_FB_HEIGHT;
@@ -542,6 +608,7 @@
 +	while (dsi[NORD2_DSI_INTSTA / 4] & NORD2_DSI_BUSY) {
 +		if (__builtin_arm_rsr64("CNTVCT_EL0") >= deadline) { return 0; }
 +	}
++	nord2_display_overlay_remove();
 +	/* MT6893 INTSTA is write-zero-to-clear (mtk_dsi.c IRQ handler). */
 +	dsi[NORD2_DSI_INTSTA / 4] = ~NORD2_DSI_FRAME_DONE;
 +	mtx[NORD2_MUTEX_EN0 / 4] = 1;
@@ -618,7 +685,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +619,7 @@
+@@ -23,6 +686,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -626,7 +693,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +635,32 @@
+@@ -38,10 +702,32 @@
  		}
  	}
  }
@@ -659,7 +726,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +695,7 @@
+@@ -76,6 +762,7 @@
  		}
  	}
  	early_col++;
@@ -667,7 +734,7 @@
  }
  
  static void
-@@ -86,9 +706,177 @@
+@@ -86,9 +773,177 @@
  	}
  }
  
@@ -845,7 +912,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +895,36 @@
+@@ -107,11 +962,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -882,7 +949,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +936,10 @@
+@@ -123,8 +1003,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -893,7 +960,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +948,969 @@
+@@ -133,11 +1015,975 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -960,6 +1027,12 @@
 +	 * driver still owns the inherited controller. Do not hand its active
 +	 * DMA list to the next kernel. This is a no-op before UFS initialization.
 +	 */
++	if (nord2_input_prepare_return() < 0) {
++		sweet_early_string("NORD2 INPUT: PWRAP still active; manual reboot required\n");
++		nord2_flush();
++		for (;;) { __asm__ volatile("wfe"); }
++	}
++	nord2_display_overlay_restore();
 +	int usb_restored = nord2_usb_prepare_return();
 +	if (usb_restored < 0) {
 +		sweet_early_string("NORD2 USB: unsafe owner at kernel return; manual reboot required\n");
@@ -1871,7 +1944,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,63 @@
+@@ -10,8 +10,65 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1910,6 +1983,8 @@
 +int nord2_display_info(uint64_t *phys, uint32_t *width, uint32_t *height, uint32_t *pitch);
 +int nord2_display_begin(void);
 +int nord2_display_refresh(void);
++void nord2_input_init(void);
++int nord2_input_prepare_return(void);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
@@ -3078,7 +3153,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1099,23 @@
+@@ -654,13 +1099,25 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -3089,6 +3164,8 @@
  	sweet_keys_init();
  	sweet_touch_init();
  	sweet_usb_probe();
++#else
++	nord2_input_init();
 +#endif
  	return 0;
 +failed:
@@ -3745,6 +3822,405 @@
  }
 +#endif /* NORD2 */
  #endif /* ARM64_BOARD_CONFIG_SWEET */
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -1,3 +1,391 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/*
++ * Nord2 FT3518 and physical keys. Pin assignments/report format come from
++ * the live Nord2 DT and its Oplus FT3518/MT6885 pinctrl/keypad drivers.
++ * One polling thread owns GPIO I2C0; open drain is direction-switching,
++ * never driving a high level. No DMA, clock votes, firmware upload, PMIC
++ * configuration or regulator changes. Inherited VTP must already be on.
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_key(int, int);
++extern void sweet_hid_touch(int, int, int, int);
++
++enum { NI_SCL = 204, NI_SDA = 205, NI_RESET = 20, NI_IRQ = 21, NI_VOLDN = 155 };
++static vm_offset_t ni_gpio, ni_lt, ni_tm, ni_rt, ni_pwrap;
++static bool ni_started, ni_saved, ni_bus_owned, ni_pwrap_owned;
++static int ni_chan;
++static uint32_t ni_active;
++static int ni_x[10], ni_y[10];
++static unsigned ni_events;
++static struct {
++	unsigned pin, mux, dir, dout;
++} ni_pins[] = {{NI_SCL,0,0,0}, {NI_SDA,0,0,0}, {NI_RESET,0,0,0},
++              {NI_IRQ,0,0,0}, {NI_VOLDN,0,0,0}};
++static uint32_t ni_ies_lt, ni_ies_tm, ni_ies_rt;
++
++static uint32_t
++ni_rd(vm_offset_t base, unsigned off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++ni_wr(vm_offset_t base, unsigned off, uint32_t v)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = v;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static void
++ni_mask(vm_offset_t base, unsigned off, uint32_t mask, uint32_t v)
++{
++	ni_wr(base, off, (ni_rd(base, off) & ~mask) | (v & mask));
++}
++
++static void
++ni_gpio_bit(unsigned pin, unsigned reg, bool set)
++{
++	/* MTK GPIO SET/CLR aliases: affect only this pin. */
++	ni_wr(ni_gpio, reg + pin / 32 * 16 + (set ? 4 : 8), 1u << (pin % 32));
++}
++
++static bool
++ni_level(unsigned pin)
++{
++	return !!(ni_rd(ni_gpio, 0x200 + pin / 32 * 16) & (1u << (pin % 32)));
++}
++
++static void
++ni_wait(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&ni_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static void
++ni_line(unsigned pin, bool high)
++{
++	ni_gpio_bit(pin, 0, !high); /* DOUT fixed at zero: release or pull low. */
++	delay(4);
++}
++
++static bool
++ni_clock_high(void)
++{
++	ni_line(NI_SCL, true);
++	for (unsigned i = 0; i < 100; i++) {
++		if (ni_level(NI_SCL)) { return true; }
++		delay(1);
++	}
++	return false;
++}
++
++static bool
++ni_stop(void)
++{
++	ni_line(NI_SCL, false);
++	ni_line(NI_SDA, false);
++	bool ok = ni_clock_high();
++	ni_line(NI_SDA, true);
++	return ok && ni_level(NI_SDA);
++}
++
++static bool
++ni_start(void)
++{
++	ni_line(NI_SDA, true);
++	if (!ni_clock_high() || !ni_level(NI_SDA)) { return false; }
++	ni_line(NI_SDA, false);
++	ni_line(NI_SCL, false);
++	return true;
++}
++
++static bool
++ni_send(uint8_t b)
++{
++	for (unsigned bit = 0; bit < 8; bit++) {
++		ni_line(NI_SDA, !!(b & 0x80));
++		if (!ni_clock_high()) { return false; }
++		ni_line(NI_SCL, false);
++		b <<= 1;
++	}
++	ni_line(NI_SDA, true);
++	if (!ni_clock_high()) { return false; }
++	bool ack = !ni_level(NI_SDA);
++	ni_line(NI_SCL, false);
++	return ack;
++}
++
++static bool
++ni_recv(uint8_t *b, bool last)
++{
++	uint8_t v = 0;
++	ni_line(NI_SDA, true);
++	for (unsigned bit = 0; bit < 8; bit++) {
++		if (!ni_clock_high()) { return false; }
++		v = (uint8_t)((v << 1) | ni_level(NI_SDA));
++		ni_line(NI_SCL, false);
++	}
++	ni_line(NI_SDA, last); /* master NACK on final byte */
++	if (!ni_clock_high()) { return false; }
++	ni_line(NI_SCL, false);
++	ni_line(NI_SDA, true);
++	*b = v;
++	return true;
++}
++
++static bool
++ni_read(uint8_t reg, uint8_t *data, unsigned len)
++{
++	if (!len || len > 62) { return false; }
++	bool ok = ni_start() && ni_send(0x38u << 1) && ni_send(reg) &&
++	    ni_start() && ni_send((0x38u << 1) | 1u);
++	for (unsigned i = 0; ok && i < len; i++) {
++		ok = ni_recv(&data[i], i + 1 == len);
++	}
++	bool stopped = ni_stop();
++	return ok && stopped;
++}
++
++/* Pure decoder: reject a whole corrupt report before publishing any contact.
++ * FT3518's high_resolution_support is x4, not the generic 12-bit protocol. */
++static bool
++ni_decode(const uint8_t b[62], uint32_t *active, int x[10], int y[10])
++{
++	uint32_t seen = 0, mask = 0;
++	if (b[1] > 10) { return false; }
++	for (unsigned i = 0; i < 10; i++) {
++		unsigned off = 6 * i, id = b[off + 4] >> 4;
++		if (id == 15) { break; }
++		if (id >= 10 || (seen & (1u << id))) { return false; }
++		seen |= 1u << id;
++		unsigned event = b[off + 2] >> 6;
++		if (event == 3) { return false; }
++		if (event == 1) { continue; }
++		unsigned px = ((b[off + 2] & 15) << 10) |
++		    (b[off + 3] << 2) | ((b[off + 6] >> 6) & 3);
++		unsigned py = ((b[off + 4] & 15) << 10) |
++		    (b[off + 5] << 2) | ((b[off + 6] >> 4) & 3);
++		if (!b[1] || px >= 4320 || py >= 9600) { return false; }
++		x[id] = (int)(px / 4);
++		y[id] = (int)(py / 4);
++		mask |= 1u << id;
++	}
++	if ((unsigned)__builtin_popcount(mask) != b[1]) { return false; }
++	*active = mask;
++	return true;
++}
++
++static void
++ni_report(uint32_t mask, const int x[10], const int y[10])
++{
++	for (unsigned i = 0; i < 10; i++) {
++		bool was = !!(ni_active & (1u << i)), down = !!(mask & (1u << i));
++		if (was != down || (down && (ni_x[i] != x[i] || ni_y[i] != y[i]))) {
++			if (down) { ni_x[i] = x[i]; ni_y[i] = y[i]; }
++			if (was != down && ni_events++ < 80) {
++				printf("NORD2 INPUT: finger=%u down=%d x=%d y=%d\n",
++				    i, down, ni_x[i], ni_y[i]);
++			}
++			sweet_hid_touch((int)i, down, ni_x[i], ni_y[i]);
++		}
++	}
++	ni_active = mask;
++}
++
++static bool
++ni_touch(void)
++{
++	uint8_t b[62], ack;
++	memset(b, 0xff, sizeof(b));
++	if (!ni_read(0x01, b, 15)) { return false; }
++	if (b[0] == 0xff && b[1] == 0 && b[2] == 0xff) { return true; }
++	if (b[0] == 0xff && b[1] == 0xff && b[2] == 0xff) {
++		(void)ni_read(0x3e, &ack, 1);
++		return false;
++	}
++	if (b[14] == 0xff) {
++		if (!ni_read(0x3e, &ack, 1)) { return false; }
++	} else if (!ni_read(0x10, b + 15, 47)) { return false; }
++	uint32_t active;
++	int x[10] = {0}, y[10] = {0};
++	if (!ni_decode(b, &active, x, y)) { return false; }
++	ni_report(active, x, y);
++	return true;
++}
++
++/* MT6359 TOPSTATUS: power bit1, HOMEKEY/volume-up bit3, both active-low.
++ * WACS2 sends a read only. VLDCLR acknowledges the wrapper, not the PMIC. */
++static bool
++ni_keys_read(uint16_t *out)
++{
++	uint32_t v = ni_rd(ni_pwrap, 0xc24);
++	if (!(v & (1u << 21))) { return false; }
++	if (((v >> 16) & 7u) == 6 && ni_pwrap_owned) {
++		ni_wr(ni_pwrap, 0xc28, 1);
++		v = ni_rd(ni_pwrap, 0xc24);
++	}
++	if (((v >> 16) & 7u) != 0) { return false; }
++	ni_pwrap_owned = true;
++	ni_wr(ni_pwrap, 0xc20, (0x2au / 2) << 16);
++	for (unsigned i = 0; i < 1000; i++) {
++		v = ni_rd(ni_pwrap, 0xc24);
++		if (((v >> 16) & 7u) == 6) {
++			*out = (uint16_t)v;
++			ni_wr(ni_pwrap, 0xc28, 1);
++			return true;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++int
++nord2_input_prepare_return(void)
++{
++	/* Called only after all other cores are OFF. Never take a thread lock. */
++	if (!ni_saved) { return 0; }
++	bool idle = true;
++	if (ni_pwrap_owned) {
++		idle = false;
++		for (unsigned i = 0; i < 1000; i++) {
++			unsigned fsm = (ni_rd(ni_pwrap, 0xc24) >> 16) & 7;
++			if (fsm == 6) { ni_wr(ni_pwrap, 0xc28, 1); }
++			if (fsm == 0) { idle = true; break; }
++			delay(1);
++		}
++	}
++	if (ni_bus_owned) { (void)ni_stop(); }
++	for (unsigned i = 0; i < sizeof(ni_pins) / sizeof(ni_pins[0]); i++) {
++		unsigned pin = ni_pins[i].pin, shift = pin % 8 * 4;
++		ni_gpio_bit(pin, 0, false);
++		ni_gpio_bit(pin, 0x100, ni_pins[i].dout);
++		ni_gpio_bit(pin, 0, ni_pins[i].dir);
++		ni_mask(ni_gpio, 0x300 + pin / 8 * 16, 15u << shift, ni_pins[i].mux << shift);
++	}
++	ni_mask(ni_lt, 0x40, 3u << 15, ni_ies_lt);
++	ni_mask(ni_tm, 0x50, 3u << 12, ni_ies_tm);
++	ni_mask(ni_rt, 0x30, 1u << 24, ni_ies_rt);
++	ni_saved = false;
++	return idle ? 1 : -1;
++}
++
++static void
++ni_thread(void *arg, wait_result_t result)
++{
++	(void)arg; (void)result;
++	ni_wait(2000);
++	ni_gpio = ml_io_map(0x10005000, 0x1000);
++	ni_lt = ml_io_map(0x11f20000, 0x1000);
++	ni_tm = ml_io_map(0x11f30000, 0x1000);
++	ni_rt = ml_io_map(0x11ea0000, 0x1000);
++	ni_pwrap = ml_io_map(0x10026000, 0x1000);
++	if (!ni_gpio || !ni_lt || !ni_tm || !ni_rt || !ni_pwrap) {
++		panic("NORD2 INPUT: mapping failed");
++	}
++	for (unsigned i = 0; i < sizeof(ni_pins) / sizeof(ni_pins[0]); i++) {
++		unsigned pin = ni_pins[i].pin;
++		ni_pins[i].mux = (ni_rd(ni_gpio, 0x300 + pin / 8 * 16) >> (pin % 8 * 4)) & 15;
++		ni_pins[i].dir = (ni_rd(ni_gpio, pin / 32 * 16) >> (pin % 32)) & 1;
++		ni_pins[i].dout = (ni_rd(ni_gpio, 0x100 + pin / 32 * 16) >> (pin % 32)) & 1;
++		printf("NORD2 INPUT: pin=%u mux=%u dir=%u out=%u level=%d\n",
++		    pin, ni_pins[i].mux, ni_pins[i].dir, ni_pins[i].dout, ni_level(pin));
++	}
++	ni_ies_lt = ni_rd(ni_lt, 0x40);
++	ni_ies_tm = ni_rd(ni_tm, 0x50);
++	ni_ies_rt = ni_rd(ni_rt, 0x30);
++	ni_saved = true; /* snapshots complete before first mutation */
++	for (unsigned i = 0; i < sizeof(ni_pins) / sizeof(ni_pins[0]); i++) {
++		unsigned pin = ni_pins[i].pin;
++		ni_gpio_bit(pin, 0, false);
++		if (pin == NI_SDA || pin == NI_SCL) { ni_gpio_bit(pin, 0x100, false); }
++		ni_mask(ni_gpio, 0x300 + pin / 8 * 16, 15u << (pin % 8 * 4), 0);
++	}
++	ni_mask(ni_lt, 0x40, 3u << 15, 3u << 15);
++	ni_mask(ni_tm, 0x50, 3u << 12, 3u << 12);
++	ni_mask(ni_rt, 0x30, 1u << 24, 1u << 24);
++	ni_bus_owned = true;
++	/* Reset according to Oplus driver; inherited MT6360 VTP is unchanged. */
++	ni_gpio_bit(NI_RESET, 0x100, false);
++	ni_gpio_bit(NI_RESET, 0, true);
++	ni_wait(10);
++	ni_gpio_bit(NI_RESET, 0x100, true);
++	ni_wait(200);
++	uint8_t a = 0, b = 0;
++	bool bus_idle = ni_level(NI_SCL) && ni_level(NI_SDA);
++	bool touch_ok = bus_idle && ni_read(0xa3, &a, 1) && ni_read(0x9f, &b, 1) &&
++	    a == 0x54 && b == 0x52;
++	uint16_t top = 0;
++	bool key_ok = ni_keys_read(&top);
++	printf("NORD2 INPUT: FT3518 id=%02x:%02x ready=%d idle=%d irq=%d; TOPSTATUS=%#x ok=%d\n",
++	    a, b, touch_ok, bus_idle, ni_level(NI_IRQ), top, key_ok);
++	printf("NORD2 INPUT: software I2C0, x4 coordinates, PMIC power/up and GPIO155 down; poll=10ms\n");
++	unsigned errors = 0, ticks = 0, key_errors = 0;
++	int state[3] = {0}, previous[3] = {-1, -1, -1};
++	for (;;) {
++		key_ok = ni_keys_read(&top);
++		int now[3] = {!(top & 2), !(top & 8), !ni_level(NI_VOLDN)};
++		if (!key_ok && (key_errors++ % 500) == 0) {
++			printf("NORD2 INPUT: PWRAP read failed status=%#x\n", ni_rd(ni_pwrap, 0xc24));
++		}
++		if (key_ok) { key_errors = 0; }
++		for (unsigned k = 0; k < 3; k++) {
++			if (k < 2 && !key_ok) {
++				previous[k] = -1;
++				if (key_errors >= 3 && state[k]) {
++					state[k] = 0;
++					sweet_hid_key((int)k, 0);
++				}
++				continue;
++			}
++			if (previous[k] == now[k] && state[k] != now[k]) {
++				state[k] = now[k];
++				printf("NORD2 INPUT: key=%u down=%d top=%#x\n", k, state[k], top);
++				sweet_hid_key((int)k, state[k]);
++			}
++			previous[k] = now[k];
++		}
++		if (touch_ok && (ni_active || !ni_level(NI_IRQ) || (++ticks % 10) == 0)) {
++			if (!ni_touch()) {
++				if ((errors++ % 100) == 0) {
++					printf("NORD2 INPUT: touch report error irq=%d scl=%d sda=%d\n",
++					    ni_level(NI_IRQ), ni_level(NI_SCL), ni_level(NI_SDA));
++				}
++				if (errors >= 3) { ni_report(0, ni_x, ni_y); }
++			} else { errors = 0; }
++		}
++		ni_wait(10);
++	}
++}
++
++void
++nord2_input_init(void)
++{
++	int enabled = 0, stop = 0;
++	thread_t thread;
++	PE_parse_boot_argn("nord2input", &enabled, sizeof(enabled));
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (ni_started || enabled != 1 || stop != 23 || !nord2_smp_userland_ready()) { return; }
++	ni_started = true;
++	kern_return_t kr = kernel_thread_start(ni_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) { thread_deallocate(thread); }
++	else { printf("NORD2 INPUT: thread start failed %d\n", kr); }
++}
++#else /* original Sweet hardware */
+ /*
+  * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
+  * Call once after the scheduler is running; all work runs on one thread.
+@@ -658,3 +1046,4 @@
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
++#endif /* NORD2 */
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1867,6 +1867,12 @@

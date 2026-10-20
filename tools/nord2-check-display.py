@@ -11,8 +11,8 @@ source, out = map(Path, sys.argv[1:])
 out.mkdir(parents=True, exist_ok=True)
 early = (source / 'osfmk/arm64/sweet_early.c').read_text()
 fb = (source / 'iokit/Kernel/arm/SweetFramebuffer.cpp').read_text()
-code = 'int\nnord2_display_info(' + early.split(
-    'int\nnord2_display_info(', 1)[1].split('static void\nnord2_flush', 1)[0]
+code = 'static volatile uint32_t *nord2_ovl[4];' + early.split(
+    'static volatile uint32_t *nord2_ovl[4];', 1)[1].split('static void\nnord2_flush', 1)[0]
 code = code.replace('__asm__ volatile("dsb sy" ::: "memory");', 'barriers++;')
 assert 'sweet_early_putc(c[i]);' in early
 assert 'nord2_gui_owned && !panic_active()' in early
@@ -40,6 +40,13 @@ static int enabled, stop;
 static bool panicking, acquire_ok, outer_lock, complete;
 static uint64_t ticks, daif, freq;
 static unsigned barriers;
+static uint32_t ovl[4][1024];
+static uintptr_t ml_io_map(uint64_t pa, unsigned size) {
+    assert(size == 4096);
+    const uint64_t addr[4] = {0x14000000,0x14100000,0x14001000,0x14101000};
+    for(unsigned i=0;i<4;i++) if(pa==addr[i]) return (uintptr_t)ovl[i];
+    assert(0); return 0;
+}
 static bool panic_active(void) { return panicking; }
 static void PE_parse_boot_argn(const char *name, void *value, unsigned size) {
     assert(size == sizeof(int));
@@ -94,8 +101,32 @@ int main(void) {
     ticks=0; dsi[0]=dsi[3]=0; complete=true;
     assert(nord2_display_refresh() && dsi[3]==~NORD2_DSI_FRAME_DONE && barriers==2);
     assert(ticks<10);
+    /* Only the exact known composition is eligible; both pipes must match. */
+    for(unsigned i=0;i<2;i++) {
+        ovl[i][0x2c/4]=2; ovl[i+2][0x2c/4]=1;
+        ovl[i][0xf60/4]=0x77806000+i*2160;
+        ovl[i+2][0xf40/4]=0x76e10000+i*2160;
+        ovl[i][0x64/4]=4320; ovl[i+2][0x44/4]=4352;
+        ovl[i][0x58/4]=ovl[i+2][0x38/4]=0x0960021c;
+        ovl[i][0xe0/4]=1; ovl[i][0x24/4]=0xabcdef;
+    }
+    nord2_ovl_checked=false; ovl[1][0xf60/4]++;
+    nord2_display_overlay_init();
+    assert(!nord2_ovl_saved); nord2_display_overlay_remove();
+    assert(ovl[0][0x2c/4]==2 && ovl[1][0x2c/4]==2);
+    ovl[1][0xf60/4]--; nord2_ovl_checked=false;
+    nord2_display_overlay_init(); assert(nord2_ovl_saved);
+    uint32_t saved[4][1024]; memcpy(saved,ovl,sizeof(saved));
+    nord2_display_overlay_remove(); assert(nord2_ovl_removed);
+    for(unsigned i=0;i<2;i++) {
+        assert(ovl[i][0x2c/4]==0 && ovl[i][0xe0/4]==0);
+        assert(ovl[i][0x24/4]==(0xabcdef & ~(1<<5)));
+        assert(!memcmp(saved[i+2],ovl[i+2],sizeof(ovl[0])));
+    }
+    nord2_display_overlay_restore();
+    assert(!nord2_ovl_removed && !memcmp(saved,ovl,sizeof(saved)));
     puts("PASS: display opt-in, mapping guards, console handoff, panic exclusion,"
-         " busy/FRAME_DONE timeouts, command-mode refresh and W0C acknowledgement");
+         " busy/FRAME_DONE timeouts, W0C, two-pipe overlay guards/removal/restore");
 }
 '''
 cfile, exe = out / 'display-host.c', out / 'display-host'
