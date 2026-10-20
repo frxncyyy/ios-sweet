@@ -325,7 +325,13 @@ class Checker:
                        disp.prop('canvas-height') == struct.pack('<I', 2436))
             self.check('kernel contains Nord2 command-mode presentation',
                        b'NORD2 FB: command-mode present' in kernel and
-                       b'NORD2 FB: display configuration refused' in kernel)
+                       b'NORD2 FB: display configuration refused' in kernel and
+                       b'nord2,display' in kernel)
+            product = next((n for n in root.children if n.name == 'product'), None)
+            self.check('Nord2 GUI carries filtered iPhone product/display identity',
+                       product is not None and product.prop('product-name') == b'iPhone X\0' and
+                       product.prop('artwork-scale-factor') == struct.pack('<I', 3) and
+                       all(not flags for _, flags, _ in product.props))
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

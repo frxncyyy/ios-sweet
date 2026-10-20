@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read the native XNU USB console using system libusb.
 
-Protocol1 captures the first65524 persistent bytes. Protocol2 reads the
-separate4MiB append-only live buffer; both are bounded, not unlimited streams.
+Protocol 1 captures the first 65524 persistent bytes. Protocol 2 reads the
+separate 4 MiB append-only live buffer; both are bounded, not unlimited streams.
 
 Usage: nord2-usb-console.py OUTPUT_DIRECTORY [--wait SECONDS]
 Selects product "Nord2 XNU console", never the Android ADB recovery interface.
@@ -114,7 +114,7 @@ try:
     if not handle:
         raise SystemExit('Enumerated USB console disappeared')
     status = read_status()
-    print('XNU USB connected; reading pmsg while XNU is running.', flush=True)
+    print('XNU USB connected; reading the console log while XNU is running.', flush=True)
     protocol = status[1]
     capacity = 65524
     if protocol == 2:
