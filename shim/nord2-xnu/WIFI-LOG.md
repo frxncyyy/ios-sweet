@@ -1,5 +1,46 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-20: snapshot hardware success, cold power probe prepared
+
+The user authorized the exact snapshot image `bf0ea8bb…ba34fa88`. Boot-only
+flash and reboot succeeded at21:05:38CEST. The image is currently running;
+the exclusive runner must not be reused. All24 PMIC reads succeeded, eight
+cores passed, eight initial GUI presents completed, and the user confirmed
+lockscreen/touch/buttons work.
+
+Measured SPM CONN_PWR_CON=0x12, PWR_STATUS/2ND=0x10580e01, RC_CFG1=0x401425;
+AXI protection status=0xe70c500e/0xe7, GALS=0, reset=0. CONN is powered off
+with isolation/clock-disable set. The bootloader left bank0 protection bit13
+clear, bit14 set and bank2 bit2 set. VCN13/VCN18 control/monitor read0,
+OP_EN=0x8000, OP_CFG=0; VCN13 analog selector0x202e=0x400 is1.3V. The read
+addresses match **MT6359P** (`mt6885/upmu_hw.h`), not generic MT6359's map.
+Raw24 values are saved in private `wifi/snapshot/hardware-result.json`.
+
+USB first appeared only after the user reseated the cable. Three captures
+then ended on EP0 timeout while iOS continued. Host client now has optional
+bounded timeout/retry settings; tolerant capture uses5s ×6 attempts maximum,
+at the same immutable read offsets. No new device write commands were added.
+
+Next probe `nord2wifi=2` is implemented but not yet CI-built/hardware-tested:
+from a guarded cold RC-mode state, enable only VCN18/VCN13 at inherited
+voltage, set radio GPIO172..182, enable GALS/CONN and check power/protection
+acknowledgements before reading CONN sleep status/HW ID. Then isolate the bus,
+turn CONN off and restore owned pin/rail/clock fields. It does not release
+WFSYS CPU, load firmware, perform calibration/DMA or transmit. VCN33/voltage
+selectors/modem/BT/GPS state are not programmed. Failed isolation/power-off
+prevents dropping the rails and returning to Linux. Actual-C fault tests
+cover cold guards, command bounds, partial-on failures, missing rails/acks,
+bad ID/mapping, restoration failure/retry. Local compile and input regression
+tests pass. The user also requested a Sol agent investigating slow boot;
+its sweet_early.c change is integrated as opt-in `nord2fastlog=1`: circular
+row clearing replaces expensive scrolling while preserving USB/pmsg logs.
+New timing at GUI ownership distinguishes framebuffer processing from elapsed
+time since stage6. The first-GUI marker precedes the first successful present;
+it is not a lockscreen completion measurement. Exact-C20k-line sanitizer tests
+and local compilation pass. No hardware speedup claim yet. Combined CI/image
+is the next step. Final tolerant snapshot capture saved229445bytes with
+no USB error; exact digest/results under private hardware-tolerant/.
+
 ## 2026-10-20: firmware acquired; first XNU diagnostic implemented
 
 The authorized rescue/return sequence completed: exact rescue flashed only
@@ -81,9 +122,9 @@ kernel, both DT representations and tested rescue RAMdisk are byte-exact.
 Linked disassembly confirms the read command/timeout, boot-argument gate,
 cleanup ordering, AP mappings and24-read loop. Private `wifi/snapshot/`
 contains the build log, manifest, verifier and guarded flash runner.
-No hardware test or authorization yet. The next boot-only test needs the
-user's exact approval and fastboot; normal iOS mounts its existing filesystem
-read/write, while this added diagnostic only observes radio power state.
+Hardware test and exact authorization have since completed as recorded above.
+Normal iOS mounts its existing filesystem read/write, while this added
+diagnostic only observes radio power state.
 It neither enables the radio nor supplies networking.
 
 Firmware headers were decoded against Android's ROM_EMI_HEADER and CONNAC

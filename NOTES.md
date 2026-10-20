@@ -3,6 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WI-FI SNAPSHOT PASSED ON HARDWARE; POWER PROBE IN DEVELOPMENT.**
+  User authorized bf0ea8bb…ba34fa88; boot-only flash and reboot succeeded
+  21:05:38CEST. Private wifi/snapshot/run-approved-boot.py EXECUTED; do not
+  rerun exclusive flash log. Phone now runs that snapshot image, not fd6d75ca.
+  All24 PMIC reads succeeded; all8 cores PASS, FT3518/key initialization OK.
+  Eight GUI presents done=1; user confirms lockscreen, touch and buttons work.
+  CONN power=0x12, both status=0x10580e01 (CONN bit1 off), RC=0x401425.
+  AXI protection=0xe70c500e/0xe7, GALS=0, reset=0. VCN13/VCN18 CON0/MON=0;
+  OP_EN=0x8000, OP_CFG=0. VCN13 selector0x202e=0x400 is1.3V.
+  These are MT6359P/mt6885 upmu_hw.h addresses; generic mt6359/registers.h
+  has a different layout and MUST NOT be used for writes.
+  USB initially absent until user reseated cable; subsequent EP0 timeouts
+  interrupted three captures. Tolerant capture uses new optional host
+  --timeout-ms5000 --timeout-retries5 (max30s/request, read-only immutable
+  offsets; defaults unchanged). Logs/results under wifi/snapshot/.
+  New nord2wifi=2 probe in sweet_touch.c prepares only VCN18/VCN13 RC-mode
+  enable, radio GPIO172..182, GALS/SPM CONN domain; checks AP acknowledgements
+  before CONN sleep/ID reads. No firmware, WFSYS CPU release, DMA or RF.
+  Preserves voltage settings, refuses non-cold/RC/1.3V state, restores only
+  owned bits. Failed power-off/protection restoration retains rails and
+  prevents Linux return. Exact-C ASan/UBSan fault tests and local C compile
+  PASS; input regression/fuzz PASS. Not yet CI-built/flashed/authorized.
+  User additionally requests faster boot (5–6min) and explicitly requested
+  Sol agent boot_speed completed sweet_early.c performance work: opt-in
+  nord2fastlog=1 clears two circular console rows instead of copying31 rows,
+  reducing per-newline framebuffer traffic from8570880 to276480bytes.
+  Default/panic scrolling and full USB/pmsg logs remain. New NORD2 BOOT
+  first-GUI marker reports elapsed_ticks/fb_ticks/freq/scrolls/pushes at
+  GUI ownership, before first successful present; this is NOT a lockscreen
+  completion timestamp. Counts begin at stage6 fb_init. No measured speedup
+  yet: historical launchd begins~94s, another~66s usermanagerd gap remains.
+  Exact-C fastlog sanitizer test20000 lines and local compile PASS. Root
+  regenerated0082 against pristine tree and verified exact reproduction.
+  Full combined CI/image/approval next. Tolerant final snapshot capture
+  229445bytes SHA718cc62aee9d764ed05248974000e1d838f7159a23bc34859c9ee2fe4026d8c1
+  ended at deadline without USB error; historical small captures remain.
+
 - **WI-FI FIRMWARE COLLECTED; WORKING iOS BOOT RESTORED.**
   User authorized exact rescue -> read vendor -> restore iOS sequence.
   Both boot-only flashes/reboots succeeded, at20:44:05 and20:49:37CEST.
@@ -22,7 +59,7 @@
   Retry capture confirms all first8 GUI presents done=1 and a touch gesture.
   Private restored-ios-live/, restored-ios-gui/ and restored-ios-gui-retry/
   hold boot evidence. Earlier capture ended on intermittent USB timeouts.
-  First XNU Wi-Fi diagnostic implemented, not flashed: opt-in nord2wifi=1
+  First XNU Wi-Fi diagnostic implemented and now tested above: nord2wifi=1
   snapshots AP-side power/bus/pinmux and24 PMIC rail/clock registers.
   Runs serially on the input thread before polling, after fallback cleanup
   is armed; no CONN MMIO, PMIC value writes, firmware/DMA or RF transmission.
@@ -47,11 +84,10 @@
   INIT_DONE/timeout, opt-in gating, cleanup order, AP maps and24-read loop.
   Private wifi/snapshot/{manifest.json,verify-image.py,image-build.log,
   critical-functions-check.json,linked-*.txt,run-approved-boot.py} saved.
-  Guarded runner --authorized-wifi-snapshot-boot is prepared/syntax checked,
-  NOT EXECUTED. No new Wi-Fi image has been flashed or authorized yet.
-  Next: obtain exact boot-only approval/fastboot, run the prepared image,
-  capture NORD2 WIFI snapshot and verify iOS/input still run. If boot fails,
-  use tested rescue and restore working iOS; never boot normal Android.
+  Guarded runner --authorized-wifi-snapshot-boot EXECUTED after exact user
+  approval. Snapshot/GUI/input hardware result is recorded above.
+  If a later boot fails, use tested rescue and restore working iOS;
+  never boot normal Android.
   This image does not enable the radio or implement Wi-Fi networking.
   Firmware ROM headers and five RAM-code region descriptors parsed privately.
   Main RAM-code tailer CRC matches. All16 vendor file extents independently
@@ -74,7 +110,7 @@
   Six corruption/boundary tests PASS. Known rescue d78bf9fe…3d03bac5 and
   working iOS fd6d75ca…49995f20 hashes reverified. Both stages of private
   research/nord2/wifi/run-approved-collection.py have EXECUTED after explicit
-  user approval/fastboot. No Wi-Fi kernel hardware test yet.
+  user approval/fastboot. The first read-only Wi-Fi snapshot is now tested above.
   Static inspection of local iOS wifid confirms required IO80211.framework
   and Apple80211 scan/associate/power/event API imports; no selectors recovered.
   Private ios-abi/ holds exact identity/import/string evidence. REA native

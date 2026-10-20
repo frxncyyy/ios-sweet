@@ -12,7 +12,7 @@ ap.add_argument("source", type=Path, nargs="?",
 args = ap.parse_args()
 source = args.source.read_text()
 start = source.index("static bool\nni_pmic_read(")
-end = source.index("\nint\nnord2_input_prepare_return", start)
+end = source.index("/* NORD2 Wi-Fi power probe.", start)
 actual = source[start:end]
 thread = source[source.index("static void\nni_thread("):]
 assert thread.index("ni_saved = true") < thread.index("ni_wifi_snapshot();")
@@ -101,8 +101,8 @@ int main(void) {
  assert(ni_keys_read(&value) && commands==1 && clears==2);
  reset();stalled=true;
  assert(!ni_keys_read(&value) && commands==1 && waits==1000 && clears==0);
- for(int disabled=-1;disabled<=2;disabled++) {
-  if(disabled==1)continue;
+ for(int disabled=-1;disabled<=3;disabled++) {
+  if(disabled==1 || disabled==2)continue;
   reset();bootarg=disabled;ni_wifi_snapshot();assert(maps==0 && reads==0 && commands==0);
  }
  reset();bootarg=1;map_failed=true;ni_wifi_snapshot();assert(maps==4 && reads==0 && commands==0);

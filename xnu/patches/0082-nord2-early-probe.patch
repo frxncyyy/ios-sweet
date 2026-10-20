@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,679 @@
+@@ -1,16 +1,709 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -89,6 +89,10 @@
 +
 +static int nord2_fb_state = -1;	/* -1 undecided, 0 off, 1 on */
 +static int nord2_fb_started;
++/* Opt-in diagnostic: keep log sinks intact while avoiding framebuffer copies. */
++static uint32_t nord2_fastlog;
++static uint64_t nord2_fb_begin_ticks, nord2_fb_draw_ticks;
++static uint64_t nord2_fb_scrolls, nord2_fb_pushes;
 +static uint32_t nord2_gui_owned;
 +static void nord2_stream_init(void);
 +static unsigned int nord2_fb_row, nord2_fb_col;
@@ -253,6 +257,8 @@
 +		return;
 +	}
 +	nord2_fb_state = PE_parse_boot_argn("nord2fb", &v, sizeof(v)) && v;
++	PE_parse_boot_argn("nord2fastlog", &nord2_fastlog, sizeof(nord2_fastlog));
++	nord2_fb_begin_ticks = __builtin_arm_rsr64("CNTVCT_EL0");
 +	if (nord2_fb_state && !nord2_fb_started) {
 +		sweet_early_string("NORD2-XNU: on-screen log active\n");
 +	}
@@ -290,6 +296,7 @@
 +static void
 +nord2_fb_push(void)
 +{
++	nord2_fb_pushes++;
 +	volatile uint32_t *dsi = (volatile uint32_t *)nord2_phys(NORD2_DSI0);
 +	volatile uint32_t *mtx = (volatile uint32_t *)nord2_phys(NORD2_DISP_MUTEX);
 +
@@ -313,6 +320,7 @@
 +static void
 +nord2_fb_scroll(void)
 +{
++	nord2_fb_scrolls++;
 +	volatile uint32_t *fb = (volatile uint32_t *)nord2_phys(NORD2_FB_PA);
 +	const unsigned int src = NORD2_FB_ORIGIN_Y + NORD2_FB_CELL_H;
 +	const unsigned int lines = (NORD2_FB_ROWS - 1) * NORD2_FB_CELL_H;
@@ -333,7 +341,16 @@
 +nord2_fb_newline(void)
 +{
 +	nord2_fb_col = 0;
-+	if (nord2_fb_row + 1 >= NORD2_FB_ROWS) {
++	if (nord2_fastlog && !panic_active()) {
++		/* Circular console: one row clear instead of 31 rows read+copied.
++		 * A blank following row marks the cursor; panic keeps normal scroll. */
++		nord2_fb_row = (nord2_fb_row + 1) % NORD2_FB_ROWS;
++		nord2_fb_clear_row();
++		uint32_t current = nord2_fb_row;
++		nord2_fb_row = (current + 1) % NORD2_FB_ROWS;
++		nord2_fb_clear_row();
++		nord2_fb_row = current;
++	} else if (nord2_fb_row + 1 >= NORD2_FB_ROWS) {
 +		nord2_fb_scroll();
 +	} else {
 +		nord2_fb_row++;
@@ -587,11 +604,20 @@
 +	__builtin_arm_wsr("DAIFSet", 0xf);
 +	bool outer;
 +	bool ok = nord2_console_acquire(nord2_raw_core() + 1, &outer);
++	bool first = ok && !nord2_gui_owned;
 +	if (ok) {
 +		nord2_gui_owned = 1;
 +		if (outer) { __atomic_store_n(&nord2_console_owner, 0, __ATOMIC_RELEASE); }
 +	}
 +	__builtin_arm_wsr64("DAIF", daif);
++	if (first) {
++		/* GUI owns pixels now, so reporting cannot recursively draw. Raw
++		 * counter deltas exclude USB capture/drain time and need no clock epoch. */
++		printf("NORD2 BOOT: first-GUI fastlog=%u elapsed_ticks=%llu fb_ticks=%llu freq=%llu scrolls=%llu pushes=%llu\n",
++		    nord2_fastlog, __builtin_arm_rsr64("CNTVCT_EL0") - nord2_fb_begin_ticks,
++		    nord2_fb_draw_ticks, __builtin_arm_rsr64("CNTFRQ_EL0"),
++		    nord2_fb_scrolls, nord2_fb_pushes);
++	}
 +	return ok;
 +}
 +
@@ -679,13 +705,17 @@
 +	nord2_ring()->size = nord2_pos;
 +	nord2_ring()->start = 0;
 +	nord2_flush();
-+	nord2_fb_putc(c);
++	if (nord2_fb_on() && (!nord2_gui_owned || panic_active())) {
++		uint64_t begin = __builtin_arm_rsr64("CNTVCT_EL0");
++		nord2_fb_putc(c);
++		nord2_fb_draw_ticks += __builtin_arm_rsr64("CNTVCT_EL0") - begin;
++	}
 +}
 +#else
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +686,7 @@
+@@ -23,6 +716,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -693,7 +723,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +702,32 @@
+@@ -38,10 +732,32 @@
  		}
  	}
  }
@@ -726,7 +756,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +762,7 @@
+@@ -76,6 +792,7 @@
  		}
  	}
  	early_col++;
@@ -734,7 +764,7 @@
  }
  
  static void
-@@ -86,9 +773,177 @@
+@@ -86,9 +803,177 @@
  	}
  }
  
@@ -912,7 +942,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +962,36 @@
+@@ -107,11 +992,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -949,7 +979,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +1003,10 @@
+@@ -123,8 +1033,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -960,7 +990,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +1015,975 @@
+@@ -133,11 +1045,975 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -3824,7 +3854,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,598 @@
+@@ -1,3 +1,811 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/*
@@ -4230,7 +4260,7 @@
 +{
 +	int enabled = 0;
 +	PE_parse_boot_argn("nord2wifi", &enabled, sizeof(enabled));
-+	if (enabled != 1) { return; }
++	if (enabled != 1 && enabled != 2) { return; }
 +	/* AP-side registers only. The CONN region (0x18000000..) is deliberately
 +	 * not mapped: an access while power/bus protection is wrong can hang
 +	 * the bus regardless of any software timeout. No radio state is changed.
@@ -4274,10 +4304,222 @@
 +	printf("NORD2 WIFI: snapshot complete pmic=%u/24; continuing iOS\n", done);
 +}
 +
++/* NORD2 Wi-Fi power probe.
++ * Register/sequence reference: MediaTek's GPL-2.0 platform code,
++ * Copyright (c) 2020 MediaTek Inc., mt6893_pos.c/mt6893_pmic.c, and
++ * clk-mt6885-pg.c selected by CONFIG_COMMON_CLK_MT6893. This bounded probe
++ * only starts the conninfra domain, reads its identity and restores state.
++ * No WFSYS CPU release, firmware/EMI writes, DMA, calibration or RF.
++ * MT6359P addresses below match mt6885 upmu_hw.h, NOT mt6359/registers.h.
++ * The existing input thread is the sole PMIF/GPIO owner during this probe. */
++static struct {
++	vm_offset_t spm, infra, gals;
++	uint32_t cfg, pwr, prot, prot2, clock, mux21, mux22, drive, pd, pu;
++	uint16_t pmic[6];
++	bool saved, domain_touched;
++} nw;
++static const uint16_t nw_addr[6] = {0x1c34, 0x1c3a, 0x1c2e, 0x1c22, 0x1c28, 0x1c1c};
++static const uint16_t nw_mask[6] = {0xf0, 0xf0, 3, 0xf0, 0xf0, 3};
++static const uint16_t nw_value[6] = {0xf0, 0, 3, 0xf0, 0, 3};
++
++static bool
++nw_wait(vm_offset_t base, unsigned off, uint32_t mask, uint32_t value)
++{
++	for (unsigned i = 0; i < 2000; i++) {
++		if ((ni_rd(base, off) & mask) == value) { return true; }
++		delay(10);
++	}
++	printf("NORD2 WIFI: power timeout off=%#x mask=%#x want=%#x got=%#x\n",
++	    off, mask, value, ni_rd(base, off));
++	return false;
++}
++
++static bool
++nw_pmic_write(unsigned slot, bool restore)
++{
++	/* Allow only each saved value or its RC-mode request. Preserve all other
++	 * fields; neither voltage selectors nor unrelated PMIC rails are writable. */
++	if (!nw.saved || slot >= 6) { return false; }
++	uint16_t addr = nw_addr[slot], current = 0;
++	uint16_t want = restore ? nw.pmic[slot] :
++	    (nw.pmic[slot] & ~nw_mask[slot]) | nw_value[slot];
++	if (!ni_pmic_read(addr, &current)) { return false; }
++	if (current == want) { return true; }
++	if ((current & ~nw_mask[slot]) != (want & ~nw_mask[slot])) { return false; }
++	if (!nw_wait(ni_pwrap, 0xca8, 0x800e, 0x8000)) { return false; }
++	ni_pwrap_owned = true;
++	ni_wr(ni_pwrap, 0xc84, want);
++	ni_wr(ni_pwrap, 0xc80, (1u << 29) | addr);
++	/* Write completion is idle, not read-valid. Serialize a readback only
++	 * after it completes; all PMIF commands remain on the same thread. */
++	if (!nw_wait(ni_pwrap, 0xca8, 0x800e, 0x8000)) { return false; }
++	bool ok = ni_pmic_read(addr, &current) && current == want;
++	if (!ok) {
++		printf("NORD2 WIFI: PMIC verify addr=%#x want=%#x got=%#x restore=%d\n",
++		    addr, want, current, restore);
++	}
++	return ok;
++}
++
++static bool
++nw_rail_wait(uint16_t addr, uint16_t mask, uint16_t want)
++{
++	uint16_t v = 0;
++	for (unsigned i = 0; i < 100; i++) {
++		if (!ni_pmic_read(addr, &v)) { return false; }
++		/* MT6359P monitor B_EN and B_STB. Do not proceed on SW_EN alone. */
++		if ((v & mask) == want) { return true; }
++		delay(100);
++	}
++	printf("NORD2 WIFI: rail timeout addr=%#x mask=%#x want=%#x got=%#x\n",
++	    addr, mask, want, v);
++	return false;
++}
++
++static bool
++nw_restore(void)
++{
++	if (!nw.saved) { return true; }
++	if (nw.domain_touched) {
++		/* Isolate the bus before removing power, including partial-on failures.
++		 * Refuse to drop rails or return to Linux if protection cannot settle. */
++		ni_wr(nw.infra, 0x2a0, 1u << 13);
++		if (!nw_wait(nw.infra, 0x228, 1u << 13, 1u << 13)) { return false; }
++		ni_wr(nw.infra, 0x2a0, 1u << 14);
++		if (!nw_wait(nw.infra, 0x228, 1u << 14, 1u << 14)) { return false; }
++		ni_wr(nw.infra, 0x714, 4);
++		if (!nw_wait(nw.infra, 0x724, 4, 4)) { return false; }
++		ni_mask(nw.spm, 0x304, 2, 2);
++		ni_mask(nw.spm, 0x304, 0x10, 0x10);
++		ni_mask(nw.spm, 0x304, 1, 0);
++		ni_mask(nw.spm, 0x304, 4, 0);
++		ni_mask(nw.spm, 0x304, 8, 0);
++		if (!nw_wait(nw.spm, 0x16c, 2, 0) ||
++		    !nw_wait(nw.spm, 0x170, 2, 0)) { return false; }
++		ni_mask(nw.spm, 0x304, 0x1f, nw.pwr);
++		/* Restore only the protection bits this probe owns. Bootloader leaves
++		 * bit13 clear even while CONN is off; preserve that measured state. */
++		ni_wr(nw.infra, 0x2a4, (~nw.prot) & 0x6000);
++		ni_wr(nw.infra, 0x718, (~nw.prot2) & 4);
++		if (!nw_wait(nw.infra, 0x228, 0x6000, nw.prot & 0x6000) ||
++		    !nw_wait(nw.infra, 0x724, 4, nw.prot2 & 4)) { return false; }
++		nw.domain_touched = false;
++	}
++	ni_mask(nw.gals, 0x504, 1, nw.clock);
++	ni_wr(nw.spm, 0, 0x0b160000 | (nw.cfg & 0xffff));
++	ni_mask(ni_gpio, 0x450, 0xffff0000, nw.mux21);
++	ni_mask(ni_gpio, 0x460, 0x0fffffff, nw.mux22);
++	ni_mask(ni_rt, 0, 0x3fff8, nw.drive);
++	ni_mask(ni_rt, 0x50, 0x4800, nw.pd);
++	ni_mask(ni_rt, 0x70, 0x4800, nw.pu);
++	/* Reverse order disables VCN13 before VCN18; retain context on failure. */
++	for (unsigned i = 6; i > 0; i--) {
++		if (!nw_pmic_write(i - 1, true)) { return false; }
++	}
++	if (!nw_rail_wait(0x1c20, 1, 0) || !nw_rail_wait(0x1c32, 1, 0)) { return false; }
++	if ((ni_rd(nw.gals, 0x504) & 1) != (nw.clock & 1) ||
++	    (ni_rd(nw.spm, 0) & 0xffff) != (nw.cfg & 0xffff) ||
++	    (ni_rd(nw.spm, 0x304) & 0x1f) != (nw.pwr & 0x1f) ||
++	    (ni_rd(ni_gpio, 0x450) & 0xffff0000) != (nw.mux21 & 0xffff0000) ||
++	    (ni_rd(ni_gpio, 0x460) & 0x0fffffff) != (nw.mux22 & 0x0fffffff) ||
++	    (ni_rd(ni_rt, 0) & 0x3fff8) != (nw.drive & 0x3fff8) ||
++	    (ni_rd(ni_rt, 0x50) & 0x4800) != (nw.pd & 0x4800) ||
++	    (ni_rd(ni_rt, 0x70) & 0x4800) != (nw.pu & 0x4800)) { return false; }
++	nw.saved = false;
++	return true;
++}
++
++static void
++ni_wifi_power_probe(void)
++{
++	int enabled = 0;
++	PE_parse_boot_argn("nord2wifi", &enabled, sizeof(enabled));
++	if (enabled != 2) { return; }
++	nw.spm = ml_io_map(0x10006000, 0x1000);
++	nw.infra = ml_io_map(0x10001000, 0x1000);
++	nw.gals = ml_io_map(0x1020e000, 0x1000);
++	if (!nw.spm || !nw.infra || !nw.gals) { return; }
++	nw.cfg = ni_rd(nw.spm, 0);
++	nw.pwr = ni_rd(nw.spm, 0x304);
++	nw.prot = ni_rd(nw.infra, 0x228);
++	nw.prot2 = ni_rd(nw.infra, 0x724);
++	nw.clock = ni_rd(nw.gals, 0x504);
++	nw.mux21 = ni_rd(ni_gpio, 0x450); nw.mux22 = ni_rd(ni_gpio, 0x460);
++	nw.drive = ni_rd(ni_rt, 0); nw.pd = ni_rd(ni_rt, 0x50); nw.pu = ni_rd(ni_rt, 0x70);
++	uint16_t volts = 0, mon13 = 0, mon18 = 0;
++	/* Cold RC-mode only, matching the measured Nord2 state. Never seize an
++	 * active/shared radio domain or adjust voltage to make a guard pass. */
++	if ((nw.pwr & 0x1f) != 0x12 || (ni_rd(nw.spm, 0x16c) & 2) ||
++	    (ni_rd(nw.spm, 0x170) & 2) || !(ni_rd(nw.spm, 0x504) & 1) ||
++	    !(nw.prot & 0x4000) || !(nw.prot2 & 4) ||
++	    (nw.clock & 1) || (nw.mux21 & 0xffff0000) || (nw.mux22 & 0x0fffffff) ||
++	    !ni_pmic_read(0x202e, &volts) || (volts & 0xf0f) != 0x400 ||
++	    !ni_pmic_read(0x1c20, &mon13) || mon13 ||
++	    !ni_pmic_read(0x1c32, &mon18) || mon18) {
++		printf("NORD2 WIFI: power probe refused non-cold/RC/1.3V state\n");
++		return;
++	}
++	for (unsigned i = 0; i < 6; i++) {
++		if (!ni_pmic_read(nw_addr[i], &nw.pmic[i]) ||
++		    (nw.pmic[i] & nw_mask[i])) {
++			printf("NORD2 WIFI: power probe refused PMIC slot=%u\n", i);
++			return;
++		}
++	}
++	nw.saved = true; /* Arm restoration before the first PMIC/state write. */
++	unsigned stage = 1;
++	bool success = false;
++	uint32_t id = 0, cfg_id = 0;
++	printf("NORD2 WIFI: cold power probe begin; no firmware/DMA/RF\n");
++	for (unsigned i = 0; i < 6; i++) {
++		if (!nw_pmic_write(i, false)) { goto out; }
++	}
++	if (!nw_rail_wait(0x1c32, 3, 3) || !nw_rail_wait(0x1c20, 3, 3)) { goto out; }
++	stage = 2;
++	ni_mask(ni_gpio, 0x450, 0xffff0000, 0x11110000);
++	ni_mask(ni_gpio, 0x460, 0x0fffffff, 0x01111111);
++	ni_mask(ni_rt, 0, 0x3fff8, 0x8248);
++	ni_mask(ni_rt, 0x50, 0x4800, 0);
++	ni_mask(ni_rt, 0x70, 0x4800, 0x4800);
++	ni_wr(nw.spm, 0, 0x0b160001 | (nw.cfg & 0xfffe));
++	ni_mask(nw.gals, 0x504, 1, 1);
++	nw.domain_touched = true;
++	ni_mask(nw.spm, 0x304, 4, 4);
++	ni_mask(nw.spm, 0x304, 8, 8);
++	if (!nw_wait(nw.spm, 0x16c, 2, 2) || !nw_wait(nw.spm, 0x170, 2, 2)) { goto out; }
++	ni_mask(nw.spm, 0x304, 0x10, 0);
++	ni_mask(nw.spm, 0x304, 2, 0);
++	ni_mask(nw.spm, 0x304, 1, 1);
++	ni_wr(nw.infra, 0x2a4, 0x4000);
++	ni_wr(nw.infra, 0x718, 4); /* Selected clk-mt6885-pg, not POS's 0x2. */
++	ni_wr(nw.infra, 0x2a4, 0x2000);
++	if (!nw_wait(nw.infra, 0x228, 0x6000, 0) ||
++	    !nw_wait(nw.infra, 0x724, 4, 0)) { goto out; }
++	delay(6000); /* Platform XO settling delay. */
++	stage = 3;
++	/* Only map/access CONN after AP power, clock and bus acknowledgements. */
++	if ((ni_rd(nw.spm, 0x304) & 0x1f) != 0xd ||
++	    !(ni_rd(nw.gals, 0x504) & 1)) { goto out; }
++	vm_offset_t host = ml_io_map(0x18060000, 0x1000);
++	vm_offset_t conn = ml_io_map(0x18001000, 0x1000);
++	if (!host || !conn || !nw_wait(host, 0x184, 0x20, 0)) { goto out; }
++	id = ni_rd(conn, 0);
++	if (id != 0x20010101) { goto out; }
++	cfg_id = ni_rd(conn, 4);
++	success = true;
++out:
++	printf("NORD2 WIFI: power probe stage=%u id=%#x cfg=%#x success=%d\n",
++	    stage, id, cfg_id, success);
++	bool restored = nw_restore();
++	printf("NORD2 WIFI: power probe restored=%d\n", restored);
++	if (!restored) { panic("NORD2 WIFI: restoration failed; refuse Linux return"); }
++}
++
 +int
 +nord2_input_prepare_return(void)
 +{
 +	/* Called only after all other cores are OFF. Never take a thread lock. */
++	if (!nw_restore()) { return -1; }
 +	if (!ni_saved) { return 0; }
 +	bool idle = true;
 +	if (ni_pwrap_owned) {
@@ -4338,6 +4580,7 @@
 +	ni_ies_rt = ni_rd(ni_rt, 0x30);
 +	ni_saved = true; /* snapshots complete before first mutation */
 +	ni_wifi_snapshot(); /* PMIF cleanup is now armed, before any GPIO change. */
++	ni_wifi_power_probe();
 +	for (unsigned i = 0; i < sizeof(ni_pins) / sizeof(ni_pins[0]); i++) {
 +		unsigned pin = ni_pins[i].pin;
 +		ni_gpio_bit(pin, 0, false);
@@ -4423,7 +4666,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1253,4 @@
+@@ -658,3 +1466,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */

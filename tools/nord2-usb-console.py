@@ -23,9 +23,15 @@ ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('output', type=Path)
 ap.add_argument('--wait', type=float, default=180)
 ap.add_argument('--read-seconds', type=float, default=20)
+ap.add_argument('--timeout-ms', type=int, default=1500,
+                help='Timeout per read-only USB request (default: 1500)')
+ap.add_argument('--timeout-retries', type=int, default=3,
+                help='Retries at the same immutable offset (default: 3)')
 args = ap.parse_args()
 assert 0 < args.wait <= 600
 assert 0 < args.read_seconds <= 600
+assert 100 <= args.timeout_ms <= 5000 and 0 <= args.timeout_retries <= 11
+assert args.timeout_ms * (args.timeout_retries + 1) <= 30000
 args.output.mkdir(parents=True, exist_ok=True)
 lib = C.CDLL(ctypes.util.find_library('usb-1.0') or 'libusb-1.0.so.0')
 ptr = C.c_void_p
@@ -54,16 +60,16 @@ def request(code, value, size, index=0):
     # All requests are read-only and log offsets are immutable. An overloaded
     # phone can miss one EP0 deadline while printing or paging in userland;
     # retry the same offset without duplicating or losing captured bytes.
-    for attempt in range(4):
+    for attempt in range(args.timeout_retries + 1):
         n = lib.libusb_control_transfer(handle, 0xc0, code, value, index,
-                                       buffer, size, 1500)
+                                       buffer, size, args.timeout_ms)
         if n >= 0:
             return buffer.raw[:n]
         event = dict(request=code, value=value, index=index, error=n,
                      attempt=attempt + 1, time=time.time())
         with (args.output / 'transport-events.jsonl').open('a') as events:
             events.write(json.dumps(event) + '\n')
-        if n != -7 or attempt == 3:  # Retry TIMEOUT, never a disconnected device.
+        if n != -7 or attempt == args.timeout_retries:  # Never retry a disconnect.
             raise OSError(f'USB request {code:#x} failed: libusb {n}')
         time.sleep(0.05)
 

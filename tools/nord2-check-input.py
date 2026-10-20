@@ -10,6 +10,11 @@ out.mkdir(parents=True, exist_ok=True)
 text = (source / "bsd/dev/sweet_touch.c").read_text()
 code = "enum { NI_SCL" + text.split("enum { NI_SCL", 1)[1].split(
     "static void\nni_thread(", 1)[0]
+# This model exercises input while the radio probe is inactive. The AP/PMIC
+# snapshot and active radio restoration have their own exact-C fault models.
+radio_start = code.index("static void\nni_wifi_snapshot(")
+radio_end = code.index("\nint\nnord2_input_prepare_return(", radio_start)
+code = code[:radio_start] + "static bool nw_restore(void) { return true; }\n" + code[radio_end:]
 for name, body in (
     ("ni_rd", "return model_read(base, off);"),
     ("ni_wr", "model_write(base, off, v);"),
