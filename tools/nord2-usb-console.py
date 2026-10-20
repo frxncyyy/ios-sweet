@@ -4,6 +4,8 @@
 Usage: nord2-usb-console.py OUTPUT_DIRECTORY [--wait SECONDS]
 Selects product "Nord2 XNU console", never the Android ADB recovery interface.
 Only vendor IN requests are sent; there are no disk or memory-write commands.
+Linux access: install the adjacent 70-nord2-xnu-console.rules into
+/etc/udev/rules.d/ with administrator authentication, then reload udev.
 """
 import argparse
 import ctypes as C
@@ -86,9 +88,11 @@ try:
                     result = lib.libusb_open(device, C.byref(handle))
                     if result != -3 or time.monotonic() >= access_deadline:
                         break
-                    time.sleep(0.1)  # Allow the existing udev user-access rule to run.
+                    time.sleep(0.1)  # Allow the dedicated udev access rule to run.
                 if result != 0:
-                    raise SystemExit(f'Cannot open native USB console: libusb {result}')
+                    hint = ('; install/reload tools/70-nord2-xnu-console.rules'
+                            if result == -3 else '')
+                    raise SystemExit(f'Cannot open native USB console: libusb {result}{hint}')
                 break
     finally:
         lib.libusb_free_device_list(devices, 1)

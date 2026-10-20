@@ -2294,8 +2294,8 @@
 +} nusb_phy;
 +
 +/*
-+ * Reuse the local recovery's VID/PID so its existing host access rule also
-+ * applies. The vendor interface is deliberately NOT an ADB interface:
++ * Local diagnostic uses the recovery's VID/PID, with its own udev access
++ * rule matching product/serial. The vendor interface is NOT ADB:
 + * subclass 0x53/protocol1 and product "Nord2 XNU console". Local test only.
 + */
 +static const uint8_t nusb_device[] = {

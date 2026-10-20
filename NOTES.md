@@ -3,8 +3,56 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE: USB point14 returned to ADB RAM rescue; native USB did
-  NOT enumerate. Userdata unchanged. Boot still contains point14.**
+- **CURRENT DEVICE: point15 native USB LIVE LOG PASSED; ADB RAM rescue returned.
+  Boot still contains the authorized point15 image; userdata unchanged.**
+  After installing/reloading the dedicated udev rule, repeated the SAME
+  image using only fastboot reboot (phone had already returned to fastboot;
+  attempted adb preflight found no device, so sent no ADB reboot).
+  Native USB delivered14961B while XNU was active and ADB absent:
+  `research/nord2/usb/phy-console/retry-live/xnu-live.log`,
+  SHA-256 `3f1c8db40a7c05479d5e7bfea7003c0280a9f7ab07cfaf816cacc93d9fb7505f`.
+  Protocol NUSB/version1/configured1,96 status samples,201 total requests,
+  95 log reads,2 bus resets,0 stalls. Authenticated ADB rescue returned.
+  Saved pmsg `backup/nord2/logs/20261020-124040-usb-phy-stop15-retry/pstore/pmsg-ramoops-0`,
+  15484B, SHA-256
+  `655a9ba01f5f2b6d2146522e303f6de9983d28ee8fe70174ac7d0523f3d54176`.
+  Live bytes equal the exact prefix of recovered pmsg. Root rescue marker
+  and absence of block filesystem mounts verified. Evidence:
+  `research/nord2/usb/phy-console/{retry-verified.json,retry-host-kernel.log}`.
+  This proves native USB EP0 log/status transport, not yet concurrent boot
+  logging, bulk endpoints, CDC-ECM or a complete iOS USB stack.
+  **Next: background polling thread with the HFS diagnostic PID1 in RAM,**
+  to receive live progress while XNU continues mounting/executing userland.
+  Preserve existing authorized images; a new candidate needs its own approval.
+  First point15 run before host permission correction follows:
+  User explicitly authorized `nord2-usb-phy-stop15.img` after it was built
+  and verified. Expected product, single-device identity, boot partition size
+  and exact candidate/original-backup hashes checked; boot flash/reboot passed.
+  Evidence `research/nord2/usb/phy-console/hardware-test/flash.log`.
+  PC enumerated "Nord2 XNU console" at high-speed, descriptors byte-identical
+  to the expected device/configuration descriptors. XNU reports resets2,
+  requests10, log_reads0, stalls0, point15 stop and Linux return.
+  Reader failed with LIBUSB_ERROR_ACCESS(-3); no live log was read yet.
+  Saved pmsg `backup/nord2/logs/20261020-123430-usb-phy-stop15/pstore/pmsg-ramoops-0`,
+  15482B, SHA-256
+  `74fc5260f15b42a950559406c1157ace338810554c753c8f629db5d42ececcb0`.
+  Evidence `research/nord2/usb/phy-console/hardware-test/verified.json`.
+  PHY before: ACR0=00463c6e ACR5=40801000 ACR6=00000442 ACR3=c0040000,
+  ACR4=0000001a DTM0=02be00d4 DTM1=0. Active DTM0=02000000,
+  DTM1=00000226 ACR6=00100442; the inherited forced suspend/pulldown/
+  transceiver/termination bits were released. MAC connected POWER60e1,
+  final POWER60f1 DEV2b000003 OPSTATE12 EP0CSR40.
+  Root rescue/marker verified, no block filesystem/data mounted.
+  Userdata unchanged. Restore original boot only if rescue return fails.
+  Host access correction: existing system70-uaccess rule matches ADB/fastboot
+  INTERFACE descriptors, not VID/PID. Our vendor interfaceff5301 did not match.
+  New `tools/70-nord2-xnu-console.rules` grants active-session uaccess only
+  when VID18d1/PIDd001 + exact product and serial"nord2-xnu" match.
+  Syntax verified; installed through pkexec/authentication at
+  `/etc/udev/rules.d/70-nord2-xnu-console.rules`, exact contents compared.
+  `pkexec udevadm control --reload` succeeded after system authentication.
+  Same-image retry completed successfully above, without another boot write.
+  Prior point14 result follows:
   User approved the exact boot-only image and original-boot restoration if
   rescue return fails, then brought the phone to fastboot. Product oplus6893,
   boot size32MiB, non-userspace bootloader and both image/backup hashes checked.
@@ -42,7 +90,23 @@
   C compile and patch apply/match passed. Local relink replaces only
   sweet_usb.o in a copy of the tested point14 archive; kernel SHA-256
   `05dc0fc424d826b7196ab6b429a5857bf92567a05ccab348b43ea7a3f1d8daff`.
-  Image `nord2-usb-phy-stop15.img` Zopfli build running. Not authorized/flashed.
+  Image `shim/out/nord2-xnu/nord2-usb-phy-stop15.img`,33312768B, SHA-256
+  `e5cfe515f53bc38b1f1e534d5abff5da1281c3ae0bc2aeb25a4f8fa82b416a63`.
+  Payload SHA-256
+  `17131df6192cf9dd2bd3f8645ab4374a648257d5dfdfb374cf17e3041541874c`.
+  All static image/layout checks passed; original Linux kernel and both DT
+  representations match the original backup exactly, rescue ramdisk matches
+  the tested unstripped rescue. Manifest in `phy-console/manifest.json`.
+  Cmdline differs from point14 only by `nord2stopat=15`.
+  This exact image is authorized/flashed; hardware result recorded above.
+  Source committed/pushed as28b69c923ad6c3ac1dd81b25297f45b08f908d40.
+  Full Apple-clang rebuild PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39408508581
+  Downloaded run.json/build.log and xnu-kernel under
+  `research/ci-39408508581/`. CI kernel17224624B SHA-256
+  `29f27e75e228a11877c184183bd8dd04786cbe3ac66275ca45379113c3b2946c`
+  matches artifact SHA256SUMS. Hardware tests used the frozen local relink,
+  not this newly downloaded CI kernel.
   Image `shim/out/nord2-xnu/nord2-usb-console-stop14.img`,33312768B, SHA-256
   `80d3b5f0e3b428f5036784e924082e419f933bd95d59ef088f4dd239df159c6f`;
   payload `48fde2c0e404f2d45f53f08e08bd9f53a41c436774ace1358c633ac9bcc30800`.
@@ -86,8 +150,9 @@
   clocks/PHY/VBUS. Serves for45s with interrupts masked and explicit watchdog
   service, then disconnects/restores MAC state and returns to ADB rescue.
   Generic panic return also calls its no-op-unless-owned cleanup.
-  - Native descriptor uses the current recovery VID18d1/PIDd001 to reuse
-    the existing host udev access rule, but product is "Nord2 XNU console",
+  - Native descriptor uses the current recovery VID18d1/PIDd001;
+    a dedicated host udev rule is needed (see point15 result above).
+    Product is "Nord2 XNU console",
     serial "nord2-xnu", vendor interfaceff/53/01 (NOT ADB).
     `tools/nord2-usb-console.py OUTPUT [--wait 180]` selects that exact product
     via sysfs/libusb, reads protocol status request0x52 and pmsg request0x51
@@ -145,14 +210,15 @@
     `nord2-rescue-stop12.img` built and all static checks passed: 33,314,816B,
     SHA-256 `7ec48eb45e4533fae5b40a0438153c6c31b4c7d9ee14a6c1cd8a336843503d4e`.
     Unstripped, already-tested rescue ramdisk is preserved exactly.
-    No combined image or userdata installation has been flashed.
+    This stop12/rescue candidate was not flashed. Combined USB point13/14
+    images were tested later as recorded above; userdata remains unchanged.
   - User proposed native XNU USB and encouraged a complete implementation.
     Local MT6893 driver and live DT identify MediaTek MTU3, MAC11201000,
     IPPC11203e00, USB2 PHY11e40000, high-speed. Existing Sweet driver is
     Qualcomm DWC3 and remains excluded. Plan: MTU3 enumeration/control,
     then data endpoints for console/transfers; Linux EP0 is PIO, QMU handles
     data DMA. Need inspect inherited clock/PHY/controller state on XNU.
-    USB port is not implemented or hardware-tested yet.
+    This was the initial USB plan; current point13/14 results are above.
     First source milestone: `nord2_usb_probe()` in `bsd/dev/sweet_usb.c`
     is compiled only on Nord2, completely excludes the Qualcomm DWC3 code,
     and runs only at `nord2stopat=13` before root selection. It checks
@@ -231,12 +297,11 @@
   Android userdata replacement is now in scope; no full data backup requested.
   No userdata write has happened yet. Preserve bootloaders/recovery/modem and
   existing backups. Prepare concrete iOS boot/recovery/log path before flashing.
-  Current next work: userdata replacement will prevent ordinary Android boot;
-  inspect existing recovery for an ADB rescue environment and prepare a way
-  to retrieve pmsg/logs without Android userdata. Also address safe UFS host
-  cleanup before any post-root panic chain-back: current point12 cleanup is
-  explicit before its stop, generic panic return does NOT release active root
-  UFS ownership. RAM-root diagnostic is unaffected (UFS never selected).
+  Historical next steps after PID1: prepare ADB rescue and generic UFS cleanup
+  before replacing userdata. Both were implemented later (see above).
+  Rescue and combined chain-back are now hardware-tested; generic cleanup
+  with an owned UFS root is only host-tested so far. RAM-root diagnostic was
+  unaffected because UFS was never selected.
   Existing recovery is backed up (128MiB); parsed locally under
   `research/nord2/recovery-unpacked/` without changing the device. It contains
   Lineage Android15 recovery init/adbd, configfs USB scripts and all shared libs.

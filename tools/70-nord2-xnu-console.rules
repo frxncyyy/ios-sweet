@@ -1,0 +1,4 @@
+# Grant the active local session access only to this diagnostic XNU gadget.
+# Install as /etc/udev/rules.d/70-nord2-xnu-console.rules, then reload udev.
+# VID/PID alone is insufficient: the stock ADB gadget uses the same pair.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="18d1", ATTR{idProduct}=="d001", ATTR{product}=="Nord2 XNU console", ATTR{serial}=="nord2-xnu", TAG+="uaccess"
