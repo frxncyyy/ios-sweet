@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **NEW UFS / COMMON WI-FI IMAGES VERIFIED; AWAIT EXACT AUTHORIZATION.**
+  CI39506694221 / source9327714bfe56719881e4c6251243fcd6afc97b24 passed.
+  Focused linked review passed: exact LINERESET exception, paired range mapping,
+  common opt-in, all40 snapshots/restoration and dirty handoff block.
+  Both images33,275,904 bytes with278,528 bytes spare in boot:
+  `shim/out/nord2-xnu/nord2-ufs-linereset-stop23.img` SHA-256
+  477e2abfb2ce6418544acbc1d75868898a0c0b0ad8b4f5e46b498c7e3d191101;
+  payload b551e0e65a572a4f614604847837529eac2075291d67acf41238594cd3742f2f.
+  RO pre-root two-lane trial, GPT verification and negotiated x1 restoration,
+  then always halt. Parse with explicit --allow-line-reset; old captures keep
+  their original zero-only policy. No root mount or Linux handoff.
+  `shim/out/nord2-xnu/nord2-ios-wifi-common-stop23.img` SHA-256
+  2e4f315e66bb84e9d811ca4245db08342ad1aff235e2b121fc7d13aea33dfd1d;
+  payload bb0c7a7ab02203a47d44412bdd199de752b1724f17ffe0fe46e7888d7a1a4764.
+  RW iOS, eight cores, input/display/USB, fast console, RTC skip, four-file
+  firmware check and reversible40-register common Wi-Fi setup. New setup is
+  hardware UNTESTED; dirty restoration blocks power-off/Linux handoff and
+  requires physical fastboot. No firmware execution/RF/networking yet.
+  Independent unpack, exact kernel segments, Android header, Linux/bothDTs,
+  rescue raw contents and static boot guards all PASS. Exact runners prepared
+  under private ufs-linereset-common/{diagnostic,ios}, flags respectively
+  --authorized-ufs-linereset-boot / --authorized-wifi-common-boot; capture60s/180s.
+  Neither runner executed or image authorized. Both verify current working
+  ce84 image plus original backups/rescue before flashing. Phone remains on
+  working ce84 iOS; no USB capture client active. Need new sequence approval,
+  physical fastboot for each test. A-die scoped-ID candidate remains private,
+  independent source review/fault tests/ARM64 compile PASS, no hardware claim.
+
 - **CURRENT OBSERVER FINALIZED; PHONE ON WORKING IOS.**
   ce84 USB600s deadline complete, no transport/capacity error. Log309,551B
   SHA-256 e9ef4a1cb8ac6de606a04f0b928d888cac33ed24cb941a79dd4473ee6ebf748e.
