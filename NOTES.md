@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **COMBINED NEXT CANDIDATE CI39491596110/sourcece25bf3 RUNNING.**
+  Includes opt-inRTCskip+extendedreadonlyUFSlimits+priorGUIretry/diagnostics
+  andfirmwareRAMverification. Intendedimage nord2-ios-rtc-ufs-wifi-stop23.img;
+  private rtc-ufs-wifi build/verify prepared, notpacked/flashed/authorized.
+  Originaltestedrescuebase selected; Zopfli30iterations planned forsize.
+  Optional private recompression of exact rescue CPIO being evaluated only
+  ifimageexceeds32MiB; testedrescuefile remainsunchanged. Noimageclaims yet.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39491596110
+  Isolated wifi_emi_snapshot.{c,h} prepared withhosttests/nativeARMcompile:
+  exactSMCstructuredREAD, preservesrawreturns, validatesselectors/groups/
+  regions, maximum128queries, stopsunsupported, neverSET/CLEAR/MMIO writes.
+  Notlinked/intoboot, noSMCexecuted, noeffectivepermissionclaim/deadlineclaim.
+  Private emi-permission-plan.md documentslimitations. RootreviewPASS.
+
 - **MEASURED: UFS G4x1 RATE B; NEXT RTC-SKIP/LIMITS SOURCE READY.**
   Authorized8eb3f477 boot reports all6DME_GET valid0x3f: RX/TXgear4,1laneeach,
   HSseries2,pwrmode0x11, noerror/pending. BeforeGUIownership:57793commands,
