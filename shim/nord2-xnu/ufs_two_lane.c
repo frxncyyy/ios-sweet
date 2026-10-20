@@ -37,7 +37,14 @@ static int healthy(struct run *s)
  v=rd(s,HCS);if(!gate(s,3,v,(v&0x30)==0))return 0;
  const uint32_t offsets[4]={0x58,0x78,0x24,0x18};
  for(unsigned i=0;i<4;i++){v=rd(s,offsets[i]);if(!gate(s,4+i,v,v==0))return 0;}
- for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);if(!gate(s,8+(a-0x38)/4,v,v==0))return 0;}
+ /* Selected Linux ufshcd.c6113–6126 ignores PHY LINERESET (bit4):
+  * ufshci.h212–214 valid=bit31, lane errors=bits3:0. Admit only the
+  * captured valid+LINERESET value, never other/reserved/lane-error bits.
+  * No extra read/clear: preserve read-sensitive register evaluation order.
+  * IS must still be clean; an unexpected UIC_ERROR interrupt is not allowed. */
+ for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);
+  int pass=v==0 || (a==0x38 && v==UINT32_C(0x80000010));
+  if(!gate(s,8+(a-0x38)/4,v,pass))return 0;}
  return 1;
 }
 static int allowed(uint16_t attr,int set)

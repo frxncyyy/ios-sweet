@@ -3,6 +3,53 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **COST OBSERVER: LOCKSCREEN CONFIRMED, USER REPORTS MUCH FASTER BOOT.**
+  ce84a4f3 flash/reboot OKAY00:11:32CEST. Capture600s stillrunning (do not
+  restart/reboot). Human: lockscreenvisible, avvio "anni luce più veloce";
+  noexacthumanbootduration. FirstGUI47.720902s fromstage6, framebuffer4.248683s.
+  41,328strategybuffers/37,414reads/1,994,534,400requestedbytes,421RMWreads.
+  map0.986191s, mutexwait24.465547s(overlapping aggregate), maxwait0.157074s,
+  held7.695039s, copy0.483964s. 41,941commands,1,949,347,840readbytes,
+  cmd7.309914s, doorbell6.965747s, errors0/timeouts0. G4x1B remains. All4WiFi
+  files verified, powerprobeID20010101/success1/restored1. Do not attribute all
+  47.7s toUFS or subtract/sumoverlappingtimers aswalltime. ExactXNU APIs support
+  narrowpaired buf_map_range/buf_unmap_range update, nowactive; strategy and
+  sourceAPI contract ASan/UBSan+fullBSDcompilePASS. Improvementnotmeasured.
+  NativeCPUclock helper remainsprivate/unintegrated; nofrequencyclaim.
+  Combinednextsource includesLINERESET exception +defaultoff commonWiFi
+  transaction +pairedmapping only. Preparing fullCI; notineither currentimage.
+
+- **SECOND AUTHORIZED UFS COST OBSERVER STARTING.**
+  Human confirms physicalfastboot. ce84a4f3 runner nowstarting, captures600s.
+  Single-use; neverrerun afterflash.log exists. No newpermission needed; exact
+  image coveredby precedingsequence. ParentownsUSB. NewLINERESET/commonWifi
+  sources areseparatefrom this frozen8702715image. Collectstrategy/GUItiming.
+
+- **PREFLIGHT CAPTURE COMPLETE: UECPA LINERESET IS EXACT REFUSAL.**
+  2ec05f7f flash/reboot OKAY00:06:41CEST; nativeUSB120s exit0. Full20-line
+  log16,844B SHA-256 bb5753f35548d851c40086cd27b4691ad612ea94bd6f0afb99d0da89cd956276.
+  Initial fail9/index8 measuredUECPA80000010; all23ownershipconditionsPASS,
+  HCE1/HCS10f, doorbells/IE/AHIT0. NoDMEcommands/SETs/rootmount. Controller
+  gates beyondUECPA were unread, notzero. SelectedAndroid ufshcd.c6113ff
+  explicitly ignores LINERESET, distinct from laneerror mask0xf. Narrow next
+  canonicalfix accepts only0 or exact80000010 atsameexistingread; no broadmask,
+  noextraMMIO/clear, allothererror/statusgates unchanged. Fault/transition/
+  rollback/readtrace testsPASS. Newfix NOT in either authorizedimage.
+  First runnerEXECUTED; neverrerun. Needphysicalfastboot for alreadyauthorized
+  ce84a4f3 observer. Privatehardware-result.json +hardware-report-final.json.
+  Common Wi-Fi candidate nowintegrated in active source with defaultoff
+  nord2wificommon=1,40registersnapshot/apply/readback/reverserestore, freshcold
+  ownerguards, dirtyhandoffblock and elapsedcounter. Exactsource/table/fault
+  tests, ARM64helpers and activefullsweet_touch compilePASS; noCI/flashyet.
+
+- **UFS PREFLIGHT/COST SEQUENCE AUTHORIZED; FIRST RUNNER STARTING.**
+  Human: "Autorizzo entrambi; pronto in fastboot". Covers exact2ec05f7f
+  diagnostic then ce84a4f3 observer hashes below. Private authorization record
+  ufs-preflight-cost/authorization-sequence.json. Parent owns device/USB.
+  Diagnostic runner is single-use; never rerun after flash.log exists. Collect
+  actual20-line preflight before requesting physicalfastboot for authorized
+  observer. No new approval needed for second image in this sequence.
+
 - **CI39503015652: BOTH NEW UFS IMAGES VERIFIED; AWAIT AUTHORIZATION.**
   Source870271596eb0a09bd5b2920981681bf8cca200fc, full CI success and focused
   linked gate/cost review PASS. Both images33,273,856B, boot spare280,576B.

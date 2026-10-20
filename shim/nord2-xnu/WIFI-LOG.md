@@ -1,5 +1,47 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-21: firmware reads verified; common setup ready for a hardware test
+
+The `0956173b…2235c89a` boot verified all four firmware files in RAM from
+the preserved vendor partition: 973648, 5726, 296916 and 49868 bytes.
+The probe completed with status0 in661119 ticks at13MHz (~50.86ms).
+These are verified inputs, not evidence of firmware execution or networking.
+The exact Display Zoom reset restored1125x2436 surfaces; the user confirmed
+the lockscreen. The unrelated EMI SMC queries all returned x0=2, so their
+apparent structural validity is not proof of effective MPU permissions.
+ROM placement must not rely on that decoded permission snapshot.
+
+New default-off `nord2wificommon=1`, inside the existing `nord2wifi=2`
+powered window, snapshots, applies, reads back and reverses40 common controls:
+four D-die retention registers and36 non-BT SPI table entries. The table is
+extracted independently in the test from selected MT6893 Android source
+`04d00c2565764c3922c9b4826b5acff1106e533f`. It does not issue RF SPI commands,
+release a subsystem CPU, load firmware into EMI or transmit.
+
+The native adapter establishes a fresh owner only after the original CONN
+off/isolated/rail-off predicates pass, then rechecks AP accessibility and14
+shared CONN fields for WFSYS/BGF/BT/GPS/FM requests and SPI busy state. It
+never reads powered-off subordinate buses. Every destination is saved before
+mutation; partial writes are included in reverse restoration. If restoration
+cannot be verified, the persistent dirty latch preserves ownership and blocks
+power-off and Linux handoff. The existing return path then halts before other
+subsystem cleanup. A physical reset is required in that case.
+
+`tools/test-nord2-wifi-common.py` covers the exact native adapter and common
+engine:640 callback fault positions, partial apply/restoration failures,
+guard loss, register allowlists, opt-out, and source-exact table order/masks.
+ASan/UBSan, helper ARM64 compiles and full active `sweet_touch.c` compile pass.
+The transaction reports elapsed CNTVCT ticks and actual CNTFRQ; frequent
+guard reads remain a bounded diagnostic cost, not a demonstrated runtime
+performance characteristic. Full CI/image/hardware validation is pending.
+
+Private next-stage work contains a bounded A-die CHIP_ID TOPSPI reader.
+It is not integrated: it requires retained common setup plus reviewed strap,
+clock and reset sequencing. The selected A-die function clears the entire
+16KiB SYSRAM after earlier efuse/build-mode writes, so do not invent a new
+ordering to preserve those words. EMI ownership/permissions and execution
+handoff still need concrete validation before ROM placement and CPU release.
+
 ## 2026-10-20: conninfra power probe passed; console/display regression
 
 Authorized power/fastlog image5d917ab1…5d773f06d flashed to boot and rebooted

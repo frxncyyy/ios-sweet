@@ -14,7 +14,8 @@ code = "enum { NI_SCL" + text.split("enum { NI_SCL", 1)[1].split(
 # snapshot and active radio restoration have their own exact-C fault models.
 radio_start = code.index("static void\nni_wifi_snapshot(")
 radio_end = code.index("\nint\nnord2_input_prepare_return(", radio_start)
-code = code[:radio_start] + "static bool nw_restore(void) { return true; }\n" + code[radio_end:]
+code = (code[:radio_start] + "static bool ncc_latched_dirty;\n"
+        "static bool nw_restore(void) { return true; }\n" + code[radio_end:])
 for name, body in (
     ("ni_rd", "return model_read(base, off);"),
     ("ni_wr", "model_write(base, off, v);"),
@@ -139,6 +140,9 @@ int main(void) {
     assert(ni_keys_read(&top) && top==0xa && regs[4][0xca8/4]==1<<15);
     wrap_complete=false; delays=0;
     assert(!ni_keys_read(&top) && delays==1000);
+    ncc_latched_dirty=true; ni_saved=true;
+    assert(nord2_input_prepare_return()==-1 && ni_saved);
+    ncc_latched_dirty=false;
     ni_saved=true; ni_bus_owned=false;
     assert(nord2_input_prepare_return()==-1); /* cannot hand active wrapper to Linux */
     ni_saved=true; regs[4][0xca8/4]=(1<<15)|(6<<1);

@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 
+canonical = Path(__file__).resolve().parents[1] / "shim/nord2-xnu"
 source = Path("research/ci-39158169212/buildtree/xnu/bsd/dev/sweet_touch.c").read_text()
 pmic = source[source.index("static bool\nni_pmic_read("):
               source.index("static void\nni_wifi_snapshot(")]
@@ -23,6 +24,11 @@ prefix = r'''
 #include <string.h>
 #include <setjmp.h>
 #include <stdarg.h>
+#include "wifi_common.h"
+#include "wifi_cold_snapshot.h"
+#define NCC_DEVICE_BARRIER() ((void)0)
+#define NCC_TICKS() UINT64_C(42)
+#define NCC_FREQUENCY() UINT64_C(13000000)
 typedef uintptr_t vm_offset_t;
 static vm_offset_t ni_pwrap=0x10026000, ni_gpio=0x10005000, ni_rt=0x11ea0000;
 static bool ni_pwrap_owned;
@@ -154,6 +160,7 @@ static vm_offset_t ml_io_map(vm_offset_t a,size_t n) {
  return a;
 }
 static void PE_parse_boot_argn(const char *n,void *v,size_t s) {
+ if(!strcmp(n,"nord2wificommon")){assert(s==sizeof(unsigned));*(unsigned*)v=0;return;}
  assert(!strcmp(n,"nord2wifi") && s==sizeof(int));*(int*)v=bootarg;
 }
 static int quiet_printf(const char *fmt,...) {
@@ -239,5 +246,7 @@ with tempfile.TemporaryDirectory() as tmp:
     c.write_text(prefix + pmic + actual + suffix)
     subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-O1", "-g",
                     "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
-                    "-fno-omit-frame-pointer", str(c), "-o", str(exe)], check=True)
+                    "-fno-omit-frame-pointer", "-I" + str(canonical), str(c),
+                    str(canonical / "wifi_common.c"),
+                    str(canonical / "wifi_cold_snapshot.c"), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

@@ -5,6 +5,8 @@ import re,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[1];s=(ROOT/'research/ci-39158169212/buildtree/xnu/bsd/dev/sweet_ufs.c').read_text()
 a=s.index('static struct nord2_ufs_strategy_stats {');b=s.index('\nstatic struct nord2_ufs_link_stats',a);stats=s[a:b]
 a=s.index('static void\nsweet_ufs_strategy(buf_t bp)');b=s.index('\nstatic int\nsweet_ufs_ioctl(',a);strategy=s[a:b]
+assert 'buf_map_range(bp, &vaddr)' in strategy and 'buf_unmap_range(bp);' in strategy
+assert 'buf_map(bp,' not in strategy and 'buf_unmap(bp)' not in strategy
 for tag in ('STRATEGY','PHASES','CALLERS','SIZES'):
  literal=re.search(r'printf\("(NORD2 UFS '+tag+r':[^"\n]+)"',s)[1]
  worst=literal.replace('%llu','18446744073709551615').replace('\\n','\n')
@@ -40,8 +42,8 @@ static uint32_t buf_flags(buf_t b){return b->flags;}
 static void buf_setresid(buf_t b,uint32_t n){b->resid=n;}
 static void buf_seterror(buf_t b,int e){b->error=e;}
 static void buf_biodone(buf_t b){assert(!held);b->done++;}
-static int buf_map(buf_t b,caddr_t *p){assert(!held);maps++;ticks+=5;*p=b->data;return map_error;}
-static void buf_unmap(buf_t b){(void)b;assert(!held);unmaps++;}
+static int buf_map_range(buf_t b,caddr_t *p){assert(!held);maps++;ticks+=5;*p=b->data;return map_error;}
+static void buf_unmap_range(buf_t b){(void)b;assert(!held);unmaps++;}
 static void lck_mtx_lock(int *p){assert(p==&sweet_ufs_lock&&!held);held=1;ticks+=7;}
 static void lck_mtx_unlock(int *p){assert(p==&sweet_ufs_lock&&held);held=0;}
 static int ufs_read_blocks(uint64_t lba,uint32_t n){assert(held&&lba>=su.first_block&&n<=256);reads++;ticks+=50;

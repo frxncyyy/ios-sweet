@@ -15,6 +15,7 @@ static uint32_t regs[64],values[65536];
 static uint64_t clockticks;
 static unsigned issued,fail_at,timeout_at,wrong_status_at,extra_is_at,only_ucc_at,only_upm_at,stalled,reads,read_failure,read_corruption,polls,power;
 static int ownership;
+static unsigned pa_mode,pa_reads,pa_error_at;
 static unsigned mismatch_at,loss_at,error_at,read_uncertain,host_error_at,device_error_at;
 static uint32_t rd(void *c,uint32_t a) {
  (void)c;assert(a/4<64);
@@ -29,6 +30,10 @@ static uint32_t rd(void *c,uint32_t a) {
   if(issued==error_at)regs[0x3c/4]=1;
   if(issued==host_error_at)regs[0x30/4]|=0x10;
   if(issued==device_error_at)regs[0x30/4]|=0x20;
+ }
+ if(a==0x38){pa_reads++;
+  if(pa_error_at && issued>=pa_error_at)return 0x80000011;
+  if(pa_mode==1 || (pa_mode==2 && pa_reads==1) || (pa_mode==3 && issued>=25))return 0x80000010;
  }
  return regs[a/4];
 }
@@ -58,6 +63,7 @@ static int hash(void *c,uint64_t lba,uint32_t n,unsigned char out[32]) {
 static const unsigned char expected[32]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
 static struct n2l_ops ops={rd,wr,ticks,delay,barrier,owned,hash,expected,1000000};
 static void reset(void) {
+ pa_mode=pa_reads=pa_error_at=0;
  memset(regs,0,sizeof(regs));memset(values,0,sizeof(values));
  regs[0x34/4]=1;regs[0x30/4]=0x10b;clockticks=0;ownership=1;
  mismatch_at=loss_at=error_at=read_uncertain=host_error_at=device_error_at=0;
@@ -93,6 +99,30 @@ int main(void) {
  for(unsigned i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
   reset();values[invalid[i]]=99;assert(n2l_diagnostic(&ops,0,1,&r)&&!r.sets&&!r.root_allowed);
  }
+ // Exact valid+LINERESET may be initial-only (read-sensitive model),
+ // persistent or first observed during transition; no hidden extra read.
+ for(unsigned mode=1;mode<=3;mode++){
+  reset();pa_mode=mode;assert(!n2l_diagnostic(&ops,0,1,&r));restored(&r);
+  assert(r.commands==115 && r.sets==37 && pa_reads>115);
+  assert(r.preflight[8]==(mode==3?0:0x80000010));
+ }
+ // Every other individual PHY bit remains rejected, even with LINERESET.
+ for(unsigned bit=0;bit<32;bit++)if(bit!=4 && bit!=31){
+  reset();regs[0x38/4]=0x80000010u|(1u<<bit);
+  assert(n2l_diagnostic(&ops,0,1,&r)&&r.error==-2&&!r.commands&&r.preflight_fail==9);
+ }
+ const uint32_t reject_pa[]={0x10,0x80000000,0xffffffff,0x80000001,0x8000000f};
+ for(unsigned i=0;i<sizeof(reject_pa)/sizeof(reject_pa[0]);i++){
+  reset();regs[0x38/4]=reject_pa[i];assert(n2l_diagnostic(&ops,0,1,&r)&&!r.commands);
+ }
+ // Lane errors at any actual command, including rollback, remain uncertain.
+ for(unsigned i=1;i<=115;i++){
+  reset();pa_mode=1;pa_error_at=i;
+  assert(n2l_diagnostic(&ops,0,1,&r)&&r.uncertain&&!r.root_allowed&&!r.handoff_allowed&&issued==i);
+ }
+ // LINERESET allowance never licenses an unexpected UIC_ERROR IRQ.
+ reset();pa_mode=1;extra_is_at=25;
+ assert(n2l_diagnostic(&ops,0,1,&r)&&r.uncertain&&issued==25&&!r.handoff_allowed);
  // Each baseline/forward/rollback command faulted independently.
  for(unsigned i=1;i<=115;i++) {
   reset();fail_at=i;assert(n2l_diagnostic(&ops,0,1,&r)&&!r.root_allowed);

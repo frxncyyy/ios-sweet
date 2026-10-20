@@ -3776,11 +3776,12 @@
  	if (count == 0) {
  		goto done;
  	}
+-	if (buf_map(bp, &vaddr)) {
 +#if defined(NORD2)
 +	bool measure = nord2_ufs_profile_enabled;
 +	uint64_t map_begin = measure ? nord2_ufs_counter() : 0;
 +#endif
- 	if (buf_map(bp, &vaddr)) {
++	if (buf_map_range(bp, &vaddr)) {
  		error = EIO;
  		goto done;
  	}
@@ -3843,7 +3844,7 @@
  				error = ufs_write_blocks(su.first_block + lba, blocks);
  			}
  		}
-@@ -459,6 +1418,9 @@
+@@ -459,8 +1418,11 @@
  		done += want;
  		buf_setresid(bp, count - done);
  	}
@@ -3851,8 +3852,11 @@
 +	if (measure) { nord2_ufs_strategy_stats.held_ticks += nord2_ufs_counter() - held_begin; }
 +#endif
  	lck_mtx_unlock(&sweet_ufs_lock);
- 	buf_unmap(bp);
+-	buf_unmap(bp);
++	buf_unmap_range(bp);
  
+ done:
+ 	if (error) {
 @@ -586,6 +1548,12 @@
  static int
  sweet_ufs_init(void)
@@ -4673,9 +4677,11 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,811 @@
+@@ -1,3 +1,823 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
++#include "wifi_common.c"
++#include "wifi_cold_snapshot.c"
 +/*
 + * Nord2 FT3518 and physical keys. Pin assignments/report format come from
 + * the live Nord2 DT and its Oplus FT3518/MT6885 pinctrl/keypad drivers.
@@ -5131,6 +5137,7 @@
 + * No WFSYS CPU release, firmware/EMI writes, DMA, calibration or RF.
 + * MT6359P addresses below match mt6885 upmu_hw.h, NOT mt6359/registers.h.
 + * The existing input thread is the sole PMIF/GPIO owner during this probe. */
++static bool ncc_fresh_owned, ncc_latched_dirty;
 +static struct {
 +	vm_offset_t spm, infra, gals;
 +	uint32_t cfg, pwr, prot, prot2, clock, mux21, mux22, drive, pd, pu;
@@ -5198,6 +5205,7 @@
 +static bool
 +nw_restore(void)
 +{
++	if (ncc_latched_dirty) { return false; } /* preserve dirty common ownership */
 +	if (!nw.saved) { return true; }
 +	if (nw.domain_touched) {
 +		/* Isolate the bus before removing power, including partial-on failures.
@@ -5245,12 +5253,17 @@
 +	    (ni_rd(ni_rt, 0x50) & 0x4800) != (nw.pd & 0x4800) ||
 +	    (ni_rd(ni_rt, 0x70) & 0x4800) != (nw.pu & 0x4800)) { return false; }
 +	nw.saved = false;
++	ncc_fresh_owned = false;
 +	return true;
 +}
++
++#include "wifi_common_adapter.inc"
 +
 +static void
 +ni_wifi_power_probe(void)
 +{
++	if (ncc_latched_dirty) { panic("NORD2 WIFI COMMON: dirty; refuse another probe"); }
++	ncc_fresh_owned = false;
 +	int enabled = 0;
 +	PE_parse_boot_argn("nord2wifi", &enabled, sizeof(enabled));
 +	if (enabled != 2) { return; }
@@ -5285,6 +5298,7 @@
 +			return;
 +		}
 +	}
++	ncc_fresh_owned = true; /* only after ALL original cold+PMIC checks */
 +	nw.saved = true; /* Arm restoration before the first PMIC/state write. */
 +	unsigned stage = 1;
 +	bool success = false;
@@ -5325,6 +5339,7 @@
 +	id = ni_rd(conn, 0);
 +	if (id != 0x20010101) { goto out; }
 +	cfg_id = ni_rd(conn, 4);
++	ncc_power_window(host, conn, id);
 +	success = true;
 +out:
 +	printf("NORD2 WIFI: power probe stage=%u id=%#x cfg=%#x success=%d\n",
@@ -5337,6 +5352,7 @@
 +int
 +nord2_input_prepare_return(void)
 +{
++	if (ncc_latched_dirty) { return -1; } /* refuse Linux-return preparation */
 +	/* Called only after all other cores are OFF. Never take a thread lock. */
 +	if (!nw_restore()) { return -1; }
 +	if (!ni_saved) { return 0; }
@@ -5485,7 +5501,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1466,4 @@
+@@ -658,3 +1478,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -6490,7 +6506,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane.c
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,162 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Original staged pre-root experiment. Selected Linux ufshcd.c:4125,4449;
@@ -6532,7 +6548,14 @@
 + v=rd(s,HCS);if(!gate(s,3,v,(v&0x30)==0))return 0;
 + const uint32_t offsets[4]={0x58,0x78,0x24,0x18};
 + for(unsigned i=0;i<4;i++){v=rd(s,offsets[i]);if(!gate(s,4+i,v,v==0))return 0;}
-+ for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);if(!gate(s,8+(a-0x38)/4,v,v==0))return 0;}
++ /* Selected Linux ufshcd.c6113–6126 ignores PHY LINERESET (bit4):
++  * ufshci.h212–214 valid=bit31, lane errors=bits3:0. Admit only the
++  * captured valid+LINERESET value, never other/reserved/lane-error bits.
++  * No extra read/clear: preserve read-sensitive register evaluation order.
++  * IS must still be clean; an unexpected UIC_ERROR interrupt is not allowed. */
++ for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);
++  int pass=v==0 || (a==0x38 && v==UINT32_C(0x80000010));
++  if(!gate(s,8+(a-0x38)/4,v,pass))return 0;}
 + return 1;
 +}
 +static int allowed(uint16_t attr,int set)
@@ -6937,4 +6960,327 @@
 +#define NORD2_ZOOM_RESET_H
 +/* Call only after root mount, before launching PID1. Default is inactive. */
 +void nord2_zoom_reset(void);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_common.c
+@@ -0,0 +1,83 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_common.h"
++const struct ncc_reg ncc_table[NCC_COUNT]={
++ {0x18000038u,0xffffffffu,0x00000000u},
++ {0x1800003cu,0xffffffffu,0x000000ffu},
++ {0x18000050u,0xffffffffu,0x00000000u},
++ {0x18000054u,0xffffffffu,0x00000001u},
++ {0x18005070u,0xffffffffu,0x0af40a04u},
++ {0x18005074u,0xffffffffu,0x00a00090u},
++ {0x18005078u,0xffffffffu,0x009c008cu},
++ {0x1800507cu,0x00000fffu,0x00000a08u},
++ {0x18005080u,0x00000fffu,0x00000094u},
++ {0x18005084u,0x00000fffu,0x0000002cu},
++ {0x18005088u,0xffffffffu,0x0afc0a0cu},
++ {0x1800508cu,0x00000fffu,0x000000f0u},
++ {0x18005090u,0x00000fffu,0x000000f4u},
++ {0x18005094u,0x00000fffu,0x000000fcu},
++ {0x18005098u,0x00000fffu,0x000000f8u},
++ {0x18005004u,0x0000001fu,0x00000008u},
++ {0x18005010u,0x0000ffffu,0x0000a03cu},
++ {0x18005014u,0x0000ffffu,0x0000a03cu},
++ {0x18005018u,0x0000ffffu,0x0000aa18u},
++ {0x1800501cu,0x0000ffffu,0x0000aa18u},
++ {0x18005020u,0x0000ffffu,0x0000a0c8u},
++ {0x18005024u,0x0000ffffu,0x0000aa00u},
++ {0x18005028u,0x0000ffffu,0x0000a0b4u},
++ {0x1800502cu,0x0000ffffu,0x0000a34cu},
++ {0x18005030u,0xffffffffu,0x00000000u},
++ {0x18005034u,0xffffffffu,0x00000000u},
++ {0x18005038u,0xffffffffu,0x74e0fff5u},
++ {0x1800503cu,0xffffffffu,0x76e8fff5u},
++ {0x18005040u,0xffffffffu,0x00000000u},
++ {0x18005044u,0xffffffffu,0xffffffffu},
++ {0x18005048u,0xffffffffu,0x00000019u},
++ {0x1800504cu,0xffffffffu,0x00010400u},
++ {0x18005050u,0xffffffffu,0x57400000u},
++ {0x18005054u,0xffffffffu,0x57400000u},
++ {0x18005058u,0xffffffffu,0x44e0fff5u},
++ {0x1800505cu,0xffffffffu,0x44e0fff5u},
++ {0x18005060u,0xffffffffu,0x00000001u},
++ {0x18005064u,0xffffffffu,0x00000000u},
++ {0x18005068u,0xffffffffu,0x00040019u},
++ {0x1800506cu,0xffffffffu,0x00410440u},
++};
++static int guard(const struct ncc_ops *o,void *c){return o->check(c,NCC_REQUIRED);}
++int ncc_run(const struct ncc_ops *o,void *c,unsigned opt,unsigned stage,struct ncc_result *r)
++{
++ unsigned i,n; uint32_t v,w; int e;
++ if(!r)return -1;
++ *r=(struct ncc_result){0}; r->clean=1;
++ if(opt!=1||stage<1||stage>2||!o||!o->check||!o->read||!o->write||!o->barrier){r->error=-1;return -1;}
++ n=stage==1?4:NCC_COUNT; r->phase=1;
++ for(i=0;i<n;i++){
++  if(guard(o,c)||o->read(c,ncc_table[i].address,&r->before[i])){r->error=-2;return -1;}
++  r->snapshots++;
++ }
++ r->phase=2;
++ for(i=0;i<n;i++){
++  /* Recheck full snapshot before writing: unexpected concurrent changes fail. */
++  if(guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=r->before[i]){r->error=-3;break;}
++  w=(v&~ncc_table[i].mask)|(ncc_table[i].value&ncc_table[i].mask);
++  if(guard(o,c)){r->error=-3;break;}
++  r->touched|=UINT64_C(1)<<i; r->clean=0;
++  e=o->write(c,ncc_table[i].address,w);
++  if(e||guard(o,c)||o->barrier(c)||guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=w){r->error=-4;break;}
++  r->verified++;
++ }
++ r->phase=3;
++ /* Best effort for every touched register. Never claim restoration merely
++  * because a failing write may actually have reached the device. */
++ for(i=n;i>0;){i--;if(!(r->touched&(UINT64_C(1)<<i)))continue;
++  if(guard(o,c)){r->restore_error=-5;continue;}
++  e=o->write(c,ncc_table[i].address,r->before[i]);
++  if(e||guard(o,c)||o->barrier(c)||guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=r->before[i]){r->restore_error=-6;continue;}
++  r->restored|=UINT64_C(1)<<i;
++ }
++ r->clean=(r->restored==r->touched);
++ if(!r->error&&!r->restore_error)r->phase=4;
++ return r->error||r->restore_error?-1:0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_common.h
+@@ -0,0 +1,42 @@
++#ifndef NORD2_COMMON_TRANSACTION_H
++#define NORD2_COMMON_TRANSACTION_H
++#include <stdint.h>
++#define NCC_COUNT 40
++/* All bits must be freshly checked by adapter: exclusive cold power-probe
++ * ownership; restoration armed; ID20010101; AP power/clock/protection good;
++ * WFSYS CPU reset asserted and power/status off; BT/GPS/FM and firmware idle;
++ * Wi-Fi-only next_status; both apertures readable and writable by AP.
++ * No concurrent agent (including firmware) may touch any of these registers. */
++#define NCC_OWNED 1u
++#define NCC_RESTORE_ARMED 2u
++#define NCC_CHIP_ID 4u
++#define NCC_POWER_READABLE 8u
++#define NCC_WFSYS_COLD 16u
++#define NCC_ALL_MASTERS_IDLE 32u
++#define NCC_WIFI_ONLY 64u
++#define NCC_AP_ACCESS 128u
++#define NCC_REQUIRED 0xffu
++struct ncc_reg {uint32_t address,mask,value;};
++extern const struct ncc_reg ncc_table[NCC_COUNT];
++struct ncc_ops {
++ int (*check)(void *,unsigned);
++ int (*read)(void *,uint32_t,uint32_t *);
++ /* Failure may have partially written; helper marks touched beforehand. */
++ int (*write)(void *,uint32_t,uint32_t);
++ int (*barrier)(void *); /* completed device write ordering before readback */
++};
++struct ncc_result {
++ uint32_t before[NCC_COUNT];
++ uint64_t touched,restored;
++ unsigned snapshots,verified,phase;
++ int error,restore_error,clean;
++};
++/* optin must be exactly1. stage1 retention only; stage2 retention+whole
++ * non-BT SPI table. No continuation into RF commands or firmware execution.
++ * Every mutation is reversed even on success; clean means verified restoration
++ * of EVERY touched full register. Caller must still restore outer power probe.
++ * Return0 completed+clean; -1 failed (consult clean/restore_error).
++ * Callbacks bounded by caller; hung MMIO cannot be software-time-limited.
++ * Result retains snapshots on failure. No allocation/maps/native MMIO here. */
++int ncc_run(const struct ncc_ops *,void *,unsigned,unsigned,struct ncc_result *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_common_adapter.inc
+@@ -0,0 +1,144 @@
++/* Opt-in MT6893 common-configuration diagnostic, included by sweet_touch.c.
++ * Existing sole probe thread; never a worker. No address outside allowlists. */
++struct ncc_pred {uint32_t address,mask;};
++static const struct ncc_pred ncc_predicates[14]={
++ {0x18000010,1},{0x18000000,0x80},{0x180602cc,4},
++ {0x18000008,0x80},{0x18000014,1},{0x18000114,0x03000000},
++ {0x18000124,0x01000003},{0x18001874,1},{0x18001878,1},
++ {0x18008040,1},{0x180601a8,1},{0x180601ac,1},{0x180601b0,1},
++ {0x18004000,0x3e}
++};
++static struct {
++ vm_offset_t rgu,host,cfg,spi,table,fm;
++ uint32_t id,predicate_valid,predicate_raw[14];unsigned failed_field;
++ struct ncc_result result;
++} ncc_native;
++#ifndef NCC_DEVICE_BARRIER
++#define NCC_DEVICE_BARRIER() __asm__ volatile("dsb sy" ::: "memory")
++#endif
++static vm_offset_t ncc_aperture(uint32_t address)
++{
++ switch(address&~0xfffu){
++ case 0x18000000:return ncc_native.rgu;
++ case 0x18001000:return ncc_native.cfg;
++ case 0x18004000:return ncc_native.spi;
++ case 0x18005000:return ncc_native.table;
++ case 0x18008000:return ncc_native.fm;
++ case 0x18060000:return ncc_native.host;
++ default:return 0;
++ }
++}
++static int ncc_ap_check(void)
++{
++ if(!ncc_fresh_owned||ncc_latched_dirty||!nw.saved||!nw.domain_touched||
++  ncc_native.id!=0x20010101||!nw.spm||!nw.infra||!nw.gals||!ncc_native.host)return -1;
++ if((ni_rd(nw.spm,0x304)&0x1f)!=0xd||!(ni_rd(nw.spm,0x16c)&2)||
++  !(ni_rd(nw.spm,0x170)&2)||!(ni_rd(nw.gals,0x504)&1)||
++  (ni_rd(nw.infra,0x228)&0x6000)||(ni_rd(nw.infra,0x724)&4))return -1;
++ return (ni_rd(ncc_native.host,0x184)&0x20)?-1:0;
++}
++static int ncc_native_check(void *opaque,unsigned required)
++{
++ (void)opaque;
++ ncc_native.predicate_valid=0;ncc_native.failed_field=14;
++ if(required!=NCC_REQUIRED||ncc_ap_check())return -1;
++ for(unsigned i=0;i<14;i++){
++  vm_offset_t base=ncc_aperture(ncc_predicates[i].address);
++  /* Do not access CONN after an AP prerequisite disappears. */
++  if(!base||ncc_ap_check()){ncc_native.failed_field=i;return -1;}
++  uint32_t raw=ni_rd(base,ncc_predicates[i].address&0xfff);
++  ncc_native.predicate_raw[i]=raw;ncc_native.predicate_valid|=1u<<i;
++  if(raw&ncc_predicates[i].mask){ncc_native.failed_field=i;return -1;}
++ }
++ return 0;
++}
++static int ncc_native_index(uint32_t address)
++{
++ for(unsigned i=0;i<NCC_COUNT;i++)if(ncc_table[i].address==address)return (int)i;
++ return -1;
++}
++static int ncc_native_read(void *opaque,uint32_t address,uint32_t *value)
++{
++ (void)opaque;
++ if(!value||ncc_native_index(address)<0||ncc_ap_check())return -1;
++ vm_offset_t base=ncc_aperture(address);if(!base)return -1;
++ *value=ni_rd(base,address&0xfff);return 0;
++}
++static int ncc_native_write(void *opaque,uint32_t address,uint32_t value)
++{
++ (void)opaque;int i=ncc_native_index(address);
++ if(i<0||ncc_native.result.snapshots!=NCC_COUNT||ncc_ap_check())return -1;
++ const struct ncc_reg *t=&ncc_table[i];uint32_t before=ncc_native.result.before[i];
++ uint32_t programmed=(before&~t->mask)|(t->value&t->mask);
++ if(value!=before&&value!=programmed)return -1;
++ vm_offset_t base=ncc_aperture(address);if(!base)return -1;
++ ni_wr(base,address&0xfff,value);return 0;
++}
++static int ncc_native_barrier(void *opaque)
++{(void)opaque;if(ncc_ap_check())return -1;NCC_DEVICE_BARRIER();return 0;}
++static int ncc_cold_read(void *opaque,uint64_t address,uint32_t *value)
++{
++ (void)opaque;
++ if(!value||ncc_ap_check())return -1;
++ if(address!=0x18000010&&address!=0x18000000&&address!=0x180602cc)return -1;
++ vm_offset_t base=ncc_aperture((uint32_t)address);if(!base)return -1;
++ *value=ni_rd(base,(unsigned)address&0xfff);return 0;
++}
++static int ncc_cold_check(void *opaque,unsigned required)
++{(void)opaque;return required==NWC_REQUIRED?ncc_ap_check():-1;}
++#ifndef NCC_TICKS
++static uint64_t ncc_ticks(void)
++{ uint64_t value; __asm__ volatile("mrs %0, cntvct_el0" : "=r" (value)); return value; }
++#define NCC_TICKS() ncc_ticks()
++#endif
++#ifndef NCC_FREQUENCY
++static uint64_t ncc_frequency(void)
++{ uint64_t value; __asm__ volatile("mrs %0, cntfrq_el0" : "=r" (value)); return value; }
++#define NCC_FREQUENCY() ncc_frequency()
++#endif
++static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
++{
++ unsigned enabled=0;PE_parse_boot_argn("nord2wificommon",&enabled,sizeof(enabled));
++ if(enabled!=1)return; /* zero additional MMIO/map/log by default */
++ ncc_native.host=host;ncc_native.cfg=cfg;ncc_native.id=id;
++ if(ncc_ap_check()){
++  printf("NORD2 WIFI COMMON: skipped=1 reason=owner-or-AP\n");return;
++ }
++ ncc_native.rgu=ml_io_map(0x18000000,0x1000);
++ if(!ncc_native.rgu){printf("NORD2 WIFI COMMON: skipped=1 reason=rgu-map\n");return;}
++ const struct nwc_ops cold_ops={ncc_cold_check,ncc_cold_read};struct nwc_result cold;
++ int status=nwc_snapshot(&cold_ops,0,1,&cold);
++ printf("NORD2 WIFI COMMON COLD: status=%d valid=%#x cpu=%#x top=%#x power=%#x\n",
++  status,cold.valid_mask,cold.raw[0],cold.raw[1],cold.raw[2]);
++ if(status)return;
++ ncc_native.spi=ml_io_map(0x18004000,0x1000);
++ ncc_native.table=ml_io_map(0x18005000,0x1000);
++ ncc_native.fm=ml_io_map(0x18008000,0x1000);
++ if(!ncc_native.spi||!ncc_native.table||!ncc_native.fm){
++  printf("NORD2 WIFI COMMON: skipped=1 reason=table-map\n");return;
++ }
++ /* Two fresh predicate passes. No polling, sleep, selector write or retry. */
++ if(ncc_native_check(0,NCC_REQUIRED)||ncc_native_check(0,NCC_REQUIRED)){
++  unsigned i=ncc_native.failed_field;
++  printf("NORD2 WIFI COMMON: skipped=1 valid=%#x field=%u raw=%#x\n",
++   ncc_native.predicate_valid,i,(i<14&&(ncc_native.predicate_valid&(1u<<i)))?ncc_native.predicate_raw[i]:0);return;
++ }
++ const struct ncc_ops ops={ncc_native_check,ncc_native_read,ncc_native_write,ncc_native_barrier};
++ uint64_t begin=NCC_TICKS();
++ status=ncc_run(&ops,0,1,2,&ncc_native.result);
++ uint64_t elapsed=NCC_TICKS()-begin;
++ struct ncc_result *r=&ncc_native.result;
++ printf("NORD2 WIFI COMMON: status=%d phase=%u snapshots=%u verified=%u error=%d restore_error=%d clean=%d\n",
++  status,r->phase,r->snapshots,r->verified,r->error,r->restore_error,r->clean);
++ printf("NORD2 WIFI COMMON RESTORE: touched=%#llx restored=%#llx valid=%#x field=%u\n",
++  (unsigned long long)r->touched,(unsigned long long)r->restored,
++  ncc_native.predicate_valid,ncc_native.failed_field);
++ printf("NORD2 WIFI COMMON TIME: ticks=%llu frequency=%llu\n",
++  (unsigned long long)elapsed,(unsigned long long)NCC_FREQUENCY());
++ if(!r->clean){
++  /* Persistent latch is checked by nw_restore and the Linux-return path.
++   * Do NOT power down, clear saved ownership or discard snapshots. */
++  ncc_latched_dirty=true;
++  panic("NORD2 WIFI COMMON: dirty restoration; retain power/ownership; refuse handoff");
++ }
++}
+--- /dev/null
++++ b/bsd/dev/wifi_cold_snapshot.c
+@@ -0,0 +1,21 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Three CONN-side reads from selected soc3_0.c2164–2196. No native adapter. */
++#include "wifi_cold_snapshot.h"
++int nwc_snapshot(const struct nwc_ops *ops,void *context,unsigned optin,struct nwc_result *out)
++{
++ if(!out)return -1;
++ struct nwc_result zero={0};*out=zero;
++ if(optin!=1 || !ops || !ops->check || !ops->read){out->error=-1;return -1;}
++ static const uint64_t address[3]={UINT64_C(0x18000010),UINT64_C(0x18000000),UINT64_C(0x180602cc)};
++ for(unsigned i=0;i<3;i++) {
++  if(ops->check(context,NWC_REQUIRED)){out->error=-2;return -1;}
++  uint32_t value=0;out->attempted++;
++  if(ops->read(context,address[i],&value)){out->error=-3;return -1;}
++  out->raw[i]=value;out->valid_mask|=1u<<i;
++ }
++ out->cold=!(out->raw[0]&1) && !(out->raw[1]&0x80) && !(out->raw[2]&4);
++ return out->cold?0:1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_cold_snapshot.h
+@@ -0,0 +1,18 @@
++#ifndef NORD2_WFSYS_COLD_SNAPSHOT_H
++#define NORD2_WFSYS_COLD_SNAPSHOT_H
++#include <stdint.h>
++/* Caller must already own the cold power probe, arm restoration, prove both
++ * AP power acks, clock, bus protection/readability and CONN ID20010101. */
++#define NWC_REQUIRED 0x3fu
++struct nwc_ops {
++ int (*check)(void *,unsigned); /*0 only while all prerequisites remain true*/
++ int (*read)(void *,uint64_t,uint32_t *); /* exact one allowed read or error */
++};
++struct nwc_result {uint32_t raw[3],valid_mask;unsigned attempted;int error,cold;};
++/* Explicit optin1. At most3new-register reads, no writes/maps/SMC/loops. An IO
++ * callback itself can stall; software cannot interrupt a hung MMIO read.
++ * Return0 all3valid+cold;1 valid but noncold;-1 invalid/guard/read failure.
++ * Caller MUST always execute its existing restore path, regardless of result.
++ * No effective EMI permission or firmware execution inference is made. */
++int nwc_snapshot(const struct nwc_ops *,void *,unsigned,struct nwc_result *);
 +#endif
