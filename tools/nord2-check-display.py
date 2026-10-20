@@ -45,6 +45,7 @@ static uint64_t nord2_fb_begin_ticks, nord2_fb_draw_ticks, nord2_fb_scrolls, nor
 static uint64_t nord2_fb_completed, nord2_fb_busy_timeouts, nord2_fb_frame_timeouts;
 static uint64_t nord2_fb_throttle_skips;
 static unsigned gui_markers;
+static unsigned profile_reports;
 static uint32_t ovl[4][1024];
 static uintptr_t ml_io_map(uint64_t pa, unsigned size) {
     assert(size == 4096);
@@ -87,6 +88,10 @@ static int model_printf(const char *format, ...) {
     return 0;
 }
 #define printf model_printf
+static void nord2_ufs_profile_report(void) {
+    assert(nord2_gui_owned && !nord2_console_owner && daif==0x80);
+    profile_reports++;
+}
 '''
 cases = r'''
 int main(void) {
@@ -105,7 +110,8 @@ int main(void) {
     assert(!nord2_display_begin() && !nord2_gui_owned && daif==0x80);
     acquire_ok=true; outer_lock=true; nord2_console_owner=4;
     assert(nord2_display_begin() && nord2_gui_owned && !nord2_console_owner && daif==0x80);
-    assert(gui_markers==1 && nord2_display_begin() && gui_markers==1);
+    assert(gui_markers==1 && profile_reports==1 && nord2_display_begin());
+    assert(gui_markers==1 && profile_reports==1);
     ticks=0;
     nord2_gui_owned=0; assert(!nord2_display_refresh() && !ticks && !barriers);
     nord2_gui_owned=1; panicking=true;

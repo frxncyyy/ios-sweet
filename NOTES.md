@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **USER PRIORITY: UFS/WI-FI AND FAST BOOT; UFS PROFILE PREPARED.**
+  User explicitly authorizes parallel Sol agents. boot_speed implemented
+  opt-in nord2ufsprofile=1: six allowlisted local DME_GETs report actual
+  RX/TX gear/active lanes, HS series and power mode; aggregate command/read/
+  write/sync counts, bytes, command/doorbell total/max ticks, errors/timeouts.
+  No link/PHY/clock/voltage/media tuning. UIC writes only GET command/args and
+  own W1C completion; bounded100ms/100k polls; pending completion retained
+  across SCSI acknowledgement and blocks unsafe Linux restoration.
+  Runs under existing UFS ownership/mutex after takeover/GPT; reports once
+  at first GUI after copying stats and unlocking. Root integrated header and
+  GUI hook after console release; display host test verifies placement.
+  Actual-C sanitizer tests and both local translation-unit compiles PASS;
+  patch0082 exact reproduction PASS. Evidence research/nord2/ufs-profile/.
+  Command ticks exclude caller mutex wait/bounce memcpy; doorbell time includes
+  polling/scheduling. No hardware UFS speed result yet. Next full CI pending.
+  Console-only correction CI39486360460/source8c3ca35 PASSED, artifact saved;
+  next hardware candidate will include that fix plus UFS measurement.
+  Android logs prove G4/two lanes/rateB after Linux negotiation (private
+  backup/nord2/logs/20261020-124040-usb-phy-stop15-retry/dmesg.txt:2247),
+  not XNU's inherited state. Nord2 does NOT start persistent UFS logger
+  (sole call guarded !NORD2); no periodic logger flush cost on this boot.
+  Wi-Fi memory loader prepared in separate shim/nord2-xnu/wifi_firmware.c/.h:
+ 16 stored extents/four reconstructed hashes, bounded LZ4, caller buffers,
+  no embedded firmware/hardware access. Host real-vendor/corruption/sanitizer
+  tests pass and peer review finds no blocking issue. Not kernel-integrated;
+  verified GPT/super/LP vendor-read API remains to implement. Preserve staged
+  firmware files; root handles commits with established identity.
+
 - **CONN POWER/ID/RESTORE PASSED; FASTLOG DISPLAY REGRESSION, FIX PREPARED.**
   User authorized exact5d917ab1…5d773f06d boot-only test and supplied fastboot.
   Flash/reboot both OKAY at21:39:18CEST. Power runner EXECUTED; never rerun
@@ -16,10 +44,15 @@
   UMD interval65.8542->7.4368s; launchd early tasks72.8737->9.40794s.
   Private initial evidence356955bytes SHA
   870f85a886632abe9e38955a62d21bb7d93fd156467b0eac8c27bc3203e025a2.
-  Full capture still running; hardware-result.json marks display regression.
-  Verified fallback runner wifi/power/restore-working-ios.py prepared, NOT
-  executed; user asked to enter fastboot for already-authorized working-iOS
-  restoration. Preserve userdata; never normal Android.
+  Final capture773212bytes SHA
+  780cae64d85ea36f8dac76399696c1528a23193472c7e4ced743f763ef1941aa.
+  Capture ended on USB disconnect(libUSB-4), not a recorded kernel panic;
+  hardware-result.json marks display regression. Phone USB currently absent.
+  Verified fallback runner wifi/power/restore-working-ios.py EXECUTED after
+  phone appeared in fastboot. Working fd6d75ca…49995f20 image flashed to boot
+  and rebooted OKAY at21:50:16CEST; restored-ios-live capture pending. Both
+  exclusive runners have executed; DO NOT rerun. Preserve userdata; never
+  normal Android.
   Source defect found: old console push used W1C semantics for W0C INTSTA,
   did not clear stale FRAME_DONE before START, and retriggered despite BUSY
   timeout. Faster logging may expose this race; causality not yet isolated.
@@ -28,9 +61,17 @@
   rate limit, default/panic unthrottled. Adds completion/timeout/skip counters.
   Exact-C ASan/UBSan MMIO/time tests and local ARMv8.2 compile PASS; display
   regression model updated for one-time GUI timing after lock release, PASS.
-  Patch0082 regenerated/exact reproduction PASS; full CI/image pending.
+  Patch0082 regenerated/exact reproduction PASS. Commit8c3ca35 pushed;
+  CI39486360460 is running; image pending.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39486360460
   UFS maximum speed is UNVERIFIED; user asks to investigate. No UFS tuning
-  writes or benchmark claim. Sol is inspecting link settings/driver evidence.
+  writes or benchmark claim. Source audit: inherits LK link/PHY/clocks, no
+  gear/lane/HS-rate measurement or negotiation. Controller advertises32
+  slots, XNU uses slot0/global mutex/1MiB bounce and polling. Android requests
+  up to HS-G4/two lanes/rateB; this is not the measured inherited state.
+  Next UFS measurement: aggregate command/doorbell latency, counts and bytes;
+  DME_GET link-state probe separately bounded. ufscache=0 selects CPU DMA
+  maintenance, not the UFS device-cache state.
 
 - **WI-FI SNAPSHOT PASSED; POWER/FASTLOG IMAGE PROVENANCE.**
   User authorized bf0ea8bb…ba34fa88; boot-only flash and reboot succeeded

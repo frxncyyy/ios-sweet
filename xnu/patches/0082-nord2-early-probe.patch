@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,16 +1,755 @@
+@@ -1,16 +1,756 @@
  /*
 - * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
 - * per-CPU state: panic() can reach this before a current thread exists.
@@ -663,6 +663,7 @@
 +		    nord2_fb_draw_ticks, __builtin_arm_rsr64("CNTFRQ_EL0"),
 +		    nord2_fb_scrolls, nord2_fb_pushes, nord2_fb_completed,
 +		    nord2_fb_busy_timeouts, nord2_fb_frame_timeouts, nord2_fb_throttle_skips);
++		nord2_ufs_profile_report();
 +	}
 +	return ok;
 +}
@@ -761,7 +762,7 @@
  static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
  #define EARLY_FB early_fb
  #define EARLY_WIDTH 1080u
-@@ -23,6 +762,7 @@
+@@ -23,6 +763,7 @@
  #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
  
  extern unsigned char iso_font[256 * 16];
@@ -769,7 +770,7 @@
  
  /* Initialized data must remain writable until disable, including panics. */
  static unsigned int early_row, early_col;
-@@ -38,10 +778,32 @@
+@@ -38,10 +779,32 @@
  		}
  	}
  }
@@ -802,7 +803,7 @@
  	if (early_disabled) {
  		return;
  	}
-@@ -76,6 +838,7 @@
+@@ -76,6 +839,7 @@
  		}
  	}
  	early_col++;
@@ -810,7 +811,7 @@
  }
  
  static void
-@@ -86,9 +849,177 @@
+@@ -86,9 +850,177 @@
  	}
  }
  
@@ -988,7 +989,7 @@
  	if (early_disabled || stage > 20) {
  		return;
  	}
-@@ -107,11 +1038,36 @@
+@@ -107,11 +1039,36 @@
  	sweet_early_string(": ");
  	sweet_early_string(label);
  	sweet_early_putc('\n');
@@ -1025,7 +1026,7 @@
  	if (early_disabled || early_panicking) {
  		return;
  	}
-@@ -123,8 +1079,10 @@
+@@ -123,8 +1080,10 @@
  	va_end(copy);
  	sweet_early_putc('\n');
  	__asm__ volatile("dsb sy" ::: "memory");
@@ -1036,7 +1037,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +1091,975 @@
+@@ -133,11 +1092,975 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -2020,7 +2021,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,65 @@
+@@ -10,8 +10,67 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -2063,6 +2064,8 @@
 +int nord2_input_prepare_return(void);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
++/* Opt-in boot I/O/link measurement; reports after releasing the UFS lock. */
++void nord2_ufs_profile_report(void);
 +/* Point 12: restore the polled UFS host after publishing the BSD root device. */
 +void nord2_ufs_root_stop(void);
 +/* Final chain-back, including panics: 0 untouched, 1 restored, -1 unsafe. */
@@ -2703,7 +2706,7 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,6 +147,41 @@
+@@ -141,13 +147,209 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
@@ -2742,12 +2745,169 @@
 +}
 +#endif
 +
++#if defined(NORD2)
++/* Opt-in observation only. All updates and snapshots use sweet_ufs_lock.
++ * DME_GET is a UIC transaction, not a passive MMIO read: command writes are
++ * restricted to six local PA attributes, with no SET/peer/power commands. */
++#define N2_UIC_CMD 0x90u
++#define N2_UIC_ARG1 0x94u
++#define N2_UIC_ARG2 0x98u
++#define N2_UIC_ARG3 0x9cu
++#define N2_UIC_READY (1u << 3)
++#define N2_UIC_COMPLETE (1u << 10)
++#define N2_UIC_TIMEOUT_TICKS_DIV 10u /* 100ms maximum per transaction */
++#define N2_UIC_POLL_LIMIT 100000u
++static bool nord2_ufs_profile_enabled, nord2_ufs_profile_reported;
++static bool nord2_ufs_uic_pending;
++static bool nord2_root_owned;
++static struct nord2_ufs_profile_stats {
++	uint64_t commands, reads, writes, syncs, read_bytes, write_bytes;
++	uint64_t command_ticks, command_max_ticks, doorbell_ticks, doorbell_max_ticks;
++	uint64_t errors, timeouts;
++} nord2_ufs_stats;
++static struct nord2_ufs_link_stats {
++	uint32_t values[6], valid_mask, completed, result;
++	int error;
++} nord2_ufs_link;
++static const uint16_t nord2_ufs_attrs[6] = {
++	0x1583, /* PA_RXGEAR */ 0x1568, /* PA_TXGEAR */
++	0x1580, /* PA_ACTIVERXDATALANES */ 0x1560, /* PA_ACTIVETXDATALANES */
++	0x156a, /* PA_HSSERIES */ 0x1571 /* PA_PWRMODE: RX high/TX low nibble */
++};
++
++static uint64_t
++nord2_ufs_counter(void)
++{
++	return __builtin_arm_rsr64("CNTVCT_EL0");
++}
++
++/* Independent hard iteration cap also bounds a stalled architected counter. */
++static bool
++nord2_ufs_uic_poll(uint32_t off, uint32_t mask, uint32_t want)
++{
++	uint64_t frequency = __builtin_arm_rsr64("CNTFRQ_EL0");
++	if (!frequency) { return false; }
++	uint64_t start = nord2_ufs_counter();
++	for (unsigned i = 0; i < N2_UIC_POLL_LIMIT; i++) {
++		if ((ufs_rd(off) & mask) == want) { return true; }
++		if (nord2_ufs_counter() - start >=
++		    (frequency + N2_UIC_TIMEOUT_TICKS_DIV - 1) / N2_UIC_TIMEOUT_TICKS_DIV) {
++			return false;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++/* May also run from final recovery without taking a mutex. Never reset or
++ * abort a UIC transaction: refuse handoff if our issued GET has not finished. */
++static bool
++nord2_ufs_uic_drain(void)
++{
++	if (!nord2_ufs_uic_pending) { return true; }
++	if (!nord2_ufs_uic_poll(REG_IS, N2_UIC_COMPLETE, N2_UIC_COMPLETE) ||
++	    !nord2_ufs_uic_poll(REG_HCS, N2_UIC_READY, N2_UIC_READY)) {
++		return false;
++	}
++	ufs_wr(REG_IS, N2_UIC_COMPLETE); /* W1C only our completed UIC */
++	__builtin_arm_dsb(0xf);
++	nord2_ufs_uic_pending = false;
++	return true;
++}
++
++static int
++nord2_ufs_dme_get(uint16_t attr, uint32_t *value, uint32_t *result)
++{
++	bool allowed = false;
++	for (unsigned i = 0; i < 6; i++) {
++		if (attr == nord2_ufs_attrs[i]) { allowed = true; }
++	}
++	if (!allowed || !value || !result || !nord2_ufs_profile_enabled) { return EPERM; }
++	/* Caller owns root controller and its mutex; never interfere with SCSI,
++	 * task management, an inherited completion, or enabled interrupt handling. */
++	if (!nord2_root_owned || su.probe_only || !su.regs || !(ufs_rd(REG_HCE) & 1) ||
++	    (ufs_rd(REG_HCS) & (HCS_DP | HCS_UTRLRDY | N2_UIC_READY)) !=
++	    (HCS_DP | HCS_UTRLRDY | N2_UIC_READY) || ufs_rd(REG_UTRLDBR) ||
++	    ufs_rd(0x78) || ufs_rd(REG_IE) || ufs_rd(REG_IS) || nord2_ufs_uic_pending) {
++		return EBUSY;
++	}
++	if (!__builtin_arm_rsr64("CNTFRQ_EL0")) { return EINVAL; }
++	ufs_wr(N2_UIC_ARG1, (uint32_t)attr << 16); /* selector zero, local GET */
++	ufs_wr(N2_UIC_ARG2, 0);
++	ufs_wr(N2_UIC_ARG3, 0);
++	nord2_ufs_uic_pending = true;
++	__builtin_arm_dsb(0xf);
++	ufs_wr(N2_UIC_CMD, 1); /* DME_GET: never DME_SET or link-state commands */
++	__builtin_arm_dsb(0xf);
++	if (!nord2_ufs_uic_poll(REG_IS, N2_UIC_COMPLETE, N2_UIC_COMPLETE)) {
++		return ETIMEDOUT; /* pending retained; no further GETs or recovery reset */
++	}
++	*result = ufs_rd(N2_UIC_ARG2) & 0xffu;
++	uint32_t observed = ufs_rd(N2_UIC_ARG3);
++	if (!nord2_ufs_uic_drain()) { return ETIMEDOUT; }
++	if (*result) { return EIO; }
++	*value = observed;
++	return 0;
++}
++
++static void
++nord2_ufs_profile_link(void)
++{
++	if (!nord2_ufs_profile_enabled) { return; }
++	for (unsigned i = 0; i < 6; i++) {
++		int error = nord2_ufs_dme_get(nord2_ufs_attrs[i],
++		    &nord2_ufs_link.values[i], &nord2_ufs_link.result);
++		if (error) { nord2_ufs_link.error = error; return; }
++		nord2_ufs_link.valid_mask |= 1u << i;
++		nord2_ufs_link.completed++;
++	}
++}
++
++static void
++nord2_ufs_profile_wait(uint64_t begin)
++{
++	uint64_t ticks = nord2_ufs_counter() - begin;
++	nord2_ufs_stats.doorbell_ticks += ticks;
++	if (ticks > nord2_ufs_stats.doorbell_max_ticks) {
++		nord2_ufs_stats.doorbell_max_ticks = ticks;
++	}
++}
++
++/* Public hook at first GUI, called after the console lock is released.
++ * Copy only under the I/O mutex; printf must never hold it. */
++void
++nord2_ufs_profile_report(void)
++{
++	if (!nord2_ufs_profile_enabled) { return; }
++	struct nord2_ufs_profile_stats stats;
++	struct nord2_ufs_link_stats link;
++	bool pending;
++	lck_mtx_lock(&sweet_ufs_lock);
++	if (nord2_ufs_profile_reported) { lck_mtx_unlock(&sweet_ufs_lock); return; }
++	nord2_ufs_profile_reported = true;
++	stats = nord2_ufs_stats;
++	link = nord2_ufs_link;
++	pending = nord2_ufs_uic_pending;
++	lck_mtx_unlock(&sweet_ufs_lock);
++	printf("NORD2 UFS PROFILE: freq=%llu commands=%llu reads=%llu writes=%llu syncs=%llu read_bytes=%llu write_bytes=%llu cmd_ticks=%llu cmd_max=%llu doorbell_ticks=%llu doorbell_max=%llu errors=%llu timeouts=%llu\n",
++	    __builtin_arm_rsr64("CNTFRQ_EL0"), stats.commands, stats.reads, stats.writes,
++	    stats.syncs, stats.read_bytes, stats.write_bytes, stats.command_ticks,
++	    stats.command_max_ticks, stats.doorbell_ticks, stats.doorbell_max_ticks,
++	    stats.errors, stats.timeouts);
++	printf("NORD2 UFS LINK: valid=%#x completed=%u error=%d result=%#x pending=%u rx_gear=%u tx_gear=%u rx_lanes=%u tx_lanes=%u hs_series=%u pwr_mode=%#x\n",
++	    link.valid_mask, link.completed, link.error, link.result, pending,
++	    link.values[0], link.values[1], link.values[2], link.values[3],
++	    link.values[4], link.values[5]);
++}
++#endif /* NORD2 */
++
  /*
   * One SCSI command in slot 0, data (if any) to/from the bounce buffer
   * (to the device when write is set). Returns 0 or an errno.
-@@ -148,6 +189,11 @@
+  */
  static int
- ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+-ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
++ufs_scsi_impl(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
  {
 +#if defined(NORD2)
 +	if (su.probe_only && !nord2_ufs_probe_command(cdb, cdb_len, len, write)) {
@@ -2757,7 +2917,47 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -253,6 +299,13 @@
+@@ -204,6 +406,9 @@
+ 	}
+ 	__builtin_arm_dsb(0xf);
+ 
++#if defined(NORD2)
++	uint64_t profile_issued = nord2_ufs_profile_enabled ? nord2_ufs_counter() : 0;
++#endif
+ 	ufs_wr(REG_UTRLDBR, 1);
+ 	uint64_t deadline;
+ 	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
+@@ -219,6 +424,9 @@
+ 	while (ufs_rd(REG_UTRLDBR) & 1) {
+ 		uint64_t now = mach_absolute_time();
+ 		if (now > deadline) {
++#if defined(NORD2)
++			if (nord2_ufs_profile_enabled) { nord2_ufs_profile_wait(profile_issued); }
++#endif
+ 			ufs_wr(REG_UTRLCLR, ~1u);
+ 			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
+ 			return ETIMEDOUT;
+@@ -234,8 +442,19 @@
+ 			delay(1);
+ 		}
+ 	}
++#if defined(NORD2)
++	if (nord2_ufs_profile_enabled) { nord2_ufs_profile_wait(profile_issued); }
++#endif
+ 	__builtin_arm_dsb(0xf);
++#if defined(NORD2)
++	/* A timed-out observation may finish late. Preserve its completion for
++	 * the bounded recovery drain; SCSI must not consume another owner's UIC. */
++	uint32_t status = ufs_rd(REG_IS);
++	if (nord2_ufs_uic_pending) { status &= ~N2_UIC_COMPLETE; }
++	ufs_wr(REG_IS, status);
++#else
+ 	ufs_wr(REG_IS, ufs_rd(REG_IS));         /* acknowledge completion status */
++#endif
+ 
+ 	dma_sync(DMA_UTRL, sizeof(*utrd));
+ 	if (su.cache) {
+@@ -253,9 +472,44 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
@@ -2771,7 +2971,38 @@
  	return 0;
  }
  
-@@ -374,6 +427,12 @@
++static int
++ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
++{
++#if defined(NORD2)
++	if (nord2_ufs_profile_enabled) {
++		uint64_t begin = nord2_ufs_counter();
++		int error = ufs_scsi_impl(cdb, cdb_len, len, write);
++		uint64_t ticks = nord2_ufs_counter() - begin;
++		nord2_ufs_stats.commands++;
++		nord2_ufs_stats.command_ticks += ticks;
++		if (ticks > nord2_ufs_stats.command_max_ticks) { nord2_ufs_stats.command_max_ticks = ticks; }
++		if (cdb_len && cdb[0] == 0x28) {
++			nord2_ufs_stats.reads++;
++			if (!error) { nord2_ufs_stats.read_bytes += len; }
++		} else if (cdb_len && cdb[0] == 0x2a) {
++			nord2_ufs_stats.writes++;
++			if (!error) { nord2_ufs_stats.write_bytes += len; }
++		} else if (cdb_len && cdb[0] == 0x35) {
++			nord2_ufs_stats.syncs++;
++		}
++		if (error) { nord2_ufs_stats.errors++; }
++		if (error == ETIMEDOUT) { nord2_ufs_stats.timeouts++; }
++		return error;
++	}
++#endif
++	return ufs_scsi_impl(cdb, cdb_len, len, write);
++}
++
+ /* READ(10) of count device blocks at lba into the bounce buffer. */
+ static int
+ ufs_read_blocks(uint64_t lba, uint32_t count)
+@@ -374,6 +628,12 @@
  	ufs_wr(REG_IE, 0);                      /* polled operation */
  	ufs_wr(REG_IS, ufs_rd(REG_IS));
  	ufs_wr(REG_UTRLRSR, 0);
@@ -2784,7 +3015,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +446,334 @@
+@@ -387,6 +647,334 @@
  	return 0;
  }
  
@@ -2933,11 +3164,11 @@
 +	uint32_t ie, ba, bau, rsr;
 +};
 +static struct nord2_ufs_saved nord2_root_saved;
-+static bool nord2_root_owned;
 +
 +static bool
 +nord2_ufs_restore(const struct nord2_ufs_saved *saved)
 +{
++	if (!nord2_ufs_uic_drain()) { return false; }
 +	if (ufs_rd(REG_UTRLDBR)) {
 +		nord2_ufs_write_reg(REG_UTRLCLR, ~1u);
 +	}
@@ -3119,7 +3350,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -599,8 +986,25 @@
+@@ -599,15 +1187,40 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3145,8 +3376,13 @@
  	uint32_t cache = 0, wait = 0;
  	PE_parse_boot_argn("ufscache", &cache, sizeof(cache));
  	PE_parse_boot_argn("ufswait", &wait, sizeof(wait));
-@@ -608,6 +1012,9 @@
+ 	su.cache = (cache == 1);
  	su.wait = (wait == 1);
++#if defined(NORD2)
++	uint32_t profile = 0;
++	PE_parse_boot_argn("nord2ufsprofile", &profile, sizeof(profile));
++	nord2_ufs_profile_enabled = (profile == 1);
++#endif
  
  	su.regs = ml_io_map(reg[0], reg[1]);
 +	if (!su.regs) {
@@ -3155,7 +3391,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1026,69 @@
+@@ -619,31 +1232,72 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3209,6 +3445,9 @@
  		error = ufs_find_partition(want);
 +#endif
  	}
++#if defined(NORD2)
++	if (!error) { nord2_ufs_profile_link(); }
++#endif
  	lck_mtx_unlock(&sweet_ufs_lock);
  	if (error) {
 -		return error;
@@ -3229,7 +3468,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1099,25 @@
+@@ -654,13 +1308,25 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
