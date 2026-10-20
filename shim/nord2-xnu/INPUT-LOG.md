@@ -37,8 +37,10 @@ dispatch through `sweet_hid_key`. Persistent read failures release held
 contacts/PMIC keys. GPIO polling and I2C transactions are not a latency or
 throughput claim; real interaction still needs verification.
 
-The MT6360 LDO2 VTP supply is marked default-on in the device tree, but
-its state at XNU entry is **not established**. This implementation leaves
+The MT6360 LDO2 VTP node carries `regulator-default-on=<1>`, but that property
+is **not evidence that the rail is powered** (the main-PMIC parser even uses
+value1 for off, and the separate MT6360 driver does not parse it).
+Its state at XNU entry is **not established**. This implementation leaves
 the supply unchanged and only pulses the board's touch reset pin. If ID
 reads fail, logs report pin state, bus idle and ID; touch polling is withheld
 while buttons continue. Do not infer a working supply from the DT default.
@@ -71,6 +73,7 @@ coordinates, ten fingers, up events, malformed/duplicate IDs, invalid counts,
 100,000 random reports, change-only dispatch, I2C read/address NACK/clock
 timeout/STOP/length bounds, read-only PMIC commands, wrapper ownership and
 refusing a return with an active transaction.
+It also checks masked GPIO/IES restoration with unrelated fields populated.
 
 `tools/nord2-check-display.py` covers the original GUI gates and DSI timeouts
 plus two-pipe overlay validation, leaving unexpected layouts unchanged,

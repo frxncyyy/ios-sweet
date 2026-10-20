@@ -125,8 +125,31 @@ int main(void) {
     ni_saved=true; regs[4][0xc24/4]=(1<<21)|(6<<16);
     assert(nord2_input_prepare_return()==1 && regs[4][0xc24/4]==1<<21);
     assert(nord2_input_prepare_return()==0);
+    /* A partial setup must restore saved fields while retaining neighbours. */
+    ni_saved=true; ni_bus_owned=false;
+    for(unsigned i=0;i<5;i++) {
+        unsigned pin=ni_pins[i].pin;
+        ni_pins[i].mux=i+1; ni_pins[i].dir=(pin==20); ni_pins[i].dout=1;
+        regs[0][(0x300+pin/8*16)/4]=0xabababab;
+    }
+    ni_ies_lt=1<<15; ni_ies_tm=1<<12; ni_ies_rt=0;
+    regs[1][0x40/4]=regs[2][0x50/4]=regs[3][0x30/4]=0xffffffff;
+    assert(nord2_input_prepare_return()==1);
+    uint32_t masks[1024]={0};
+    for(unsigned i=0;i<5;i++) {
+        unsigned pin=ni_pins[i].pin, mo=(0x300+pin/8*16)/4, shift=pin%8*4;
+        masks[mo]|=15u<<shift;
+        assert(((regs[0][mo]>>shift)&15)==ni_pins[i].mux);
+        assert(((regs[0][(pin/32*16)/4]>>(pin%32))&1)==ni_pins[i].dir);
+        assert((regs[0][(0x100+pin/32*16)/4]>>(pin%32))&1);
+    }
+    for(unsigned i=0;i<1024;i++) if(masks[i])
+        assert((regs[0][i]&~masks[i])==(0xabababab&~masks[i]));
+    assert(regs[1][0x40/4]==(0xffffffffu&~(1u<<16)));
+    assert(regs[2][0x50/4]==(0xffffffffu&~(1u<<13)));
+    assert(regs[3][0x30/4]==(0xffffffffu&~(1u<<24)));
     puts("PASS: x4/multitouch/up/invalid reports, 100k fuzz, HID changes, I2C read/NACK/"
-         "stuck-clock/STOP/bounds, read-only PWRAP timeout/ownership/return");
+         "stuck-clock/STOP/bounds, PWRAP timeout/ownership, masked pin/IES restoration");
 }
 '''
 cfile, exe = out / "input-host.c", out / "input-host"

@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **INPUT/OVERLAY WORK IN PROGRESS; PHONE STILL ON VERIFIED GUI IMAGE.**
+- **INPUT/OVERLAY IMAGE READY; EXACT BOOT AUTHORIZATION PENDING.**
   User now requests touchscreen and buttons, and reports LK orange warning
   remains over the UI. New opt-in nord2input=1 driver in sweet_touch.c reads
   FT3518 via GPIO204/205 software I2C, reset20/IRQ21; decodes Oplus x4 reports
@@ -17,8 +17,28 @@
   Does not patch LK or remove the warning during bootloader execution.
   Exact C host models pass ASan/UBSan, 100k malformed-report fuzz, I2C/PWRAP
   timeout/ownership checks, display guard/preservation/restoration checks.
-  Three modified C translation units compile locally. Full CI/image build
-  and hardware input/overlay verification are pending. No flash this task yet.
+  Three modified C translation units compile locally. Full Apple-clang
+  CI39464319716/source812d941c97e292558f992c8b16e7c0d1b31a9613 PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39464319716
+  All1096 captured compile commands use generic ARMv8.2+crypto; linked RCpc2
+  scan clean. Artifact SHA256SUMS matches kernel17264344bytes, SHA-256
+  48d7d1c41272821afb9d6ee7a9b234375d4fecf8b71aea3f62ddee46c00684db.
+  Linked disassembly confirms input/mode23/SMP gates, bounded PWRAP cleanup,
+  overlay saved-state flag before MMIO and the exact two-pipe field updates.
+  Frozen shim/out/nord2-xnu/nord2-ios-input-stop23.img,33542144bytes,
+  12288bytes spare below32MiB. SHA-256:
+  d74b1b18db5f7ab669f1bace7e6b5d30730b616c843b1022f111311d5a9e59f6.
+  Payload14505904bytes SHA-256
+  84440e543c97d72e652db6765872adc2e9487ff5080101a26c4e4744e9dac440.
+  Same GUI/full-userland23 cmdline plus nord2input=1. Default15-iteration
+  Zopfli; all static checks pass. Independent verification confirms original
+  Linux, both DT representations and tested rescue RAMdisk are byte-exact.
+  Private manifest.json,verify-image.py,image-build.log and guarded
+  run-approved-boot.py --authorized-input-boot are prepared/syntax-checked.
+  Runner NOT EXECUTED; exact boot-only test authorization still required.
+  It will flash only boot, leave installed HFS in place, capture native USB,
+  retain the verified RAM ADB rescue fallback. Phone still runs GUI image
+  061333bb…23f8dca1. Touch/buttons/overlay are NOT hardware-validated yet.
   See shim/nord2-xnu/INPUT-LOG.md and research/nord2/input-ui/.
 
 - **MILESTONE: iOS 16.7.16 LOCKSCREEN ON ONEPLUS NORD 2, eight XNU cores.**
