@@ -100,6 +100,14 @@ Power tests cover independent CRC vectors, bad identity/CRC rejection, the
 write allowlist, inherited-rail preservation,3.0V enable/readback/restore,
 and NACK or mismatched readback preventing an unverified restoration.
 
+Full Apple-clang [CI39468314328](https://github.com/frxncyyy/ios-sweet/actions/runs/39468314328)
+passed at source `066ccc735f366b5df58b7dbe46d4239e15e183b0`.
+The frozen `nord2-ios-input-power-stop23.img` is33,544,192 bytes,
+SHA-256 `fd6d75caf4c7e95431bdb40eb50ca79650e8272824f54fd5f783cdec49995f20`.
+Static checks, instruction compatibility, partition size and byte-exact
+rescue-content verification pass. This corrected image has not been flashed;
+exact boot-only approval is pending. Preserve the first input-image evidence.
+
 `tools/nord2-check-display.py` covers the original GUI gates and DSI timeouts
 plus two-pipe overlay validation, leaving unexpected layouts unchanged,
 preserving GUI layers and exact restoration. These are host models, not

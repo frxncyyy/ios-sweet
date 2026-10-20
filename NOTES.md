@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **INPUT CORRECTION: local checks pass, full CI/image still pending.**
+- **INPUT CORRECTION: full CI/image verified; exact flash approval pending.**
   User confirms volume-down works; volume-up, power and touch do not.
   First input boot d74b1b18…5a9e59f6 successfully runs iOS and reports GPIO155
   press/release events. FT3518 ID is00:00/not ready; PMIC reads fail/status0.
@@ -24,8 +24,32 @@
   Exact-C ASan/UBSan tests cover CRC, identity/write allowlist, inherited rail,
   enable/readback/restore, failed-write restoration refusal, PMIF/transport
   timeouts, report decoding/fuzz. Latest evidence research/nord2/input-power/.
-  Only first image flash was authorized; prepare verified next image and
-  request its exact boot-only approval. Phone remains in first input iOS.
+  Full Apple-clang CI39468314328/source066ccc735f366b5df58b7dbe46d4239e15e183b0
+  PASSED: https://github.com/frxncyyy/ios-sweet/actions/runs/39468314328
+  Kernel17264664bytes SHA-256
+  d2aceb52a2cdb445a8d65fb804bfa6f02bbea5a13ffff1232a48e587b2a27aa5,
+  matching artifact SHA256SUMS. All1097 captured compile-command log lines
+  carry generic ARMv8.2+crypto (parallel log output is interleaved; this is
+  not a translation-unit count). Linked RCpc2 scan2189365 instructions clean.
+  Disassembly confirms PMIF offsets/INIT_DONE/raw read address/bounded poll
+  and three short-circuit steps when restoring VTP.
+  First image's final ten-minute capture235875bytes ended at deadline with
+  no USB transport error or captured kernel panic; SHA-256
+  4cf4e5dadfaabb101bfde7040858d8a93226abbed77f769baf7086fb3ef1d2ff.
+  Frozen shim/out/nord2-xnu/nord2-ios-input-power-stop23.img:
+  33544192bytes (10240bytes spare), SHA-256
+  fd6d75caf4c7e95431bdb40eb50ca79650e8272824f54fd5f783cdec49995f20.
+  Payload14505920bytes SHA-256
+  311147857b1e624ba820b592000383b836ded9a9c62097b71b914552ef72f1d0.
+  Same full-userland23/input/display cmdline; default15-iteration Zopfli.
+  Static checker all PASS; independent verification confirms original Linux,
+  both DT representations and tested rescue RAMdisk byte-exact.
+  Private research/nord2/input-power/{manifest.json,verify-image.py,
+  image-build.log,critical-functions-check.json,linked-functions.txt,
+  run-approved-boot.py} saved. Runner syntax-checked, NOT EXECUTED.
+  Use --authorized-input-power-boot only after exact user approval.
+  Only first image flash was authorized; request the corrected image's exact
+  boot-only approval. Phone remains in first input iOS.
 
 - **FIRST INPUT/OVERLAY IMAGE PROVENANCE (results above).**
   User now requests touchscreen and buttons, and reports LK orange warning
