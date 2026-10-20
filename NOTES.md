@@ -3,6 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT WORK: point21 integrates8-core XNU + USB + diagnostic HFS RAM PID1.**
+  User said "vai" after the8-core milestone; implementation/preparation is
+  authorized. No new boot image has been flashed in this phase. Phone last
+  observed in manual fastboot. Preserve all prior images and backups.
+  New mode21 permits SMP startup only with cpus8, rd=md0, ufsrw=0/rootrw=0.
+  It reuses the tested bounded all8 scheduler/timer/IPI/atomic-worker probe;
+  only full PASS publishes the userland-ready flag and continues to USB.
+  BSD ordering now runs SMP gate before USB, then RAM-root selection.
+  USB21 requires that pass flag, pins its sole PIO service to CPU0 before
+  any register access, and publishes ready/done with release/acquire.
+  CPU0 masks IRQs for each bounded PIO iteration; secondary panic requests
+  CPU0 return and powers off. Existing all-secondary-OFF guard precedes
+  MAC/PHY cleanup. USB cleanup refuses non-CPU0 SMP ownership and failed
+  cleanup blocks Linux return. Normal45-second timeout still bounds the
+  test if HFS/PID1 stalls; PID1's intentional exit66 should end it earlier.
+  Append-only NC pmsg now has writer/read publication DMBs so USB cannot
+  read a newly advertised length before data from another core is visible.
+  Added return-caller CPU and controller-restored log markers.
+  Existing mode16 still requires cpus1; mode20 still accepts2/4/8 without
+  mounting a root. No full iOS/UFS write mode enabled by these changes.
+  Local generic ARMv8.2 compilation passes for sweet_early.c,sweet_usb.c,
+  bsd_init.c; RCpc2 scans clean. Exact-source host ASan/UBSan tests pass:
+  SMP configuration/return/IRQ guards, RAM-only/write-flag rejection,
+  USB background pass/ready/failure/timeout gates, migration from all8 CPUs
+  and failed-migration refusal,100000 malformed control requests, cleanup
+  owner checks and1000 PHY rollback states. Patch applies and matches sources.
+  Evidence research/nord2/smp/userland/. tools/nord2-check-usb-smp.py added;
+  other relevant host/static checkers extended for mode21.
+  Retain existing8MiB RAM HFS diagnostic image:
+  research/nord2/rootfs-live/nord2-hfs-pid1.img,
+  SHAb5fa35f397e784c1da04988503ee43d9ce23e7925829a84be181d4ceba07308a.
+  Next full Apple-clang CI, build/verify candidate (boot has very little
+  spare space), then obtain specific boot-test approval if not already given.
+  No additional user-data access required. Hardware success must show all8
+  SMP PASS, USB live HFS/PID1 success +10 timer ticks, expected PID1 exit66,
+  coordinated all7 OFF, USB restoration and authenticated root ADB rescue.
+
 - **CURRENT RESULT: all8 cores VERIFIED running XNU; full2→4→8 sequence PASSED.**
   User explicitly authorized the NEW exact generic2/4/8 sequence; completed.
   Previous original-image sequence remains stopped. Current phone: root ADB

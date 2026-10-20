@@ -217,7 +217,7 @@ class Checker:
             self.check('point 13 keeps both disk write flags disabled',
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
-        if any(f'nord2stopat={p}' in args for p in (14, 15, 16)):
+        if any(f'nord2stopat={p}' in args for p in (14, 15, 16, 21)):
             self.check('USB console has the bounded native MTU3 transport',
                        b'NORD2 USB: native console for 45 seconds; EP0 PIO, no DMA' in kernel and
                        b'after bounded MTU3 USB console' in kernel and
@@ -269,6 +269,20 @@ class Checker:
                        [a for a in args if a.startswith('cpus=')] in
                        [['cpus=2'], ['cpus=4'], ['cpus=8']] and
                        [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
+        if 'nord2stopat=21' in args:
+            self.check('point 21 requires all8 SMP workers before RAM userland',
+                       b'NORD2 SMP: all8 passed; continuing to USB and RAM userland' in kernel and
+                       b'NORD2 SMP: XNU secondaries all OFF; CPU0 return permitted' in kernel and
+                       b'NORD2 USB: all8 SMP pass required before USB/RAM userland' in kernel)
+            self.check('point 21 pins USB to CPU0 and preserves bounded cleanup',
+                       b'NORD2 USB: service bound to CPU0' in kernel and
+                       b'after background MTU3 USB console' in kernel and
+                       b'NORD2 USB: controller restored before kernel return' in kernel)
+            self.check('point 21 uses eight CPUs and only the diagnostic RAM root',
+                       [a for a in args if a.startswith('cpus=')] == ['cpus=8'] and
+                       [a for a in args if a.startswith('rd=')] == ['rd=md0'] and
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)

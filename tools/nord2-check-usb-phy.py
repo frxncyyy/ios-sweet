@@ -23,6 +23,9 @@ prelude = r'''
 #include <stdio.h>
 #include <string.h>
 typedef uintptr_t vm_offset_t;
+static bool nusb_smp;
+static unsigned core;
+#define __builtin_arm_rsr64(s) ((uint64_t)core << 8)
 #define NUSB_SOFTCON (1u<<6)
 static struct {
     bool owned;
@@ -103,6 +106,7 @@ cases = r'''
 static void reset(unsigned seed) {
     memset(&nusb,0,sizeof(nusb)); memset(&nusb_phy,0,sizeof(nusb_phy));
     writes=mac_writes=delays=elapsed=restores=0;
+    nusb_smp=false; core=0;
     map_fail=restoring=false;
     for(unsigned i=0;i<7;i++) {
         seed=seed*1664525u+1013904223u;
@@ -130,6 +134,12 @@ int main(void) {
         nusb.commonie=0x3b7; nusb.linkie=1; nusb.devconf=0;
         mac_regs[0x2404/4]=nusb.power|NUSB_SOFTCON;
         restoring=true;
+        nusb_smp=true;
+        for (core=1;core<8;core++) {
+            assert(nord2_usb_prepare_return()==-1 && !mac_writes && !restores &&
+                   nusb.owned && nusb_phy.owned);
+        }
+        core=0;
         assert(nord2_usb_prepare_return()==1);
         assert(!nusb.owned && !nusb_phy.owned && restores==7 && mac_writes==13);
         for (unsigned i=0;i<7;i++) assert(phy_regs[nusb_phy_offsets[i]/4]==original[i]);

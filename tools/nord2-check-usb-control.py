@@ -17,12 +17,17 @@ decoder = 'static const uint8_t nusb_device[]' + decoder.split('static uint32_t\
 early = (source / 'osfmk/arm64/sweet_early.c').read_text()
 reader = early.split('uint32_t\nnord2_log_read', 1)[1]
 reader = 'uint32_t\nnord2_log_read' + reader.split('static volatile struct nord2_ring *nord2_log', 1)[0]
+assert reader.index('ring->size;') < reader.index('__builtin_arm_dmb(DMB_SY)') < reader.index('ring->data[')
+writer = early.split('nord2_putc(char c)', 1)[1].split('#else', 1)[0]
+assert writer.index('ring()->data[') < writer.index('__builtin_arm_dmb(DMB_SY)') < writer.index('ring()->size =')
 prelude = r'''
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define DMB_SY 15
+#define __builtin_arm_dmb(x) ((void)(x))
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define NORD2_PMSG_SIZE 65536u
 #define NORD2_RING_HDR 12u
@@ -113,6 +118,9 @@ model = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+static bool nusb_smp;
+static unsigned core;
+#define __builtin_arm_rsr64(s) ((uint64_t)core << 8)
 #define NUSB_SOFTCON (1u<<6)
 static struct {
     bool owned;
@@ -144,6 +152,9 @@ int main(void) {
     regs[4/4]=0; regs[0x84/4]=0x10001;
     regs[0x800/4]=5u<<24;
     regs[0x80/4]=regs[0x241c/4]=regs[0x854/4]=0xffffffffu;
+    nusb_smp=true;
+    for (core=1;core<8;core++) assert(nord2_usb_prepare_return()==-1 && !writes && nusb.owned);
+    core=0;
     assert(nord2_usb_prepare_return()==1 && !nusb.owned && writes==13);
     assert(regs[0x2404/4]==nusb.power && regs[4/4]==nusb.lv1ie);
     assert(regs[0x84/4]==nusb.epie && regs[0x800/4]==nusb.devconf);
