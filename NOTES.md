@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **Next SMP candidate: point18 low32 PSCI probe, READY; not authorized.**
+- **CURRENT DEVICE: point18 authorized/flashed; core1 executed, strict context check failed; ADB rescue returned.**
   Point17 did not verify even core1 execution; entry and context were above
   4GiB and context_id was the only mailbox pointer. Neither high-address nor
   context handoff support is established. Do not call either the cause yet.
@@ -30,10 +30,27 @@
   Payload SHA `13d92d735f36caf6b0b68cf336cf8eb80db922f02526d97b337087052b644610`.
   Original Linux kernel, both DT representations and tested rescue ramdisk
   independently compared: unchanged. Manifest saved, candidate frozen.
-  NOT YET AUTHORIZED/FLASHED. Phone already fastboot at13:39 CEST.
+  User authorized this exact image; boot-only flash/reboot PASSED at13:50:51
+  CEST. Probe copied/read back low stub and core1 CPU_ON returned0. Core1
+  completed the mailbox and CPU_OFF: EL1, MPIDR81000100, MIDR412fd050 (A55),
+  SCTLR30d00800 (M/C off), CNTFRQ13000000, magic4e32534d, state1, affinityOFF1.
+  Firmware delivered x0/context_id=0 instead of requested40184080. This alone
+  fails the strict point18 result check, stops the loop and reports0/7;
+  distinguish that from actual execution/shutdown of core1, now proven.
+  Cores2..7 were NOT started. All seven OFF checked before return; root ADB
+  rescue/marker and no block filesystem/data mounts verified. Original boot
+  restoration unnecessary because rescue succeeded. Point18 image remains in
+  boot. Evidence `research/nord2/smp/low32/hardware-test/verified.json`;
+  pmsg `backup/nord2/logs/20261020-135431-smp-low32-stop18/pstore/pmsg-ramoops-0`,
+  15352B, SHA-256 `66e9a0b0824394c8e8cf66c663a9160208cd91c45c7e81df89425603bd1606cd`.
+  Next: retain observed context as diagnostic, use fixed mailboxes to test
+  all secondaries without depending on firmware context delivery. This result
+  does NOT establish whether the firmware supports entries above4GiB.
   Point17 full Apple-clang CI PASSED at ff8d66e:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39414925445
-  Run/log/artifact download under `research/ci-39414925445/` in progress.
+  Run/log saved under `research/ci-39414925445/`; artifact download failed
+  with a network read timeout and needs retry. Source point18 commit55ed523
+  is pushed; Apple-clang CI for the next candidate remains to dispatch.
 
 - **Current user priority: enable all eight CPU cores (or as many as practical)
   BEFORE installing/starting full iOS userland. No userdata install yet.**
@@ -97,9 +114,9 @@
   this branch uses machine_config=SWEET with NORD2 defined by patch0082.
   The rerun used SWEET and passed; this was a dispatch error, not a C failure.
 
-- **CURRENT DEVICE: point16 concurrent USB + HFS diagnostic PID1 PASSED;
+- **Earlier milestone: point16 concurrent USB + HFS diagnostic PID1 PASSED;
   authenticated root ADB RAM rescue returned. Userdata unchanged.**
-  Boot currently contains the exact authorized image
+  Boot at that time contained the exact authorized image
   `shim/out/nord2-xnu/nord2-usb-userland-stop16.img`,33323008B, SHA-256
   `94ff103461f8d72af9d46134dd4c13349261d1739672d3b849d4b5a8eeee7989`.
   Payload SHA `e417ad487d0a80fbb501f6bb842f865376d4c7394afa0d5b18a0ba19201e46bb`.
