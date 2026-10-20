@@ -17,7 +17,8 @@
   Actual-C sanitizer tests and both local translation-unit compiles PASS;
   patch0082 exact reproduction PASS. Evidence research/nord2/ufs-profile/.
   Command ticks exclude caller mutex wait/bounce memcpy; doorbell time includes
-  polling/scheduling. No hardware UFS speed result yet. Next full CI pending.
+  polling/scheduling. No hardware UFS speed result yet. Full CI39488497958/source242e41f running.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39488497958
   Console-only correction CI39486360460/source8c3ca35 PASSED, artifact saved;
   next hardware candidate will include that fix plus UFS measurement.
   Android logs prove G4/two lanes/rateB after Linux negotiation (private
@@ -28,14 +29,18 @@
  16 stored extents/four reconstructed hashes, bounded LZ4, caller buffers,
   no embedded firmware/hardware access. Host real-vendor/corruption/sanitizer
   tests pass and peer review finds no blocking issue. Not kernel-integrated;
-  verified GPT/super/LP vendor-read API remains to implement. Preserve staged
-  firmware files; root handles commits with established identity.
+  verified GPT/super/LP vendor-read API now prepared in active sweet_ufs.c,
+  separately tested/reviewed under research/nord2/ufs-vendor; not in CI242e41f.
+  Gated nord2wififw=1, max64KiB, pins both GPT/LP metadata copies, retains
+  root bounds/LUN/write policy; read failure leaves output untouched. Backup
+  GPT test fixture is synthesized, hardware validation remains pending.
+  Loader local kernel compile passed; firmware probe bridge is being prepared.
 
 - **CONN POWER/ID/RESTORE PASSED; FASTLOG DISPLAY REGRESSION, FIX PREPARED.**
   User authorized exact5d917ab1…5d773f06d boot-only test and supplied fastboot.
   Flash/reboot both OKAY at21:39:18CEST. Power runner EXECUTED; never rerun
-  exclusive flash log. Phone now runs power/fastlog image; USB capture starts
-  under private wifi/power/hardware-live/. Radio stage3 ID20010101 cfg3
+  exclusive flash log. Power/fastlog capture is saved
+  under private wifi/power/hardware-live/; image has since been replaced by fallback. Radio stage3 ID20010101 cfg3
   success=1/restored=1, all8 SMP PASS, FT3518/key initialization succeeds.
   First-GUI ownership100.0895s since stage6; framebuffer58.4852s (58.43%),
   scrolls0/pushes2343. This is NOT lockscreen timing: first3 presents done=0,
@@ -47,10 +52,16 @@
   Final capture773212bytes SHA
   780cae64d85ea36f8dac76399696c1528a23193472c7e4ced743f763ef1941aa.
   Capture ended on USB disconnect(libUSB-4), not a recorded kernel panic;
-  hardware-result.json marks display regression. Phone USB currently absent.
+  hardware-result.json marks display regression.
   Verified fallback runner wifi/power/restore-working-ios.py EXECUTED after
   phone appeared in fastboot. Working fd6d75ca…49995f20 image flashed to boot
-  and rebooted OKAY at21:50:16CEST; restored-ios-live capture pending. Both
+  and rebooted OKAY at21:50:16CEST; restored-ios-live capture230762B complete.
+  User confirms console still visible, GUI not restored. Followup USB capture
+  running; physicalpower display-on eventually gives present done1 and overlay
+  removal, but NO swap-layer logs. Backboardd now creates960x2079 BGRA and
+  b3a8 surfaces; earlierworkingfd6 used1125x2436 BGRA. Cause unestablished.
+  Device is still XNU (USB18d1:d001 shared by our console; lsusb product label
+  alone must NOT be mistaken for fastboot; fastboot devices is empty). Both
   exclusive runners have executed; DO NOT rerun. Preserve userdata; never
   normal Android.
   Source defect found: old console push used W1C semantics for W0C INTSTA,
@@ -62,7 +73,7 @@
   Exact-C ASan/UBSan MMIO/time tests and local ARMv8.2 compile PASS; display
   regression model updated for one-time GUI timing after lock release, PASS.
   Patch0082 regenerated/exact reproduction PASS. Commit8c3ca35 pushed;
-  CI39486360460 is running; image pending.
+  CI39486360460 PASSED; next image adds UFS profiling.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39486360460
   UFS maximum speed is UNVERIFIED; user asks to investigate. No UFS tuning
   writes or benchmark claim. Source audit: inherits LK link/PHY/clocks, no
