@@ -3,6 +3,41 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT OBSERVER FINALIZED; PHONE ON WORKING IOS.**
+  ce84 USB600s deadline complete, no transport/capacity error. Log309,551B
+  SHA-256 e9ef4a1cb8ac6de606a04f0b928d888cac33ed24cb941a79dd4473ee6ebf748e.
+  Private ios-profile/final-cost-report.json validates full log/result hash,
+  preserves counters and separates human lockscreen/speed feedback. Exact
+  lockscreen onset unknown; firstGUI ownership47.7209016s is fromstage6 only.
+  No capture client remains. Both395030 runners have executed; never rerun.
+  New395066 images are still packing, not authorized. Planned next captures
+  60s for stop-only UFS (engine20s bound) and180s for iOS common probe; enough
+  to cover measured startup while avoiding the former600s idle collection.
+
+- **CI39506694221 PASSED; NEW IMAGES PACKING.**
+  Source9327714bfe56719881e4c6251243fcd6afc97b24, kernel17,336,088B SHA-256
+  c5b7c8eb73302fa13d28a729543ab438241954d6bb8f4c0f3d33d50bedc69c17.
+  Artifact checksum and all1,102 compiler invocations/physical command lines
+  genericARMv8.2+crypto verified. Private diagnostic/ios verifiers now pinned
+  to exact kernel; two offline builds starting under1GiB perprocess limits.
+  Metadata independently checks both modes: EMI off, common onlyinRWobserver,
+  explicit dirtyhalt behavior and nofirmwareexecution. Newimages notauthorized.
+  ce84observer USB600s finished exit0, log309,551B; agent finalizing report.
+  Phone left on workingiOS, humanlockscreen +muchfasterboot confirmed.
+
+- **NEXT CI39506694221 RUNNING; CURRENT IOS STILL CAPTURING.**
+  Source9327714bfe56719881e4c6251243fcd6afc97b24 pushed tofork; fullCI
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39506694221
+  IncludesnarrowUECPA LINERESET exception/defaultoff commonWiFi diagnostic/
+  pairedrange mapping. Independent sourceintegration/guard/patchparity review
+  and canonicalfault/ARM64 testsPASS. Input+powerregressions alsoPASS after
+  modelnewdefaultoffhook/dirtylatchdependencies. Patch7286lines exactreproduction.
+  gitdiffwhitespace's space-before-tab finding is generated unifiedpatchcontext,
+  not sourceindentation; otherchecksPASS. Newprivate templates under
+  ufs-linereset-common/{diagnostic,ios} readyONLY, kernelhashpendingCI; both
+  unbuilt/unauthorized. Currentce84lockscreenconfirmed; parentUSB600scapture
+  ongoing. NoCPUclockfeature inthisCI. NextA-dieID remainsprivatepreparedonly.
+
 - **COST OBSERVER: LOCKSCREEN CONFIRMED, USER REPORTS MUCH FASTER BOOT.**
   ce84a4f3 flash/reboot OKAY00:11:32CEST. Capture600s stillrunning (do not
   restart/reboot). Human: lockscreenvisible, avvio "anni luce più veloce";

@@ -1,15 +1,36 @@
-# Nord 2 XNU early probe
+# Nord 2 XNU and iOS bring-up
 
-This is a diagnostic boot image for the OnePlus Nord 2 (MediaTek MT6893), not
-an iOS boot. It contains the Sweet XNU kernel built for MT6893, a small
-Linux-Image loader and a preserved copy of the stock Android kernel. It
-writes a log to the Android ramoops `pmsg` ring and, with `nord2fb=1`, to the
-DSI command-mode display. The default early stop returns after `cpu_init()`;
-later diagnostic images have initialized BSD and published the UFS root
-device, then returned to Android. They do not yet boot iOS userland.
+As of 2026-10-21, the OnePlus Nord 2 (MediaTek MT6893) boots the installed
+iOS 16 userland to the lockscreen. Eight XNU cores, the command-mode display,
+FT3518 touchscreen, power/volume buttons and native USB logging have passed
+hardware tests. The iOS HFS filesystem occupies the former Android userdata
+partition. **Do not boot normal Android over it.** The current fallback is
+the tested ADB recovery in RAM, which mounts no block filesystem.
 
-The current blocker and exact test results are in the active handoff at the
-top of `NOTES.md`. As of 2026-10-20, the corrected CPU-driver matching and
+The loader packages Sweet XNU built for MT6893 with the preserved Android
+Linux kernel and device trees. It supports both bounded diagnostic stops and
+continuous iOS mode at point23. Current iOS images use the tested rescue
+ramdisk for a permissible Linux return. Unsafe controller or restoration
+state halts instead. Native USB exposes live logs; the early console and
+ramoops pmsg log remain useful before USB starts.
+
+The user confirmed substantially faster startup after console optimization,
+skipping the missing RTC service wait and restoring the standard Display Zoom
+dimensions. The latest measured display-ownership marker is47.72 seconds
+from loader stage6; it is not an exact power-on-to-lockscreen measurement.
+UFS is currently G4, one lane in each direction, HS seriesB. About2GB of boot
+reads took7.31 aggregate command seconds with no errors in the latest report.
+Two-lane negotiation is still a diagnostic experiment. Wi-Fi power and four
+firmware files in RAM have been verified; firmware execution and networking
+are not working yet. See `WIFI-LOG.md` for the next initialization stages.
+
+Exact current images, authorization, capture results and the next action are
+in the active handoff at the top of `NOTES.md`. The sections below preserve
+the earlier diagnostic stages and build mechanics.
+
+## Earlier diagnostic milestones
+
+As of 2026-10-20, the corrected CPU-driver matching and
 unambiguous `nord2stopat=8` argument have passed on hardware: XNU returns
 from `kperf_init_early`, reaches the stop before BSD, and chains back to
 Android with pmsg intact. Point 9 has also passed: BSD reaches root
@@ -18,7 +39,7 @@ also passed: inherited UFSHCI register inspection, DMA/SCSI reads of LUN2
 capacity/GPT, and read-only publication of `ufsroot0` before mounting.
 The inherited host state was restored before returning to Android.
 
-These probes do not write UFS media. They do write the
+Those pre-root probes do not write UFS media. They do write the
 pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
 frames, and the MediaTek watchdog restart register. Past early bring-up it
 also initializes the GIC and architected virtual timer.
@@ -41,7 +62,8 @@ Nord2 panic/Android-return hook; that final panic is expected. Exit codes
 70–74 or an earlier panic are failures. Require the success marker, HFS
 mount evidence and Android return, not just a reboot. All these markers
 were observed on the Nord2 on 2026-10-20, followed by verified restoration
-of the original Android boot. Apple launchd has not yet run on this device.
+of the original Android boot, before userdata was replaced. This historical
+probe preceded the successful Apple launchd and full iOS userland boot.
 
 ### ADB recovery without Android userdata
 
@@ -225,9 +247,14 @@ resulting file. Add any newly touched source file to its `FILES` list.
 ## Flashing
 
 This directory builds an image; it is not permission to flash it. `fastboot
-boot` fails on this phone even for the original image, so a test means
-flashing **boot only**, entering fastboot manually, and afterwards restoring
-`backup/nord2/boot.img` (33554432 bytes, SHA-256
-`04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`) and
-checking the read-back hash and `sys.boot_completed`. Bootloader, recovery,
-modem, persist and userdata are never touched.
+boot` fails on this phone even for the original image, so the current test
+procedure flashes **boot only** after exact-image authorization and manual
+entry into fastboot. Use the active handoff's verified image and single-use
+runner. Diagnostic images may intentionally halt and require manual fastboot
+before returning to working iOS or the tested RAM ADB rescue.
+
+The original `backup/nord2/boot.img` remains preserved (33554432 bytes,
+SHA-256 `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`),
+but restoring and booting normal Android is no longer the default recovery:
+userdata now contains iOS. Continuous iOS images mount that filesystem read/
+write. Keep bootloaders, recovery, modem, persist and backups intact.
