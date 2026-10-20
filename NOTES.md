@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **UFS TWO-LANE IMAGE VERIFIED; AWAITING EXACT AUTHORIZATION.**
+  CI39495585573/dece242; image
+  `shim/out/nord2-xnu/nord2-ufs-two-lane-diag-stop23.img`, 33,269,760 bytes,
+  SHA-256 0089ae589b3bd9cb4b552e0a8916414ba5d5d61cbd5089f75936a0da2a6c55dc.
+  Payload d28cf9839c2e5df75473a7a9eea51e7524641020fad6d0c61e760ccd460b967b.
+  Standard/static checks, independent unpack and linked path reviews PASS.
+  Strict read-only pre-root test; tries x2, verifies reads, negotiates x1 back,
+  then always halts (no iOS or Linux handoff). Physical fastboot required after
+  capture. Private hardware-candidate/run-approved-boot.py PREPARED ONLY,
+  exact flag --authorized-ufs-two-lane-boot; exclusive logs prevent repeat.
+  Second Wi-Fi/display image packing sequentially, not flashed/authorized.
+
+- **USER CONFIRMS DISPLAY ZOOM CHANGED WHILE GUI WORKED.**
+  User answered yes to Zoom schermo change at 23:07 CEST. Matches current
+  960x2079 versus prior fullscreen1125x2436 and repeated missing scaler lookups.
+  Strong explanation for persisted failure even with earlier kernel, but actual
+  preference and causal reset not yet verified. Investigating reversible reset;
+  no preference/filesystem change made. Full record diagnostics remain useful.
+
 - **COMBINED TEST COMPLETE; UI STILL SHOWS CONSOLE.**
   Authorized e5f91de5…6e2741b flashed/rebooted OKAY at 22:40:03 CEST.
   Runner EXECUTED; never rerun. Final 600-second USB capture: 956,617 bytes,
@@ -24,8 +43,12 @@
   stage/header/range logs preserve every existing hash and validation gate.
   Results/parser/raw evidence: private `research/nord2/rtc-ufs-wifi/`.
 
-- **NEXT SOURCE INTEGRATED; CI39495585573 RUNNING.**
+- **NEXT SOURCE VERIFIED; CI39495585573 PASSED.**
   Source dece242488ecb646fc4693e81319b2e0b0f28d1f; macOS full kernel build.
+  Kernel 17,285,968 bytes, SHA-256
+  9bdffb19b3f52da6450d6a978879555ba5dd8d76111b07e622fa7cee3d5b0864.
+  Artifact checksum verified; all 1,101 C/C++ compile commands use generic
+  ARMv8.2+crypto (verifier includes both clang and clang++).
   https://github.com/frxncyyy/ios-sweet/actions/runs/39495585573
   Adds first-two complete swap-record diagnostics, bounded vendor validation
   evidence, opt-in dedicated EMI-read worker and separate `nord2ufs2lane=1`
@@ -37,7 +60,13 @@
   Engine/adapter fault models, real saved GPT hashing, default-path regression,
   bounded logging, display/vendor/firmware tests and local ARM64 compiles pass.
   Dedicated two-lane mode has NOT run on hardware. A new exact image approval
-  is required for any further flash; neither new image is packed yet.
+  is required for any further flash. Packing the UFS stop-only image first,
+  then the iOS/Wi-Fi/display observer sequentially to limit host memory use.
+  The phone remains on e5f91de5; no further device action executed.
+  Independent linked reviews confirm pre-root X2 halt/return guards, fixed
+  GPT digest/read, exact EMI read ABI and worker lifecycle, vendor reports
+  outside the UFS lock. Evidence: private CI directory linked-{ufs,wifi}-review.
+  Private offline parsers prepared for complete X2 and two swap-record dumps.
 
 - **FUTURE ROM TRANSACTION HELPER TESTED, NOT LINKED.**
   `wifi_rom_transaction.{c,h}` uses the verified ROM plan and an injected I/O
