@@ -12,6 +12,7 @@
 #define SYS_write  4
 #define SYS_open   5
 #define SYS_getpid 20
+#define SYS_select_nocancel 407
 
 	.text
 	.globl	_start
@@ -71,6 +72,35 @@ compare:
 	b.cs	fail_console
 	cmp	x0, x20
 	b.ne	fail_console
+#ifdef NORD2_LIVE_PROBE
+	/* Ten timer sleeps prove that USB polling and EL0 both keep running. */
+	mov	x21, #10
+live_tick:
+	mov	x9, #1
+	str	x9, [sp, #32]		/* user64_timeval.tv_sec */
+	str	xzr, [sp, #40]		/* tv_usec and padding */
+	mov	x0, #0
+	mov	x1, #0
+	mov	x2, #0
+	mov	x3, #0
+	add	x4, sp, #32
+	mov	x16, #SYS_select_nocancel
+	svc	#0x80
+	b.cs	fail_sleep
+	cbnz	x0, fail_sleep
+	mov	x0, x19
+	adr	x1, live_message
+	adr	x2, live_message_end
+	sub	x2, x2, x1
+	mov	x20, x2
+	mov	x16, #SYS_write
+	svc	#0x80
+	b.cs	fail_console
+	cmp	x0, x20
+	b.ne	fail_console
+	subs	x21, x21, #1
+	b.ne	live_tick
+#endif
 	mov	x0, #66
 	b	finish
 fail_pid:
@@ -88,6 +118,11 @@ fail_contents:
 fail_console:
 	mov	x0, #74
 	b	finish
+#ifdef NORD2_LIVE_PROBE
+fail_sleep:
+	mov	x0, #75
+	b	failed
+#endif
 failed:
 	mov	x20, x0
 	mov	x0, x19
@@ -111,8 +146,17 @@ expected:
 expected_end:
 success:
 	.ascii	"\nNORD2 USERLAND: HFS read verified; getpid=1; EL0 syscalls OK\n"
+#ifdef NORD2_LIVE_PROBE
+	.ascii	"NORD2 USERLAND: starting ten timed USB live-log ticks\n"
+#else
 	.ascii	"NORD2 USERLAND: deliberate exit 66; diagnostic complete\n"
+#endif
 success_end:
+#ifdef NORD2_LIVE_PROBE
+live_message:
+	.ascii	"NORD2 USERLAND: live tick; PID1 and USB polling running\n"
+live_message_end:
+#endif
 failure:
 	.ascii	"\nNORD2 USERLAND: diagnostic FAILED; see PID1 exit code\n"
 failure_end:

@@ -19,8 +19,10 @@ import time
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('output', type=Path)
 ap.add_argument('--wait', type=float, default=180)
+ap.add_argument('--read-seconds', type=float, default=20)
 args = ap.parse_args()
 assert 0 < args.wait <= 600
+assert 0 < args.read_seconds <= 600
 args.output.mkdir(parents=True, exist_ok=True)
 lib = C.CDLL(ctypes.util.find_library('usb-1.0') or 'libusb-1.0.so.0')
 ptr = C.c_void_p
@@ -51,6 +53,16 @@ def request(code, value, size):
     if n < 0:
         raise OSError(f'USB request {code:#x} failed: libusb {n}')
     return buffer.raw[:n]
+
+
+def read_status():
+    raw = request(0x52, 0, 28)
+    if len(raw) != 28:
+        raise OSError('Truncated native console status')
+    status = struct.unpack('<7I', raw)
+    if status[:2] != (0x4253554e, 1):
+        raise ValueError('Unexpected native console protocol')
+    return status
 
 
 try:
@@ -98,22 +110,17 @@ try:
         lib.libusb_free_device_list(devices, 1)
     if not handle:
         raise SystemExit('Enumerated USB console disappeared')
-    raw = request(0x52, 0, 28)
-    if len(raw) != 28:
-        raise SystemExit('Truncated native console status')
-    status = struct.unpack('<7I', raw)
-    if status[:2] != (0x4253554e, 1):
-        raise SystemExit('Unexpected native console protocol')
+    status = read_status()
     print('XNU USB connected; reading pmsg while XNU is running.', flush=True)
     log = bytearray()
     samples = [status]
-    until = time.monotonic() + 20
+    until = time.monotonic() + args.read_seconds
     while time.monotonic() < until and len(log) < 65524:
         try:
             chunk = request(0x51, len(log), min(1024, 65524 - len(log)))
             log += chunk
             (args.output / 'xnu-live.log').write_bytes(log)
-            samples.append(struct.unpack('<7I', request(0x52, 0, 28)))
+            samples.append(read_status())
         except OSError:
             if not log:
                 raise

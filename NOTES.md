@@ -3,8 +3,41 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE: point15 native USB LIVE LOG PASSED; ADB RAM rescue returned.
-  Boot still contains the authorized point15 image; userdata unchanged.**
+- **CURRENT DEVICE: point16 concurrent USB + HFS diagnostic PID1 PASSED;
+  authenticated root ADB RAM rescue returned. Userdata unchanged.**
+  Boot currently contains the exact authorized image
+  `shim/out/nord2-xnu/nord2-usb-userland-stop16.img`,33323008B, SHA-256
+  `94ff103461f8d72af9d46134dd4c13349261d1739672d3b849d4b5a8eeee7989`.
+  Payload SHA `e417ad487d0a80fbb501f6bb842f865376d4c7394afa0d5b18a0ba19201e46bb`.
+  Boot-only flash/reboot passed at13:01 CEST after exact device/product/size
+  and original backup hash checks. Native USB enumerated at13:02:41;
+  received HFS mount, getpid1/EL0 success, ALL TEN one-second ticks and the
+  expected diagnostic PID1 exit66. Background EP0 polling and BSD/userland
+  therefore ran concurrently on the real phone. Live log17144B, SHA-256
+  `8df33a70df7f47c9bd4e1bbd574e3928ce033afd6ebdd21d6f0928499863b0e4`,
+  `research/nord2/usb/background/hardware-live/xnu-live.log`.
+  66 status samples; last request141/reset2/log_read65/stall0/configured1.
+  Expected initproc panic then generic USB cleanup returned to ADB rescue.
+  Saved pmsg17322B, SHA-256
+  `5e726f0ae613637e1de72f27eb95e201d35d5175b93f1a9b710cb9b80bcd732a`,
+  `backup/nord2/logs/20261020-130111-usb-userland-stop16/pstore/pmsg-ramoops-0`.
+  Live bytes equal its exact prefix. Root rescue marker and absence of
+  block-backed filesystems or /data verified. No original-boot restore was
+  needed: authorization specified it only if rescue return failed.
+  Evidence `research/nord2/usb/background/hardware-test/verified.json`,
+  `flash.log`, `host-kernel.log`, `mounts.txt`; build layout in `manifest.json`.
+  Initial reader expired across approval/context BEFORE the actual test;
+  `client-hardware.log` is that pre-test timeout. `client-active.log` is the
+  successful reader restarted before XNU enumeration.
+  This proves concurrent native EP0 logging, not bulk/CDC-ECM/full USB or
+  Apple launchd. /sbin/launchd in the RAM image is our static diagnostic.
+  **Next: full Apple-clang CI of point16, then move from RAM diagnostics
+  toward the prepared iOS root on UFS with this live console retained.**
+  Do not write userdata until the exact install/boot artifacts are reviewed
+  and the destructive write confirmed (broad deletion already authorized).
+
+- **Previous device: point15 native USB LIVE LOG PASSED; ADB RAM rescue returned.
+  Boot contained the authorized point15 image; userdata unchanged.**
   After installing/reloading the dedicated udev rule, repeated the SAME
   image using only fastboot reboot (phone had already returned to fastboot;
   attempted adb preflight found no device, so sent no ADB reboot).
@@ -21,9 +54,33 @@
   `research/nord2/usb/phy-console/{retry-verified.json,retry-host-kernel.log}`.
   This proves native USB EP0 log/status transport, not yet concurrent boot
   logging, bulk endpoints, CDC-ECM or a complete iOS USB stack.
-  **Next: background polling thread with the HFS diagnostic PID1 in RAM,**
-  to receive live progress while XNU continues mounting/executing userland.
+  Background polling thread with HFS diagnostic PID1 now tested above;
+  live progress received while XNU mounted and executed diagnostic userland.
   Preserve existing authorized images; a new candidate needs its own approval.
+  Background candidate now built and authorized: `nord2-usb-userland-stop16.img`.
+  Only point16 creates a kernel thread (requires explicit cpus=1), waits for
+  its readiness with scheduler sleeps, then allows BSD to mount the RAM root.
+  Thread uses the tested PHY/EP0 path; masks IRQ/FIQ only during each PIO
+  iteration and sleeps1ms with interrupts restored. Existing point14/15
+  synchronous loops remain. Deadline45s returns to rescue if PID1 stalls;
+  normal expected end is diagnostic PID1 exit66 -> panic return cleanup.
+  No UFS selected (`rd=md0 ufsrw=0 rootrw=0`).
+  New `NORD2_LIVE_PROBE` compile mode in tools/nord2-init-probe.S emits ten
+  messages separated by select_nocancel(407),nfds0,timeval1s. Exit75 means
+  timer syscall failed. Default build remains byte-identical to old probe.
+  Fresh 8MiB HFS root built and fsck/read-back verified in isolated KVM copy:
+  `research/nord2/rootfs-live/nord2-hfs-pid1.img`, SHA-256
+  `b5fa35f397e784c1da04988503ee43d9ce23e7925829a84be181d4ceba07308a`;
+  diagnostic binary16635B SHA
+  `18f1270d9dd9f535a07f95834fe490f3eb240a59d202d732a3191e8a3eddac9e`.
+  Source C compilation, decoder/PHY tests and new background-start
+  ready/failure/timeout/single-CPU guard tests passed; patch applies/matches.
+  Local relink only replaces sweet_usb.o in the tested point15 archive.
+  Kernel21961184B SHA
+  `8cb2119f7b3c1505f3e2cc9eb0fba8cc9e7ce81f7b24a2d8d1e86c39d99c9002`;
+  evidence `research/nord2/usb/background/`. Built and authorized; hardware
+  success recorded above. Native reader used --read-seconds60; HFS/getpid1
+  and all ten live ticks were present in the USB log.
   First point15 run before host permission correction follows:
   User explicitly authorized `nord2-usb-phy-stop15.img` after it was built
   and verified. Expected product, single-device identity, boot partition size

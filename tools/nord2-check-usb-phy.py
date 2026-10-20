@@ -12,7 +12,7 @@ source = Path(sys.argv[1])
 out = Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 usb = (source / 'bsd/dev/sweet_usb.c').read_text()
-state = usb.split('/* TPHY v2 COM offsets,', 1)[1].split('/*\n * Reuse', 1)[0]
+state = usb.split('/* TPHY v2 COM offsets,', 1)[1].split('} nusb_phy;', 1)[0] + '} nusb_phy;\n'
 state = state[state.index('static const uint16_t'):]
 code = usb.split('static bool\nnusb_phy_snapshot', 1)[1]
 code = 'static bool\nnusb_phy_snapshot' + code.split('static void\nnord2_usb_enumerate', 1)[0]
