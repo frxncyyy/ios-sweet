@@ -4,6 +4,18 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **FULL CI 39510279443 RUNNING FOR LIVE X2 + COMMON AP OBSERVER.**
+  Source `4a8b957230c19db8969080778749a6e55e9e60f8` pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39510279443
+  Parent must await successful run, download kernel/log, validate source/hash
+  and generic ARMv8.2 compiler flags, review linked live/error/return paths,
+  then fill private `ufs-live-common-ap/ios/identity-required.json` and build.
+  Exact image remains unbuilt and unauthorized; no new device operation.
+  Private parser handles initial verified x2, failed transition and both
+  pre-root uncertain-I/O / later runtime panics without claiming success.
+  Product ADT pinned; CI identity placeholders block premature image builds.
+
+
 - **LIVE-X2 / AP OBSERVABILITY READY FOR FULL CI.**
   Final active driver SHA-256
   1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
