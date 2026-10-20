@@ -1037,7 +1037,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +1092,975 @@
+@@ -133,11 +1092,1033 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -1578,9 +1578,65 @@
 +static int32_t nord2_smp_off_error[8];
 +static uint32_t nord2_smp_userland_passed;
 +
++/* The PE numeric parser selects a value but cannot prove uniqueness or exact
++ * spelling. The stop-only RO exception requires bounded, unique key=value
++ * tokens from the original command line, matching the image checker's bundle.
++ * Ordinary configurations retain their existing PE-parser behavior. */
++static bool
++nord2_smp_arg_exact(const char *key, const char *expected, unsigned *occurrences)
++{
++	const struct boot_args *ba = (const struct boot_args *)PE_boot_args();
++	*occurrences = 0;
++	if (!ba) { *occurrences = 1; return false; }
++	const char *cmd = ba->CommandLine;
++	size_t length = 0, key_length = 0;
++	while (length < sizeof(ba->CommandLine) && cmd[length]) { length++; }
++	if (length == sizeof(ba->CommandLine)) { *occurrences = 1; return false; }
++	while (key[key_length]) { key_length++; }
++	bool matched = false;
++	for (size_t pos = 0; pos < length;) {
++		/* ASCII whitespace, as used by the offline image argument split. */
++		if (cmd[pos] == ' ' || (cmd[pos] >= '\t' && cmd[pos] <= '\r')) { pos++; continue; }
++		size_t begin = pos;
++		while (pos < length && cmd[pos] != ' ' && !(cmd[pos] >= '\t' && cmd[pos] <= '\r')) { pos++; }
++		size_t end = pos, n = 0;
++		while (n < key_length && begin + n < end && cmd[begin + n] == key[n]) { n++; }
++		if (n != key_length || (begin + n != end && cmd[begin + n] != '=')) { continue; }
++		(*occurrences)++;
++		if (begin + n == end) { continue; } /* bare flag is never explicit */
++		size_t value = begin + n + 1;
++		n = 0;
++		while (value + n < end && expected[n] && cmd[value + n] == expected[n]) { n++; }
++		if (value + n == end && !expected[n]) { matched = true; }
++	}
++	return *occurrences == 1 && matched;
++}
++
++static bool
++nord2_smp_lane_diag_config(void)
++{
++	static const char *const required[][2] = {
++		{ "nord2stopat", "23" }, { "cpus", "8" },
++		{ "rd", "ufsroot0" }, { "ufsroot", "userdata" },
++		{ "nord2ufs2lane", "1" }, { "ufsrw", "0" }, { "rootrw", "0" },
++		{ "nord2input", "0" }, { "nord2wifi", "0" }, { "nord2wififw", "0" },
++		{ "nord2wifiemi", "0" }, { "nord2fbdiag", "0" }, { "nord2ufsprofile", "1" }
++	};
++	for (unsigned i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
++		unsigned count;
++		if (!nord2_smp_arg_exact(required[i][0], required[i][1], &count)) { return false; }
++	}
++	return true;
++}
++
 +static bool
 +nord2_smp_userland_config(unsigned stop)
 +{
++	unsigned lane_count;
++	(void)nord2_smp_arg_exact("nord2ufs2lane", "1", &lane_count);
++	if (lane_count) {
++		return stop == 23 && nord2_smp_lane_diag_config();
++	}
 +	char root[16] = {0};
 +	int ufsrw = -1, rootrw = -1;
 +	PE_parse_boot_argn("rd", root, sizeof(root));
@@ -1884,6 +1940,8 @@
 +			printf("NORD2 SMP: all8 passed; continuing to USB and RAM userland\n");
 +		} else if (stop == 22) {
 +			printf("NORD2 SMP: all8 passed; continuing to USB and read-only iOS root\n");
++		} else if (nord2_smp_lane_diag_config()) {
++			printf("NORD2 SMP: all8 passed; continuing to read-only UFS lane diagnostic stop\n");
 +		} else {
 +			printf("NORD2 SMP: all8 passed; continuing to USB and writable iOS root\n");
 +		}
@@ -3124,7 +3182,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +738,551 @@
+@@ -387,6 +738,553 @@
  	return 0;
  }
  
@@ -3287,7 +3345,9 @@
 +	return memcmp(digest, expected, sizeof(digest)) == 0;
 +}
 +
-+/* Standalone GPT validation: never calls select_userdata or rebinds any root
++/* Live read verified backup entries start at total-8 (eight reserved tail
++ * blocks), with the header at total-1. Do not assume packed total-5 layout.
++ * Standalone GPT validation: never calls select_userdata or rebinds any root
 + * state. Both headers/arrays must agree with the verified LUN2 layout. */
 +static int
 +nord2_vendor_gpt_copy(bool backup)
@@ -3340,7 +3400,7 @@
 +	static const uint8_t disk_guid[16] = { 0 }; /* exact saved GPT identity */
 +	if (current != header_lba || other != (backup ? 1 : N2_VENDOR_LUN_BLOCKS - 1) ||
 +	    first != 34 || last != 31240183ull || memcmp(b + 56, disk_guid, 16) ||
-+	    entry_lba != (backup ? N2_VENDOR_LUN_BLOCKS - 5 : 2) || count != 128 ||
++	    entry_lba != (backup ? N2_VENDOR_LUN_BLOCKS - 8 : 2) || count != 128 ||
 +	    entry_size != 128 || entries_crc != 0x97de707eu) { return EINVAL; }
 +	nord2_vendor_diag.stage = backup ? N2V_BACKUP_ARRAY : N2V_PRIMARY_ARRAY;
 + error = ufs_read_blocks(entry_lba, 4);
@@ -3676,7 +3736,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -586,6 +1482,12 @@
+@@ -586,6 +1484,12 @@
  static int
  sweet_ufs_init(void)
  {
@@ -3689,7 +3749,7 @@
  	DTEntry node;
  	uintptr_t const *reg = NULL;
  	unsigned int size = 0;
-@@ -599,15 +1501,43 @@
+@@ -599,15 +1503,43 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3733,7 +3793,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1549,84 @@
+@@ -619,31 +1551,84 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3822,7 +3882,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1637,28 @@
+@@ -654,13 +1639,28 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -6459,7 +6519,7 @@
 +#define NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 +#include <stdint.h>
 +#include <stddef.h>
-+/* Staged experiment only: never linked/activated by current kernel. No reset,
++/* Opt-in pre-root diagnostic: linked through the Nord2 UFS adapter. No reset,
 + * PHY/clock/AHIT writes, peer commands, allocation or root publication. */
 +#define N2L_READ_COMPLETED_ERROR 1
 +#define N2L_READ_UNCERTAIN 2
@@ -6496,7 +6556,7 @@
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane_adapter.inc
 @@ -0,0 +1,90 @@
-+/* Future stop-only adapter. Included after ufs_read_blocks; never active today. */
++/* Opt-in stop-only adapter, included after ufs_read_blocks. Never publishes root. */
 +struct nord2_x2_context { uint64_t first,blocks,dma_pa; vm_offset_t dma; };
 +static int nord2_x2_owned(void *opaque)
 +{

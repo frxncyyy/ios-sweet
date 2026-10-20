@@ -3,7 +3,40 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **UFS TWO-LANE IMAGE VERIFIED; AWAITING EXACT AUTHORIZATION.**
+- **LIVE READS IDENTIFY WIFI VALIDATOR AND ZOOM SETTINGS.**
+  ADB rescue remains running, no block filesystem mounted and no phone writes.
+  Read53,248B from LUN2: primary GPT pinned hash unchanged; real backup entries
+  start at31240184(total-8), not assumed31240187(total-5). Both header CRCs,
+  entry CRCs and complete arrays match. Private wifi/live-gpt-read stores raw
+  copies and hashes. Narrow vendor validator fix + real-copy/fault tests pass.
+  Targeted read-only HFSX reader fetched147,456B, found mobile graphics plist:
+  canvas_height2079/canvas_width960, exactly83B, SHA-256
+  a162a5b4ce6e5acbce663a3595ce4402effedf3f628e6da0c0c1710d6f92db27.
+  Volume is dirty from forced reboot: raw observation is explicitly untrusted
+  until revalidated through mounted XNU VFS; no journal/raw disk modification.
+  Original saved in display-capabilities/graphics-zoom-original.plist.
+  Proposed standard2436x1125 differs at four bytes, new SHA-256
+  a275c9213db9ef42c86512664684f1d76f0c623cd42b108c516c6b5ac7d2d7a3.
+  Preparing opt-in pre-launchd VFS reset with exact preimage/backup/readback;
+  not integrated or run. Runtime SMP RO-mode fix and tests also ready.
+  Frozen Wi-Fi observer74271734…366f72a is built/verified but unflashed and
+  still carries old vendor placement; hold it while integrating these fixes.
+
+- **UFS TEST REFUSED EARLY; PHONE IN ADB RAM RESCUE.**
+  Exact0089ae58 image flash/reboot succeeded, but unchanged runtime
+  nord2_smp_userland_config still required RW1 for stop23. Panic before the
+  lane diagnostic: unsupported startup configuration cpu=1 cpus=8 stop=23.
+  No UFS lane transition attempted. Pstore saved immediately under private
+  backup/nord2/logs/20261020-231112-ufs-two-lane-diag; hardware-result.json in
+  hardware-candidate records digest/result. Native USB never started; parent
+  stopped its host wait. ADB recovery authenticated, userdata not mounted;
+  recompressed rescue Linux path now hardware-observed working. DO NOT rerun
+  old runner. Fixing narrow runtime RO-mode gate; previous static checker
+  covered only image arguments and failed to catch this integration mismatch.
+  User has been told; no next flash authorized. Phone should remain connected
+  in rescue for targeted read-only HFS preferences extraction (Zoom confirmed).
+
+- **UFS TWO-LANE IMAGE AUTHORIZED AND FLASHED; CAPTURE RUNNING.**
   CI39495585573/dece242; image
   `shim/out/nord2-xnu/nord2-ufs-two-lane-diag-stop23.img`, 33,269,760 bytes,
   SHA-256 0089ae589b3bd9cb4b552e0a8916414ba5d5d61cbd5089f75936a0da2a6c55dc.
@@ -11,8 +44,11 @@
   Standard/static checks, independent unpack and linked path reviews PASS.
   Strict read-only pre-root test; tries x2, verifies reads, negotiates x1 back,
   then always halts (no iOS or Linux handoff). Physical fastboot required after
-  capture. Private hardware-candidate/run-approved-boot.py PREPARED ONLY,
+  capture. Private hardware-candidate/run-approved-boot.py was prepared,
   exact flag --authorized-ufs-two-lane-boot; exclusive logs prevent repeat.
+  User authorized exact image; flash/reboot OKAY at 23:09 CEST. Runner
+  EXECUTED, do not rerun. Native USB capture in hardware-candidate/hardware-live.
+  Test intentionally halts; physical fastboot needed for the next image.
   Second Wi-Fi/display image packing sequentially, not flashed/authorized.
 
 - **USER CONFIRMS DISPLAY ZOOM CHANGED WHILE GUI WORKED.**

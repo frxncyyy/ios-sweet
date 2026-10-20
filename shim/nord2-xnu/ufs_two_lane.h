@@ -2,7 +2,7 @@
 #define NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 #include <stdint.h>
 #include <stddef.h>
-/* Staged experiment only: never linked/activated by current kernel. No reset,
+/* Opt-in pre-root diagnostic: linked through the Nord2 UFS adapter. No reset,
  * PHY/clock/AHIT writes, peer commands, allocation or root publication. */
 #define N2L_READ_COMPLETED_ERROR 1
 #define N2L_READ_UNCERTAIN 2

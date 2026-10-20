@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Exact guarded vendor-reader C with private LP/GPT fixtures and real SHA256.
 
-No device access. Private fixture binaries stay outside git. The backup GPT
-header is synthesized from the saved primary using the standard mirror offsets;
-a differing actual backup fails closed on hardware.
+No device access. Private fixture binaries stay outside git. Both real GPT
+copies come from the live read-only rescue capture: primary20KiB and tail32KiB.
+Backup entries begin at total-8, header at total-1; no synthesized geometry.
 """
 from pathlib import Path
 import re
+import hashlib
 import subprocess
 import tempfile
 
 root=Path(__file__).resolve().parent.parent
+live=root/'research/nord2/wifi/live-gpt-read'
+assert hashlib.sha256((live/'primary.bin').read_bytes()).hexdigest()=='e01c103f7d3c6399364e72304b41f99bf24b517b1990f1ba8623ad184472bc86'
+assert hashlib.sha256((live/'backup-tail.bin').read_bytes()).hexdigest()=='c42bb521f900f57f3c57cf1c998707f43ad176ac6da3623d8c4f4e8c3c48674f'
+assert (live/'primary.bin').read_bytes()[4096:] == (live/'backup-tail.bin').read_bytes()[:16384]
+assert (live/'primary.bin').read_bytes()[4096:] == (root/'backup/nord2/ufs-baseline/entries.bin').read_bytes()
 s=(root/'research/ci-39158169212/buildtree/xnu/bsd/dev/sweet_ufs.c').read_text()
 a=s.index('/* Immutable read-only vendor mapping.')
 b=s.index('/* Included exactly once; do not also compile a separate module object. */',a)
@@ -50,7 +56,7 @@ static int vendor_printf(const char *format,...) {
 }
 #define printf vendor_printf
 static uint32_t registers[64];
-static uint8_t primary[4096], backup[4096], entries[16384];
+static uint8_t primary[4096], backup[4096], entries[16384], backup_entries[16384];
 static uint8_t geometry0[4096], geometry1[4096], metadata0[65536], metadata1[65536];
 static uint64_t capacity_blocks=31240192ull;
 static uint32_t capacity_size=4096;
@@ -74,7 +80,8 @@ static int ufs_read_blocks(uint64_t lba,uint32_t blocks) {
  uint8_t *out=(void *)(su.dma+DMA_BOUNCE); size_t n=(size_t)blocks*4096;
  if(lba==1 && blocks==1) memcpy(out,primary,n);
  else if(lba==31240191 && blocks==1) memcpy(out,backup,n);
- else if((lba==2 || lba==31240187) && blocks==4) memcpy(out,entries,n);
+ else if(lba==2 && blocks==4) memcpy(out,entries,n);
+ else if(lba==31240184 && blocks==4) memcpy(out,backup_entries,n);
  else if(lba==344064+1 && blocks==1) memcpy(out,geometry0,n);
  else if(lba==344064+2 && blocks==1) memcpy(out,geometry1,n);
  else if(lba==344064+3 && blocks==16) memcpy(out,metadata0,n);
@@ -100,11 +107,12 @@ static void fixtures(const char *lp,const char *gpt) {
  load_file(lp,"geometry-backup.bin",geometry1,sizeof(geometry1));
  load_file(lp,"metadata-primary.bin",metadata0,sizeof(metadata0));
  load_file(lp,"metadata-backup.bin",metadata1,sizeof(metadata1));
- load_file(gpt,"header.bin",primary,sizeof(primary));
- load_file(gpt,"entries.bin",entries,sizeof(entries));
- memcpy(backup,primary,sizeof(backup));
- uint64_t v=31240191;memcpy(backup+24,&v,8);v=1;memcpy(backup+32,&v,8);
- v=31240187;memcpy(backup+72,&v,8);crc_header(backup);
+ uint8_t live_primary[20480],live_tail[32768];
+ load_file(gpt,"primary.bin",live_primary,sizeof(live_primary));
+ load_file(gpt,"backup-tail.bin",live_tail,sizeof(live_tail));
+ memcpy(primary,live_primary,sizeof(primary));memcpy(entries,live_primary+4096,sizeof(entries));
+ memcpy(backup,live_tail+7*4096,sizeof(backup));memcpy(backup_entries,live_tail,sizeof(backup_entries));
+ assert(!memcmp(entries,backup_entries,sizeof(entries)));
 }
 static void reset(void) {
  memset(dma,0,sizeof(dma)); memset(registers,0,sizeof(registers));
@@ -134,6 +142,8 @@ int main(int argc,char **argv) {
  for(unsigned i=0;i<65536;i++) assert(out[i+1]==(uint8_t)(7708082176ull+123+i));
  assert(out[0]==0xa5 && out[65537]==0xa5);unchanged();
  assert(nord2_vendor_diag.stage==N2V_PAYLOAD && !nord2_vendor_diag.error);
+ assert(nord2_vendor_diag.backup && nord2_vendor_diag.entry_lba==31240184 && nord2_vendor_diag.current==31240191);
+ assert(nord2_vendor_diag.stored_crc==1852567670u && nord2_vendor_diag.actual_crc==1852567670u);
  sweet_ufs_vendor_report();assert(reports==3 && !held);
  // Every diagnostic line fits the real255-char console limit at maximal fields.
  struct nord2_vendor_diagnostic saved_diag=nord2_vendor_diag;
@@ -154,9 +164,9 @@ int main(int argc,char **argv) {
   if(fail<10) { unsigned n=reads;assert(sweet_ufs_read_vendor(0,out,4096)==EIO && reads==n); }
  }
  // Each immutable copy is independently checked; changes must fail closed.
- uint8_t *copies[]={primary,backup,entries,geometry0,geometry1,metadata0,metadata1};
- unsigned sizes[]={92,92,16384,4096,4096,65536,65536};
- for(unsigned c=0;c<7;c++) {
+ uint8_t *copies[]={primary,backup,entries,backup_entries,geometry0,geometry1,metadata0,metadata1};
+ unsigned sizes[]={92,92,16384,16384,4096,4096,65536,65536};
+ for(unsigned c=0;c<8;c++) {
   for(unsigned j=0;j<16;j++) {
    unsigned at=(j*4051u)%sizes[c];copies[c][at]^=0x80;
    reset();memset(out,0xa5,sizeof(out));
@@ -165,10 +175,10 @@ int main(int argc,char **argv) {
   }
  }
  // Correctly checksummed but incompatible header geometry is still refused.
- reset(); uint64_t changed=3;memcpy(backup+72,&changed,8);crc_header(backup);
+ reset(); uint64_t changed=31240187;memcpy(backup+72,&changed,8);crc_header(backup);
  memset(out,0xa5,sizeof(out));assert(sweet_ufs_read_vendor(0,out,4096)!=0);
  output_unchanged(out,sizeof(out));
- assert(nord2_vendor_diag.stage==N2V_BACKUP_HEADER && nord2_vendor_diag.entry_lba==3 && nord2_vendor_diag.error==EINVAL);
+ assert(nord2_vendor_diag.stage==N2V_BACKUP_HEADER && nord2_vendor_diag.entry_lba==31240187 && nord2_vendor_diag.error==EINVAL);
  assert(nord2_vendor_diag.backup && nord2_vendor_diag.guid_equal && nord2_vendor_diag.current==31240191 && nord2_vendor_diag.other==1);
  assert(nord2_vendor_diag.first==34 && nord2_vendor_diag.last==31240183 && nord2_vendor_diag.count==128 && nord2_vendor_diag.entry_size==128);
  assert(nord2_vendor_diag.actual_crc==nord2_vendor_diag.stored_crc);
@@ -227,5 +237,5 @@ with tempfile.TemporaryDirectory(prefix='nord2-ufs-vendor-') as tmp:
                     '-Wno-deprecated-declarations','-fsanitize=address,undefined',
                     str(c),'-lcrypto','-o',str(exe)],check=True)
     subprocess.run([str(exe),str(root/'research/nord2/wifi/vendor-read'),
-                    str(root/'backup/nord2/ufs-baseline')],check=True)
-print('PASS: exact vendor reader + real SHA256/private fixtures; GPT/LP copies, corruption, faults, bounds/overflow/fuzz, ownership/context, root-state preservation and all-or-nothing output')
+                    str(live)],check=True)
+print('PASS: exact vendor reader + real live primary/backup GPT and SHA256/LP fixtures; total-8 accepted/old total-5 rejected; independent copy corruption, faults, bounds/overflow/fuzz, ownership/context, root-state preservation and all-or-nothing output')

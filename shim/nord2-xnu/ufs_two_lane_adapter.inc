@@ -1,4 +1,4 @@
-/* Future stop-only adapter. Included after ufs_read_blocks; never active today. */
+/* Opt-in stop-only adapter, included after ufs_read_blocks. Never publishes root. */
 struct nord2_x2_context { uint64_t first,blocks,dma_pa; vm_offset_t dma; };
 static int nord2_x2_owned(void *opaque)
 {
