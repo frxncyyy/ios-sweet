@@ -207,6 +207,29 @@ class Checker:
                    all(re.fullmatch(r'[^=]+=(?:0|[1-9][0-9]*|0x[0-9a-fA-F]+)', arg)
                        for arg in stops), ', '.join(stops))
         args = cmdline.split()
+        chosen = next((n for n in root.children if n.name == 'chosen'), None)
+        mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
+        ramdisk = mmap.prop('RAMDisk') if mmap else None
+        if ramdisk is not None or 'rd=md0' in args:
+            self.check('RAM root selects md0 unambiguously',
+                       [a for a in args if a.startswith('rd=')] == ['rd=md0'])
+            valid = ramdisk is not None and len(ramdisk) == 16
+            self.check('RAMDisk has physical address and size', valid)
+            if valid:
+                rd_pa, rd_size = struct.unpack('<QQ', ramdisk)
+                rd_va = rd_pa - pbase + vb
+                matches = [s for s in segs if s[0] == rd_va and s[1] == rd_size]
+                self.check('RAMDisk has one backed, page-aligned segment',
+                           rd_size > 0 and rd_pa % 0x4000 == 0 and
+                           rd_size % 0x4000 == 0 and len(matches) == 1 and
+                           0 < matches[0][3] <= rd_size and
+                           matches[0][2] + matches[0][3] <= adt_off)
+                self.check('RAMDisk is reserved before ADT and inside RAM',
+                           pbase <= rd_pa and rd_pa + rd_size == kend_pa and
+                           rd_pa + rd_size <= region_end)
+                self.check('RAMDisk follows all kernel segments without overlap',
+                           len(matches) == 1 and
+                           all(s == matches[0] or s[0] + s[1] <= rd_va for s in segs))
         if 'rd=ufsroot0' in args:
             ufs = next((n for n in root.children if n.name == 'sweet-ufs'), None)
             self.check('Nord 2 root uses the verified UFS controller and LUN2',

@@ -5,22 +5,42 @@ an iOS boot. It contains the Sweet XNU kernel built for MT6893, a small
 Linux-Image loader and a preserved copy of the stock Android kernel. It
 writes a log to the Android ramoops `pmsg` ring and, with `nord2fb=1`, to the
 DSI command-mode display. The default early stop returns after `cpu_init()`;
-later diagnostic images have reached the end of IOKit initialization and
-returned to Android. They do not yet boot iOS userland.
+later diagnostic images have initialized BSD and published the UFS root
+device, then returned to Android. They do not yet boot iOS userland.
 
 The current blocker and exact test results are in the active handoff at the
 top of `NOTES.md`. As of 2026-10-20, the corrected CPU-driver matching and
 unambiguous `nord2stopat=8` argument have passed on hardware: XNU returns
 from `kperf_init_early`, reaches the stop before BSD, and chains back to
 Android with pmsg intact. Point 9 has also passed: BSD reaches root
-filesystem selection, including network-thread scheduling. The next test,
-point 10, only reads standard UFSHCI registers to inspect the MT6893
-controller state inherited from LK.
+filesystem selection, including network-thread scheduling. Points 10–12
+also passed: inherited UFSHCI register inspection, DMA/SCSI reads of LUN2
+capacity/GPT, and read-only publication of `ufsroot0` before mounting.
+The inherited host state was restored before returning to Android.
 
-The probe does not write storage or load an iOS ramdisk. It does write the
+These probes do not write UFS media. They do write the
 pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
 frames, and the MediaTek watchdog restart register. Past early bring-up it
 also initializes the GIC and architected virtual timer.
+
+### Prepared RAM-root userspace probe (not yet tested on the phone)
+
+`nord2-hfs-pid1.img` adds an 8 MiB HFS+ RAM root to the point-12 kernel.
+The image helper accepts `--ramdisk IMAGE` immediately after its two
+positional arguments; use `rd=md0 nord2stopat=0 ufsrw=0 rootrw=0`.
+The root remains in RAM and the UFS driver is not selected. The checker
+verifies the RAMDisk ADT address/size against its payload segment and the
+reserved memory layout.
+
+`tools/nord2-init-probe.S`, wrapped with `tools/mkinit.py`, is the diagnostic
+`/sbin/launchd`, not Apple's launchd. It opens `/dev/console`, requires
+`getpid()==1`, and verifies the exact contents of `/nord2-probe.txt`.
+Success prints `NORD2 USERLAND: HFS read verified; getpid=1; EL0 syscalls OK`,
+then deliberately exits with code 66. PID1's exit triggers the existing
+Nord2 panic/Android-return hook; that final panic is expected. Exit codes
+70–74 or an earlier panic are failures. Require the success marker, HFS
+mount evidence and Android return, not just a reboot. No hardware result
+for this image has been observed yet.
 
 ## Artifact layout
 

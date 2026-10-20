@@ -3,8 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE: original Android boot restored and verified after
-  point 11.** Point 12 is prepared; no authorization/flash yet.
+- **CURRENT DEVICE STATE: point12 passed; original Android boot restored and verified.**
+  User authorized the exact boot-only test/restore. Flash and reboot succeeded;
+  saved pmsg is `backup/nord2/logs/20261020-110041-ufs-root-stop12/pstore/pmsg-ramoops-0`,
+  15051 bytes, SHA-256 `b37d2e694b395d3ade3e62966c65f099ffea5d777b2a5c4a598463f6ab2eb4b0`.
+  Observed correct GPT CRCs/extents, `userdata` on LUN2 read-only, `BSD root:
+  ufsroot0`, `root probe host restored, ready=1 writable=0`, the pre-mount
+  stop and `RETURN TO STOCK ANDROID KERNEL`. No filesystem was mounted.
+  Original boot then flashed back; Android `sys.boot_completed=1` and full boot
+  SHA-256 `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
+  Evidence: `research/ci-39388874797/stop12/{flash.log,restore.log,restore-verified.json}`.
+  This fifth test authorization is completed. No userdata changes.
+  **Next candidate prepared, NOT flashed or authorized:**
+  `shim/out/nord2-xnu/nord2-hfs-pid1.img`, 30,584,832 bytes,
+  SHA-256 `c143559d225622b2b96fbdf14ff830cfd513ec0c468b199e6ee4161a6692145d`.
+  Same point12 kernel; new 8MiB HFS RAM root, `rd=md0 nord2stopat=0
+  ufsrw=0 rootrw=0` and existing single-CPU/debug/VM/display args.
+  `tools/nord2-init-probe.S` is a bounded diagnostic PID1, NOT Apple launchd.
+  It requires getpid=1 and exact HFS file contents, prints success then exits66.
+  Expected final PID1-exit panic (status0x4200) invokes the existing Android
+  return hook. Failures exit70..74. Require HFS mount + success text + exit66
+  and Android return; a reboot or panic alone does not prove success.
+  UFS root init is selected only by rd=ufsroot0; this RAM-root test skips it.
+  Image helper now accepts --ramdisk; checker validates ADT/segment/range/no
+  overlap. Negative checks reject wrong RAM address/size/root/kernel overlap.
+  Embedded RAM disk exactly matches the fsck-clean local image. All static
+  image/layout checks passed, including actual loader source-end limit.
+  Evidence: `research/ci-39388874797/hfs-pid1/`; HFS generation/read-back:
+  `research/nord2/rootfs-vm/{run-pid1.py,pid1.log,nord2-hfs-pid1.img}`.
+  RAM disk SHA-256 `f2085fc34e65f5e3728dcf72308702578e84884cda4afc7f6a3ad68aefa77e3b`,
+  PA0x144280000; payload SHA-256
+  `c01bed5a551e6aa169b24175e9e07df30a85c0029b8cb57e2877defaa20966d7`.
+  HFS folder-count repair applied after Linux copy; final fsck/read-back pass.
+  Full Apple userland has NOT run on this Nord2.
   `shim/out/nord2-xnu/nord2-ufs-root-stop12.img`, 30,572,544 bytes,
   SHA-256 `c02eadfece4ff731f3234d13132ffb823280e5f3f12ef430f9135b69d6398d72`.
   Cmdline: `debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
@@ -29,10 +60,14 @@
   - **Host iOS HFS image built, NOT written to the phone:**
     `research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img`, 16 GiB,
     about12 GiB used, case-sensitive journaled HFS+, source16.7.16/20H392.
+    SHA-256 `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`;
+    adjacent `.json`/`.sha256` manifests saved. No Nord2 userdata overwrite
+    is authorized; the upstream Oct15 delete-Android permission is for Sweet.
     Base builder operations plus `tools/sweet-root-tweaks.py` applied inside
     a local KVM guest; final `fsck.hfsplus -f -n` reports clean.
     launchd/dyld original hashes, root:wheel0755,44 dyld cache hard links,
-    logd markers and version checked. Full47 critical-file readback in progress.
+    logd markers and version checked. All47 critical files read back with hashes/owners/modes matching the
+    source; `verify.log` reports `ALL_CRITICAL_FILES_MATCH 47`.
     No mobileactivationd container exists yet, so the tweak script reported
     skipped data_ark; retain that limitation until first userland startup.
   - VM tooling/evidence: `research/nord2/rootfs-vm/{prepare.py,run.py,
@@ -62,7 +97,7 @@
     run/stop `1`; UTMRLBA/upper/doorbell all `0`, run/stop `1`.
     Controller enabled, device and request lists ready, 64-bit addressing
     advertised, no pending transfer/task requests. This proves MMIO access;
-    DMA and SCSI transport remain untested.
+    DMA and SCSI transport were untested at point10 (verified at point11).
   - Exact final markers: `UFS snapshot end`,
     `stop at after read-only UFS host snapshot`,
     `RETURN TO STOCK ANDROID KERNEL`. Android log collector completed normally.
@@ -82,7 +117,7 @@
     `ab8324bc`/`97de707e` exactly match Android baseline.
     `inherited request list and interrupts restored`, `read probe result=0`,
     point11 stop and Android return markers all present. UFS DMA and
-    read transport are now VERIFIED; root publication/mount remain undone.
+    read transport are VERIFIED; publication later verified at point12; mount still untested.
   `shim/out/nord2-xnu/nord2-ufs-read-stop11.img`, 30,572,544 bytes,
   SHA-256 `2027c467d8162966d9ba7cbb20bd8b1cf550960d48ebec94d4fa53619b00f8f6`.
   Cmdline uses `cpus=1 nord2stopat=11`; all image checks pass.
@@ -118,7 +153,7 @@
     `research/nord2/ipsw/root-images/mounts/{OS,SystemOS,AppOS}`.
     launchd, dyld, SystemVersion and all 44 dyld cache files read fully,
     hashes/ownership/modes in `critical-files.json`; version16.7.16/20H392.
-    No HFS root image yet. No system installation or privileged mounts.
+    HFS image subsequently built as recorded above. No system installation or privileged host mounts.
 
 - **Completed point-9 test — original Android boot restored and verified.**
   Point 9 **passed**, including `SWEET CPU: requested=1 selected=1`,
