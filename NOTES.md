@@ -3,6 +3,30 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **UFS FIXED TEST CAPTURE COMPLETE; NO LANE TRANSITION.**
+  72ad734d…f8194821 flash/reboot OKAY at23:38:19CEST; nativeUSB120s exit0.
+  All8 scheduler PASS; GPT validated. Complete7-line diagnostic report:
+  rc=-1 phase1 error-2 commands0 sets0 reads0, uncertain0, root_published0,
+  return_blocked1. Initial healthy()/IS gate refused before first DME command;
+  exact failing predicate NOT recorded. LAST HCS/IS zeros are unpopulated
+  result fields, NOT measured register values. Do not infer a register cause.
+  Final log16212B SHA-256 ea97b2fb80ec4d6643ea66da35ba6d7afe7c0ce497027def41ce92c1311d3476.
+  Private hardware-fixed/hardware-result.json preserves complete raw report.
+  Phone intentionally halted in diagnostic; no root mount/disk write occurred.
+  First runner completed/EXECUTED, never rerun. Need physical fastboot, then
+  execute already-authorized zoom-wifi0956173b image; no new permission needed.
+  Separate agent prepares exact short-circuit preflight observations preserving
+  every guard/no extra MMIO reads; NOT integrated into current frozen images.
+
+- **BOTH NEW IMAGES AUTHORIZED; FIRST RUNNER STARTED.**
+  Human explicitly approved entire sequence, including Zoom two-value reset
+  and verified backup: "Autorizzo entrambi; pronto in fastboot". Authorization
+  covers exact72ad734d…f8194821 then0956173b…2235c89a images above. First
+  hardware-fixed/run-approved-boot.py STARTED; never rerun. Parent collects
+  UFS result before second image; physical fastboot required between tests.
+  No new permission needed for second image; request only physical readiness.
+  Private CI authorization-sequence.json records hashes and human wording.
+
 - **TWO NEW IMAGES VERIFIED; AWAIT EXACT HUMAN AUTHORIZATION.**
   CI39499794889/c25b788, both33,271,808B with282,624B boot spare.
   `shim/out/nord2-xnu/nord2-ufs-two-lane-fixed-stop23.img` SHA-256
