@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT RESULT: generic2 PASSED real XNU SMP; generic4 next, already authorized.**
+- **CURRENT RESULT: generic2 and generic4 PASSED XNU SMP; generic8 next, already authorized.**
   User explicitly authorized the NEW exact generic2/4/8 sequence.
   Previous original-image sequence remains stopped. Phone in fastboot.
   New full Apple-clang kernel from successful CI39424762428/source98efcd7,
@@ -44,8 +44,13 @@
   Pmsg13775B SHA-256 `fca148ba5c97a3851def890dc1bb08e4817ff95841eea2fb5e74287dc644e8bd`,
   `backup/nord2/logs/20261020-150252-smp-generic2-stop20/pstore/pmsg-ramoops-0`.
   Evidence generic/hardware-test-2/verified.json. Stop sequence at any failure.
-  Next: ask only manual fastboot for already-authorized generic4, then test8
-  only after full4-core success and root rescue. No new permission required.
+  Test4 PASSED at15:08 CEST: all4 A55 workers on correct cores, timers
+  33/18/18/17, correct IPI replies1..4, counter16384, console_dropped0,
+  scheduler4/4 PASS1. All secondaries OFF; root ADB/no block-data mounts
+  verified. Pmsg14256B SHA-256 `55a8933ce58643597739573cbcbc501e233eb714babc1d557e19515dafdd7bcc`,
+  `backup/nord2/logs/20261020-150624-smp-generic4-stop20/pstore/pmsg-ramoops-0`.
+  Evidence generic/hardware-test-4/verified.json. Next: ask only manual
+  fastboot for already-authorized generic8. No new permission required.
 
 - **Previous result: point20/2 CPUs FAILED before secondary startup; sequence4/8 STOPPED.**
   User authorized the exact three images conditionally,2→4→8; do not flash
