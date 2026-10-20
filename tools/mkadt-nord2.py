@@ -90,7 +90,10 @@ def build():
         cpu_nodes.append(node(f'cpu{core}', [
             phandle(),
             ('device_type', cstr('cpu')),
-            ('compatible', cstr('arm,cortex-a78' if core >= 4 else 'arm,cortex-a55') + cstr('ARM,v8')),
+            # IOKit matches the shared PSCI/GIC CPU driver using this board
+            # token. Keep the real core type; qcom,kryo470 is Sweet-only.
+            ('compatible', cstr('mediatek,mt6893-cpu') +
+             cstr('arm,cortex-a78' if core >= 4 else 'arm,cortex-a55') + cstr('ARM,v8')),
             ('reg', u32(core << 8)),
             ('cpu-id', u32(core)),
             ('cluster-id', u32(0)),

@@ -1,7 +1,39 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 
-## Nord 2 active handoff — 2026-10-19 (this workspace)
+## Nord 2 active handoff — 2026-10-20 (this workspace)
+
+- 2026-10-20 (session 8, Codex): **CPU driver matching mismatch found in the
+  source; hardware verification pending.** This supersedes the final session-7
+  explanation below. `ml_wait_max_cpus()` does NOT spin until eight CPUs check
+  in: it sleeps on `max_cpus_initialized`, waiting for `ml_set_max_cpus()`.
+  `ml_parse_cpu_topology()` honors `cpus=1`; `IODTPlatformExpert::createNubs()`
+  only adds `logical-cpu-id` to CPUs selected by that topology. Eight ADT
+  nodes therefore do not require eight online CPUs.
+  - The real mismatch: Nord 2 CPU nodes had only `arm,cortex-a55/a78` and
+    `ARM,v8`, but the only `SweetCPU` personality in `KernelConfigTables.cpp`
+    matched `qcom,kryo470`. No Nord 2 CPU could match, and the saved deep-boot
+    logs contain no `SWEET CPU:` lines. `SweetCPU::startAll()` normally calls
+    `ml_set_max_cpus()` after testing SGI1 on every selected CPU.
+  - Fix: add `mediatek,mt6893-cpu` to Nord 2 CPU compatible lists and a separate
+    `SweetCPU` personality for that token (patch 0082). Keep the actual Cortex
+    types, Sweet's existing Qualcomm match, `cpus=1`, and the normal kperf wait.
+    `tools/nord2-mkpatch.sh` now includes `iokit/KernelConfigTables.cpp`.
+    Build with Apple clang via CI; do not use fake `__builtin_xnu_*` fallbacks.
+  - Next test: CI kernel + new ADT, `nord2stopat=0008` (after kperf, before
+    `bsd_init`). Expected evidence: `SWEET CPU: requested=1 selected=1`,
+    `1/1 CPUs initialized, SGI1 verified`, stop 8, chain-back to Android.
+    A failure may expose a further CPU/GIC issue; do not claim a working fix
+    until the log proves it. Do not try `cpus=8` as a workaround or skip kperf.
+  - Phone checked at session start: Android `sys.boot_completed=1`, rooted,
+    full boot partition SHA-256
+    `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`,
+    matching `backup/nord2/boot.img`; pstore empty. No flash/reboot this
+    session yet. Previous per-test approvals were completed; prepare and
+    verify the new image before requesting the next boot-only test.
+  - `gh` is now installed/authenticated for `frxncyyy/ios-sweet`; branch
+    `codex/nord2-bringup`, starting commit `168c6b4`. Existing untracked `kmod/`
+    belongs to the previous work and has been left untouched.
 
 - 2026-10-19 (session 6, Claude, handoff to Opencode): **diagnostic test of
   `nord2-xnu-late2.img` `4a2614ce…` (authorized, run twice) done; Android did
