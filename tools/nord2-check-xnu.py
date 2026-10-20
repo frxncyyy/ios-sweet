@@ -206,6 +206,26 @@ class Checker:
         self.check('stop arguments avoid implicit octal/string parsing',
                    all(re.fullmatch(r'[^=]+=(?:0|[1-9][0-9]*|0x[0-9a-fA-F]+)', arg)
                        for arg in stops), ', '.join(stops))
+        args = cmdline.split()
+        if 'rd=ufsroot0' in args:
+            ufs = next((n for n in root.children if n.name == 'sweet-ufs'), None)
+            self.check('Nord 2 root uses the verified UFS controller and LUN2',
+                       ufs is not None and
+                       ufs.prop('reg') == struct.pack('<QQ', 0x11270000, 0x2300) and
+                       ufs.prop('lun') == struct.pack('<I', 2))
+            self.check('embedded kernel includes Nord 2 UFS root support',
+                       b'NORD2 UFS: root probe host restored, ready=' in kernel)
+        stopat = [a.split('=', 1)[1] for a in stops if a.startswith('nord2stopat=')]
+        try:
+            root_probe = any(int(v, 0) == 12 for v in stopat)
+        except ValueError:
+            root_probe = False  # Already rejected by the stop-argument check.
+        if root_probe:
+            self.check('point 12 selects UFS root with both write flags disabled',
+                       len(stopat) == 1 and
+                       [a for a in args if a.startswith('rd=')] == ['rd=ufsroot0'] and
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
 
 
 def main():

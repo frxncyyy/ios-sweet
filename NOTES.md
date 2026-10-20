@@ -3,6 +3,50 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT DEVICE STATE: original Android boot restored and verified after
+  point 11.** Point 12 is prepared; no authorization/flash yet.
+  `shim/out/nord2-xnu/nord2-ufs-root-stop12.img`, 30,572,544 bytes,
+  SHA-256 `c02eadfece4ff731f3234d13132ffb823280e5f3f12ef430f9135b69d6398d72`.
+  Cmdline: `debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
+  nord2fb=1 nord2stopat=12 rd=ufsroot0 ufsrw=0 rootrw=0`.
+  - Root driver now selects LUN2, checks capacity/4096-byte blocks and both
+    GPT CRCs/bounds before publishing `ufsroot0`; Nord 2 accepts only the
+    known MMIO region and `ufsroot=userdata`. The ADT adds that UFS node.
+    Qualcomm input/USB and background persistent log/sample startup are
+    excluded on Nord 2. Point 12 forces read-only even if ufsrw=1 is supplied.
+  - After `setconf`, before mounting any filesystem, point 12 restores the
+    inherited host and chain-backs. Expected success is
+    `root probe host restored, ready=1 writable=0` and the publication stop.
+    Initialization failures also restore/quiesce; failed restoration halts
+    rather than returning with active DMA. The image checker requires
+    matching UFS ADT/kernel support and explicit ufsrw=0/rootrw=0 for point12.
+  - Exact-code ASan/UBSan harness now includes root init/publication,
+    forced read-only, actual userdata extents, failure cleanup and refusal
+    of other partitions, in addition to all point11 tests.
+    C compilation, patch regeneration and all image checks passed.
+    Artifacts: `research/ci-39388874797/stop12/`.
+    Same new-CI base archive; only BSD init/UFS and point10 early C replaced.
+  - **Host iOS HFS image built, NOT written to the phone:**
+    `research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img`, 16 GiB,
+    about12 GiB used, case-sensitive journaled HFS+, source16.7.16/20H392.
+    Base builder operations plus `tools/sweet-root-tweaks.py` applied inside
+    a local KVM guest; final `fsck.hfsplus -f -n` reports clean.
+    launchd/dyld original hashes, root:wheel0755,44 dyld cache hard links,
+    logd markers and version checked. Full47 critical-file readback in progress.
+    No mobileactivationd container exists yet, so the tweak script reported
+    skipped data_ark; retain that limitation until first userland startup.
+  - VM tooling/evidence: `research/nord2/rootfs-vm/{prepare.py,run.py,
+    smoke.log,build.log,finish.log,verify-content.sh}`. Host kernel/modules
+    7.2.9-arch1-1, KVM, 2GiB guest, readonly9p inputs. No host sudo/install.
+    Local Debian packages (URLs+hashes in `../toolchains/rootfs-tools/downloads.json`):
+    busybox-static1.37.0-6+b9, hfsprogs540.1.linux3-6.
+    Root APFS trees were archived with GNU tar/PAX/numeric owners:
+    OS8,830,801,920 bytes, SystemOS3,363,665,920, AppOS9,768,960.
+    Direct9p tree copy was slow and aborted; `incomplete-slow-9p.img` is NOT
+    an installation image. Tar-based copy finished in ~93s; initial build
+    missed /dev/stdin, then `finish` added it and repaired the same32 Unicode
+    names and HFS folder counts known from upstream. Final checks passed.
+
 - **Completed point-10 test — original Android boot restored
   and verified.** `sys.boot_completed=1`; full boot partition SHA-256
   `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
@@ -23,7 +67,7 @@
     `stop at after read-only UFS host snapshot`,
     `RETURN TO STOCK ANDROID KERNEL`. Android log collector completed normally.
 
-- **CURRENT DEVICE STATE — point 11 PASSED; original Android boot restored and verified.**
+- **Completed point-11 test — original Android boot restored and verified.**
   User authorized this image and boot-only flash/restore. Test flash/reboot
   succeeded; Android returned and log collection completed. Original boot
   subsequently restored via fastboot; full boot hash matches the original

@@ -1017,7 +1017,7 @@
  #ifndef _ARM64_SWEET_EARLY_H_
  #define _ARM64_SWEET_EARLY_H_
  
-@@ -10,8 +10,41 @@
+@@ -10,8 +10,43 @@
  void sweet_early_mark(unsigned int stage, const char *label);
  void sweet_early_putc(char c);
  void sweet_early_panic(const char *fmt, va_list *args);
@@ -1040,6 +1040,8 @@
 +void nord2_ufs_snapshot(void);
 +/* Point 11: bounded LUN2 read probe, restore host before returning to Android. */
 +void nord2_ufs_probe(void);
++/* Point 12: restore the polled UFS host after publishing the BSD root device. */
++void nord2_ufs_root_stop(void);
 +/* Private identity tables for pmsg/framebuffer/RAM window (stage 6). */
 +extern uint64_t nord2_l1_pa;
 +void nord2_identity_init(void);
@@ -1518,7 +1520,7 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -868,6 +880,13 @@
+@@ -868,12 +880,22 @@
  	bsd_init_kprintf("calling inittodr\n");
  	inittodr(0);
  
@@ -1532,7 +1534,16 @@
  	/* Mount the root file system. */
  	while (TRUE) {
  		int err;
-@@ -1119,7 +1138,13 @@
+ 
+ 		bsd_init_kprintf("calling setconf\n");
+ 		setconf();
++#if defined(NORD2)
++		nord2_ufs_root_stop();
++#endif
+ #if CONFIG_NETBOOT
+ 		netboot = (mountroot == netboot_mountroot);
+ #endif
+@@ -1119,7 +1141,13 @@
  		}
  	}
  
@@ -1569,11 +1580,12 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,6 +147,40 @@
+@@ -141,6 +147,41 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
 +#if defined(NORD2)
++static bool nord2_ufs_wait(uint32_t off, uint32_t mask, uint32_t value);
 +/*
 + * The pre-root diagnostic accepts exactly TUR, READ CAPACITY(10), and
 + * READ(10) of the primary GPT area (LBAs 1..63). No arbitrary CDB, media
@@ -1610,7 +1622,7 @@
  /*
   * One SCSI command in slot 0, data (if any) to/from the bounce buffer
   * (to the device when write is set). Returns 0 or an errno.
-@@ -148,6 +188,11 @@
+@@ -148,6 +189,11 @@
  static int
  ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
  {
@@ -1622,13 +1634,13 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -253,6 +298,13 @@
+@@ -253,6 +299,13 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
 +#if defined(NORD2)
-+	if (su.probe_only && (ucd->resp[2] != su.lun || ucd->resp[3] != su.tag ||
-+	    (ucd->resp[1] & 0x60))) {
++	if (ucd->resp[2] != su.lun || ucd->resp[3] != su.tag ||
++	    (ucd->resp[1] & 0x60)) {
 +		printf("NORD2 UFS: response identity or transfer length mismatch\n");
 +		return EIO;
 +	}
@@ -1636,7 +1648,20 @@
  	return 0;
  }
  
-@@ -387,6 +439,274 @@
+@@ -374,6 +427,12 @@
+ 	ufs_wr(REG_IE, 0);                      /* polled operation */
+ 	ufs_wr(REG_IS, ufs_rd(REG_IS));
+ 	ufs_wr(REG_UTRLRSR, 0);
++#if defined(NORD2)
++	__builtin_arm_dsb(0xf);
++	if (!nord2_ufs_wait(REG_UTRLRSR, 1, 0)) {
++		return ETIMEDOUT;
++	}
++#endif
+ 	uint64_t list = su.dma_pa + DMA_UTRL;
+ 	ufs_wr(REG_UTRLBA, (uint32_t)list);
+ 	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
+@@ -387,6 +446,315 @@
  	return 0;
  }
  
@@ -1663,7 +1688,7 @@
 +
 +/* Inspect only GPT metadata; do not read any partition contents. */
 +static int
-+nord2_ufs_probe_gpt(uint64_t blocks)
++nord2_ufs_read_gpt(uint64_t blocks, bool select_userdata)
 +{
 +	uint8_t *b = (uint8_t *)(su.dma + DMA_BOUNCE);
 +	uint32_t hsize, hcrc, nent, esz, ecrc;
@@ -1714,6 +1739,7 @@
 +		return EIO;
 +	}
 +	unsigned found = 0;
++	uint64_t userdata_first = 0, userdata_blocks = 0;
 +	static const char *const wanted[] = { "boot", "userdata" };
 +	for (uint32_t i = 0; i < nent; i++) {
 +		const uint8_t *e = b + i * esz;
@@ -1738,6 +1764,10 @@
 +				return EINVAL;
 +			}
 +			found |= 1u << w;
++			if (w == 1) {
++				userdata_first = first;
++				userdata_blocks = last - first + 1;
++			}
 +			printf("NORD2 UFS: GPT %s first=%llu blocks=%llu\n",
 +			    wanted[w], first, last - first + 1);
 +		}
@@ -1747,6 +1777,10 @@
 +	}
 +	printf("NORD2 UFS: GPT verified entries=%u header_crc=0x%08x entries_crc=0x%08x\n",
 +	    nent, hcrc, ecrc);
++	if (select_userdata) {
++		su.first_block = userdata_first;
++		su.nblocks = userdata_blocks;
++	}
 +	return 0;
 +}
 +
@@ -1775,6 +1809,8 @@
 +struct nord2_ufs_saved {
 +	uint32_t ie, ba, bau, rsr;
 +};
++static struct nord2_ufs_saved nord2_root_saved;
++static bool nord2_root_owned;
 +
 +static bool
 +nord2_ufs_restore(const struct nord2_ufs_saved *saved)
@@ -1891,7 +1927,7 @@
 +		error = EINVAL;
 +		goto done;
 +	}
-+	error = nord2_ufs_probe_gpt((uint64_t)last + 1);
++	error = nord2_ufs_read_gpt((uint64_t)last + 1, false);
 +done:
 +	if (changed && !nord2_ufs_restore(&saved)) {
 +		printf("NORD2 UFS: cannot safely restore host; manual reboot required\n");
@@ -1906,11 +1942,171 @@
 +	printf("NORD2 UFS: read probe result=%d\n", error);
 +	nord2_stop_at(11, "after bounded UFS read probe");
 +}
++
++static void
++nord2_ufs_release_root(void)
++{
++	if (nord2_root_owned) {
++		if (!nord2_ufs_restore(&nord2_root_saved)) {
++			printf("NORD2 UFS: root host restore failed; manual reboot required\n");
++			for (;;) {
++				__asm__ volatile("wfe");
++			}
++		}
++		nord2_root_owned = false;
++		printf("NORD2 UFS: root probe host restored, ready=%u writable=%u\n",
++		    su.ready, su.writable);
++	}
++}
++
++/* Called before any root mount for the point-12 publication diagnostic. */
++void nord2_ufs_root_stop(void);
++void
++nord2_ufs_root_stop(void)
++{
++	uint32_t want = 0;
++	(void)PE_parse_boot_argn("nord2stopat", &want, sizeof(want));
++	if (want == 12) {
++		nord2_ufs_release_root();
++		nord2_stop_at(12, su.ready ?
++		    "after UFS root publication, before mounting" : "UFS root initialization failed");
++	}
++}
 +#endif /* NORD2 */
 +
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
+@@ -599,8 +967,21 @@
+ 		return ENXIO;
+ 	}
+ 	PE_parse_boot_argn("ufsroot", want, sizeof(want));
++#if defined(NORD2)
++	/* The Nord 2 port is restricted to its known controller and userdata. */
++	if (reg[0] != 0x11270000UL || reg[1] != 0x2300 || strcmp(want, "userdata")) {
++		return EINVAL;
++	}
++#endif
+ 	uint32_t rw = 0;
+ 	PE_parse_boot_argn("ufsrw", &rw, sizeof(rw));
++#if defined(NORD2)
++	uint32_t stop = 0;
++	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
++	if (stop == 12) {
++		rw = 0;
++	}
++#endif
+ 	uint32_t cache = 0, wait = 0;
+ 	PE_parse_boot_argn("ufscache", &cache, sizeof(cache));
+ 	PE_parse_boot_argn("ufswait", &wait, sizeof(wait));
+@@ -608,6 +989,9 @@
+ 	su.wait = (wait == 1);
+ 
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	if (!su.regs) {
++		return ENOMEM;
++	}
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		printf("SWEET UFS: no contiguous DMA memory\n");
+@@ -619,31 +1003,69 @@
+ 	}
+ 	su.dma_pa = ptoa_64(pn);
+ 	su.lun = 0;
++#if defined(NORD2)
++	su.lun = 2;
++#endif
+ 	su.secsize = DEV_BSIZE;
+ 
+ 	lck_mtx_lock(&sweet_ufs_lock);
++#if defined(NORD2)
++	if (!(ufs_rd(REG_HCE) & 1) ||
++	    (ufs_rd(REG_HCS) & (HCS_DP | HCS_UTRLRDY)) != (HCS_DP | HCS_UTRLRDY) ||
++	    ufs_rd(REG_UTRLDBR) || ufs_rd(0x78) || ufs_rd(REG_IS)) {
++		lck_mtx_unlock(&sweet_ufs_lock);
++		return EBUSY;
++	}
++	nord2_root_saved.ie = ufs_rd(REG_IE);
++	nord2_root_saved.ba = ufs_rd(REG_UTRLBA);
++	nord2_root_saved.bau = ufs_rd(REG_UTRLBAU);
++	nord2_root_saved.rsr = ufs_rd(REG_UTRLRSR);
++	dma_sync(0, DMA_SIZE);
++	__builtin_arm_dsb(0xf);
++	nord2_root_owned = true;
++#endif
+ 	error = ufs_take_over_host();
+ 	if (!error) {
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+-		for (int i = 0; i < 3 && (error = ufs_scsi(tur, sizeof(tur), 0, false)); i++) {
++		for (int i = 0; i < 3; i++) {
++			error = ufs_scsi(tur, sizeof(tur), 0, false);
++			if (error != EIO) {
++				break;
++			}
+ 		}
+ 	}
+ 	if (!error) {
++#if defined(NORD2)
++		static const uint8_t capacity[10] = { 0x25 };
++		error = ufs_scsi(capacity, sizeof(capacity), 8, false);
++		if (!error) {
++			const uint8_t *b = (const uint8_t *)(su.dma + DMA_BOUNCE);
++			uint32_t last = nord2_ufs_be32(b), block_size = nord2_ufs_be32(b + 4);
++			if (last == UINT32_MAX || last < 64 || block_size != UFS_BLOCK) {
++				error = EINVAL;
++			} else {
++				error = nord2_ufs_read_gpt((uint64_t)last + 1, true);
++			}
++		}
++#else
+ 		error = ufs_find_partition(want);
++#endif
+ 	}
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+ 	if (error) {
+-		return error;
++		goto failed;
+ 	}
+ 
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+-		return ENXIO;
++		error = ENXIO;
++		goto failed;
+ 	}
+ 	su.cmajor = cdevsw_add_with_bdev(-1, &sweet_ufs_cdevsw, su.bmajor);
+ 	if (su.cmajor < 0) {
+-		return ENXIO;
++		error = ENXIO;
++		goto failed;
+ 	}
+ 	su.bdev = makedev(su.bmajor, 0);
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+@@ -654,13 +1076,23 @@
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++#if !defined(NORD2)
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	sweet_keys_init();
+ 	sweet_touch_init();
+ 	sweet_usb_probe();
++#endif
+ 	return 0;
++failed:
++#if defined(NORD2)
++	/* Never pass active DMA on to a panic/chain-back after an init failure. */
++	printf("NORD2 UFS: root initialization error=%d\n", error);
++	nord2_ufs_release_root();
++	nord2_ufs_root_stop();
++#endif
++	return error;
+ }
+ 
+ /*
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1867,6 +1867,10 @@

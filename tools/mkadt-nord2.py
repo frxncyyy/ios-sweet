@@ -3,8 +3,9 @@
 
 Every address comes from dtb/nord2/live.dts and was cross-checked against
 /proc/iomem and the successful bare-metal probe (see NOTES.md). This ADT is
-for the *early* probe only: it deliberately has no display, touch, UFS or
-storage nodes, because none of those drivers has been ported to MT6893.
+for bounded bring-up. UFS reads on LUN2 have been verified on hardware;
+the root-device node below is used only when rd=ufsroot0 is requested.
+There are no Qualcomm display, touch or USB nodes.
 
 Usage:  mkadt-nord2.py OUT.adt [--dump]
 
@@ -152,7 +153,11 @@ def build():
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, buttons])
+    ], [chosen, defaults, cpus, arm_io, buttons,
+        node('sweet-ufs', [phandle(),
+            ('compatible', cstr('mediatek,mt6893-ufshci')),
+            ('reg', u64(0x11270000, 0x2300)),
+            ('lun', u32(2))])])
 
 
 if __name__ == '__main__':
