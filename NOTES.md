@@ -3,12 +3,12 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **INPUT CORRECTION: full CI/image verified; exact flash approval pending.**
+- **INPUT CORRECTION FLASHED; hardware validation in progress.**
   User confirms volume-down works; volume-up, power and touch do not.
   First input boot d74b1b18…5a9e59f6 successfully runs iOS and reports GPIO155
   press/release events. FT3518 ID is00:00/not ready; PMIC reads fail/status0.
   Both inherited LK layers were disabled and first eight GUI presents done=1
-  in live logs; visual removal of the orange warning is not yet confirmed.
+  in live logs; user now confirms the orange warning is gone over the UI.
   Evidence research/nord2/input-ui/hardware-live{,-late}/, flash.log.
   Cause of PMIC failure identified in selected Android kernel source:
   drivers/soc/mediatek/mtk-pmic-wrap_v1.c uses MT6885 PMIF SWINF2,
@@ -46,10 +46,18 @@
   both DT representations and tested rescue RAMdisk byte-exact.
   Private research/nord2/input-power/{manifest.json,verify-image.py,
   image-build.log,critical-functions-check.json,linked-functions.txt,
-  run-approved-boot.py} saved. Runner syntax-checked, NOT EXECUTED.
-  Use --authorized-input-power-boot only after exact user approval.
-  Only first image flash was authorized; request the corrected image's exact
-  boot-only approval. Phone remains in first input iOS.
+  run-approved-boot.py} saved. User explicitly authorized exact boot-only
+  image and supplied fastboot. Runner --authorized-input-power-boot EXECUTED:
+  flash boot and reboot OKAY,2026-10-20 20:09:33CEST. No other partition
+  flashed; native USB capture starts in hardware-live/client-hardware.log.
+  Do not rerun exclusive runner or overwrite logs. Await hardware diagnostics
+  and user interaction before claiming corrected touch/power/up work.
+  Initial hardware evidence: all8 scheduler PASS; MT6360 ID0x53, inherited
+  VTP enable0x80/selector0x40 (disabled), after setup status0xc4/3.0V ready.
+  FT3518 now reports54:52 ready=1 powered=1, PMIF TOPSTATUS0xe ok=1.
+  Some touch reports rejected, mostly IRQ high/idle; exact packet cause is
+  not yet known. User asked to test swipe, volume up/down, short power/wake
+  once lockscreen appears. No captured kernel panic at this checkpoint.
 
 - **FIRST INPUT/OVERLAY IMAGE PROVENANCE (results above).**
   User now requests touchscreen and buttons, and reports LK orange warning

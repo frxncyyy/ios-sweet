@@ -84,8 +84,8 @@ The saved overlay registers are restored before returning to rescue.
 The bootloader will still show its normal unlocked warning during boot;
 the change targets only the stale layer left over the iOS interface.
 The first input-image hardware log confirms both inherited layers disabled
-and the first eight command-mode GUI presents completed. Visual confirmation
-of the warning's removal is still pending.
+and the first eight command-mode GUI presents completed. The user confirms
+the orange warning is gone from the iOS lockscreen.
 
 ## Validation
 
@@ -105,8 +105,17 @@ passed at source `066ccc735f366b5df58b7dbe46d4239e15e183b0`.
 The frozen `nord2-ios-input-power-stop23.img` is33,544,192 bytes,
 SHA-256 `fd6d75caf4c7e95431bdb40eb50ca79650e8272824f54fd5f783cdec49995f20`.
 Static checks, instruction compatibility, partition size and byte-exact
-rescue-content verification pass. This corrected image has not been flashed;
-exact boot-only approval is pending. Preserve the first input-image evidence.
+rescue-content verification pass. The user authorized this exact image; boot
+flash and reboot succeeded at20:09:33CEST on2026-10-20. Hardware validation is
+in progress. Preserve the first input-image evidence.
+
+Initial corrected-image hardware probes succeed: MT6360 ID0x53, inherited
+VTP disabled (`enable=0x80`, `selector=0x40`), enabled3.0V status0xc4;
+FT3518 ID54:52/ready1 and PMIF TOPSTATUS0xe/ok1. Eight-core scheduler test
+also passes. Idle touch-report rejections still occur and their packet
+contents are not logged; gestures and power/up actions await user testing.
+The initial USB capture ended at87,806 bytes with four EP0 timeouts; capture
+was restarted without rebooting. This is not evidence of a kernel panic.
 
 `tools/nord2-check-display.py` covers the original GUI gates and DSI timeouts
 plus two-pipe overlay validation, leaving unexpected layouts unchanged,
