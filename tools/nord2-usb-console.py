@@ -51,11 +51,21 @@ if lib.libusb_init(C.byref(ctx)) != 0:
 
 def request(code, value, size, index=0):
     buffer = C.create_string_buffer(size)
-    n = lib.libusb_control_transfer(handle, 0xc0, code, value, index,
-                                   buffer, size, 1500)
-    if n < 0:
-        raise OSError(f'USB request {code:#x} failed: libusb {n}')
-    return buffer.raw[:n]
+    # All requests are read-only and log offsets are immutable. An overloaded
+    # phone can miss one EP0 deadline while printing or paging in userland;
+    # retry the same offset without duplicating or losing captured bytes.
+    for attempt in range(4):
+        n = lib.libusb_control_transfer(handle, 0xc0, code, value, index,
+                                       buffer, size, 1500)
+        if n >= 0:
+            return buffer.raw[:n]
+        event = dict(request=code, value=value, index=index, error=n,
+                     attempt=attempt + 1, time=time.time())
+        with (args.output / 'transport-events.jsonl').open('a') as events:
+            events.write(json.dumps(event) + '\n')
+        if n != -7 or attempt == 3:  # Retry TIMEOUT, never a disconnected device.
+            raise OSError(f'USB request {code:#x} failed: libusb {n}')
+        time.sleep(0.05)
 
 
 def read_status():
@@ -126,6 +136,8 @@ try:
             raise SystemExit('Invalid live-log bounds')
     log = bytearray()
     samples = [status]
+    stop_reason = 'deadline'
+    transport_error = None
     until = time.monotonic() + args.read_seconds
     while time.monotonic() < until and len(log) < capacity:
         try:
@@ -139,9 +151,11 @@ try:
                 with (args.output / 'xnu-live.log').open('ab') as output:
                     output.write(chunk)
             samples.append(read_status())
-        except OSError:
+        except OSError as error:
             if not log:
                 raise
+            stop_reason = 'usb_error'
+            transport_error = str(error)
             break
         if not chunk:
             time.sleep(0.25)
@@ -152,9 +166,13 @@ try:
     result = dict(native_usb=True, protocol=protocol, log_capacity=capacity, log_bytes=len(log),
                   log_sha256=hashlib.sha256(log).hexdigest(),
                   status_samples=samples, userdata_commands_sent=False,
-                  log_capacity_reached=len(log) == capacity)
+                  log_capacity_reached=len(log) == capacity,
+                  stop_reason='capacity' if len(log) == capacity else stop_reason,
+                  transport_error=transport_error)
     (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f'Saved {len(log)} bytes of XNU log over native USB.', flush=True)
+    if transport_error:
+        print(f'Capture ended early: {transport_error}', flush=True)
 finally:
     if handle:
         lib.libusb_close(handle)

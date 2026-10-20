@@ -3,7 +3,51 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT HARDWARE RESULT: REAL APPLE USERLAND RUNS; GUI NOT YET SHOWN.**
+- **MILESTONE: iOS 16.7.16 LOCKSCREEN ON ONEPLUS NORD 2, eight XNU cores.**
+  User explicitly reports "HA BOOTATO! VEDO LA LOCKSCREEN" on 2026-10-20
+  around 18:54 CEST, about 7–8 minutes after the 18:46:54 reboot. Exact authorized
+  nord2-ios-display-stop23.img was flashed ONLY to boot successfully:
+  SHA-256: 061333bbb5dffeb1945cd1dce2108bb5039cfe1c10c6b32b73a924ff23f8dca1.
+  Full CI 39458357257/source d7cef5a, packaging b331176, frozen record d34a930.
+  All 8 scheduler workers/timers/IPIs PASS. HFS journal replay completed and
+  writable iOSRoot mounted. Original Apple launchd, SpringBoard and backboardd
+  run. AppleCLCD registered 1080x2400/4352 at 0x76e10000, canvas 1125x2436;
+  backboardd matched /product and disp0, opened AppleCLCD successfully.
+  backboardd created IOSurfaces 2/3 at 1125x2436/BGRA/stride 4608 and submitted
+  swaps; all first 8 logged NORD2 command-mode presents report done=1.
+  SpringBoard creates its own surfaces too. This confirms the real GUI path
+  from Apple userland through CPU rendering/IOSurface to the MediaTek panel.
+  Touch and physical buttons have NOT been ported/verified; this milestone
+  proves display/userland boot, not full phone functionality or stability.
+  Phone left running this image. Do NOT reboot/restore/reinstall without a
+  concrete next task; no normal Android boot on HFS userdata. ADB rescue
+  fallback remains authorized. Frozen image and original backups preserved.
+  Private evidence: research/nord2/display-userland/{flash.log,manifest.json,
+  hardware-live/,hardware-live-late/,hardware-live-retry/,hardware-lockscreen/}.
+  Native USB v2 advertises 4 MiB and captures beyond 64 KiB. Earlier readers ended
+  at 37504/46547 bytes, then 116712 bytes due transient EP0 TIMEOUT(-7), not a
+  reboot. Client now retries the same immutable read offset up to 4 times and
+  records transport-events.jsonl plus explicit stop_reason/transport_error.
+  A recovered read after two timeouts was observed; consecutive four timeouts still
+  end a capture. Final hardware-lockscreen capture 208551 bytes, SHA-256:
+  b76912771cbe6d5e93611fbf8e0e09d50a0b6cc3aaae03118d18f5e53aeed239.
+  It ended at the requested 45 seconds, no transport error. Contains all first 8
+  successful presents; no captured SpringBoard/backboardd crash or kernel panic.
+  Crashes captured for driverkitd and PosterBoard (wallpaper service); these
+  did not prevent the observed lockscreen. Evidence lockscreen-verified.json.
+  Host fault test verifies bounded retries, identical offsets, disconnect
+  refusal and empty responses. Python syntax and diff checks pass.
+  No kernel modifications or root filesystem edits were needed after this
+  authorized boot. IOAcceleratorES polling was an intermediate startup state,
+  NOT a proven blocker: it progressed to software-rendered GUI with time.
+  Optional REA doctor found no native engine/active Codex registration;
+  no settings or engines changed, no binary analysis/patch performed, and
+  the investigation was unnecessary once the hardware reached lockscreen.
+  Current active-source sampler remains disabled for NORD2; enable only if
+  later diagnostics warrant it. Keep logs private (UUIDs/IDs). Do not rerun
+  run-approved-boot.py blindly: exclusive flash.log already exists.
+
+- **PREVIOUS IMAGE RESULT: REAL APPLE USERLAND RUNS; GUI NOT YET SHOWN.**
   Exact authorized `nord2-ios-userland-stop23.img` flashed only to boot and
   rebooted on 2026-10-20 18:16:56 CEST. SHA-256
   `662285c21b8bcd2a5294b4be7175fce69b2d7b47e45aebf4286dd63434bd5c91`.
@@ -21,12 +65,11 @@
   `10d0c9f3cf66ec88427d38ca76c9b5fbf4f838a42d53b3d4032f2e22820ebb3a`.
   Captures: research/nord2/ios-userland-rw/{hardware-live,hardware-live-late}/;
   flash.log and client-hardware.log alongside. Private raw logs contain IDs:
-  do not commit them. Current boot remains mode23, iOS running; no reboot or
-  recovery attempted. USB status remains responsive; log saturation is not a
-  kernel hang. No shell, unrestricted memory or disk commands are available
+  do not commit them. That capture preceded the GUI-image reboot recorded
+  above. USB remained responsive; log saturation was not a kernel hang. No shell, unrestricted memory or disk commands are available
   through this USB interface.
 
-- **NEXT WORK: opt-in Nord2 GUI and extended live log, not yet flashed.**
+- **GUI IMAGE IMPLEMENTATION AND PROVENANCE (hardware result above).**
   Confirmed code-level display blocker: Nord2 ADT omitted disp0 and the
   loader intentionally supplies zero boot_video fields. Sweet's framebuffer
   expects continuous scanout, while Nord2 requires a DSI command trigger.
@@ -79,14 +122,16 @@
   both DT representations/tested rescue RAMdisk are byte-exact.
   Private manifest.json,verify-image.py,payload.bin,image-build.log saved.
   run-approved-boot.py --authorized-display-boot is prepared and syntax
-  checked; NOT EXECUTED. It pins exact image/backup/CI hashes and fastboot
-  identity, flashes only boot, starts USB wait300/read600 before reboot.
+  checked, then EXECUTED after exact user authorization. It pins exact
+  image/backup/CI hashes and fastboot identity, flashes only boot, and starts
+  USB wait300/read600 before reboot.
   The prior root readback is historical installation evidence; current HFS
   contents have changed during iOS first boot. No reinstall is needed.
-  Exact GUI-image flash authorization is now pending; current phone still
-  runs the original mode23 image662285c2…34bd5c91. Fallback remains ADB rescue.
-  Preserve frozen23 and all earlier images; prepare and verify the new image
-  before requesting its exact boot-only approval.
+  Exact GUI-image flash authorization was received and the image is now
+  running. Original mode23 image662285c2…34bd5c91 is retained for evidence.
+  Fallback remains ADB rescue.
+  Preserve frozen23 and all earlier images; prepare and verify any future
+  image before requesting its exact boot-only approval.
 
 - **FULL iOS ROOT INSTALLED AND VERIFIED before first boot.**
   Source research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img,
@@ -110,7 +155,7 @@
   Never return to the old unbounded stdin writer. Historical failed logs
   remain private in install/,install-retry/,install-after-crash/.
 
-- **Frozen mode23 provenance and recovery (currently on phone).**
+- **Previous mode23 provenance and recovery (superseded on phone).**
   Full Apple-clang CI39450476117/source4e3f65181f0ac08dd1f524d0da405bf676c49c9b
   PASSED: https://github.com/frxncyyy/ios-sweet/actions/runs/39450476117
   Kernel research/ci-39450476117/xnu-kernel/kernel.development.sweet,
