@@ -49,7 +49,7 @@ static void nord2_usb_enumerate(vm_offset_t mac,bool phy,bool bg) {
     polls++; nusb_background_state=1;
 }
 static void nord2_stop_at(unsigned stop,const char *label) {
-    assert(stop==nusb_background_stop && (stop==16 || stop==21) && label);
+    assert(stop==nusb_background_stop && (stop==16 || stop==21 || stop==22) && label);
     assert(core==0 && nusb_background_state==2 && polls==1);
     longjmp(escape,1);
 }
@@ -58,9 +58,9 @@ static int thread_terminate(void *p) { (void)p; assert(false); return 0; }
 '''
 cases = r'''
 int main(void) {
-    for(unsigned start=0;start<8;start++) for(unsigned i=0;i<2;i++) {
+    for(unsigned start=0;start<8;start++) for(unsigned i=0;i<3;i++) {
         core=start; binding=polls=blocks=nusb_background_state=0;
-        wrong_migration=false; nusb_background_stop=i?21:16;
+        wrong_migration=false; nusb_background_stop=i?20+i:16;
         int result=setjmp(escape);
         if (!result) nusb_background_thread((void*)0x1000,0);
         assert(result==1 && polls==1);
@@ -70,7 +70,7 @@ int main(void) {
     if (!result) nusb_background_thread((void*)0x1000,0);
     assert(result==2 && !polls && !nusb_background_state);
     puts("PASS: USB service migrates to CPU0 before MMIO from all8 CPUs;"
-         " migration failure refuses MMIO; bounded mode16/21 exit;"
+         " migration failure refuses MMIO; bounded mode16/21/22 exit;"
          " SMP shutdown precedes guarded USB cleanup");
 }
 '''

@@ -787,7 +787,7 @@
  void
  sweet_early_relocate(uint64_t base)
  {
-@@ -133,11 +842,949 @@
+@@ -133,11 +842,966 @@
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
  }
@@ -1156,7 +1156,7 @@
 +{
 +	unsigned stop = 0, cpus = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop == 20 || stop == 21) {
++	if (stop == 20 || stop == 21 || stop == 22) {
 +		nord2_kernel_smp_probe();
 +		return;
 +	}
@@ -1323,7 +1323,7 @@
 +static uint32_t nord2_smp_userland_passed;
 +
 +static bool
-+nord2_smp_ram_config(void)
++nord2_smp_userland_config(unsigned stop)
 +{
 +	char root[16] = {0};
 +	int ufsrw = -1, rootrw = -1;
@@ -1331,7 +1331,19 @@
 +	root[sizeof(root) - 1] = 0;
 +	PE_parse_boot_argn("ufsrw", &ufsrw, sizeof(ufsrw));
 +	PE_parse_boot_argn("rootrw", &rootrw, sizeof(rootrw));
-+	return !strcmp(root, "md0") && ufsrw == 0 && rootrw == 0;
++	if (ufsrw != 0 || rootrw != 0) {
++		return false;
++	}
++	if (stop == 21) {
++		return !strcmp(root, "md0");
++	}
++	if (stop == 22) {
++		char part[16] = {0};
++		PE_parse_boot_argn("ufsroot", part, sizeof(part));
++		part[sizeof(part) - 1] = 0;
++		return !strcmp(root, "ufsroot0") && !strcmp(part, "userdata");
++	}
++	return false;
 +}
 +
 +int
@@ -1383,7 +1395,7 @@
 +	PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
 +	bool allowed = (stop == 20 && (cpus == 2 || cpus == 4 || cpus == 8)) ||
-+	    (stop == 21 && cpus == 8 && nord2_smp_ram_config());
++	    ((stop == 21 || stop == 22) && cpus == 8 && nord2_smp_userland_config(stop));
 +	if (!allowed || cpu == 0 || cpu >= cpus ||
 +	    __atomic_load_n(&nord2_smp_stop_requested, __ATOMIC_ACQUIRE)) {
 +		panic("NORD2 SMP: unsupported startup configuration cpu=%u cpus=%u stop=%u",
@@ -1607,10 +1619,15 @@
 +	    "console_dropped=%u PASS=%u\n", passed, cpus, total, cpus * 4096,
 +	    dropped, pass);
 + done:
-+	if (stop == 21 && pass && cpus == 8 && nord2_smp_ram_config()) {
++	if ((stop == 21 || stop == 22) && pass && cpus == 8 &&
++	    nord2_smp_userland_config(stop)) {
 +		__atomic_store_n(&nord2_smp_userland_passed, 1, __ATOMIC_RELEASE);
 +		(void)thread_bind(PROCESSOR_NULL);
-+		printf("NORD2 SMP: all8 passed; continuing to USB and RAM userland\n");
++		if (stop == 21) {
++			printf("NORD2 SMP: all8 passed; continuing to USB and RAM userland\n");
++		} else {
++			printf("NORD2 SMP: all8 passed; continuing to USB and read-only iOS root\n");
++		}
 +		return;
 +	}
 +	nord2_stop_at(stop, "after bounded XNU SMP scheduler probe");
@@ -2837,7 +2854,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -599,8 +986,21 @@
+@@ -599,8 +986,25 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -2852,14 +2869,18 @@
 +#if defined(NORD2)
 +	uint32_t stop = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop == 12) {
++	if (stop == 12 || stop == 22) {
 +		rw = 0;
++	}
++	if (stop == 22 && !nord2_smp_userland_ready()) {
++		printf("NORD2 UFS: all8 SMP pass required before iOS root\n");
++		return EPERM;
 +	}
 +#endif
  	uint32_t cache = 0, wait = 0;
  	PE_parse_boot_argn("ufscache", &cache, sizeof(cache));
  	PE_parse_boot_argn("ufswait", &wait, sizeof(wait));
-@@ -608,6 +1008,9 @@
+@@ -608,6 +1012,9 @@
  	su.wait = (wait == 1);
  
  	su.regs = ml_io_map(reg[0], reg[1]);
@@ -2869,7 +2890,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1022,69 @@
+@@ -619,31 +1026,69 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -2943,7 +2964,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1095,23 @@
+@@ -654,13 +1099,23 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -3025,11 +3046,11 @@
 +{
 +	int stop = 0;
 +	PE_parse_boot_argn("nord2stopat", &stop, sizeof(stop));
-+	if (stop != 13 && stop != 14 && stop != 15 && stop != 16 && stop != 21) {
++	if (stop != 13 && stop != 14 && stop != 15 && stop != 16 && stop != 21 && stop != 22) {
 +		return;
 +	}
-+	if (stop == 21 && !nord2_smp_userland_ready()) {
-+		printf("NORD2 USB: all8 SMP pass required before USB/RAM userland\n");
++	if ((stop == 21 || stop == 22) && !nord2_smp_userland_ready()) {
++		printf("NORD2 USB: all8 SMP pass required before USB/userland\n");
 +		goto done;
 +	}
 +	if (stop == 13) {
@@ -3080,17 +3101,17 @@
 +		nord2_usb_enumerate(mac, stop == 15, false);
 +		goto done;
 +	}
-+	if (stop == 16 || stop == 21) {
++	if (stop == 16 || stop == 21 || stop == 22) {
 +		/* The SMP service is pinned to CPU0. A return from another core
 +		 * routes through CPU0, which masks IRQs before MAC/PHY cleanup. */
 +		int cpus = 0;
 +		PE_parse_boot_argn("cpus", &cpus, sizeof(cpus));
-+		if ((stop == 16 && cpus != 1) || (stop == 21 && cpus != 8)) {
++		if ((stop == 16 && cpus != 1) || ((stop == 21 || stop == 22) && cpus != 8)) {
 +			printf("NORD2 USB: invalid background CPU configuration\n");
 +			goto done;
 +		}
 +		thread_t thread;
-+		nusb_smp = stop == 21;
++		nusb_smp = stop == 21 || stop == 22;
 +		nusb_background_stop = (unsigned)stop;
 +		__atomic_store_n(&nusb_background_state, 0, __ATOMIC_RELEASE);
 +		if (kernel_thread_start(nusb_background_thread, (void *)mac, &thread) != KERN_SUCCESS) {
@@ -3105,7 +3126,7 @@
 +		}
 +		if (__atomic_load_n(&nusb_background_state, __ATOMIC_ACQUIRE) == 1) {
 +			printf("NORD2 USB: background console ready; continuing BSD boot\n");
-+			return;  /* Mount/execute the diagnostic RAM root concurrently. */
++			return;  /* Continue root selection while the bounded USB service runs. */
 +		}
 +		printf("NORD2 USB: background initialization failed or timed out\n");
 +		goto done;
@@ -3574,7 +3595,7 @@
 +	printf("NORD2 USB: service bound to CPU0\n");
 +	nord2_usb_enumerate((vm_offset_t)arg, true, true);
 +	__atomic_store_n(&nusb_background_state, 2, __ATOMIC_RELEASE);
-+	/* Also bounds the test if the diagnostic root or PID1 stalls. */
++	/* Also bounds the test if root mounting or userland stalls. */
 +	nord2_stop_at(nusb_background_stop, "after background MTU3 USB console");
 +	(void)thread_terminate(current_thread());
 +	thread_block(THREAD_CONTINUE_NULL);

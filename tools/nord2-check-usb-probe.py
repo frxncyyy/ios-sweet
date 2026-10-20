@@ -86,7 +86,7 @@ static void PE_parse_boot_argn(const char *name, void *val, size_t size) {
 }
 static void nord2_stop_at(unsigned point, const char *label) {
     assert((point==13 && strcmp(label,"after read-only MTU3 snapshot")==0) ||
-           ((point==16 || point==21) && strcmp(label,"after background MTU3 USB console")==0));
+           ((point==16 || point==21 || point==22) && strcmp(label,"after background MTU3 USB console")==0));
     stopped++;
 }
 static int capture(const char *format, ...) {
@@ -117,7 +117,7 @@ static void run(void) {
     for (unsigned n=0;n<4;n++)
         assert(mprotect(regions[n],0x4000,PROT_READ)==0);
     nord2_usb_probe(); /* Any MMIO write faults, including accidental W1C. */
-    if (selected!=16 && selected!=21) assert(stopped==(selected==13));
+    if (selected!=16 && selected!=21 && selected!=22) assert(stopped==(selected==13));
 }
 int main(void) {
     for (unsigned n=0;n<4;n++) {
@@ -167,6 +167,12 @@ int main(void) {
     assert(stopped==1 && !spawned && strstr(output,"invalid background CPU"));
     reset(); selected=21; cpu_count=8; smp_pass=true; thread_outcome=0; run();
     assert(stopped==1 && spawned==1 && sleeps==10000);
+    reset(); selected=22; cpu_count=8; run();
+    assert(stopped==1 && !spawned && !maps[0] && strstr(output,"all8 SMP pass required"));
+    reset(); selected=22; cpu_count=8; smp_pass=true; run();
+    assert(!stopped && spawned==1 && nusb_smp && nusb_background_stop==22);
+    reset(); selected=22; cpu_count=4; smp_pass=true; run();
+    assert(stopped==1 && !spawned);
     for (unsigned n=0;n<4;n++) assert(munmap(regions[n],0x4000)==0);
     puts("PASS: exact MTU3 probe; no MMIO writes; inactive gate, four clock gates,"
          " five device gates, all mapping failures, complete register snapshot;"

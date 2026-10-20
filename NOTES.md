@@ -3,6 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT WORK: prepare point22, first Apple iOS userland attempt from UFS.**
+  Point21 passed; continue toward original full-iOS objective. No userdata
+  write has occurred. User permits deleting Android data, but exact install
+  and point22 boot still need the destructive-step confirmation.
+  Mode22 now requires cpus8,rd=ufsroot0,ufsroot=userdata,ufsrw=0,rootrw=0
+  at SMP startup; all8 scheduler PASS required before USB and UFS takeover.
+  Reuses tested CPU0 USB thread/45-second bound and coordinated shutdown.
+  UFS22 forces read-only even if its write flag is requested and refuses
+  initialization without SMP readiness. Other modes retain their guards.
+  First attempt intentionally reads the complete Apple filesystem but does
+  not allow iOS filesystem writes; this may stop launchd/services requiring
+  writable /private/var. Purpose: observe actual dyld/launchd execution and
+  first failure over live USB before enabling writes.
+  Local three-C-file compilation and exact-source SMP/USB/UFS host tests
+  PASS, including wrong partition, missing/truncated config, wrong CPU
+  count/write flags, UFS pre-MMIO denial and forced read-only. RCpc2 clean.
+  Patch applies and matches source. Next full CI and frozen boot candidate,
+  prepare constrained ADB installer/readback verification, then request
+  exact installation+boot authorization. Current phone is root ADB rescue.
+  Root16GiB SHA reverified:
+  `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
+  Evidence research/nord2/ios-userland/. After userdata becomes HFS, fallback
+  is the tested ADB rescue boot, NOT normal Android boot (Android data will
+  be gone). Keep original boot/recovery backups for later Android reinstall.
+
 - **CURRENT RESULT: point21 eight-core XNU + native USB + RAM PID1 PASSED.**
   Exact authorized imagec5ce4445…f368e86a flashed only to boot; returned to
   authenticated root ADB RAM rescue without any block/data filesystem mount.
