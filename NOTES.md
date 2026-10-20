@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CURRENT RESULT: full iOS16 root INSTALLED and VERIFIED on userdata.**
+  Authorized bounded transfer completed with exit0; all17179869184bytes
+  acknowledged/fsynced, then full device readback SHA-256 matched:
+  `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
+  Evidence research/nord2/ios-userland-rw/install-bounded/{result.json,
+  device-readback.sha256,write-progress.json,final-rescue-state.txt} and
+  install-bounded.log. ADB memory stayed roughly38-60MiB; previous OOM
+  failure resolved by sequential64MiB writes, not only by added swap.
+  Phone remains authenticated UID0 ADB RAM rescue with no block/data mounts;
+  no reboot or boot flash occurred during installation. Current boot point21.
+  Android data has now been replaced by HFS iOS; preserve rescue/original
+  backups, NEVER boot normal Android expecting usable userdata.
+  Boot23 frozen662285c2…34bd5c91 is ready (details below), NOT YET FLASHED.
+  Next request exact boot23 authorization + manual fastboot, then run private
+  run-approved-boot.py --authorized-boot23. USB live log first65524bytes;
+  stop23 runs continuously, root writable. Panic returns to RAM ADB rescue;
+  manual recovery must use tested rescuebootd78bf9fe…3d03bac5 if needed.
+  First Apple launchd/full iOS runtime remains UNTESTED until this boot.
+
 - **CURRENT WORK: point23, direct full Apple iOS userland boot.**
   User requests going directly to userland; confirmed the transient ADB loss
   was an accidentally moved fragile cable. ADB root RAM rescue is back.
@@ -41,8 +60,8 @@
   Host fake-ADB tests passed distinct multi-chunk offsets, binary integrity,
   guard failures, first/second chunk failure without false completion/hash.
   Actual rescue RAM-only seek test PASS: XY at1MiB,2MiB file length retained.
-  Current authorized retry: install-bounded/ and install-bounded.log,
-  agent /root/install_ios_resume; monitor ADB RSS as well as real progress.
+  Successful authorized retry: install-bounded/ and install-bounded.log,
+  agent /root/install_ios_resume; completed with full readback (result above).
   Point21 remains in boot. No reboot/mount/boot changes before full readback.
   Earlier read-only preflight evidence: ios-userland/install-preflight/.
   Never describe userdata as untouched after these interrupted transfers.
