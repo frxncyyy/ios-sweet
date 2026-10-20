@@ -34,8 +34,34 @@
   Retain existing8MiB RAM HFS diagnostic image:
   research/nord2/rootfs-live/nord2-hfs-pid1.img,
   SHAb5fa35f397e784c1da04988503ee43d9ce23e7925829a84be181d4ceba07308a.
-  Next full Apple-clang CI, build/verify candidate (boot has very little
-  spare space), then obtain specific boot-test approval if not already given.
+  Full Apple-clang CI39437387549 PASSED, source1f5efba:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39437387549
+  Downloaded SHA256SUMS verified; kernel17263040B SHA-256
+  `9d9fb7ebf4d998b85dbe643f4ad3e3f08c1ceb522787bc8bf0daffbe1145f052`.
+  All1096 captured SWEET compile commands explicitly generic ARMv8.2+crypto.
+  RCpc2 scan clean. Linked disassembly verifies CPU0 binding/migration/check
+  before USB enumeration, completion STLR, readiness/stop LDAR, guarded USB
+  cleanup, SGI/affinity checks before cleanup, and pmsg publication DMB SY.
+  Evidence userland/kernel.json,critical-functions-{check.json,disassembly.txt}.
+  Frozen candidate BUILT and independently verified:
+  `shim/out/nord2-xnu/nord2-smp-usb-userland-stop21.img`,33552384B
+  (2048B below the33554432B boot partition), SHA-256
+  `c5ce4445204cf81fa4d77afba3126775a9a14f15344947f6bd83ce01f368e86a`.
+  Payload22891392B SHA-256
+  `29959651fd87a75e8f544e5f247b35b875876093264537f68111279137838ee2`.
+  Cmdline: debug=0xc cpus=8 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
+  nord2fb=1 nord2stopat=21 rd=md0 ufsrw=0 rootrw=0.
+  Full CI kernel used directly; default15-iteration Zopfli compression.
+  Static checker PASS; original Linux and both DT representations exact;
+  tested ADB rescue ramdisk exact; embedded8MiB diagnostic HFS image exact.
+  Manifest/extracted payload/image-build.log and private verification scripts
+  under research/nord2/smp/userland/. No point21 hardware test authorized yet.
+  Phone last observed disconnected from both ADB and fastboot. Next obtain
+  exact boot-only test approval and manual fastboot; preserve this image.
+  After approval verify hashes/device/boot size, flash only boot, reboot and
+  immediately start native USB reader (wait240/read60) and rescue collector
+  (label smp-usb-userland-stop21) in parallel. If rescue fails restore original
+  Android boot under test authorization, with manual fastboot if needed.
   No additional user-data access required. Hardware success must show all8
   SMP PASS, USB live HFS/PID1 success +10 timer ticks, expected PID1 exit66,
   coordinated all7 OFF, USB restoration and authenticated root ADB rescue.
@@ -103,14 +129,13 @@
   for all8, beyond the earlier firmware-only CPU_ON/OFF tests. This remains
   a bounded diagnostic before root selection, not long-duration validation.
 
-  NEXT PHASE: integrate8-core operation with RAM HFS/PID1 and live USB,
-  before installing/running the prepared full iOS root. Current safety
-  guards deliberately accept multi-CPU startup ONLY for nord2stopat=20;
-  USB background service still requires cpus=1. Do NOT just change cpus=8
-  on old USB/userland images or remove both guards without reviewing
-  concurrent USB access and coordinated shutdown/cleanup. Extend those
-  paths deliberately, prepare/verify a combined bounded candidate and
-  request authorization for its exact boot image. Existing full iOS16
+  NEXT PHASE (now implemented in source, hardware pending; see point21 above):
+  integrate8-core operation with RAM HFS/PID1 and live USB before installing
+  the prepared full iOS root. These frozen point20 images permit multi-CPU
+  startup only at stop20; the frozen point16 USB image requires cpus1.
+  Do NOT change cpus=8 on an old USB/userland image. Point21 deliberately
+  extends startup, USB ownership and coordinated shutdown guards together.
+  Request authorization for its verified exact boot image. Existing full iOS16
   HFS root is still local only; userdata untouched by this entire sequence.
   Actual Apple launchd/full iOS, graphics/touch and sustained SMP load are
   not verified by these tests. Preserve original boot/recovery backups.
