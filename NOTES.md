@@ -1524,3 +1524,11 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   - Expected: if 0007 hangs, the stall is in `PE_lockdown_iokit`'s return path
     (after `StartIOKitMatching` returned) or `vm_set_restrictions`; if it
     returns, the stall is `kperf_init_early()` and 0008 pins it.
+
+- 2026-10-20 (session 7, Opencode): **point 7 returns to Android (~92 s)** →
+  `vm_set_restrictions` and the `PE_lockdown_iokit` return path are fine; the
+  only remaining call before `bsd_init` is **`kperf_init_early()`**. Point 8
+  (right after it, before `bsd_init`) is in the same kernel, so only a new
+  payload is needed: `shim/out/nord2-xnu/nord2-l8.img` (`nord2stopat=0008`) —
+  see below for size/SHA. If 0008 hangs, `kperf_init_early()` is the stall; if
+  it returns, the stall is in `bsd_init`'s prologue before point 5.
