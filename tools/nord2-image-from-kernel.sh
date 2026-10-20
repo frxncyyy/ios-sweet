@@ -6,6 +6,7 @@
 #
 # KERNEL_MACHO  out-XXXX/kernel.development.sweet (unstripped is fine)
 # OUT.img       boot image to create (must not exist)
+# --ramdisk     optional root image carried in RAM; supply rd=md0 in CMDLINE
 # CMDLINE       optional override of the payload boot arguments
 #
 # Steps: strip the symbols, build the ADT, build the SWEETXNU payload, pack the

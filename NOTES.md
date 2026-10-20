@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE: point12 passed; original Android boot restored and verified.**
+- **Completed point12: original Android boot restored and verified.**
   User authorized the exact boot-only test/restore. Flash and reboot succeeded;
   saved pmsg is `backup/nord2/logs/20261020-110041-ufs-root-stop12/pstore/pmsg-ramoops-0`,
   15051 bytes, SHA-256 `b37d2e694b395d3ade3e62966c65f099ffea5d777b2a5c4a598463f6ab2eb4b0`.
@@ -14,7 +14,39 @@
   SHA-256 `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`.
   Evidence: `research/ci-39388874797/stop12/{flash.log,restore.log,restore-verified.json}`.
   This fifth test authorization is completed. No userdata changes.
-  **Next candidate prepared, NOT flashed or authorized:**
+  Source/tools through commit `0401f81` pushed to the fork. Full Apple-clang
+  CI rebuild dispatched: https://github.com/frxncyyy/ios-sweet/actions/runs/39398655023
+  (head0401f81; build PASSED, evidence `research/ci-39398655023/`).
+  This CI is a source-reproducibility check; the prepared candidate below uses
+  the already tested local point12 relink. Its bytes/hash will not be replaced.
+  **CURRENT DEVICE STATE: HFS/PID1 passed; original Android boot restored and verified.**
+  User authorized this exact boot-only test/restore. Saved pmsg:
+  `backup/nord2/logs/20261020-111243-hfs-pid1/pstore/pmsg-ramoops-0`, 15759 bytes,
+  SHA-256 `ec60ff389f0868f4b68b52a91f2349d84e6dc972f83d3bb75475caab8f118a44`.
+  Observed `BSD root: md0`, `hfs: mounted Nord2Probe`, diagnostic success
+  `HFS read verified; getpid=1; EL0 syscalls OK`, voluntary exit66, expected
+  initproc panic (prints exit status66, not hex0x4200), then Android return.
+  Original boot restored; full partition SHA matches `04e84c4a…6e1f01`,
+  `sys.boot_completed=1`. Evidence in `research/ci-39388874797/hfs-pid1/`
+  (`flash.log`, `restore.log`, `restore-verified.json`). Sixth test completed.
+  **NEW USER AUTHORIZATION (this Nord2, 2026-10-20):** asked which constraint
+  applies before placing iOS on userdata; user answered exactly:
+  "Possono essere cancellati; non serve il backup dei dati".
+  Android userdata replacement is now in scope; no full data backup requested.
+  No userdata write has happened yet. Preserve bootloaders/recovery/modem and
+  existing backups. Prepare concrete iOS boot/recovery/log path before flashing.
+  Current next work: userdata replacement will prevent ordinary Android boot;
+  inspect existing recovery for an ADB rescue environment and prepare a way
+  to retrieve pmsg/logs without Android userdata. Also address safe UFS host
+  cleanup before any post-root panic chain-back: current point12 cleanup is
+  explicit before its stop, generic panic return does NOT release active root
+  UFS ownership. RAM-root diagnostic is unaffected (UFS never selected).
+  Existing recovery is backed up (128MiB); parsed locally under
+  `research/nord2/recovery-unpacked/` without changing the device. It contains
+  Lineage Android15 recovery init/adbd, configfs USB scripts and all shared libs.
+  Android currently reports FBE + dm-13 data filesystem; do not assume raw
+  userdata can be used as a filesystem while Android is mounted.
+  Tested candidate:
   `shim/out/nord2-xnu/nord2-hfs-pid1.img`, 30,584,832 bytes,
   SHA-256 `c143559d225622b2b96fbdf14ff830cfd513ec0c468b199e6ee4161a6692145d`.
   Same point12 kernel; new 8MiB HFS RAM root, `rd=md0 nord2stopat=0
@@ -61,8 +93,8 @@
     `research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img`, 16 GiB,
     about12 GiB used, case-sensitive journaled HFS+, source16.7.16/20H392.
     SHA-256 `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`;
-    adjacent `.json`/`.sha256` manifests saved. No Nord2 userdata overwrite
-    is authorized; the upstream Oct15 delete-Android permission is for Sweet.
+    adjacent `.json`/`.sha256` manifests saved. Nord2 userdata replacement
+    was newly authorized above; upstream Oct15 permission was for Sweet.
     Base builder operations plus `tools/sweet-root-tweaks.py` applied inside
     a local KVM guest; final `fsck.hfsplus -f -n` reports clean.
     launchd/dyld original hashes, root:wheel0755,44 dyld cache hard links,

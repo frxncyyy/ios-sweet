@@ -23,7 +23,7 @@ pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
 frames, and the MediaTek watchdog restart register. Past early bring-up it
 also initializes the GIC and architected virtual timer.
 
-### Prepared RAM-root userspace probe (not yet tested on the phone)
+### Verified RAM-root userspace probe
 
 `nord2-hfs-pid1.img` adds an 8 MiB HFS+ RAM root to the point-12 kernel.
 The image helper accepts `--ramdisk IMAGE` immediately after its two
@@ -39,8 +39,9 @@ Success prints `NORD2 USERLAND: HFS read verified; getpid=1; EL0 syscalls OK`,
 then deliberately exits with code 66. PID1's exit triggers the existing
 Nord2 panic/Android-return hook; that final panic is expected. Exit codes
 70–74 or an earlier panic are failures. Require the success marker, HFS
-mount evidence and Android return, not just a reboot. No hardware result
-for this image has been observed yet.
+mount evidence and Android return, not just a reboot. All these markers
+were observed on the Nord2 on 2026-10-20, followed by verified restoration
+of the original Android boot. Apple launchd has not yet run on this device.
 
 ## Artifact layout
 
@@ -148,7 +149,7 @@ inherited request list and interrupt state before returning to Android.
 If a timeout cannot be cleared or restoration fails, it retains its DMA
 memory and waits for a manual reboot. No root filesystem is mounted.
 
-Point 12 is prepared but untested. Use `rd=ufsroot0 ufsrw=0 rootrw=0`.
+Point 12 passed on the Nord2 before mounting. Use `rd=ufsroot0 ufsrw=0 rootrw=0`.
 The Nord 2 root driver validates LUN2 capacity and GPT CRCs, accepts only
 userdata, and omits Sweet's Qualcomm input/USB and background log startup.
 The diagnostic additionally forces read-only operation in the driver.
