@@ -24,6 +24,14 @@
   no LDAPR/LDAPUR/STLUR in that object. Evidence research/nord2/smp/generic.
   Patch applies and reproduces sources. Next run full Apple-clang CI with
   this target and use its complete kernel to avoid stale local objects.
+  Source98efcd7 pushed; full rebuild running:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39424762428
+  Small atomic acquire/release regression reproduces LDAPUR/STLUR with the
+  implicit Apple CPU and LDAR/STLR with generic; saved under same evidence dir.
+  Image helper now rejects LDAPUR/STLUR using an explicit RCpc2-capable
+  disassembly before packing. This is a targeted regression guard, not a
+  complete ISA audit. It rejects the failed cpu.o and kernel, accepts the
+  generic cpu.o, and refuses decoder errors/empty output.
   New candidates will require fresh approval; old three images stay frozen.
 
 - **Previous authorization/build: point20 images, conditional2→4→8 (stopped at2).**

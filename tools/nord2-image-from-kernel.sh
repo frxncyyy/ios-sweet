@@ -48,6 +48,10 @@ if [ -e "$out" ]; then
     exit 1
 fi
 
+# Reject the compiler-target regression observed in the two-core probe before
+# doing any packing. This check does not establish full hardware compatibility.
+python3 tools/nord2-check-rcpc2.py "$kernel"
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
