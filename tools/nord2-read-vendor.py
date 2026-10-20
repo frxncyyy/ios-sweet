@@ -137,7 +137,10 @@ class Rescue:
                 "Unaligned read")
         bs = 4096 if (offset | length) % 4096 == 0 else SECTOR
         command = self.prefix + ["exec-out", "dd", f"if={SUPER}", f"bs={bs}",
-                                 f"skip={offset//bs}", f"count={length//bs}"]
+                                 f"skip={offset//bs}", f"count={length//bs}",
+                                 "status=none"]
+        # exec-out merges remote stderr into stdout. Toybox status=none
+        # suppresses dd's summary so it cannot contaminate the binary stream.
         # No of=, shell, mount, dmsetup, fsck, or phone write command.
         with tempfile.TemporaryFile() as err:
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err, bufsize=0)

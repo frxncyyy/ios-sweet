@@ -3,6 +3,32 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WI-FI FIRMWARE COLLECTED; WORKING iOS BOOT RESTORED.**
+  User authorized exact rescue -> read vendor -> restore iOS sequence.
+  Both boot-only flashes/reboots succeeded, at20:44:05 and20:49:37CEST.
+  Private research/nord2/wifi/{rescue,return-ios}-flash.log; exclusive runner
+  has executed both stages, DO NOT rerun it. No other partition written.
+  Read vendor544354304bytes from super offset7708082176; primary/backup LP
+  SHA-256 validation and independent on-device full-vendor SHA-256 agree:
+  bf8de3f4d228c105cd950ac78cc1085bb3f65f9dfc52d4e0c8db10e51780b8b5.
+  Vendor is EROFS, extracted with local signature-verified Arch erofs-utils;
+  firmware-directory decompression/integrity check passes. Four required
+  firmware blobs plus conninfra.cfg saved privately with SHA/layout manifests.
+  cfg: co_clock_flag=1, pre_cal_mode=3. See WIFI-LOG.md for sizes and locations.
+  Collector fixed: adb exec-out merges remote stderr, so dd needs status=none.
+  Initial metadata read correctly rejected excess bytes; no corrupt image saved.
+  RAM rescue reports ADB state recovery: use wait-for-recovery, not wait-for-device.
+  Restored iOS USB log confirms 8/8 SMP PASS, HFS root and FT3518/key reads OK.
+  Private restored-ios-live/ and restored-ios-gui/ hold boot evidence.
+  First XNU Wi-Fi diagnostic implemented, not flashed: opt-in nord2wifi=1
+  snapshots AP-side power/bus/pinmux and24 PMIC rail/clock registers.
+  Runs serially on the input thread before polling, after fallback cleanup
+  is armed; no CONN MMIO, PMIC value writes, firmware/DMA or RF transmission.
+  Exact-C ASan/UBSan host checks PASS all65536 PMIC addresses, key behavior,
+  timeout/ownership, AP address allowlist, bootarg gates and cleanup order.
+  Local C compile PASS; 0082 regenerated and verified against pristine tree.
+  Full CI/image packaging still required before requesting a hardware test.
+
 - **ACTIVE TASK: WI-FI. Hardware/source identified; firmware collection pending.**
   Exact driver is MT6893 CONNAC2X2/SOC3_0 over AXI, conninfra HW20010101,
   A-die66358a11 in RC mode. Selected Android source includes full conninfra and
@@ -15,10 +41,11 @@
   streams vendor/odm from RAM rescue without phone writes or mounts.
   Six corruption/boundary tests PASS. Known rescue d78bf9fe…3d03bac5 and
   working iOS fd6d75ca…49995f20 hashes reverified. Private two-stage
-  research/nord2/wifi/run-approved-collection.py syntax-checked, NOT EXECUTED.
-  Asked user to authorize boot-only rescue -> firmware reads -> working iOS
-  restoration. Await reply/fastboot; do not flash before approval. No Wi-Fi
-  kernel changes or new hardware test yet; phone left at working iOS baseline.
+  research/nord2/wifi/run-approved-collection.py rescue stage EXECUTED after
+  explicit user approval/fastboot. Flash boot and reboot both OKAY; exact
+  timestamp in private rescue-flash.log. Collecting vendor read-only in RAM
+  rescue. Return to working iOS fd6d75ca…49995f20 is already authorized;
+  must complete after collection. No Wi-Fi kernel hardware test yet.
   Static inspection of local iOS wifid confirms required IO80211.framework
   and Apple80211 scan/associate/power/event API imports; no selectors recovered.
   Private ios-abi/ holds exact identity/import/string evidence. REA native

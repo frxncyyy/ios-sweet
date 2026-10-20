@@ -1,5 +1,57 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-20: firmware acquired; first XNU diagnostic implemented
+
+The authorized rescue/return sequence completed: exact rescue flashed only
+boot at 20:44:05 CEST, then original working input/power iOS image restored
+at 20:49:37. Both commands and reboots succeeded. The restored native USB
+log confirms 8/8 SMP, HFS root, FT3518 ID54:52 and valid key reads.
+Private `research/nord2/wifi/run-approved-collection.py` has executed both
+stages; do not rerun the exclusive runner.
+
+Vendor logical partition: 544354304 bytes at super offset7708082176.
+Metadata slot0 has matching primary and backup; super is11039408128 bytes.
+Image SHA-256 `bf8de3f4d228c105cd950ac78cc1085bb3f65f9dfc52d4e0c8db10e51780b8b5`
+matches a second independent on-phone read/hash. No phone filesystem mounted
+or written. EROFS vendor uses LZ4 big pclusters; local erofs-utils1.9.4,
+verified against the installed Arch keyring, successfully checked/decompressed
+the firmware directory. Tools were unpacked locally, not installed globally.
+Full result, raw metadata, rescue mount/log evidence, exact firmware hashes
+and physical/compressed extent listings are under private `research/nord2/wifi/`.
+
+| File | Extracted bytes |
+| --- | ---: |
+| soc3_0_ram_wmmcu_1a_1_hdr.bin | 49868 |
+| soc3_0_ram_wifi_1a_1_hdr.bin | 296916 |
+| soc3_0_patch_wmmcu_1a_1_hdr.bin | 5726 |
+| WIFI_RAM_CODE_soc3_0_1a_1.bin | 973648 |
+| conninfra.cfg | 32 |
+
+Configuration contains `co_clock_flag=1` and `pre_cal_mode=3`; no tcxo_gpio
+entry. Selected source chooses26MHz co-clock unless tcxo_gpio is nonzero.
+Do not blindly apply the optional GPIO155 TCXO mux: that is volume-down on
+this board. Android's clock-buffer callback says XO_WCN is hardware-controlled.
+Selected platform power path uses `clk_prepare_enable`/runtime PM, so compare
+its actual MT6893 clock-domain implementation with the alternative POS sequence
+before porting power transitions.
+
+Collector hardware correction: `adb exec-out` merges remote stderr with the
+binary stream. Added Toybox `dd status=none`; the initial attempt failed its
+exact-length check and did not save a corrupt image. Six host metadata tests
+pass, and real geometry/header/table/hash validation now passes. Rescue ADB
+state is `recovery`; `wait-for-device` waits for a different state.
+
+The opt-in XNU `nord2wifi=1` diagnostic reads only AP-side SPM/AXI/GALS/reset/
+GPIO state plus24 MT6359 clock/rail registers. It uses the input thread's
+PMIF transport before polling, after `ni_saved` arms return cleanup. It does
+not map the CONN register region, write PMIC values, load radio firmware, start
+DMA, or transmit RF. The same guarded reader retains TOPSTATUS for keys.
+No snapshot hardware test yet. Exact-C ASan/UBSan tests in
+`tools/test-nord2-wifi.py` cover all65536 PMIC addresses, key behavior,
+unowned/in-flight transactions,1000us timeout, AP-only MMIO, bootarg/mapping
+gates and cleanup order. Local kernel C compile passes; patch0082 applies
+cleanly and exactly reproduces the source. Full CI/image verification pending.
+
 ## 2026-10-20: hardware/source identification; firmware collection prepared
 
 Wi-Fi is not working yet. No new radio code has run on hardware. Preserve the
