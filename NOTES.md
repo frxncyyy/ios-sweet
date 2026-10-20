@@ -3,12 +3,42 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE STATE — session 8 test in progress:** user explicitly
+- **CURRENT DEVICE STATE — Android restored and verified after session 8.**
+  Stop 8 **passed**: the saved log contains `irq intid 0x...0001`, then
+  `stop at before bsd_init` → `RETURN TO STOCK ANDROID KERNEL` →
+  `entry=0000000040280000`. Android reached `sys.boot_completed=1`.
+  This proves the kernel returned from `kperf_init_early()` and reached the
+  genuine point-8 hook. The anticipated `SWEET CPU: 1/1...` text is absent
+  from this pmsg; do not quote it as an observation. The SGI1 IRQ and passed
+  wait are the actual evidence.
+  - Log: `backup/nord2/logs/20261020-095916-cpu-match-stop8/`, pmsg
+    10,553 bytes, SHA-256
+    `f7f18d47b769cf437651bb42410175a58f7ca43faf903205617b9b05959e7576`.
+    Android reports the original LK `PMIC_cold_reboot` boot reason even on
+    this successful chain-back; nonempty pmsg + markers prove preservation.
+  - Original `backup/nord2/boot.img` flashed back, rebooted, full partition
+    SHA-256 `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`
+    and `sys.boot_completed=1` verified. Evidence:
+    `research/ci-39388874797/stop8-restore{.log,-verified.json}`.
+    This test's flash/restore authorization is completed.
+  - Next candidate **built, not yet authorized/flashed**:
+    `shim/out/nord2-xnu/nord2-cpu-match-stop9.img`, 30,570,496 bytes, SHA-256
+    `d57e8f097f005e6e13533f9d94bd40923f6797015b22302bc3a61cc4c639ae13`.
+    Adds point 9 after `inittodr(0)`, before the root filesystem mount loop
+    in `bsd_init`. Uses the **new CI archive**, replacing only `bsd_init.o`;
+    all Apple-compiled C++ objects including the CPU matching fix are retained.
+    `cpus=1 nord2stopat=9`; all image checks passed.
+    Source comparison against the new CI tree shows only the point-9 hook
+    added to `bsd_init.c`; original CI archive hash unchanged after relinking.
+    Build files, exact link argv, link warnings and checker output are in
+    `research/ci-39388874797/stop9/`. Patch 0082 regenerated/verified.
+
+- Session 8 stop-8 test authorization and artifacts: user explicitly
   authorized a temporary boot-only flash and subsequent original-boot
   restore, and put the phone in fastboot. Preflight: expected Nord 2,
   `product=oplus6893`, boot size `0x2000000`, not userspace fastboot; image and
   original backup hashes verified. Flash and reboot both returned OK.
-  Restore is still required after collecting the log.
+  Test and restore completed as recorded above.
   - Candidate: `shim/out/nord2-xnu/nord2-ci-cpu-match-stop8.img`,
     30,676,992 bytes, SHA-256
     `7348e1782171947a6f39019c71d6a3b8b9adc65f136913afa8966021d75f7509`.
@@ -50,7 +80,7 @@
   stepping until that is fixed. It is inactive in the new test image.
 
 - 2026-10-20 (session 8, Codex): **CPU driver matching mismatch found in the
-  source; hardware verification pending.** This supersedes the final session-7
+  source; corrected stop 8 now verified above.** This supersedes the final session-7
   explanation below. `ml_wait_max_cpus()` does NOT spin until eight CPUs check
   in: it sleeps on `max_cpus_initialized`, waiting for `ml_set_max_cpus()`.
   `ml_parse_cpu_topology()` honors `cpus=1`; `IODTPlatformExpert::createNubs()`

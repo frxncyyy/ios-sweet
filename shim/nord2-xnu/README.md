@@ -9,9 +9,11 @@ later diagnostic images have reached the end of IOKit initialization and
 returned to Android. They do not yet boot iOS userland.
 
 The current blocker and exact test results are in the active handoff at the
-top of `NOTES.md`. As of 2026-10-20, the stop after `vm_set_restrictions`
-works, but the stop after `kperf_init_early` does not. The MT6893 CPU-driver
-matching correction is prepared; hardware verification is pending.
+top of `NOTES.md`. As of 2026-10-20, the corrected CPU-driver matching and
+unambiguous `nord2stopat=8` argument have passed on hardware: XNU returns
+from `kperf_init_early`, reaches the stop before BSD, and chains back to
+Android with pmsg intact. Point 9 (before root filesystem selection) is
+prepared for the next test.
 
 The probe does not write storage or load an iOS ramdisk. It does write the
 pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
@@ -107,6 +109,7 @@ also writes zero-padded decimal and must be corrected before reuse.
 | 6 | After the copyright print in `bsd_init` |
 | 7 | After `vm_set_restrictions`, before kperf |
 | 8 | After `kperf_init_early`, before `bsd_init` |
+| 9 | In `bsd_init`, after `inittodr`, before selecting/mounting the root filesystem |
 
 Point numbers are identifiers, not execution order. Never infer success
 from a reboot alone: inspect the stop marker and the Android return marker.

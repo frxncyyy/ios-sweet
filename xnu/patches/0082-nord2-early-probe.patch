@@ -1477,7 +1477,19 @@
  
  #if CONFIG_DEV_KMEM
  	bsd_init_kprintf("calling dev_kmem_init\n");
-@@ -1119,7 +1131,13 @@
+@@ -868,6 +880,11 @@
+ 	bsd_init_kprintf("calling inittodr\n");
+ 	inittodr(0);
+ 
++#if defined(NORD2)
++	/* Diagnose BSD initialization without waiting for an unported root device. */
++	nord2_stop_at(9, "before root filesystem selection");
++#endif
++
+ 	/* Mount the root file system. */
+ 	while (TRUE) {
+ 		int err;
+@@ -1119,7 +1136,13 @@
  		}
  	}
  
