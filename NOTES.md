@@ -4,6 +4,46 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **NEW LIVE-X2 / WI-FI AP IMAGE VERIFIED; AWAIT EXACT FLASH AUTHORIZATION.**
+  `shim/out/nord2-xnu/nord2-ios-ufs2-wifi-ap-stop23.img`, 33,277,952 B;
+  SHA-256 3b2e7ecb2a8dfeecfda38615229aa6d9f5327a0ede2bfb6424ee355d14204434.
+  Payload 5d4d5b72857a380db985f4c61d543f5203433df1d7eca6edc7948a5139dbcc73.
+  CI 39510279443 / source 4a8b957230c19db8969080778749a6e55e9e60f8;
+  independent linked review PASS, exact kernel segments/header/Linux/both DTs/
+  rescue CPIO/product ADT/static image-mode checks PASS. Boot spare 276,480 B.
+  Requested: nord2ufs2live=1, cpus8, stop23, existing iOS userdata RW only after
+  phase5/60 UIC/18 SET/2 verified GPT reads; retain x2 for normal operation.
+  Existing fast console/RTC/input/display/USB and reversible common Wi-Fi probe
+  retained, now with precise first AP/owner failure logs. No RF/networking or
+  firmware execution added. Both old diagnostic and current observer completed.
+  Linux return is permanently blocked for live mode. ANY uncertain pre-root
+  I/O or active I/O failure halts; manual reset to fastboot is required for
+  recovery. Tested rescue can then be flashed explicitly; current working
+  2e4f315e image is preserved and independently hashed by the prepared runner.
+  Private directory `research/nord2/ufs-live-common-ap/ios`: manifest.json,
+  payload.bin, parse-evidence.py and run-approved-boot.py prepared. Runner flag
+  --authorized-live-x2-common-ap-boot; capture 180 seconds, verifies exact new
+  image/current 2e4f/ce84/old fd6/stock backup/rescue and initial rootfs proof.
+  RUNNER NEVER EXECUTED, no flash.log/hardware-live; no new authorization yet.
+  Ask exact boot-only approval including conditional manual rescue/current-iOS
+  restoration, then physical fastboot. User's last confirmed device state is
+  working 2e4f iOS lockscreen with input; no USB capture active.
+
+
+- **CI 39510279443 PASSED; NEXT IMAGE PACKING OFFLINE.**
+  Source 4a8b957230c19db8969080778749a6e55e9e60f8; kernel 17,320,320 B,
+  SHA-256 f3e608d0550d418b5e49e8978c17b6a0c7bc79846232cc5dc7209d3cb9cecda9.
+  Artifact sums and all 1,102 generic ARMv8.2+crypto compiler invocations verified.
+  Private identity-required.json filled only after this evidence. Build session
+  45579 packs nord2-ios-ufs2-wifi-ap-stop23.img under a 1 GiB process limit;
+  logs in `ufs-live-common-ap/ios`. Agent independently reviews linked paths.
+  New image still unauthorized; wait for packing/independent manifest and
+  linked review before requesting exact boot-only approval and physical fastboot.
+  Live mode recovery requires manual reset and explicit fastboot rescue/current
+  iOS restore; automatic Linux return is blocked. Current working image remains
+  2e4f315e, human lockscreen/input confirmed; no USB collector or device writes.
+
+
 - **FULL CI 39510279443 RUNNING FOR LIVE X2 + COMMON AP OBSERVER.**
   Source `4a8b957230c19db8969080778749a6e55e9e60f8` pushed to fork.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39510279443
