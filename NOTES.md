@@ -3,8 +3,26 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE: USB point13 test flashed/rebooted; awaiting ADB rescue return.
-  Userdata unchanged.** Standalone ADB RAM rescue was tested successfully.
+- **CURRENT DEVICE: USB point13 passed; phone is in ADB RAM rescue.
+  Userdata unchanged.** Boot still contains the combined point13 image.
+  No restore was required (authorization requested restoration on failure).
+  Saved pmsg `backup/nord2/logs/20261020-115727-usb-snapshot-stop13/pstore/pmsg-ramoops-0`,
+  16818B, SHA-256 `93d581ef09ad0b08fbe96b5256e235ff876bee93d8f988ca8ddbcf792fd73f08`.
+  Clock and complete MAC snapshot, point13 stop and Linux-return markers
+  all observed; authenticated root ADB returned. Evidence:
+  `research/nord2/usb/stop13-test/{flash.log,verified.json}`.
+  Observed INFRA_CG3=00000100, TOP_CFG9=01000102, TOP_CFG10=05050201;
+  device power=0, USB2 reset status=1, port=48. MAC remains powered/clocked.
+  IPPC HWID20180724/version10010000; MAC cap endpoints8/8, FIFO8192/8192,
+  MISC_CTRL80000003 (36-bit DMA and forced VBUS), POWER_MANAGEMENT60a1
+  (high-speed enabled, soft-connect off), EP0CSR40. EP1 TX/RX QMU inactive
+  and request-list addresses zero. This supports reusing the bootloader's
+  hardware initialization for an EP0 enumeration test; it does not prove
+  USB enumeration/data transport in XNU.
+  Full Apple-clang CI at head `c3d382778d27086fd09a54c5998a6dae5373e8c1`
+  is running: https://github.com/frxncyyy/ios-sweet/actions/runs/39404509443
+  (`research/ci-39404509443/`). Current tree through c3d3827 pushed to fork.
+  Standalone ADB RAM rescue was tested successfully earlier:
   User explicitly authorized boot-only `nord2-adb-rescue.img`, SHA-256
   `d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5`,
   and original-boot restoration if it failed. Flash/reboot passed. ADB reports
@@ -88,9 +106,8 @@
       ufsrw=0/rootrw=0. No root filesystem is selected before the stop.
       **User authorized** this exact boot-only test and brought the phone
       to fastboot. Product/partition/hash checks passed, flash/reboot passed;
-      evidence `research/nord2/usb/stop13-test/flash.log`. Awaiting ADB rescue
-      and collecting logs. Original Android boot restoration is authorized
-      if return fails; manual fastboot may then be needed.
+      evidence `research/nord2/usb/stop13-test/flash.log`. ADB rescue returned
+      and log verification passed as recorded above.
       Rescue log collector now supports `tools/nord2-pull-logs.sh --rescue LABEL`;
       hardware read-only check passed and saved
       `backup/nord2/logs/20261020-115541-standalone-rescue/`.

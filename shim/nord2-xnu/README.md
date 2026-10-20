@@ -61,7 +61,8 @@ an error message. A cold reset can leave pstore empty.
 The XNU image helper accepts `--base-boot RESCUE.img --zopfli ZOPFLI_BINARY`.
 Zopfli produces a smaller standard gzip stream, verified byte-for-byte after
 decompression, so XNU and the unmodified rescue ramdisk fit in the 32 MiB boot
-partition. The combined return-to-rescue image awaits hardware testing.
+partition. The combined point13 image returned to ADB recovery on hardware
+with the complete XNU pmsg record intact.
 Generic panic return also restores any owned UFS request list before Linux
 runs; an unsafe DMA state halts instead of handing it to the next kernel.
 
