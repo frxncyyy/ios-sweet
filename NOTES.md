@@ -32,6 +32,18 @@
   prepares a separate opt-in snapshot bridge and a pre-root two-lane UFS
   diagnostic; neither changes this frozen candidate.
 
+- **NEXT WI-FI EMI OBSERVER PREPARED, NOT IN THE CANDIDATE.**
+  `shim/nord2-xnu/wifi_emi_probe.{c,h}` provides a strict `nord2wifiemi=1`
+  worker around the existing structured SMC reader: eight read queries for
+  regions 27/31, raw return/status logging, pure range/domain decoding and
+  thread cleanup. No allocations, storage/CONN/MPU writes or RF activity.
+  Query count is bounded; a secure monitor call has no interruptible software
+  deadline. Effective permission/ownership remains unknown. Exact production
+  collector/bridge fault and lifecycle tests under ASan/UBSan pass, as does
+  local ARM64 BSD compilation. Root reviewed and reran the host test.
+  Private integration plan: `wifi/next-stage/emi-probe-integration.md`.
+  No hook, patch regeneration, CI or hardware test for this bridge yet.
+
 - **MEASURED: UFS G4x1 RATE B; NEXT RTC-SKIP/LIMITS SOURCE READY.**
   Authorized8eb3f477 boot reports all6DME_GET valid0x3f: RX/TXgear4,1laneeach,
   HSseries2,pwrmode0x11, noerror/pending. BeforeGUIownership:57793commands,
