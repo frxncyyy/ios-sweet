@@ -21,6 +21,8 @@ static int arg_present=1,arg=1,fail_alloc,allocs,frees,reads,loads,logs,io_error
 static unsigned char *buffers[2];
 static size_t sizes[2];
 static uint64_t ticks;
+static int vendor_reports;
+void sweet_ufs_vendor_report(void) {vendor_reports++;}
 static int PE_parse_boot_argn(const char *name,void *value,int size) {
  assert(!strcmp(name,"nord2wififw") && size==sizeof(int));
  *(int *)value=arg;return arg_present;
@@ -76,7 +78,7 @@ static void reset(void) {
  assert(!buffers[0] && !buffers[1]);
  nwf_probe_attempted=nwf_probe_start_attempted=0;arg_present=arg=1;
  start_error=starts=deallocs=terminations=0;continuation=NULL;
- fail_alloc=allocs=frees=reads=loads=logs=io_error=loader_error=0;
+ fail_alloc=allocs=frees=reads=loads=logs=io_error=loader_error=0;vendor_reports=0;
 }
 int main(void) {
  for(int value=-2;value<=3;value++)if(value!=1){
@@ -92,7 +94,7 @@ int main(void) {
  reset();loader_error=1;assert(nord2_wifi_firmware_probe()==EIO);
  assert(allocs==2 && frees==2 && loads==1 && reads==1 && logs==1);
  reset();io_error=ENXIO;assert(nord2_wifi_firmware_probe()==ENXIO);
- assert(frees==2 && logs==1);
+ assert(frees==2 && logs==1 && vendor_reports==1);
  reset();assert(!nord2_wifi_firmware_probe());assert(frees==2 && loads==1 && reads==1 && logs==5);
  assert(nord2_wifi_firmware_probe()==EALREADY && allocs==2 && reads==1);
  reset();nwf_probe_attempted=1;assert(nord2_wifi_firmware_probe()==EALREADY && !allocs);

@@ -10,6 +10,7 @@ struct=extract('struct SweetFBDiagnostics {','class AppleCLCD :')
 report=extract('void\nAppleCLCD::reportDiagnostics(', 'void\nAppleCLCD::vsyncFired(')
 timer=extract('void\nAppleCLCD::vsyncFired(', 'void\nAppleCLCD::addClient(')
 swap=extract('void\nAppleCLCD::swap(', 'void\nAppleCLCD::present(')
+record=extract('static void\nsweet_fb_diag_record(', 'static uint32_t sweet_fb_swaps_logged;')
 a=s.index('\t\tif (!nord2_display_begin()) {')
 failed=s[a:s.index('\n#endif',a)]
 
@@ -26,6 +27,9 @@ code=r'''
 static unsigned locks, diaglogs, swaplogs, calls, refreshes, allocation_fail, reject;
 static uint64_t clockticks, sweet_fb_swap_count;
 static uint32_t last_presented_seq;
+static unsigned record_lines,record_words;
+static uint8_t record_copy[2][SWEET_FB_SWAP_REC_SIZE];
+static bool record_seen[2][SWEET_FB_SWAP_REC_SIZE/4];
 struct AppleCLCD;static AppleCLCD *active_fb;
 static const uint8_t *newer_record;
 static bool nord2_display_begin(void);
@@ -43,9 +47,23 @@ static void IOLog(const char *fmt,...) {
  assert(!locks);
  if(!strncmp(fmt,"NORD2 FB DIAG:",14))diaglogs++;
  if(!strncmp(fmt,"NORD2 FB SWAP:",14))swaplogs++;
+ if(strstr(fmt,"NORD2 FB RECORD:")==fmt) {
+  va_list args;va_start(args,fmt);uint64_t accepted=va_arg(args,uint64_t);
+  unsigned off=va_arg(args,unsigned),n=va_arg(args,unsigned);
+  assert(accepted>=1 && accepted<=2 && off%32==0 && off<SWEET_FB_SWAP_REC_SIZE);
+  assert(n==(off+32<=SWEET_FB_SWAP_REC_SIZE?8:(SWEET_FB_SWAP_REC_SIZE-off)/4));
+  for(unsigned i=0;i<8;i++) {
+   unsigned word=va_arg(args,unsigned);
+   if(i<n) {
+    assert(!record_seen[accepted-1][off/4+i]);record_seen[accepted-1][off/4+i]=true;
+    memcpy(record_copy[accepted-1]+off+4*i,&word,4);record_words++;
+   } else assert(word==0);
+  }
+  va_end(args);record_lines++;
+ }
 }
 static uint32_t get32(const uint8_t *p,uint32_t off){uint32_t v;memcpy(&v,p+off,4);return v;}
-'''+struct+r'''
+'''+record+struct+r'''
 struct AppleCLCD:OSObject {
  SweetFBDiagnostics fDiag={};uint64_t fVsyncCount=0;Clients clients;Clients *fClients=&clients;
  void *fLock=nullptr;bool fPowerOff=false,fDirty=false,fConsolePaused=false;unsigned fFadeStep=0,fFlushTicks=6;
@@ -67,10 +85,15 @@ void AppleCLCD::present(const uint8_t *rec) {
 }
 '''+report+timer+swap+r'''
 int main(){
- uint8_t rec[SWEET_FB_SWAP_REC_SIZE]={};uint32_t v=3;memcpy(rec+0x104,&v,4);
+ uint8_t rec[SWEET_FB_SWAP_REC_SIZE];for(unsigned i=0;i<sizeof(rec);i++)rec[i]=(uint8_t)(i*37+11);uint32_t v=3;memcpy(rec+0x104,&v,4);
  AppleCLCD fb;IOTimerEventSource timer;fb.fDiag.enabled=true;
  for(unsigned i=0;i<10000;i++)fb.swap(rec);
  assert(fb.fDiag.swaps==10000 && swaplogs==8);
+ assert(record_lines==72 && record_words==2*(SWEET_FB_SWAP_REC_SIZE/4));
+ assert(!memcmp(record_copy[0],rec,sizeof(rec)) && !memcmp(record_copy[1],rec,sizeof(rec)));
+ for(unsigned i=0;i<2;i++)for(unsigned j=0;j<SWEET_FB_SWAP_REC_SIZE/4;j++)assert(record_seen[i][j]);
+ // Helper guard and exact tail coverage remain bounded even if called directly.
+ sweet_fb_diag_record(rec,0);sweet_fb_diag_record(rec,3);assert(record_lines==72);
  for(unsigned i=0;i<10000;i++)AppleCLCD::vsyncFired(&fb,&timer);
  assert(fb.fDiag.vsync==10000 && diaglogs==4 && calls==1 && timer.arms==10000);
  // A single rejected ownership attempt is retried without any new swap.
@@ -102,10 +125,10 @@ int main(){
  for(unsigned i=0;i<6;i++)AppleCLCD::vsyncFired(&fb,&timer);
  assert(!fb.fDirty && calls==before+1);
  // Default behavior produces no new diagnostic counters or logs.
- unsigned dl=diaglogs,sl=swaplogs;AppleCLCD quiet;IOTimerEventSource timer2;
+ unsigned dl=diaglogs,sl=swaplogs,rl=record_lines;AppleCLCD quiet;IOTimerEventSource timer2;
  quiet.swap(rec);
  for(unsigned i=0;i<3600;i++)AppleCLCD::vsyncFired(&quiet,&timer2);
- assert(!quiet.fDiag.swaps && !quiet.fDiag.vsync && dl==diaglogs && sl==swaplogs);
+ assert(!quiet.fDiag.swaps && !quiet.fDiag.vsync && dl==diaglogs && sl==swaplogs && rl==record_lines);
 }
 '''
 with tempfile.TemporaryDirectory(prefix='nord2-fb-diag-') as d:
@@ -113,4 +136,4 @@ with tempfile.TemporaryDirectory(prefix='nord2-fb-diag-') as d:
     subprocess.run(['clang++','-std=c++17','-O1','-g','-Wall','-Wextra','-Werror',
                     '-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
-print('PASS: production swap/timer/report paths; finite8 swap+4 callback logs, power-off/alloc-failure/default behavior and ownership retry/newer-swap preservation')
+print('PASS: production swap/timer/report paths; finite8 swap+4 callback logs, power-off/alloc-failure/default behavior and ownership retry/newer-swap preservation + exact first2 record coverage/lock/default/limit')

@@ -22,9 +22,9 @@ ack = s[a:b]
 # Integration checks: profile only after successful takeover/GPT under lock,
 # restore guard before touching request lists; ordinary disabled path unchanged.
 assert s.index('if (!error) { nord2_ufs_profile_link(); }') < s.index('su.bmajor = bdevsw_add')
-assert 'if (!error) { nord2_ufs_profile_link(); }\n#endif\n\tlck_mtx_unlock' in s
+assert s.index('if (!error) { nord2_ufs_profile_link(); }') < s.index('nord2_x2_run(&result)') < s.index('nord2_x2_halt(error, &result)') < s.index('su.bmajor = bdevsw_add')
 assert 'nord2_ufs_profile_enabled = (profile == 1);' in s
-assert s.count('nord2_ufs_profile_wait(profile_issued)') == 2
+assert s.count('nord2_ufs_profile_wait(profile_issued)') == 3
 assert s.index('profile_issued =') < s.index('ufs_wr(REG_UTRLDBR, 1);')
 defines = '\n'.join(re.findall(r'^#define (?:REG_\w+|HCS_\w+|UFS_BLOCK|BOUNCE_SIZE|PRDT_CHUNK|PRDT_MAX|CMD_\w+)\s+.*$', s, re.M))
 code = r'''
@@ -32,6 +32,7 @@ code = r'''
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #define NORD2 1
@@ -55,7 +56,12 @@ static uint64_t fake_counter(const char *name) {
 static void delay(unsigned n) { assert(n==1); delay_calls++; }
 static void lck_mtx_lock(int *l) { assert(l==&sweet_ufs_lock && !held); held=1; }
 static void lck_mtx_unlock(int *l) { assert(l==&sweet_ufs_lock && held); held=0; }
-static int fake_printf(const char *f, ...) { (void)f; assert(!held); prints++; return 0; }
+static int fake_printf(const char *f, ...) {
+ assert(!held); prints++; char text[768]; va_list ap; va_start(ap,f);
+ int n=vsnprintf(text,sizeof(text),f,ap);va_end(ap);assert(n>=0);
+ if(strstr(f,"UFS LIMITS:") || strstr(f,"UFS CONFIG:") || strstr(f,"UFS CONTEXT:") || strstr(f,"UFS STATUS:"))assert(n<255);
+ return 0;
+}
 #define printf fake_printf
 static uint32_t ufs_rd(uint32_t off) {
  assert(off%4==0 && off/4<64);
@@ -95,8 +101,9 @@ static bool nord2_ufs_wait(uint32_t off, uint32_t mask, uint32_t value) {
 }
 static void nord2_ufs_write_reg(uint32_t off, uint32_t v) { ufs_wr(off,v); }
 '''+restore+r'''
-static void scsi_ack(void) {
+static int scsi_ack(void) {
 '''+ack+r'''
+ return 0;
 }
 static void reset(void) {
  memset(regs,0,sizeof(regs)); memset(&nord2_ufs_stats,0,sizeof(nord2_ufs_stats));
@@ -105,6 +112,7 @@ static void reset(void) {
  fail_submit=timeout_submit=0;
  su.regs=1; su.probe_only=false; nord2_root_owned=true;
  nord2_ufs_profile_enabled=true; nord2_ufs_profile_reported=false;
+ nord2_x2_in_progress=nord2_x2_uncertain=nord2_x2_stop=false;
  nord2_ufs_uic_pending=false; prints=writes=submits=status_reads=delay_calls=0;
  ticks=0; step=100; frequency=1000000; recovering=false; completion_fired=false; held=1;
  regs[REG_HCS/4]=HCS_DP|HCS_UTRLRDY|8; regs[REG_HCE/4]=1;
@@ -231,7 +239,13 @@ int main(void) {
  assert(!nord2_ufs_stats.commands && !prints && !writes);
  // Once-only report copies under lock then prints exclusively after unlocking.
  reset(); held=0; nord2_ufs_profile_report(); nord2_ufs_profile_report();
- assert(prints==3 && held==0 && !writes);
+ assert(prints==6 && held==0 && !writes);
+ reset(); held=0;
+ nord2_ufs_limits.valid_mask=nord2_ufs_limits.understood_mask=nord2_ufs_limits.attempted=UINT32_MAX;
+ nord2_ufs_limits.context_valid=true; nord2_ufs_limits.ahit=nord2_ufs_limits.hcs=nord2_ufs_limits.is=UINT32_MAX;
+ for(unsigned i=0;i<8;i++){nord2_ufs_limits.values[i]=nord2_ufs_limits.results[i]=UINT32_MAX;nord2_ufs_limits.errors[i]=INT32_MIN;}
+ nord2_ufs_profile_report(); assert(prints==6);
+
 }
 '''
 with tempfile.TemporaryDirectory(prefix='nord2-ufs-profile-') as tmp:

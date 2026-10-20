@@ -22,6 +22,7 @@ extern void thread_deallocate(thread_t);
 extern void thread_terminate_self(void);
 #endif
 extern int sweet_ufs_read_vendor(uint64_t, void *, uint32_t);
+extern void sweet_ufs_vendor_report(void);
 static unsigned int nwf_probe_attempted;
 struct nwf_probe_read_context { int error; };
 static int
@@ -71,6 +72,7 @@ done:
  if(output) { nwf_probe_erase(output,NWF_OUTPUT_BYTES); kfree_data(output,NWF_OUTPUT_BYTES); }
  nwf_probe_erase((unsigned char *)blobs,sizeof(blobs));
  clock_get_uptime(&end);
+ if(context.error) sweet_ufs_vendor_report();
  printf("NORD2 WIFI FW probe status=%d elapsed_ticks=%llu\n",error,
      (unsigned long long)(end-start));
  return error;

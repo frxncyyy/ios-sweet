@@ -13,7 +13,7 @@ import tempfile
 root=Path(__file__).resolve().parent.parent
 s=(root/'research/ci-39158169212/buildtree/xnu/bsd/dev/sweet_ufs.c').read_text()
 a=s.index('/* Immutable read-only vendor mapping.')
-b=s.index('\nstatic bool\nnord2_ufs_wait(uint32_t off, uint32_t mask, uint32_t value)\n{',a)
+b=s.index('/* Included exactly once; do not also compile a separate module object. */',a)
 production=s[a:b]
 a=s.index('static uint32_t\nnord2_ufs_crc32(')
 b=s.index('/* Inspect only GPT metadata;',a)
@@ -30,6 +30,7 @@ code=r'''
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -41,7 +42,13 @@ static struct { uintptr_t dma; uint64_t dma_pa, first_block, nblocks;
  bool ready, probe_only, writable; uint8_t lun; } su;
 static bool nord2_root_owned, nord2_ufs_uic_pending;
 static int sweet_ufs_lock, held, interrupts, irq_context, preempt;
-static unsigned reads, fail_at, mmio_reads;
+static unsigned reads, fail_at, mmio_reads, reports;
+static int vendor_printf(const char *format,...) {
+ assert(!held);assert(strstr(format,"NORD2 WIFI"));
+ char line[256];va_list ap;va_start(ap,format);int size=vsnprintf(line,sizeof(line),format,ap);va_end(ap);
+ assert(size>=0 && size<255);reports++;return size;
+}
+#define printf vendor_printf
 static uint32_t registers[64];
 static uint8_t primary[4096], backup[4096], entries[16384];
 static uint8_t geometry0[4096], geometry1[4096], metadata0[65536], metadata1[65536];
@@ -107,6 +114,7 @@ static void reset(void) {
  nord2_ufs_vendor_enabled=true;nord2_ufs_vendor_checked=false;nord2_ufs_vendor_error=0;
  interrupts=1;irq_context=preempt=held=0;reads=fail_at=mmio_reads=0;
  capacity_blocks=31240192;capacity_size=4096;
+ memset(&nord2_vendor_diag,0,sizeof(nord2_vendor_diag));reports=0;
  registers[REG_HCE/4]=1;registers[REG_HCS/4]=HCS_DP|HCS_UTRLRDY;
  registers[REG_UTRLBA/4]=(uint32_t)su.dma_pa;
  registers[REG_UTRLBAU/4]=(uint32_t)(su.dma_pa>>32);registers[REG_UTRLRSR/4]=1;
@@ -125,6 +133,14 @@ int main(int argc,char **argv) {
  assert(sweet_ufs_read_vendor(123,out+1,65536)==0 && reads==10);
  for(unsigned i=0;i<65536;i++) assert(out[i+1]==(uint8_t)(7708082176ull+123+i));
  assert(out[0]==0xa5 && out[65537]==0xa5);unchanged();
+ assert(nord2_vendor_diag.stage==N2V_PAYLOAD && !nord2_vendor_diag.error);
+ sweet_ufs_vendor_report();assert(reports==3 && !held);
+ // Every diagnostic line fits the real255-char console limit at maximal fields.
+ struct nord2_vendor_diagnostic saved_diag=nord2_vendor_diag;
+ nord2_vendor_diag.stage=nord2_vendor_diag.capacity_bytes=nord2_vendor_diag.size=nord2_vendor_diag.reserved=nord2_vendor_diag.stored_crc=nord2_vendor_diag.actual_crc=nord2_vendor_diag.count=nord2_vendor_diag.entry_size=nord2_vendor_diag.entries_crc=UINT32_MAX;
+ nord2_vendor_diag.capacity_blocks=nord2_vendor_diag.current=nord2_vendor_diag.other=nord2_vendor_diag.first=nord2_vendor_diag.last=nord2_vendor_diag.entry_lba=UINT64_MAX;
+ nord2_vendor_diag.error=(-2147483647-1);nord2_vendor_diag.backup=nord2_vendor_diag.header_read=nord2_vendor_diag.signature_equal=nord2_vendor_diag.revision_equal=nord2_vendor_diag.guid_equal=true;
+ sweet_ufs_vendor_report();assert(reports==6);nord2_vendor_diag=saved_diag;
  // Cached validation still serializes ownership, then issues exactly one read.
  unsigned before=reads;assert(sweet_ufs_read_vendor(544354304ull-65536,out,65536)==0);
  assert(reads==before+1);unchanged();
@@ -132,6 +148,9 @@ int main(int argc,char **argv) {
  for(unsigned fail=1;fail<=10;fail++) {
   reset();fail_at=fail;memset(out,0xa5,sizeof(out));
   assert(sweet_ufs_read_vendor(0,out,4096)==EIO);output_unchanged(out,sizeof(out));unchanged();
+ const unsigned stages[]={0,N2V_CAPACITY,N2V_PRIMARY_HEADER,N2V_PRIMARY_ARRAY,N2V_BACKUP_HEADER,N2V_BACKUP_ARRAY,N2V_GEOMETRY0,N2V_GEOMETRY1,N2V_LP0,N2V_LP1,N2V_PAYLOAD};
+ assert(nord2_vendor_diag.stage==stages[fail] && nord2_vendor_diag.error==EIO);
+ sweet_ufs_vendor_report();assert(reports==3 && !held);
   if(fail<10) { unsigned n=reads;assert(sweet_ufs_read_vendor(0,out,4096)==EIO && reads==n); }
  }
  // Each immutable copy is independently checked; changes must fail closed.
@@ -148,11 +167,18 @@ int main(int argc,char **argv) {
  // Correctly checksummed but incompatible header geometry is still refused.
  reset(); uint64_t changed=3;memcpy(backup+72,&changed,8);crc_header(backup);
  memset(out,0xa5,sizeof(out));assert(sweet_ufs_read_vendor(0,out,4096)!=0);
- output_unchanged(out,sizeof(out));fixtures(argv[1],argv[2]);
+ output_unchanged(out,sizeof(out));
+ assert(nord2_vendor_diag.stage==N2V_BACKUP_HEADER && nord2_vendor_diag.entry_lba==3 && nord2_vendor_diag.error==EINVAL);
+ assert(nord2_vendor_diag.backup && nord2_vendor_diag.guid_equal && nord2_vendor_diag.current==31240191 && nord2_vendor_diag.other==1);
+ assert(nord2_vendor_diag.first==34 && nord2_vendor_diag.last==31240183 && nord2_vendor_diag.count==128 && nord2_vendor_diag.entry_size==128);
+ assert(nord2_vendor_diag.actual_crc==nord2_vendor_diag.stored_crc);
+ sweet_ufs_vendor_report();assert(reports==3 && !held);
+ fixtures(argv[1],argv[2]);
  for(unsigned cap=0;cap<2;cap++) {
   reset();if(cap)capacity_size=512;else capacity_blocks--;
   memset(out,0xa5,sizeof(out));assert(sweet_ufs_read_vendor(0,out,1)!=0);
   output_unchanged(out,sizeof(out));unchanged();
+  assert(nord2_vendor_diag.stage==N2V_CAPACITY && nord2_vendor_diag.capacity_blocks==capacity_blocks && nord2_vendor_diag.capacity_bytes==capacity_size);
  }
  // Offset overflow, endpoint and zero/max length rules; no I/O on invalid calls.
  uint64_t offsets[]={UINT64_MAX,UINT64_MAX-4095,544354304,544354303};

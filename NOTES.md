@@ -3,7 +3,41 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **COMBINED CANDIDATE VERIFIED; NEW FLASH AUTHORIZATION PENDING.**
+- **COMBINED TEST COMPLETE; UI STILL SHOWS CONSOLE.**
+  Authorized e5f91de5…6e2741b flashed/rebooted OKAY at 22:40:03 CEST.
+  Runner EXECUTED; never rerun. Final 600-second USB capture: 956,617 bytes,
+  SHA-256 ff74088bf980d307fbc4566cf2182ecbc3862c1860a33afd3d2e444c23bcac10;
+  client exit 0. Phone remains running this XNU image, iOS root mounted RW.
+  RTC skip=1, elapsed=1 tick at 13 MHz. GUI ownership reached 63.7903 seconds
+  from stage6 (previous 93.6836), framebuffer 4.8270 seconds; this does NOT
+  measure lockscreen readiness. User confirms console persists, power dims it.
+  Five observed swap records have all four surface IDs zero. Present succeeds,
+  ownership failures=0; no active layers/lookups/copies at the diagnostic
+  checkpoint. Complete records are needed to distinguish empty submissions
+  from an unsupported record layout; no speculative capability changes made.
+  UFS remains G4x1 B FAST/FAST, 9.6597 aggregate command seconds, no errors or
+  timeouts. LIMITS valid/understood=ff: both directions available2/connected2,
+  terms1, UniPro5, adaptation1, AHIT0, HCS10f/UPMCRS1/IS0. Last error-list
+  characters truncated at exactly255; next reports split into bounded lines.
+  Firmware probe errno22 after 66,604 ticks; no files verified. Most likely
+  backup-GPT identity/layout assumption, NOT proven. New bounded validator
+  stage/header/range logs preserve every existing hash and validation gate.
+  Results/parser/raw evidence: private `research/nord2/rtc-ufs-wifi/`.
+
+- **NEXT SOURCE INTEGRATED; FULL CI TO BE DISPATCHED.**
+  Adds first-two complete swap-record diagnostics, bounded vendor validation
+  evidence, opt-in dedicated EMI-read worker and separate `nord2ufs2lane=1`
+  diagnostic. The latter runs before root publication, tests negotiated x2
+  and rollback to x1 with pinned GPT reads, then always stops. It never leaves
+  a mounted root or allows Linux fallback. Unknown limits/timeouts/ownership
+  fail closed; uncertain DMA/UIC state remains owned. Diagnostic-only SCSI
+  polling also has a one-million-iteration hard limit if its clock stalls.
+  Engine/adapter fault models, real saved GPT hashing, default-path regression,
+  bounded logging, display/vendor/firmware tests and local ARM64 compiles pass.
+  Dedicated two-lane mode has NOT run on hardware. A new exact image approval
+  is required for any further flash; neither new image is packed yet.
+
+- **COMBINED CANDIDATE VERIFIED (PROVENANCE).**
   CI39491596110/source ce25bf39098c1be91cc8d929c4e6b2dd4959088c passed.
   Kernel: 17,300,400 bytes, SHA-256
   a917ad29f47f9099cc239fe2b5f6fc3693dec5ec913fc01e531f9265c94ff101;
@@ -17,7 +51,7 @@
   firmware execution or Wi-Fi networking. Uses installed iOS root read/write.
   Static checks, independent unpack and linked GUI retry/RTC spot checks pass.
   Private `rtc-ufs-wifi/{manifest.json,verify-image.py,run-approved-boot.py}`;
-  runner prepared, NOT EXECUTED. Phone remains on profile image 8eb3f477.
+  runner was prepared and has now executed as recorded above.
   User confirms console remains visible; a power press dims the screen.
   Rescue base is recompressed: 28,594,176 bytes, SHA-256
   ed05ea02d0499fe4109e6498a6852e769c346226aa4a56a220338673f8a2f5bf.
