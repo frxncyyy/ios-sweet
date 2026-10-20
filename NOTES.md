@@ -1532,3 +1532,27 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   payload is needed: `shim/out/nord2-xnu/nord2-l8.img` (`nord2stopat=0008`) —
   see below for size/SHA. If 0008 hangs, `kperf_init_early()` is the stall; if
   it returns, the stall is in `bsd_init`'s prologue before point 5.
+
+- 2026-10-20 (session 7, Opencode): **ROOT CAUSE OF THE POST-"SWEET BATTERY"
+  HANG FOUND: `kperf_init_early()` → `ml_wait_max_cpus()`.**
+  - Point 7 (`after vm_set_restrictions`) returns to Android (~92 s); point 8
+    (`before bsd_init`, right after `kperf_init_early()`) hangs →
+    `kperf_init_early()` is the stall.
+  - Source (`osfmk/kperf/kperf.c:77`): `kperf_init_early()` starts with
+    `ml_wait_max_cpus();` — it **spins until `machine_info.max_cpus` CPUs have
+    checked in**. Our ADT advertises **8 CPU nodes** and the probe boots with
+    `cpus=1` (only CPU0 online), so the wait never completes: that is the
+    silent, timer-starving stall right after the IOKit matching, and the AP
+    watchdog (`WDT_RST` now correctly kicked, ~10 s timeout) resets the SoC
+    with `PMIC_cold_reboot`.
+  - Fixes to try next (cheap, no CI):
+    1. boot with `cpus=8` (PSCI bring-up of all 8 cores is already supported by
+       the Sweet port, patch 0065) so `ml_wait_max_cpus()` completes; or
+    2. for `cpus=1` probes, stop the spin: gate `kperf_init_early()` (or
+       `ml_wait_max_cpus()`) on NORD2 when only one CPU is requested, e.g.
+       skip the wait when `machine_info.max_cpus > ml_get_cpu_count()`, or
+    3. add `kperf` to the probe cmdline? (not needed: the wait is unconditional).
+  - **Phone restored** after the test (`boot` = `04e84c4a…6e1f01`), Android up.
+  - Images/tests of this batch: `nord2-l7.img` (`8013ad20…`) returns;
+    `nord2-l8.img` (`0feb4942…`) hangs; CI runs 39331965998 (before/after
+    SweetBattery hooks), 39336045043 (after StartIOKitMatching). All committed.
