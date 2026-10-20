@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **Next candidate: point19 fixed-mailbox low/high PSCI probe, READY, awaiting authorization.**
+- **CURRENT DEVICE: point19 PASSED low+high, all7 secondaries; ADB rescue returned.**
   This follows the observed point18 context_id=0. Only mode19 treats context
   as diagnostic; slot is derived from MPIDR in the unchanged stackless stub.
   Completion, CPU identity/type, EL, MMU/cache-off, timer frequency and CPU_OFF
@@ -29,16 +29,31 @@
   byte-identical to point18, SHA64cb547ace2ad90be3dc8d23ff3d98dc0737fa7fa8ca778d03523874c9c8321c;
   all branches internal, no stack or external PC-relative accesses, stores
   confined to its mailbox. Manifest and disassembly verification saved.
-  Candidate is frozen, not authorized/flashed. Phone now in fastboot at14:04
-  CEST (user moved it from rescue). Request this exact boot-only test; collect
-  logs with `tools/nord2-pull-logs.sh --rescue smp-fixed-stop19` immediately
-  after reboot. Require both pass=0/1 reports7/7 and every core OFF before
-  calling it fully passed. Startup evidence still is NOT XNU SMP scheduling.
-  On failed rescue return, original boot restoration is part of requested
-  authorization; if a core cannot stop, manual fastboot is needed.
-  Source commit6870fbb pushed. Apple CI39419145258 is in progress.
+  User authorized this exact boot-only image. Flash/reboot passed at14:10
+  CEST. BOTH pass0 (entry40180000) and pass1 (entry1434900cc) report7/7;
+  all14 CPU_ON/OFF cycles succeeded. Cores1..3 MIDR412fd050 (A55),4..7
+  MIDR411fd410 (A78), EL1, SCTLR30d00800, CNTFRQ13000000. Every core
+  reported context_id=0 despite requested nonzero value; fixed mailboxes
+  worked. High physical entry support is now verified, no low trampoline
+  required merely to enter secondary XNU code. Primary+all7 are startable,
+  but XNU scheduler still ran only on CPU0: do not report functional XNU SMP.
+  All seven OFF checked before chain-back; root ADB rescue/marker and no
+  block-backed/data filesystem mounts verified. No original restore needed.
+  Pmsg19065B SHA-256 `967a8dce9c6b9a7add68a0da2c309b710576cb8b83251d5d4b074e1744d29d56`,
+  `backup/nord2/logs/20261020-141027-smp-fixed-stop19/pstore/pmsg-ramoops-0`.
+  Evidence `research/nord2/smp/fixed/hardware-test/{verified.json,rescue.txt,flash.log}`.
+  Timer IRQ messages bisect a few printf lines; parser removes only complete
+  timer-tick records before checking14 per-core result lines; raw pmsg intact.
+  Next implement coordinated kernel-secondary shutdown and serialized early
+  logging, then bounded actual XNU2-CPU scheduler/timer/IPI test before4/8.
+  Source6870fbb full Apple-clang CI PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39419145258
+  Downloaded run.json/build.log/xnu-kernel under research/ci-39419145258;
+  kernel SHA15ca446aafbf5848085950a0e5d9b16be15f1c6cf48440c5ff3bf37cc7f2ffe5
+  matches artifact SHA256SUMS. Hardware used frozen local relink.
 
-- **CURRENT DEVICE: point18 authorized/flashed; core1 executed, strict context check failed; ADB rescue returned.**
+
+- **Previous device: point18 authorized/flashed; core1 executed, strict context check failed; ADB rescue returned.**
   Point17 did not verify even core1 execution; entry and context were above
   4GiB and context_id was the only mailbox pointer. Neither high-address nor
   context handoff support is established. Do not call either the cause yet.
@@ -87,7 +102,7 @@
   succeeded; kernel SHA-256
   `42bd46182a92a365a7ddabcb5868ac1d70ce5cd84e712caf7a55ac9dc1d44d75`
   matches the artifact SHA256SUMS. Source point18 commit55ed523 is pushed.
-  Full Apple-clang CI for point19 at6870fbb is running:
+  Full Apple-clang CI for point19 at6870fbb passed:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39419145258
 
 - **Current user priority: enable all eight CPU cores (or as many as practical)
