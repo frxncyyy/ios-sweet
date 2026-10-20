@@ -49,9 +49,44 @@
   display timeout tests, local two-C-file compiles and RCpc2 checks passed.
   Local C++ is unavailable due to Apple's __builtin_xnu_type_* extensions;
   full Apple-clang CI is required. No fake builtins or local kernel relink.
-  Evidence research/nord2/display-userland/. New kernel/image/CI/authorization
-  still pending. Preserve frozen23 and all earlier images; prepare and verify
-  the new image before requesting its exact boot-only approval.
+  Evidence research/nord2/display-userland/. Full CI39458357257, source
+  d7cef5a99bb7c7d9b6bda620decfc57aa8a21cdc, PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39458357257
+  Client also passed a real protocol1 read from the running phone and exact
+  mock reads of all4MiB using32-bit offsets. Packaging commit b331176 adds
+  --product-adt: copy only non-placeholder /product properties from the
+  same IPSW's D22AP tree, as Sweet does. Mode23 omitted this node too;
+  backboardd logged its absence. No Apple hardware nodes are copied.
+  Private source research/nord2/ipsw/d22ap.adt SHA-256
+  `9e670987c80493bd69aba7be62e3179c04663324d9249b0973675baac175dbf1`;
+  IM4P compared byte-exact with the local20H392 IPSW before extraction.
+  Generated ADT12708bytes; filtered-property equality, iPhoneX name, scale3
+  and RAM/CPU/UFS preservation checked. No second kernel CI is needed for
+  this host packaging change. Kernel17263464bytes, SHA-256
+  `ee6a1b007dc58925a46ede711504d79f0e2eb724752d33620d9b15b0d424d4a1`.
+  Artifact SHA256SUMS matched; all1096 captured compile commands use generic
+  ARMv8.2+crypto. Linked RCpc2 scan2188857 instructions clean. Disassembly
+  confirms display opt-in/mapping guards, bounded refresh/W0C, C++ hook calls,
+  serialized console entry and acquire/bounded stream reader.
+  Packaging and independent verification PASSED. Frozen image:
+  shim/out/nord2-xnu/nord2-ios-display-stop23.img,33544192bytes (10240spare),
+  SHA-256 `061333bbb5dffeb1945cd1dce2108bb5039cfe1c10c6b32b73a924ff23f8dca1`.
+  Payload14505856bytes, SHA-256
+  `4179e144cf9b52e02fd7ff4ebb8fddc84e99c4d9d378083f6d6f06012a358524`.
+  Same full-userland23 cmdline plus nord2display=1. Full CI kernel directly
+  packed with default15-iteration Zopfli. Static checker passes GUI node,
+  product identity and all prior CPU/UFS/layout gates. Original Linux and
+  both DT representations/tested rescue RAMdisk are byte-exact.
+  Private manifest.json,verify-image.py,payload.bin,image-build.log saved.
+  run-approved-boot.py --authorized-display-boot is prepared and syntax
+  checked; NOT EXECUTED. It pins exact image/backup/CI hashes and fastboot
+  identity, flashes only boot, starts USB wait300/read600 before reboot.
+  The prior root readback is historical installation evidence; current HFS
+  contents have changed during iOS first boot. No reinstall is needed.
+  Exact GUI-image flash authorization is now pending; current phone still
+  runs the original mode23 image662285c2…34bd5c91. Fallback remains ADB rescue.
+  Preserve frozen23 and all earlier images; prepare and verify the new image
+  before requesting its exact boot-only approval.
 
 - **FULL iOS ROOT INSTALLED AND VERIFIED before first boot.**
   Source research/nord2/rootfs-vm/ios16-root-20H392-nord2-v1.img,
