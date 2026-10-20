@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **NEXT INTEGRATED SOURCE READY FOR CI: SMP GATE, GPT, ZOOM RESET.**
+  Narrow RO23 SMP gate now validates the explicit diagnostic bundle. Review
+  caught a mock/API mismatch before CI: PE_boot_args already returns the
+  command-line pointer, NOT boot_args; scanner and tests now use actual ARM
+  source contract and608-byte limit. Startup and post-SMP gates share it.
+  Vendor backup geometry correction uses liveCRC-validated total-8 fixture.
+  Canonical zoom_reset.c/h opt-in helper runs once in bsdinit_task immediately
+  before load_init_program, after mounted-root initialization. Exact83B old
+  content+501:501/0600/regular/nlink1/size checks; exclusively create and verify
+  root-owned0600 backup via VFS, then same-size write/fsync/readback. Bounded
+  rollback on failure; already-standard is idempotent. No raw block writes.
+  New backup inherited group is explicitly normalized only on exclusive create.
+  Default inactive; new image must explicitly request nord2zoomreset=1 and user
+  must approve preference reset alongside boot flash. Host original stays saved.
+  Exact-source ASan/UBSan failures/default/meta tests, peer VFS review, both
+  integrated BSD translation-unit compiles and patch reproduction PASS.
+  Phone remains RAM ADB rescue, userdata unmounted; no preference reset run.
+
 - **LIVE READS IDENTIFY WIFI VALIDATOR AND ZOOM SETTINGS.**
   ADB rescue remains running, no block filesystem mounted and no phone writes.
   Read53,248B from LUN2: primary GPT pinned hash unchanged; real backup entries

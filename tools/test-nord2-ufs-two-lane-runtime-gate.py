@@ -7,6 +7,14 @@ s=(ROOT/'research/ci-39158169212/buildtree/xnu/osfmk/arm64/sweet_early.c').read_
 a=s.index('static bool\nnord2_smp_arg_exact(')
 b=s.index('\nint\nnord2_smp_userland_ready(',a)
 production=s[a:b]
+# Actual selected implementation returns the command-line char pointer, not
+# its containing boot_args. Keep the host model tied to that source contract.
+api=(ROOT/'research/ci-39158169212/buildtree/xnu/pexpert/arm/pe_bootargs.c').read_text()
+assert re.search(r'return\s+\(char\s*\*\)\s*\(\(boot_args\s*\*\)\s*PE_state\.bootArgs\)\s*->\s*CommandLine',api)
+files=(ROOT/'research/ci-39158169212/buildtree/xnu/pexpert/conf/files.arm64').read_text()
+assert 'pexpert/arm/pe_bootargs.c' in files
+assert 'const char *cmd = PE_boot_args();' in production
+
 # Keep the runtime exception aligned with the static image checker bundle.
 checker=ast.parse((ROOT/'tools/nord2-check-xnu.py').read_text())
 function=next(n for n in checker.body if isinstance(n,ast.FunctionDef) and n.name=='point23_root_checks')
@@ -32,9 +40,9 @@ code=r'''
 #include <stdio.h>
 #include <string.h>
 #define BOOT_LINE_LENGTH LENGTH_VALUE
-struct boot_args { char CommandLine[BOOT_LINE_LENGTH]; };
+struct boot_args { unsigned char prefix[108];char CommandLine[BOOT_LINE_LENGTH]; };
 static struct boot_args ba;static bool no_boot_args;
-static void *PE_boot_args(void){return no_boot_args?NULL:&ba;}
+static char *PE_boot_args(void){return no_boot_args?NULL:ba.CommandLine;}
 /* Numeric parser model deliberately allows noncanonical spellings and takes
  * first duplicate; diagnostic must reject these via exact production tokens. */
 static int PE_parse_boot_argn(const char *key,void *value,int size){

@@ -21,8 +21,8 @@ pexpert/pexpert/arm64/SWEET.h makedefs/MakeInc.def"
 
 # Canonical firmware sources live beside the shim for focused host tests.
 # Generate guarded XNU copies so this patch also links without NORD2.
-NEW_FILES="bsd/dev/wifi_firmware.c bsd/dev/wifi_firmware.h bsd/dev/wifi_firmware_probe.c bsd/dev/wifi_firmware_probe.h bsd/dev/wifi_emi_snapshot.c bsd/dev/wifi_emi_snapshot.h bsd/dev/wifi_emi_probe.c bsd/dev/wifi_emi_probe.h bsd/dev/ufs_two_lane.c bsd/dev/ufs_two_lane.h bsd/dev/ufs_two_lane_adapter.inc"
-for name in wifi_firmware wifi_firmware_probe wifi_emi_snapshot wifi_emi_probe ufs_two_lane; do
+NEW_FILES="bsd/dev/wifi_firmware.c bsd/dev/wifi_firmware.h bsd/dev/wifi_firmware_probe.c bsd/dev/wifi_firmware_probe.h bsd/dev/wifi_emi_snapshot.c bsd/dev/wifi_emi_snapshot.h bsd/dev/wifi_emi_probe.c bsd/dev/wifi_emi_probe.h bsd/dev/ufs_two_lane.c bsd/dev/ufs_two_lane.h bsd/dev/ufs_two_lane_adapter.inc bsd/dev/zoom_reset.c bsd/dev/zoom_reset.h"
+for name in wifi_firmware wifi_firmware_probe wifi_emi_snapshot wifi_emi_probe ufs_two_lane zoom_reset; do
     cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
     {
         printf '#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'
