@@ -2800,7 +2800,7 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,13 +151,274 @@
+@@ -141,13 +151,293 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
@@ -2861,6 +2861,14 @@
 +	uint64_t command_ticks, command_max_ticks, doorbell_ticks, doorbell_max_ticks;
 +	uint64_t errors, timeouts;
 +} nord2_ufs_stats;
++/* Candidate instrumentation only: mapped nonzero strategy buffers. Times
++ * include descheduling; aggregate waiter times overlap and are not boot wall. */
++static struct nord2_ufs_strategy_stats {
++	uint64_t buffers, read_buffers, requested_bytes, rmw_reads;
++	uint64_t map_ticks, mutex_wait_ticks, mutex_wait_max, held_ticks, copy_ticks;
++	uint64_t raw_buffers, cluster_buffers, pageio_buffers, async_buffers;
++	uint64_t sizes[8]; /* <=4/8/16/32/64/256/1024KiB, then larger */
++} nord2_ufs_strategy_stats;
 +static struct nord2_ufs_link_stats {
 +	uint32_t values[6], valid_mask, completed, result;
 +	int error;
@@ -3023,6 +3031,7 @@
 +{
 +	if (!nord2_ufs_profile_enabled) { return; }
 +	struct nord2_ufs_profile_stats stats;
++	struct nord2_ufs_strategy_stats strategy;
 +	struct nord2_ufs_link_stats link;
 +	struct nord2_ufs_limit_stats limits;
 +	bool pending;
@@ -3030,10 +3039,20 @@
 +	if (nord2_ufs_profile_reported) { lck_mtx_unlock(&sweet_ufs_lock); return; }
 +	nord2_ufs_profile_reported = true;
 +	stats = nord2_ufs_stats;
++	strategy = nord2_ufs_strategy_stats;
 +	link = nord2_ufs_link;
 +	limits = nord2_ufs_limits;
 +	pending = nord2_ufs_uic_pending;
 +	lck_mtx_unlock(&sweet_ufs_lock);
++	printf("NORD2 UFS STRATEGY: buffers=%llu reads=%llu requested_bytes=%llu rmw_reads=%llu\n",
++	    strategy.buffers, strategy.read_buffers, strategy.requested_bytes, strategy.rmw_reads);
++	printf("NORD2 UFS PHASES: map=%llu mutex_wait=%llu mutex_wait_max=%llu held=%llu copy=%llu\n",
++	    strategy.map_ticks, strategy.mutex_wait_ticks, strategy.mutex_wait_max, strategy.held_ticks, strategy.copy_ticks);
++	printf("NORD2 UFS CALLERS: raw=%llu cluster=%llu pageio=%llu async=%llu\n",
++	    strategy.raw_buffers, strategy.cluster_buffers, strategy.pageio_buffers, strategy.async_buffers);
++	printf("NORD2 UFS SIZES: le4k=%llu le8k=%llu le16k=%llu le32k=%llu le64k=%llu le256k=%llu le1m=%llu larger=%llu\n",
++	    strategy.sizes[0], strategy.sizes[1], strategy.sizes[2], strategy.sizes[3],
++	    strategy.sizes[4], strategy.sizes[5], strategy.sizes[6], strategy.sizes[7]);
 +	printf("NORD2 UFS PROFILE: freq=%llu commands=%llu reads=%llu writes=%llu syncs=%llu read_bytes=%llu write_bytes=%llu cmd_ticks=%llu cmd_max=%llu doorbell_ticks=%llu doorbell_max=%llu errors=%llu timeouts=%llu\n",
 +	    __builtin_arm_rsr64("CNTFRQ_EL0"), stats.commands, stats.reads, stats.writes,
 +	    stats.syncs, stats.read_bytes, stats.write_bytes, stats.command_ticks,
@@ -3076,7 +3095,7 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -204,6 +475,9 @@
+@@ -204,6 +494,9 @@
  	}
  	__builtin_arm_dsb(0xf);
  
@@ -3086,7 +3105,7 @@
  	ufs_wr(REG_UTRLDBR, 1);
  	uint64_t deadline;
  	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
-@@ -216,9 +490,30 @@
+@@ -216,9 +509,30 @@
  		spin_until += mach_absolute_time();
  		nanoseconds_to_absolutetime(CMD_SLEEP_NS, &sleep_interval);
  	}
@@ -3117,7 +3136,7 @@
  			ufs_wr(REG_UTRLCLR, ~1u);
  			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
  			return ETIMEDOUT;
-@@ -234,8 +529,23 @@
+@@ -234,8 +548,23 @@
  			delay(1);
  		}
  	}
@@ -3141,7 +3160,7 @@
  
  	dma_sync(DMA_UTRL, sizeof(*utrd));
  	if (su.cache) {
-@@ -253,9 +563,44 @@
+@@ -253,9 +582,44 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
@@ -3186,7 +3205,7 @@
  /* READ(10) of count device blocks at lba into the bounce buffer. */
  static int
  ufs_read_blocks(uint64_t lba, uint32_t count)
-@@ -374,6 +719,12 @@
+@@ -374,6 +738,12 @@
  	ufs_wr(REG_IE, 0);                      /* polled operation */
  	ufs_wr(REG_IS, ufs_rd(REG_IS));
  	ufs_wr(REG_UTRLRSR, 0);
@@ -3199,7 +3218,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +738,553 @@
+@@ -387,6 +757,553 @@
  	return 0;
  }
  
@@ -3753,7 +3772,88 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -586,6 +1484,12 @@
+@@ -425,12 +1342,39 @@
+ 	if (count == 0) {
+ 		goto done;
+ 	}
++#if defined(NORD2)
++	bool measure = nord2_ufs_profile_enabled;
++	uint64_t map_begin = measure ? nord2_ufs_counter() : 0;
++#endif
+ 	if (buf_map(bp, &vaddr)) {
+ 		error = EIO;
+ 		goto done;
+ 	}
+ 
++#if defined(NORD2)
++	uint64_t wait_begin = measure ? nord2_ufs_counter() : 0;
++#endif
+ 	lck_mtx_lock(&sweet_ufs_lock);
++#if defined(NORD2)
++	uint64_t held_begin = measure ? nord2_ufs_counter() : 0;
++	if (measure) {
++		struct nord2_ufs_strategy_stats *p = &nord2_ufs_strategy_stats;
++		p->buffers++; p->read_buffers += rd; p->requested_bytes += count;
++		p->map_ticks += wait_begin - map_begin;
++		uint64_t wait = held_begin - wait_begin;
++		p->mutex_wait_ticks += wait;
++		if (wait > p->mutex_wait_max) { p->mutex_wait_max = wait; }
++		unsigned flags = buf_flags(bp);
++		p->raw_buffers += (flags & B_RAW) != 0;
++		p->cluster_buffers += (flags & B_CLUSTER) != 0;
++		p->pageio_buffers += (flags & B_PAGEIO) != 0;
++		p->async_buffers += (flags & B_ASYNC) != 0;
++		static const uint32_t ends[7] = {4096,8192,16384,32768,65536,262144,1048576};
++		unsigned bucket = 0;
++		while (bucket < 7 && count > ends[bucket]) { bucket++; }
++		p->sizes[bucket]++;
++	}
++#endif
+ 	for (uint32_t done = 0; done < count;) {
+ 		uint64_t pos = off + done;
+ 		uint64_t lba = pos / UFS_BLOCK;
+@@ -441,15 +1385,30 @@
+ 		if (rd) {
+ 			error = ufs_read_blocks(su.first_block + lba, blocks);
+ 			if (!error) {
++#if defined(NORD2)
++				uint64_t copy_begin = measure ? nord2_ufs_counter() : 0;
++#endif
+ 				memcpy(vaddr + done, (const char *)bounce + skip, want);
++#if defined(NORD2)
++				if (measure) { nord2_ufs_strategy_stats.copy_ticks += nord2_ufs_counter() - copy_begin; }
++#endif
+ 			}
+ 		} else {
+ 			/* Partial device blocks at either end: read, merge, write back. */
+ 			if (skip || (want % UFS_BLOCK)) {
++#if defined(NORD2)
++				if (measure) { nord2_ufs_strategy_stats.rmw_reads++; }
++#endif
+ 				error = ufs_read_blocks(su.first_block + lba, blocks);
+ 			}
+ 			if (!error) {
++#if defined(NORD2)
++				uint64_t copy_begin = measure ? nord2_ufs_counter() : 0;
++#endif
+ 				memcpy((char *)bounce + skip, vaddr + done, want);
++#if defined(NORD2)
++				if (measure) { nord2_ufs_strategy_stats.copy_ticks += nord2_ufs_counter() - copy_begin; }
++#endif
+ 				error = ufs_write_blocks(su.first_block + lba, blocks);
+ 			}
+ 		}
+@@ -459,6 +1418,9 @@
+ 		done += want;
+ 		buf_setresid(bp, count - done);
+ 	}
++#if defined(NORD2)
++	if (measure) { nord2_ufs_strategy_stats.held_ticks += nord2_ufs_counter() - held_begin; }
++#endif
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+ 	buf_unmap(bp);
+ 
+@@ -586,6 +1548,12 @@
  static int
  sweet_ufs_init(void)
  {
@@ -3766,7 +3866,7 @@
  	DTEntry node;
  	uintptr_t const *reg = NULL;
  	unsigned int size = 0;
-@@ -599,15 +1503,43 @@
+@@ -599,15 +1567,43 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3810,7 +3910,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1551,84 @@
+@@ -619,31 +1615,84 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3899,7 +3999,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1639,28 @@
+@@ -654,13 +1703,28 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -6390,7 +6490,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane.c
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,155 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Original staged pre-root experiment. Selected Linux ufshcd.c:4125,4449;
@@ -6405,7 +6505,7 @@
 +#define UCC 0x400u
 +#define UPM 0x10u
 +#define SNAP 18u
-+struct run { const struct n2l_ops *o;void *c;struct n2l_result *r;uint64_t start; };
++struct run { const struct n2l_ops *o;void *c;struct n2l_result *r;uint64_t start;int observing; };
 +/* RXgear,activeRX,terminationRX,TXgear,activeTX,terminationTX,HSseries,
 + * PWRMODE,TXHSADAPT, six PA user-data timeouts, three local timeouts. */
 +static const uint16_t attrs[SNAP]={0x1583,0x1580,0x1584,0x1568,0x1560,0x1569,
@@ -6415,11 +6515,24 @@
 +static uint32_t rd(struct run *s,uint32_t a){return s->o->read32(s->c,a);}
 +static void wr(struct run *s,uint32_t a,uint32_t v){s->o->write32(s->c,a,v);}
 +static int expired(struct run *s,uint64_t begin,uint64_t span){return s->o->ticks(s->c)-begin>=span;}
++/* Record only an evaluation that the original short-circuit expression performs.
++ * HCS is intentionally read twice, exactly as before. No logging rereads. */
++static int gate(struct run *s,unsigned index,uint32_t value,int pass)
++{
++ if(s->observing){s->r->preflight[index]=value;s->r->preflight_valid|=1u<<index;
++  if(!pass)s->r->preflight_fail=index+1;}
++ return pass;
++}
 +static int healthy(struct run *s)
 +{
-+ if(!s->o->owned_preroot(s->c) || !(rd(s,0x34)&1) ||
-+    (rd(s,HCS)&0xb)!=0xb || (rd(s,HCS)&0x30) || rd(s,0x58) || rd(s,0x78) || rd(s,0x24) || rd(s,0x18))return 0;
-+ for(uint32_t a=0x38;a<=0x48;a+=4)if(rd(s,a))return 0;
++ uint32_t v;
++ v=s->o->owned_preroot(s->c);if(!gate(s,0,v,v!=0))return 0;
++ v=rd(s,0x34);if(!gate(s,1,v,(v&1)!=0))return 0;
++ v=rd(s,HCS);if(!gate(s,2,v,(v&0xb)==0xb))return 0;
++ v=rd(s,HCS);if(!gate(s,3,v,(v&0x30)==0))return 0;
++ const uint32_t offsets[4]={0x58,0x78,0x24,0x18};
++ for(unsigned i=0;i<4;i++){v=rd(s,offsets[i]);if(!gate(s,4+i,v,v==0))return 0;}
++ for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);if(!gate(s,8+(a-0x38)/4,v,v==0))return 0;}
 + return 1;
 +}
 +static int allowed(uint16_t attr,int set)
@@ -6495,9 +6608,13 @@
 + if(!r)return -1;struct n2l_result zero={0};*r=zero;
 + if(optin!=1||!o||!o->read32||!o->write32||!o->ticks||!o->delay_us||!o->barrier||
 +  !o->owned_preroot||!o->read_digest||!o->expected_gpt_digest||!o->frequency||o->frequency>UINT64_MAX/20){r->error=-1;return -1;}
-+ struct run s={o,ctx,r,0};s.start=o->ticks(ctx);uint32_t saved[SNAP],limits[6];
++ struct run s={o,ctx,r,0,0};s.start=o->ticks(ctx);uint32_t saved[SNAP],limits[6];
 + unsigned char baseline[32],observed[32];r->phase=1;
-+ if(!healthy(&s)||rd(&s,IS)){r->error=-2;return -1;}
++ s.observing=1;
++ int initial_ok=healthy(&s);
++ if(initial_ok){uint32_t value=rd(&s,IS);initial_ok=gate(&s,13,value,value==0);}
++ s.observing=0;
++ if(!initial_ok){r->error=-2;return -1;}
 + for(unsigned i=0;i<SNAP;i++) {
 +  if(uic(&s,attrs[i],0,&saved[i])){r->error=-3;return -1;}
 +  r->snapshot[i]=saved[i];r->snapshot_mask|=1u<<i;
@@ -6531,7 +6648,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,41 @@
 +#ifndef NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 +#define NORD2_UFS_TWO_LANE_DIAGNOSTIC_H
 +#include <stdint.h>
@@ -6560,6 +6677,9 @@
 + uint64_t frequency;
 +};
 +struct n2l_result {
++ /* Initial gate only: bit i means value[i] was evaluated, fail=i+1. */
++ uint32_t preflight_valid,preflight_fail,preflight[14];
++ uint32_t owned_valid,owned_fail; uint64_t owned_values[24];
 + uint32_t phase,commands,sets,reads,last_attr,last_result,last_is,last_hcs;
 + uint32_t snapshot[18],limits[6],snapshot_mask,limits_mask;
 + int error,uncertain,rollback_attempted,original_verified,root_allowed,handoff_allowed;
@@ -6572,22 +6692,41 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/ufs_two_lane_adapter.inc
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,124 @@
 +/* Opt-in stop-only adapter, included after ufs_read_blocks. Never publishes root. */
-+struct nord2_x2_context { uint64_t first,blocks,dma_pa; vm_offset_t dma; };
++struct nord2_x2_context { uint64_t first,blocks,dma_pa; vm_offset_t dma; uint32_t valid,fail;uint64_t values[24];unsigned observing; };
 +static int nord2_x2_owned(void *opaque)
 +{
 + struct nord2_x2_context *c=opaque;
 + lck_mtx_assert(&sweet_ufs_lock,LCK_MTX_ASSERT_OWNED);
-+ return nord2_x2_in_progress && nord2_x2_stop && !nord2_x2_uncertain &&
-+  nord2_root_owned && !su.ready && !su.writable && !su.probe_only && su.lun==2 &&
-+  !su.bdev && !su.bmajor && !su.cmajor && su.regs && su.dma==c->dma &&
-+  su.dma_pa==c->dma_pa && su.first_block==c->first && su.nblocks==c->blocks &&
-+  !nord2_ufs_uic_pending && ml_get_interrupts_enabled() &&
-+  !ml_at_interrupt_context() && get_preemption_level()==0 &&
-+  ufs_rd(REG_UTRLBA)==(uint32_t)(su.dma_pa+DMA_UTRL) &&
-+  ufs_rd(REG_UTRLBAU)==(uint32_t)((su.dma_pa+DMA_UTRL)>>32) &&
-+  (ufs_rd(REG_UTRLRSR)&1);
++ uint64_t v;
++#define OWN(index,expr,pass) do {v=(expr);if(c->observing){c->values[index]=v;c->valid|=1u<<(index);}if(!(pass)){if(c->observing)c->fail=(index)+1;return 0;}}while(0)
++ OWN(0,nord2_x2_in_progress,v!=0);
++ OWN(1,nord2_x2_stop,v!=0);
++ OWN(2,nord2_x2_uncertain,v==0);
++ OWN(3,nord2_root_owned,v!=0);
++ OWN(4,su.ready,v==0);
++ OWN(5,su.writable,v==0);
++ OWN(6,su.probe_only,v==0);
++ OWN(7,su.lun,v==2);
++ OWN(8,su.bdev,v==0);
++ OWN(9,su.bmajor,v==0);
++ OWN(10,su.cmajor,v==0);
++ OWN(11,su.regs,v!=0);
++ OWN(12,su.dma,v==c->dma);
++ OWN(13,su.dma_pa,v==c->dma_pa);
++ OWN(14,su.first_block,v==c->first);
++ OWN(15,su.nblocks,v==c->blocks);
++ OWN(16,nord2_ufs_uic_pending,v==0);
++ OWN(17,ml_get_interrupts_enabled(),v!=0);
++ OWN(18,ml_at_interrupt_context(),v==0);
++ OWN(19,get_preemption_level(),v==0);
++ OWN(20,ufs_rd(REG_UTRLBA),v==(uint32_t)(su.dma_pa+DMA_UTRL));
++ OWN(21,ufs_rd(REG_UTRLBAU),v==(uint32_t)((su.dma_pa+DMA_UTRL)>>32));
++ OWN(22,ufs_rd(REG_UTRLRSR),(v&1)!=0);
++#undef OWN
++ c->observing=0;
++ return 1;
 +}
 +static uint32_t nord2_x2_rd(void *opaque,uint32_t off)
 +{ (void)opaque; return ufs_rd(off); }
@@ -6632,12 +6771,14 @@
 +  0xe0,0x1c,0x10,0x3f,0x7d,0x3c,0x63,0x99,0x36,0x4e,0x72,0x30,0x4b,0x41,0xf9,0x9b,
 +  0xf2,0x4b,0x51,0x7b,0x19,0x90,0xf1,0xba,0x86,0x23,0xad,0x18,0x44,0x72,0xbc,0x86};
 + lck_mtx_assert(&sweet_ufs_lock,LCK_MTX_ASSERT_OWNED);
-+ struct nord2_x2_context c={su.first_block,su.nblocks,su.dma_pa,su.dma};
++ struct nord2_x2_context c={su.first_block,su.nblocks,su.dma_pa,su.dma,0,0,{0},1};
 + const struct n2l_ops ops={nord2_x2_rd,nord2_x2_wr,nord2_x2_ticks,nord2_x2_delay,
 +  nord2_x2_barrier,nord2_x2_owned,nord2_x2_digest,expected,
 +  __builtin_arm_rsr64("CNTFRQ_EL0")};
 + nord2_x2_in_progress=true;
 + int error=n2l_diagnostic(&ops,&c,1,result);
++ result->owned_valid=c.valid;result->owned_fail=c.fail;
++ for(unsigned i=0;i<24;i++)result->owned_values[i]=c.values[i];
 + if(result->uncertain)nord2_x2_uncertain=true;
 + nord2_x2_in_progress=false;
 + return error;
@@ -6659,6 +6800,19 @@
 +  r->snapshot[12],r->snapshot[13],r->snapshot[14],r->snapshot[15],r->snapshot[16],r->snapshot[17]);
 + printf("NORD2 UFS X2 LIMITS: valid=%#x rx_available=%u tx_available=%u rx_connected=%u tx_connected=%u version=%#x max_rx_gear=%u\n",
 +  r->limits_mask,r->limits[0],r->limits[1],r->limits[2],r->limits[3],r->limits[4],r->limits[5]);
++ printf("NORD2 UFS X2 PREFLIGHT: valid=%#x fail=%u owned_valid=%#x owned_fail=%u\n",r->preflight_valid,r->preflight_fail,r->owned_valid,r->owned_fail);
++ printf("NORD2 UFS X2 GATE 0: v0=%#x v1=%#x v2=%#x v3=%#x\n",r->preflight[0],r->preflight[1],r->preflight[2],r->preflight[3]);
++ printf("NORD2 UFS X2 GATE 4: v4=%#x v5=%#x v6=%#x v7=%#x\n",r->preflight[4],r->preflight[5],r->preflight[6],r->preflight[7]);
++ printf("NORD2 UFS X2 GATE 8: v8=%#x v9=%#x v10=%#x v11=%#x\n",r->preflight[8],r->preflight[9],r->preflight[10],r->preflight[11]);
++ printf("NORD2 UFS X2 GATE 12: v12=%#x v13=%#x\n",r->preflight[12],r->preflight[13]);
++ printf("NORD2 UFS X2 OWN 0: v0=%#llx v1=%#llx v2=%#llx\n",(unsigned long long)r->owned_values[0],(unsigned long long)r->owned_values[1],(unsigned long long)r->owned_values[2]);
++ printf("NORD2 UFS X2 OWN 3: v3=%#llx v4=%#llx v5=%#llx\n",(unsigned long long)r->owned_values[3],(unsigned long long)r->owned_values[4],(unsigned long long)r->owned_values[5]);
++ printf("NORD2 UFS X2 OWN 6: v6=%#llx v7=%#llx v8=%#llx\n",(unsigned long long)r->owned_values[6],(unsigned long long)r->owned_values[7],(unsigned long long)r->owned_values[8]);
++ printf("NORD2 UFS X2 OWN 9: v9=%#llx v10=%#llx v11=%#llx\n",(unsigned long long)r->owned_values[9],(unsigned long long)r->owned_values[10],(unsigned long long)r->owned_values[11]);
++ printf("NORD2 UFS X2 OWN 12: v12=%#llx v13=%#llx v14=%#llx\n",(unsigned long long)r->owned_values[12],(unsigned long long)r->owned_values[13],(unsigned long long)r->owned_values[14]);
++ printf("NORD2 UFS X2 OWN 15: v15=%#llx v16=%#llx v17=%#llx\n",(unsigned long long)r->owned_values[15],(unsigned long long)r->owned_values[16],(unsigned long long)r->owned_values[17]);
++ printf("NORD2 UFS X2 OWN 18: v18=%#llx v19=%#llx v20=%#llx\n",(unsigned long long)r->owned_values[18],(unsigned long long)r->owned_values[19],(unsigned long long)r->owned_values[20]);
++ printf("NORD2 UFS X2 OWN 21: v21=%#llx v22=%#llx\n",(unsigned long long)r->owned_values[21],(unsigned long long)r->owned_values[22]);
 + /* Existing timer/watchdog path remains active with interrupts enabled.
 +  * No repeated output, raw watchdog access or automatic reboot/return. */
 + for(;;){delay(1000000);}

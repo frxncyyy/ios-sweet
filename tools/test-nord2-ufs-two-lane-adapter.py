@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Canonical adapter + active-source integration guards; no device I/O."""
 from pathlib import Path
-import subprocess,tempfile
+import subprocess,tempfile,sys
 ROOT=Path(__file__).resolve().parents[1]
 P=ROOT/'shim/nord2-xnu'
 source=(ROOT/'research/ci-39158169212/buildtree/xnu/bsd/dev/sweet_ufs.c').read_text()
 adapter=(P/'ufs_two_lane_adapter.inc').read_text()
 ACTIVE=ROOT/'research/ci-39158169212/buildtree/xnu/bsd/dev'
-for name in ('ufs_two_lane.c','ufs_two_lane.h','ufs_two_lane_adapter.inc'):
- expected=(P/name).read_text()
- if name=='ufs_two_lane.c':
-  expected='#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'+expected+'\n#endif /* NORD2 */\n'
- assert (ACTIVE/name).read_text()==expected, 'active helper differs: '+name
+# Parent regenerates active copies; explicit mode exercises canonical candidate only.
+if '--canonical-only' not in sys.argv:
+ for name in ('ufs_two_lane.c','ufs_two_lane.h','ufs_two_lane_adapter.inc'):
+  expected=(P/name).read_text()
+  if name=='ufs_two_lane.c':
+   expected='#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'+expected+'\n#endif /* NORD2 */\n'
+  assert (ACTIVE/name).read_text()==expected, 'active helper differs: '+name
 assert '#include \"ufs_two_lane.c\"' in source
 assert '#include \"ufs_two_lane_adapter.inc\"' in source
 assert 'if (nord2_x2_stop || nord2_x2_uncertain) { return false; }' in source
@@ -91,7 +93,7 @@ static void reset(void){
 }
 int main(int argc,char **argv){
  assert(argc==3);
- reset();struct nord2_x2_context c={su.first_block,su.nblocks,su.dma_pa,su.dma};
+ reset();struct nord2_x2_context c={su.first_block,su.nblocks,su.dma_pa,su.dma,0,0,{0},1};
  assert(nord2_x2_owned(&c));
  for(unsigned gate=0;gate<20;gate++){
   reset();switch(gate){case 0:su.ready=true;break;case 1:su.writable=true;break;case 2:su.probe_only=true;break;
@@ -100,7 +102,7 @@ int main(int argc,char **argv){
    case 11:nord2_ufs_uic_pending=true;break;case 12:interrupts=0;break;case 13:irq=1;break;case 14:preempt=1;break;
    case 15:regs[REG_UTRLBA/4]^=4096;break;case 16:regs[REG_UTRLBAU/4]^=1;break;case 17:regs[REG_UTRLRSR/4]=0;break;
    case 18:nord2_x2_uncertain=true;break;case 19:nord2_root_owned=false;break;}
-  assert(!nord2_x2_owned(&c));
+  c.observing=1;c.valid=c.fail=0;assert(!nord2_x2_owned(&c));assert(c.fail && c.valid==((1u<<c.fail)-1));
  }
  reset();nord2_x2_wr(&c,N2_UIC_CMD,1);assert(nord2_ufs_uic_pending&&writes==1);
  nord2_x2_wr(&c,REG_IS,0x400);assert(!nord2_ufs_uic_pending&&writes==2);
@@ -128,14 +130,16 @@ int main(int argc,char **argv){
  fixture=fopen(argv[2],"rb");assert(fixture);
  assert(fread(dma+DMA_BOUNCE+4096,1,16384,fixture)==16384);fclose(fixture);
  struct n2l_result integrated;assert(!nord2_x2_run(&integrated));
+ assert(integrated.preflight_valid==0x3fff && !integrated.preflight_fail);assert(integrated.owned_valid==0x7fffff && !integrated.owned_fail);
  assert(integrated.original_verified&&integrated.root_allowed&&reads==3);
  assert(!nord2_ufs_uic_pending&&!nord2_x2_in_progress&&nord2_x2_stop);
  assert(pa[0x1580]==1&&pa[0x1560]==1&&pa[0x15d4]==1);
  (void)&nord2_x2_run;struct n2l_result report;memset(&report,0xff,sizeof(report));
  testing_halt=1;if(!setjmp(stop_jump))nord2_x2_halt(-1,&report);
- assert(logs==7);return 0;
+ assert(logs==20);return 0;
 }
 ''')
  subprocess.run(['clang','-std=c11','-O1','-g','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-fsanitize=address,undefined','-I'+str(P),str(c),str(P/'ufs_two_lane.c'),'-lcrypto','-o',str(exe)],check=True)
  subprocess.run([str(exe),str(ROOT/'backup/nord2/ufs-baseline/header.bin'),str(ROOT/'backup/nord2/ufs-baseline/entries.bin')],check=True)
+if '--canonical-only' in sys.argv: print('NOTE: active generated helper parity intentionally not checked (--canonical-only); regenerate before default verification')
 print('PASS: exact adapter ownership/descriptor/context/writeallowlist/read-error contracts + active hook/fallback/timeout ordering; ASan+UBSan; no hardware')

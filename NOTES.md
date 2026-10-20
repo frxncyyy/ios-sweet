@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **LOCKSCREEN RESTORED; ALL4 WIFI FILES VERIFIED; NEXT UFS SOURCE READY.**
+  Current0956173b flash/reboot OKAY at23:41:45CEST. User confirms lockscreen.
+  Zoom stage3 error0 attempted1 backup1 verified1 already0 restore_error0.
+  Valid active surfaces1125x2436 now present; graphics failure resolved by
+  exact two-value preference reset. FirstGUI ownership620483877ticks/13MHz
+  =47.7295s from stage6, framebuffer54703208ticks=4.208s, not measured time
+  to actual lockscreen. Capture600s still running; do not reboot prematurely.
+  Wi-Fi main973648/patch5726/WiFiROM296916/WMMCUROM49868 all verified in RAM;
+  probe status0 elapsed661119ticks (~50.855ms). No firmware execution/network.
+  Eight EMI reads all returnx0=2 with remaining arguments preserved; current
+  structural status0/range_valid1 does NOT prove actual MPU metadata. Decoded
+  40020000 range must not gate ROM placement. Selected Android ABI matches
+  helper, monitor semantics remain unknown; agent continues source analysis.
+  Future UFS source integrates initial-gate observations preserving exact
+  short-circuit MMIO reads/gates, with explicit validity+first-failure fields.
+  Adds strategy request histogram/map/mutex wait+hold/copy/RMW/flag counters;
+  ioctl capabilities/limits unchanged (private FEATURES proposal not applied).
+  Exact active strategy/profile + canonical engine/adapter/reference trace
+  ASan/UBSan suites PASS. Patch6940lines reproduces active tree. Integrated
+  ARM64compile PASS with current sweet_early header; initial local attempt used
+  stale generated-tree header and lacked nord2_input_init declaration (preserved
+  diagnostic); no production source fix needed. Preparing next fullCI.
+
+- **SECOND AUTHORIZED IMAGE STARTED: ZOOM/WIFI0956173b.**
+  Human confirmed physicalfastboot again; zoom-wifi/run-approved-boot.py now
+  STARTED. NEVER rerun this exclusive runner. Exact image and two-value VFS
+  reset were authorized in the preceding sequence. NativeUSB600s capture
+  under zoom-wifi/hardware-live; wait for actual firmware/EMI/Zoom reports.
+  No hardware success or visible GUI result yet. Parent owns USB/device;
+  Wi-Fi agent analyzes the host log only. UFS preflight observability candidate
+  and strategy-phase instrumentation remain separate from frozen image.
+
 - **UFS FIXED TEST CAPTURE COMPLETE; NO LANE TRANSITION.**
   72ad734d…f8194821 flash/reboot OKAY at23:38:19CEST; nativeUSB120s exit0.
   All8 scheduler PASS; GPT validated. Complete7-line diagnostic report:

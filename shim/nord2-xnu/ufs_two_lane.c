@@ -10,7 +10,7 @@
 #define UCC 0x400u
 #define UPM 0x10u
 #define SNAP 18u
-struct run { const struct n2l_ops *o;void *c;struct n2l_result *r;uint64_t start; };
+struct run { const struct n2l_ops *o;void *c;struct n2l_result *r;uint64_t start;int observing; };
 /* RXgear,activeRX,terminationRX,TXgear,activeTX,terminationTX,HSseries,
  * PWRMODE,TXHSADAPT, six PA user-data timeouts, three local timeouts. */
 static const uint16_t attrs[SNAP]={0x1583,0x1580,0x1584,0x1568,0x1560,0x1569,
@@ -20,11 +20,24 @@ static const uint32_t timeout_values[9]={8191,65535,32767,8191,65535,32767,8191,
 static uint32_t rd(struct run *s,uint32_t a){return s->o->read32(s->c,a);}
 static void wr(struct run *s,uint32_t a,uint32_t v){s->o->write32(s->c,a,v);}
 static int expired(struct run *s,uint64_t begin,uint64_t span){return s->o->ticks(s->c)-begin>=span;}
+/* Record only an evaluation that the original short-circuit expression performs.
+ * HCS is intentionally read twice, exactly as before. No logging rereads. */
+static int gate(struct run *s,unsigned index,uint32_t value,int pass)
+{
+ if(s->observing){s->r->preflight[index]=value;s->r->preflight_valid|=1u<<index;
+  if(!pass)s->r->preflight_fail=index+1;}
+ return pass;
+}
 static int healthy(struct run *s)
 {
- if(!s->o->owned_preroot(s->c) || !(rd(s,0x34)&1) ||
-    (rd(s,HCS)&0xb)!=0xb || (rd(s,HCS)&0x30) || rd(s,0x58) || rd(s,0x78) || rd(s,0x24) || rd(s,0x18))return 0;
- for(uint32_t a=0x38;a<=0x48;a+=4)if(rd(s,a))return 0;
+ uint32_t v;
+ v=s->o->owned_preroot(s->c);if(!gate(s,0,v,v!=0))return 0;
+ v=rd(s,0x34);if(!gate(s,1,v,(v&1)!=0))return 0;
+ v=rd(s,HCS);if(!gate(s,2,v,(v&0xb)==0xb))return 0;
+ v=rd(s,HCS);if(!gate(s,3,v,(v&0x30)==0))return 0;
+ const uint32_t offsets[4]={0x58,0x78,0x24,0x18};
+ for(unsigned i=0;i<4;i++){v=rd(s,offsets[i]);if(!gate(s,4+i,v,v==0))return 0;}
+ for(uint32_t a=0x38;a<=0x48;a+=4){v=rd(s,a);if(!gate(s,8+(a-0x38)/4,v,v==0))return 0;}
  return 1;
 }
 static int allowed(uint16_t attr,int set)
@@ -100,9 +113,13 @@ int n2l_diagnostic(const struct n2l_ops *o,void *ctx,unsigned optin,struct n2l_r
  if(!r)return -1;struct n2l_result zero={0};*r=zero;
  if(optin!=1||!o||!o->read32||!o->write32||!o->ticks||!o->delay_us||!o->barrier||
   !o->owned_preroot||!o->read_digest||!o->expected_gpt_digest||!o->frequency||o->frequency>UINT64_MAX/20){r->error=-1;return -1;}
- struct run s={o,ctx,r,0};s.start=o->ticks(ctx);uint32_t saved[SNAP],limits[6];
+ struct run s={o,ctx,r,0,0};s.start=o->ticks(ctx);uint32_t saved[SNAP],limits[6];
  unsigned char baseline[32],observed[32];r->phase=1;
- if(!healthy(&s)||rd(&s,IS)){r->error=-2;return -1;}
+ s.observing=1;
+ int initial_ok=healthy(&s);
+ if(initial_ok){uint32_t value=rd(&s,IS);initial_ok=gate(&s,13,value,value==0);}
+ s.observing=0;
+ if(!initial_ok){r->error=-2;return -1;}
  for(unsigned i=0;i<SNAP;i++) {
   if(uic(&s,attrs[i],0,&saved[i])){r->error=-3;return -1;}
   r->snapshot[i]=saved[i];r->snapshot_mask|=1u<<i;

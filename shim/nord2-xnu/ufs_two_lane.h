@@ -26,6 +26,9 @@ struct n2l_ops {
  uint64_t frequency;
 };
 struct n2l_result {
+ /* Initial gate only: bit i means value[i] was evaluated, fail=i+1. */
+ uint32_t preflight_valid,preflight_fail,preflight[14];
+ uint32_t owned_valid,owned_fail; uint64_t owned_values[24];
  uint32_t phase,commands,sets,reads,last_attr,last_result,last_is,last_hcs;
  uint32_t snapshot[18],limits[6],snapshot_mask,limits_mask;
  int error,uncertain,rollback_attempted,original_verified,root_allowed,handoff_allowed;

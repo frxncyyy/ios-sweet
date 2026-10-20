@@ -239,12 +239,12 @@ int main(void) {
  assert(!nord2_ufs_stats.commands && !prints && !writes);
  // Once-only report copies under lock then prints exclusively after unlocking.
  reset(); held=0; nord2_ufs_profile_report(); nord2_ufs_profile_report();
- assert(prints==6 && held==0 && !writes);
+ assert(prints==10 && held==0 && !writes);
  reset(); held=0;
  nord2_ufs_limits.valid_mask=nord2_ufs_limits.understood_mask=nord2_ufs_limits.attempted=UINT32_MAX;
  nord2_ufs_limits.context_valid=true; nord2_ufs_limits.ahit=nord2_ufs_limits.hcs=nord2_ufs_limits.is=UINT32_MAX;
  for(unsigned i=0;i<8;i++){nord2_ufs_limits.values[i]=nord2_ufs_limits.results[i]=UINT32_MAX;nord2_ufs_limits.errors[i]=INT32_MIN;}
- nord2_ufs_profile_report(); assert(prints==6);
+ nord2_ufs_profile_report(); assert(prints==10);
 
 }
 '''
