@@ -19,7 +19,9 @@
   Initial metadata read correctly rejected excess bytes; no corrupt image saved.
   RAM rescue reports ADB state recovery: use wait-for-recovery, not wait-for-device.
   Restored iOS USB log confirms 8/8 SMP PASS, HFS root and FT3518/key reads OK.
-  Private restored-ios-live/ and restored-ios-gui/ hold boot evidence.
+  Retry capture confirms all first8 GUI presents done=1 and a touch gesture.
+  Private restored-ios-live/, restored-ios-gui/ and restored-ios-gui-retry/
+  hold boot evidence. Earlier capture ended on intermittent USB timeouts.
   First XNU Wi-Fi diagnostic implemented, not flashed: opt-in nord2wifi=1
   snapshots AP-side power/bus/pinmux and24 PMIC rail/clock registers.
   Runs serially on the input thread before polling, after fallback cleanup
@@ -27,25 +29,52 @@
   Exact-C ASan/UBSan host checks PASS all65536 PMIC addresses, key behavior,
   timeout/ownership, AP address allowlist, bootarg gates and cleanup order.
   Local C compile PASS; 0082 regenerated and verified against pristine tree.
-  Full CI/image packaging still required before requesting a hardware test.
+  Full Apple-clang CI39478743302/source4693483 PASSED:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39478743302
+  Kernel17281112bytes SHA-256
+  0aa1672f5024ddd3411de2e180364d505880594bb5a42587f5cbd7d3462f9963,
+  matches artifact SHA256SUMS. All1094 captured compile-command log lines
+  use generic ARMv8.2+crypto. Linked RCpc2 scan2189609 instructions clean.
+  Frozen shim/out/nord2-xnu/nord2-ios-wifi-snapshot-stop23.img:
+  33544192bytes (10240bytes spare), SHA-256
+  bf0ea8bbbe8ea1de039f7199765a0daeb1d357c857999a0838674949ba34fa88.
+  Payload14505920bytes SHA-256
+  75ae374a6d64427a2fe70539ffc370af367db6f869fcba4149a30bfe76446856.
+  Same userland23/display/input command line plus nord2wifi=1; default15
+  Zopfli. Static checker all PASS; independent verification confirms original
+  Linux, both DT representations and tested rescue RAMdisk byte-exact.
+  Linked PMIF read and inlined snapshot disassembly confirms read opcode,
+  INIT_DONE/timeout, opt-in gating, cleanup order, AP maps and24-read loop.
+  Private wifi/snapshot/{manifest.json,verify-image.py,image-build.log,
+  critical-functions-check.json,linked-*.txt,run-approved-boot.py} saved.
+  Guarded runner --authorized-wifi-snapshot-boot is prepared/syntax checked,
+  NOT EXECUTED. No new Wi-Fi image has been flashed or authorized yet.
+  Next: obtain exact boot-only approval/fastboot, run the prepared image,
+  capture NORD2 WIFI snapshot and verify iOS/input still run. If boot fails,
+  use tested rescue and restore working iOS; never boot normal Android.
+  This image does not enable the radio or implement Wi-Fi networking.
+  Firmware ROM headers and five RAM-code region descriptors parsed privately.
+  Main RAM-code tailer CRC matches. All16 vendor file extents independently
+  decoded with liblz4/plain copy and match erofs-utils byte-for-byte.
+  Private firmware/{download-layout,verified-storage-layout}.json records
+  target EMI addresses and compressed source offsets/hashes. This establishes
+  a possible read-only vendor loader path, not an implemented XNU loader.
+  It may avoid embedding1.3MiB firmware in the almost-full boot image.
 
-- **ACTIVE TASK: WI-FI. Hardware/source identified; firmware collection pending.**
+- **WI-FI INITIAL RESEARCH (collection and restore now completed above).**
   Exact driver is MT6893 CONNAC2X2/SOC3_0 over AXI, conninfra HW20010101,
   A-die66358a11 in RC mode. Selected Android source includes full conninfra and
   gen4m driver; XNU currently lacks the radio and iOS Wi-Fi control interface.
   Calibration WIFI6146/WIFI_CUSTOM6 bytes extracted read-only from existing
   nvdata backup into private research/nord2/wifi/calibration; not committed.
   Exact four firmware names and power-on order in shim/nord2-xnu/WIFI-LOG.md.
-  Preserved Android vendor in super must be read; no local vendor backup.
+  Preserved Android vendor in super supplied the verified local image above.
   New tools/nord2-read-vendor.py validates LP checksums/copies/bounds and
   streams vendor/odm from RAM rescue without phone writes or mounts.
   Six corruption/boundary tests PASS. Known rescue d78bf9fe…3d03bac5 and
-  working iOS fd6d75ca…49995f20 hashes reverified. Private two-stage
-  research/nord2/wifi/run-approved-collection.py rescue stage EXECUTED after
-  explicit user approval/fastboot. Flash boot and reboot both OKAY; exact
-  timestamp in private rescue-flash.log. Collecting vendor read-only in RAM
-  rescue. Return to working iOS fd6d75ca…49995f20 is already authorized;
-  must complete after collection. No Wi-Fi kernel hardware test yet.
+  working iOS fd6d75ca…49995f20 hashes reverified. Both stages of private
+  research/nord2/wifi/run-approved-collection.py have EXECUTED after explicit
+  user approval/fastboot. No Wi-Fi kernel hardware test yet.
   Static inspection of local iOS wifid confirms required IO80211.framework
   and Apple80211 scan/associate/power/event API imports; no selectors recovered.
   Private ios-abi/ holds exact identity/import/string evidence. REA native

@@ -5,7 +5,9 @@
 The authorized rescue/return sequence completed: exact rescue flashed only
 boot at 20:44:05 CEST, then original working input/power iOS image restored
 at 20:49:37. Both commands and reboots succeeded. The restored native USB
-log confirms 8/8 SMP, HFS root, FT3518 ID54:52 and valid key reads.
+log confirms 8/8 SMP, HFS root, FT3518 ID54:52 and valid key reads. A retry
+USB capture also records all first eight GUI presents done=1 and a touch
+gesture. The preceding capture stopped on intermittent EP0 timeouts.
 Private `research/nord2/wifi/run-approved-collection.py` has executed both
 stages; do not rerun the exclusive runner.
 
@@ -35,6 +37,18 @@ Selected platform power path uses `clk_prepare_enable`/runtime PM, so compare
 its actual MT6893 clock-domain implementation with the alternative POS sequence
 before porting power transitions.
 
+Concrete discrepancy to preserve for the next stage: the selected
+`drivers/clk/mediatek/Makefile` builds `clk-mt6885-pg.o` for
+CONFIG_COMMON_CLK_MT6893. Its `spm_mtcmos_ctrl_conn` defines the second
+protection-bank write/ack mask as `1 << 2` (`0x4`) and releases protections
+in the order bank0 bit14, bank2 bit2, bank0 bit13. The alternative POS branch
+writes `0x2` to bank2 but polls status bit2 and uses a different release
+order. Do not copy that alternative literal into the selected clock-domain
+sequence. Both SPM power-status acknowledgements use bit1; CONN_PWR_CON bits
+0..4 are reset-release, isolation, primary-on, secondary-on, clock-disable.
+Future power code must replace Linux's unbounded waits with explicit timeouts
+and cleanup, and must not touch CONN MMIO until its access prerequisites hold.
+
 Collector hardware correction: `adb exec-out` merges remote stderr with the
 binary stream. Added Toybox `dd status=none`; the initial attempt failed its
 exact-length check and did not save a corrupt image. Six host metadata tests
@@ -50,7 +64,44 @@ No snapshot hardware test yet. Exact-C ASan/UBSan tests in
 `tools/test-nord2-wifi.py` cover all65536 PMIC addresses, key behavior,
 unowned/in-flight transactions,1000us timeout, AP-only MMIO, bootarg/mapping
 gates and cleanup order. Local kernel C compile passes; patch0082 applies
-cleanly and exactly reproduces the source. Full CI/image verification pending.
+cleanly and exactly reproduces the source. Full Apple-clang
+[CI39478743302](https://github.com/frxncyyy/ios-sweet/actions/runs/39478743302)
+passed at source4693483. Kernel17281112bytes, SHA-256
+`0aa1672f5024ddd3411de2e180364d505880594bb5a42587f5cbd7d3462f9963`,
+matching artifact SHA256SUMS; all1094 captured compile-command lines use
+generic ARMv8.2+crypto. Linked RCpc2 scan of2189609 instructions passes.
+
+Frozen `shim/out/nord2-xnu/nord2-ios-wifi-snapshot-stop23.img` is33544192bytes
+(10240bytes spare), SHA-256
+`bf0ea8bbbe8ea1de039f7199765a0daeb1d357c857999a0838674949ba34fa88`.
+Payload14505920bytes, SHA-256
+`75ae374a6d64427a2fe70539ffc370af367db6f869fcba4149a30bfe76446856`.
+All static checks pass. Independent unpacking confirms the original Linux
+kernel, both DT representations and tested rescue RAMdisk are byte-exact.
+Linked disassembly confirms the read command/timeout, boot-argument gate,
+cleanup ordering, AP mappings and24-read loop. Private `wifi/snapshot/`
+contains the build log, manifest, verifier and guarded flash runner.
+No hardware test or authorization yet. The next boot-only test needs the
+user's exact approval and fastboot; normal iOS mounts its existing filesystem
+read/write, while this added diagnostic only observes radio power state.
+It neither enables the radio nor supplies networking.
+
+Firmware headers were decoded against Android's ROM_EMI_HEADER and CONNAC
+tailer definitions. The two ROM payloads target EMI offsets0x230000 and
+0x2b0000. Main RAM code has five regions; the last two have the EMI flag,
+targeting offsets0x31e000 and0x3c3800. All fit the reserved conninfra EMI
+range `0x8fb00000+0x450000`. Its tailer CRC matches the bytes preceding it;
+the ROMs' internal CRC fields have not yet been independently validated.
+
+Private `firmware/download-layout.json` records those destination regions.
+`firmware/verified-storage-layout.json` records the16 compressed/plain EROFS
+extents for the four blobs, their offsets within vendor, stored SHA-256
+digests and complete file digests. Independent bounded LZ4 decoding/plain
+copy reproduces every file byte-for-byte against erofs-utils extraction.
+This provides a potential way to load from preserved vendor without adding
+1.3MiB to the nearly full boot image. No XNU vendor reader/decoder is
+implemented yet: it would need validated super/GPT bounds, serialization with
+the root UFS driver and stored/decompressed digest checks before use.
 
 ## 2026-10-20: hardware/source identification; firmware collection prepared
 
@@ -107,8 +158,9 @@ userspace loader before passing these bytes to firmware. The kernel receives
 NVRAM through a userspace write into `g_aucNvram`; its configured maximum is
 8192 bytes, not proof of the file's payload length.
 The persist backup's `/firmware` directory is empty.
-No vendor/super backup is present. Firmware must be collected from preserved
-Android super; no reason to mount or rewrite iOS userdata.
+At this initial checkpoint there was no vendor/super backup. The subsequent
+collection above obtained firmware from preserved Android super without
+mounting or rewriting iOS userdata.
 
 `tools/nord2-read-vendor.py` is a read-only ADB collector for the tested RAM
 rescue. It requires the rescue marker, root ADB and no data/vendor mounts,
@@ -122,7 +174,8 @@ The exact tested rescue remains `research/nord2/rescue/nord2-adb-rescue.img`,
 SHA-256 `d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5`.
 Return image is `shim/out/nord2-xnu/nord2-ios-input-power-stop23.img`,
 SHA-256 `fd6d75caf4c7e95431bdb40eb50ca79650e8272824f54fd5f783cdec49995f20`.
-Neither has been flashed as part of Wi-Fi work yet.
+Both have since been flashed in the authorized collection/restore sequence
+recorded above; do not repeat that sequence.
 
 Static iOS ABI evidence is saved privately in `research/nord2/wifi/ios-abi/`.
 The IPSW's `/usr/sbin/wifid` (2606496 bytes, exact digest in identity.json)
