@@ -17,15 +17,20 @@ start.s rely on and refuses to be quiet about anything unexpected:
   * the payload's window is 0x1_42000000 + 0x3e000000, its entry and its
     /chosen chain-back properties (nord2-stock-entry/dtb/xnu-region) hold
     the values the loader fills in;
+  * CPU nodes match a SweetCPU personality present in the embedded kernel,
+    so a stale kernel/ADT combination cannot silently omit the CPU driver;
   * the blob stays below the ramdisk load address (0x51100000) and the
     whole image below the 32 MiB partition.
 """
 import argparse
 import hashlib
+import re
 import struct
 import sys
 import zlib
 from pathlib import Path
+
+import adt as apple_adt
 
 PARTITION_SIZE = 33554432
 PAGE = 2048
@@ -46,6 +51,23 @@ def le32(b, o):
 
 def align(n, a=PAGE):
     return (n + a - 1) // a * a
+
+
+def unmatched_cpus(kernel, root):
+    """Check this port's string IONameMatch personalities against CPU compatibles."""
+    names = set()
+    for entry in re.findall(rb'\{[^{}\x00]*\}', kernel):
+        if not re.search(rb"'IOClass'\s*=\s*SweetCPU;", entry):
+            continue
+        if not re.search(rb"'IOProviderClass'\s*=\s*IOPlatformDevice;", entry):
+            continue
+        match = re.search(rb"'IONameMatch'\s*=\s*'([^']+)';", entry)
+        if match:
+            names.add(match[1])
+    cpus = next((n.children for n in root.children if n.name == 'cpus'), [])
+    missing = [n.name for n in cpus
+               if not names.intersection((n.prop('compatible') or b'').split(b'\0'))]
+    return names, missing if cpus else ['/cpus absent or empty']
 
 
 class Checker:
@@ -151,6 +173,12 @@ class Checker:
                    adt_off + adt_size <= len(p), f'adt {adt_off:#x}+{adt_size:#x}')
 
         adt = p[adt_off:adt_off + adt_size]
+        root, _ = apple_adt.parse(adt)
+        kernel = b''.join(p[off:off + size] for _, _, off, size in segs)
+        cpu_matches, unmatched = unmatched_cpus(kernel, root)
+        self.check('CPU nodes match an embedded SweetCPU personality', not unmatched,
+                   f'matches={sorted(n.decode() for n in cpu_matches)}, '
+                   f'unmatched={unmatched}')
         nprops = le32(adt, 0)
         q = 8
         for _ in range(nprops):

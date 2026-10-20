@@ -3,6 +3,19 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- Session 8 build in progress: fix commit `d550a21`, pushed to
+  `frxncyyy/ios-sweet:codex/nord2-bringup`; macOS workflow
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39388874797.
+  Local checks passed: patch 0082 applies and reproduces all edited files;
+  C++ configuration syntax; serialized ADT CPU identities/affinities; all
+  eight CPU nodes match exactly one personality. The image checker now also
+  verifies CPU matches against the **embedded kernel**, excluding the ADT
+  itself from its search. Negative checks reject the old CI kernel with the
+  new ADT, one missing boot-CPU binding, and an absent CPU subtree.
+  `shim/nord2-xnu/README.md` and `DISPLAY-LOG.md` have been updated to reflect
+  the verified late stops, live display, CI build requirement, and actual
+  payload address `0x43744000`. No hardware test of the CPU fix yet.
+
 - 2026-10-20 (session 8, Codex): **CPU driver matching mismatch found in the
   source; hardware verification pending.** This supersedes the final session-7
   explanation below. `ml_wait_max_cpus()` does NOT spin until eight CPUs check

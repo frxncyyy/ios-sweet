@@ -3,10 +3,20 @@
 This is a diagnostic boot image for the OnePlus Nord 2 (MediaTek MT6893), not
 an iOS boot. It contains the Sweet XNU kernel built for MT6893, a small
 Linux-Image loader and a preserved copy of the stock Android kernel. It
-writes a log to the Android ramoops `pmsg` ring, runs XNU as far as
-`cpu_init()`, then returns to the untouched stock kernel. It never writes
-storage, the framebuffer or a reserved carve-out, and it does not load a
-ramdisk of its own.
+writes a log to the Android ramoops `pmsg` ring and, with `nord2fb=1`, to the
+DSI command-mode display. The default early stop returns after `cpu_init()`;
+later diagnostic images have reached the end of IOKit initialization and
+returned to Android. They do not yet boot iOS userland.
+
+The current blocker and exact test results are in the active handoff at the
+top of `NOTES.md`. As of 2026-10-20, the stop after `vm_set_restrictions`
+works, but the stop after `kperf_init_early` does not. The MT6893 CPU-driver
+matching correction is prepared; hardware verification is pending.
+
+The probe does not write storage or load an iOS ramdisk. It does write the
+pmsg and framebuffer reservations, the DSI/MUTEX registers used to present
+frames, and the MediaTek watchdog restart register. Past early bring-up it
+also initializes the GIC and architected virtual timer.
 
 ## Artifact layout
 
@@ -17,16 +27,17 @@ and DT table, and replaces only the gzip kernel stream:
 0x40080000  loader                      (this shim, zero-padded to 2 MiB)
 0x40280000  stock Android Image         (byte-identical, BSS zero-padded to
                                          the header's image_size)
-0x436c1000  SWEETXNU payload            (16 KiB aligned)
+0x43744000  SWEETXNU payload            (16 KiB aligned; current stock kernel)
 ```
 
 LK decompresses the whole stream to `0x40080000` and, because the loader's
 Image header branches from its first instruction, runs the loader. The
-loader finds the stock Image header at `0x40280000`, so the stock kernel
-stays byte-for-byte where a normal boot puts it, and the chain-back needs no
-copying. The decompressed blob ends at `0x444c0410`, below LK's decompression
-limit (`KERNEL_DECOMPRESS_SIZE = 0xc800000` on this mediaTek generation) and
-well below the ramdisk at `0x51100000`.
+loader finds the stock Image header at `0x40280000`. The original kernel is
+preserved byte for byte at this relocated address, and the chain-back needs
+no copying. The payload address is derived from the stock Image's
+`image_size` (including BSS); it is not a hard-coded offset in the packer.
+The decompressed end varies with the payload. The image checker reports it
+and verifies that the blob stays below the ramdisk at `0x51100000`.
 
 The loader places the payload's Mach-O segments in a 992 MiB window in the
 upper DDR bank:
@@ -35,8 +46,8 @@ upper DDR bank:
 phys_base 0x1_42000000   mem_size 0x3e000000   virt_base 0xfffffe0006000000
 ```
 
-`start.s` identity-maps the 32 MiB blocks from `phys_base` for `mem_size`
-bytes (30 blocks, `0x1_42000000..0x1_7e000000`); the ADT and `boot_args` sit
+`start.s` identity-maps 30 complete 32 MiB blocks after allowing for the
+kernel's head offset (`0x1_42000000..0x1_7e000000`); the ADT and `boot_args` sit
 just past the kernel image, and the chain-back trampoline is copied to
 `0x1_42004000`, the first free page of the mapped window.
 
@@ -51,53 +62,94 @@ patches in RAM:
 | `nord2-stock-dtb` | 8 | the live FDT physical address |
 | `nord2-xnu-region` | 16 | first mapped / end of the identity window |
 
-`nord2_maybe_return()`, called from `arm_init.c` after `cpu_init()`, reads
-them and, unless the boot argument `nord2stop=0` was given, calls
-`nord2_leave_xnu()` in `start.s`. That routine copies its trampoline into the
+`nord2_maybe_return()`, called from `arm_init.c` after `cpu_init()`, caches
+them and, unless the boot argument `nord2stop=0` was given, returns to
+Android. Later stops use the same cached values. Before entering
+`nord2_leave_xnu()` in `start.s`, the return path masks interrupts and
+restores the bootstrap TTBR0 table: kernel-thread switches otherwise
+replace it with `invalid_ttep`. The assembly copies its trampoline into the
 window, cleans the whole window to the point of coherency, turns the MMU off
 with the `SCTLR_EL1` value the CPU probe observed at stock entry
 (`0x30d00800`), zeroes `x1..x3`, and branches to the stock entry with
 `x0 = dtb`. `nord2stop=1` is also the kernel default.
 
-Because the early stop is before `arm_vm_init()`, the kernel never touches
-the GIC, the arch timer or UFS: only the ADT is parsed.
+After `arm_vm_init()`, `nord2_console_remap()` gives pmsg, framebuffer and
+console/watchdog MMIO permanent kernel mappings in TTBR1 so logging
+survives context switches. Keep `cpus=1` for these tests: secondary CPU
+bring-up and returning to Android with secondary CPUs active are unverified.
 
-+### Bounded arm_vm_init walk
+### Bounded arm_vm_init walk
 
-`arm_vm_init` is the first code that can hang (a hang loses the pmsg log,
-because the reset that follows clears DRAM). It therefore contains ten
+`arm_vm_init` contains fifteen
 numbered gates, compiled in and chosen by the boot argument `nord2vmstop`:
 a gate stops the kernel and logs `NORD2-NEXT=0x…`. The loader reads the last
 `NORD2-NEXT` out of the preserved ring and rewrites `nord2vmstop=` in the
 payload command line, so `nord2-xnu-vmstep.img` advances one gate per plain
 reboot; the last `NORD2-NEXT` printed before a hang names the failing step.
+The full `arm_init` path has since passed on hardware; these gates remain
+available for regressions.
+
+### Later stops
+
+Use `nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=000N` to run to a later
+stop and chain back. Leading zeros reserve space for in-place arguments.
+
+| N | Stop |
+| --- | --- |
+| 1 | End of `arm_init` |
+| 2 | Before `SweetBattery::registerService` (also an older BSD IOKit hook) |
+| 3 | After `SweetBattery::registerService` |
+| 4 | After `StartIOKitMatching` |
+| 5 | Entry to `bsd_init` |
+| 6 | After the copyright print in `bsd_init` |
+| 7 | After `vm_set_restrictions`, before kperf |
+| 8 | After `kperf_init_early`, before `bsd_init` |
+
+Point numbers are identifiers, not execution order. Never infer success
+from a reboot alone: inspect the stop marker and the Android return marker.
 
 ## Reading the result
 
 After Android starts, the log is `/sys/fs/pstore/pmsg-ramoops-0` (read it
-before the next reboot). It shows the loader stages, then for each XNU stage
-`NORD2-XNU N/64 <label>` up to `6/64 cpu_init done`, then either
-`RETURN TO STOCK ANDROID KERNEL` or a panic with the stage it reached. Logs
-from the earlier CPU probe are in `backup/nord2/probe-v2-*`.
+before the next reboot). Run `tools/nord2-pull-logs.sh LABEL` immediately to
+save it with Android's boot reason and kernel log. Successful late stops
+show the requested marker followed by `RETURN TO STOCK ANDROID KERNEL`.
+Watchdog/manual cold resets can clear DRAM and leave pstore empty; in that
+case the on-screen log is the remaining evidence. Logs from the earlier
+CPU probe are in `backup/nord2/probe-v2-*`.
 
 ## Building
 
+Build the complete kernel with the repository's `xnu.yml` GitHub Actions
+workflow on macOS (Apple clang). The current fork is `frxncyyy/ios-sweet`,
+branch `codex/nord2-bringup`. Download both `xnu-kernel` and `xnu-buildtree`;
+record the run ID and head commit in `NOTES.md`.
+
+Package a CI kernel with the existing loader:
+
 ```sh
-shim/nord2-xnu/build.sh
+tools/nord2-image-from-kernel.sh PATH/TO/kernel.development.sweet \
+  shim/out/nord2-xnu/NEW-TEST.img \
+  debug=0xc cpus=1 keepsyms=1 -noprogress \
+  nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=0008
 ```
 
-It needs the extracted CI buildtree (`research/ci-39158169212/buildtree`, from
-`xnu-buildtree.zip`), the relinked object archive next to it, the cctools
-`ar`/`ranlib`/`strip` in `../toolchains/cctools`, and the backup
-`backup/nord2/boot.img`.
+The helper strips symbols, builds the current ADT and payload, packs the
+boot image, and runs `tools/nord2-check-xnu.py`. It refuses an existing output.
+It needs the existing `shim/out/nord2-xnu/loader-Image`, cctools in
+`../toolchains/cctools`, and the verified `backup/nord2/boot.img`.
 
-The XNU-side changes are `xnu/patches/0082-nord2-early-probe.patch` against
-the CI buildtree (six files; five of them become objects). The script
-rebuilds those objects with `-DNORD2=1`, swaps them into a copy of the CI
-archive, relinks with the saved `research/nord2/link-command.json` argv,
-strips the symbol table, builds the ADT, the payload, this loader, the boot
-image, and finally runs `tools/nord2-check-xnu.py` on the result. Outputs
-land in `shim/out/nord2-xnu/`; the relink and the packer refuse to overwrite.
+Local C/assembly changes can be compiled with `tools/nord2-xnu-cc.py`.
+`shim/nord2-xnu/build.sh` supports the older local relink path using the
+extracted CI tree and archive in `research/ci-39158169212/`. It does not
+rebuild every C++ object from the latest patches. Do not use it to package a
+new C++ change, and do not substitute upstream-clang `__builtin_xnu_*`
+fallbacks for Apple compiler metadata.
+
+XNU-side edits are carried by `xnu/patches/0082-nord2-early-probe.patch`.
+`tools/nord2-mkpatch.sh` regenerates it from the working buildtree, verifies
+that it applies to the pristine 0001–0081 CI tree, and compares every
+resulting file. Add any newly touched source file to its `FILES` list.
 
 ## Flashing
 

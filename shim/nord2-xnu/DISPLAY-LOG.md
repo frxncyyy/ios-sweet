@@ -5,7 +5,11 @@ boot (and a phone photo) replaces the gate-per-reboot walk. The pmsg ring is
 lost on the PMIC cold reset that follows a hang (`bootreason=PMIC_cold_reboot`,
 see `tools/nord2-pull-logs.sh`); the panel keeps its last frame until reset.
 
-Status: **phase 1 done and measured on hardware (2026-10-19); phase 2 built, not yet flashed.**
+Status (2026-10-20): **phases 1 and 2 verified on hardware.** The console
+shows XNU through IOKit initialization. After `arm_vm_init`, permanent
+TTBR1 mappings keep it working across thread switches; see `README.md` and
+the active handoff in `NOTES.md`. The numbered phases below preserve the
+original implementation plan, not a list of remaining tasks.
 Phase-1 results are in `NOTES.md` (session 5) and
 `backup/nord2/logs/20261019-151659-display-phase1/`: dual pipe, four
 540x2400 layers, two full-screen physical buffers in the carve-out
