@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **Next candidate: point19 fixed-mailbox low/high PSCI probe, building.**
+- **Next candidate: point19 fixed-mailbox low/high PSCI probe, READY, awaiting authorization.**
   This follows the observed point18 context_id=0. Only mode19 treats context
   as diagnostic; slot is derived from MPIDR in the unchanged stackless stub.
   Completion, CPU identity/type, EL, MMU/cache-off, timer frequency and CPU_OFF
@@ -20,11 +20,23 @@
   Local relink replaces only sweet_early.o in a copy of frozen point18 archive;
   stackless assembly is unchanged. Kernel21967712B SHA-256
   `fd3e8f2b1ca1e0a66261fb925220a0c1f015d34fd6e9c613dc9bf055a87780e5`.
-  Evidence `research/nord2/smp/fixed/`. Candidate image being packed:
-  `shim/out/nord2-xnu/nord2-smp-fixed-stop19.img`. Not authorized/flashed.
-  Next finish packaging/static checks, record exact SHA and request approval
-  for this boot-only test with recovery fallback. Current phone is in root
-  ADB rescue after point18; no original restore was required.
+  Evidence `research/nord2/smp/fixed/`. Image built, all static checks pass:
+  `shim/out/nord2-xnu/nord2-smp-fixed-stop19.img`,33314816B, SHA-256
+  `04c41d246d9ba9e5725829fdb6177cf878590c2056d6019167ce624449f04a69`.
+  Payload SHA `93928adad4c261fd434b9dae5fa2d24e665fd355ccee45be45897588faca94e3`.
+  Original Linux kernel/both DT representations and tested rescue ramdisk
+  independently compared byte-for-byte; unchanged. Linked188B secondary stub
+  byte-identical to point18, SHA64cb547ace2ad90be3dc8d23ff3d98dc0737fa7fa8ca778d03523874c9c8321c;
+  all branches internal, no stack or external PC-relative accesses, stores
+  confined to its mailbox. Manifest and disassembly verification saved.
+  Candidate is frozen, not authorized/flashed. Phone now in fastboot at14:04
+  CEST (user moved it from rescue). Request this exact boot-only test; collect
+  logs with `tools/nord2-pull-logs.sh --rescue smp-fixed-stop19` immediately
+  after reboot. Require both pass=0/1 reports7/7 and every core OFF before
+  calling it fully passed. Startup evidence still is NOT XNU SMP scheduling.
+  On failed rescue return, original boot restoration is part of requested
+  authorization; if a core cannot stop, manual fastboot is needed.
+  Source commit6870fbb pushed. Apple CI39419145258 is in progress.
 
 - **CURRENT DEVICE: point18 authorized/flashed; core1 executed, strict context check failed; ADB rescue returned.**
   Point17 did not verify even core1 execution; entry and context were above
@@ -71,9 +83,12 @@
   does NOT establish whether the firmware supports entries above4GiB.
   Point17 full Apple-clang CI PASSED at ff8d66e:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39414925445
-  Run/log saved under `research/ci-39414925445/`; artifact download failed
-  with a network read timeout and needs retry. Source point18 commit55ed523
-  is pushed; Apple-clang CI for the next candidate remains to dispatch.
+  Run/log and artifact saved under `research/ci-39414925445/`. Download retry
+  succeeded; kernel SHA-256
+  `42bd46182a92a365a7ddabcb5868ac1d70ce5cd84e712caf7a55ac9dc1d44d75`
+  matches the artifact SHA256SUMS. Source point18 commit55ed523 is pushed.
+  Full Apple-clang CI for point19 at6870fbb is running:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39419145258
 
 - **Current user priority: enable all eight CPU cores (or as many as practical)
   BEFORE installing/starting full iOS userland. No userdata install yet.**
