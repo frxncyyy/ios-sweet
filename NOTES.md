@@ -34,16 +34,32 @@
   Payload SHA `0a1900bdc747773788f6a7714fdfe6c9bd504c01d904566512051d5682c8364a`.
   Static checks and independent comparison to original Linux kernel/both DT
   representations and tested rescue ramdisk all pass. Manifest and extracted
-  payload in `research/nord2/smp/psci/`. Candidate frozen, NOT AUTHORIZED OR
-  FLASHED YET. Phone now in fastboot (read-only check at13:24 CEST);
-  the earlier attempt to read Linux CPU baseline found no ADB, changed nothing.
+  payload in `research/nord2/smp/psci/`. User authorized this exact boot-only
+  test; flash/reboot PASSED at13:26:28 CEST after hash/device/product/size checks.
+  Evidence `research/nord2/smp/psci/hardware-test/flash.log`. ADB rescue log
+  collector completed: firmware probe FAILED SAFELY, rescue return PASSED.
+  Firmware PSCI1.1, CPU_ON core1/affinity100 returned0, but its entire mailbox
+  stayed zero across5s. Probe stopped, reported0/7. All seven affinities were
+  OFF before chain-back; authenticated root rescue returned, no blockfs/data
+  mounts. Do not infer the secondary executed our entry or that SMP works.
+  Pmsg15449B SHA `c0301be03cb6dbad4b55d785d55cd93d7b5d7416de50d18ef19d52efe30231f6`,
+  `backup/nord2/logs/20261020-132632-smp-psci-stop17/pstore/pmsg-ramoops-0`.
+  `hardware-test/verified.json` records the failure and safe return. Original
+  boot restore not needed because rescue succeeded. Next inspect entry/context
+  handoff; high physical entry/context support is not established. Earlier attempted
+  Linux CPU baseline read found no ADB because phone was in fastboot;
+  changed nothing. Full Apple-clang CI of ff8d66e dispatched:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39414925445
   Passing this only proves firmware startup/shutdown, NOT XNU SMP. After it,
   add coordinated secondary shutdown for kernel return, serialize diagnostic
   logging, then validate XNU with2/4/8 CPUs, per-core timer/IPI and workload
   evidence. Integrate concurrent USB only once its cleanup/reader is safe.
   Point16 full Apple-clang CI PASSED at f12b7d0:
   https://github.com/frxncyyy/ios-sweet/actions/runs/39413072917
-  Artifact/log download in progress under `research/ci-39413072917/`.
+  Artifact/log downloaded under `research/ci-39413072917/`. CI kernel SHA-256
+  `892739078cbbf08d1d75161a9da4d2c1528d6ca6b2e3f0e328df6a6b7c10c299`,
+  matches artifact SHA256SUMS. Tested point16 image used the frozen local
+  relink, not this new CI kernel.
   First run39412479509 failed due to my incorrect machine_config=NORD2;
   this branch uses machine_config=SWEET with NORD2 defined by patch0082.
   The rerun used SWEET and passed; this was a dispatch error, not a C failure.
