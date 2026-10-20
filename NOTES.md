@@ -3,7 +3,28 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- Session 8 build in progress: fix commit `d550a21`, pushed to
+- **CURRENT DEVICE STATE — session 8 test in progress:** user explicitly
+  authorized a temporary boot-only flash and subsequent original-boot
+  restore, and put the phone in fastboot. Preflight: expected Nord 2,
+  `product=oplus6893`, boot size `0x2000000`, not userspace fastboot; image and
+  original backup hashes verified. Flash and reboot both returned OK.
+  Restore is still required after collecting the log.
+  - Candidate: `shim/out/nord2-xnu/nord2-ci-cpu-match-stop8.img`,
+    30,676,992 bytes, SHA-256
+    `7348e1782171947a6f39019c71d6a3b8b9adc65f136913afa8966021d75f7509`.
+    Cmdline: `debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
+    nord2fb=1 nord2stopat=8`. All image checks passed.
+  - CI artifact kernel SHA-256:
+    `97af2e32c7e2d86f850ecab81e19b9a8048c8e81105de3d69b5d719250cb4cca`
+    (verified against CI's `SHA256SUMS`).
+    Logs/manifests: `research/ci-39388874797/{run.json,build.log,
+    stop8-image-check.log,stop8-flash.log}`.
+  - The boot-argument defect below was reproduced by compiling the exact
+    `getval()`/`isargsep()` source on the host:
+    `research/nord2/bootarg-parser-check.{c,log}`. `0008` is STR;
+    `8` and `0x08` are NUM 8; `0010` is NUM 8, not decimal 10.
+
+- Session 8 build **passed**: fix commit `d550a21`, pushed to
   `frxncyyy/ios-sweet:codex/nord2-bringup`; macOS workflow
   https://github.com/frxncyyy/ios-sweet/actions/runs/39388874797.
   Local checks passed: patch 0082 applies and reproduces all edited files;
@@ -14,7 +35,19 @@
   new ADT, one missing boot-CPU binding, and an absent CPU subtree.
   `shim/nord2-xnu/README.md` and `DISPLAY-LOG.md` have been updated to reflect
   the verified late stops, live display, CI build requirement, and actual
-  payload address `0x43744000`. No hardware test of the CPU fix yet.
+  payload address `0x43744000`. See the current device state above for testing.
+
+- **Second source-confirmed defect in the old diagnostics:** XNU's
+  `pexpert/gen/bootargs.c:getval()` interprets a leading zero followed by a
+  digit as octal. `nord2stopat=0008` is classified as a string, copied into
+  the uint32 argument as the first three characters plus NUL, not point 8.
+  `0007` and `0005` happened to work. Thus the old stop-8 run is NOT a valid
+  after-kperf checkpoint; the successful stop 7 and failed stop 5 still
+  bound the failure before BSD. The new test uses **`nord2stopat=8`**.
+  The checker now rejects padded decimal stop arguments, and the image
+  helper's default is `nord2stopat=2`. The legacy `patch_gate_arg()` in
+  `loader.c` also emits padded decimal: do not use automatic `nord2vmstop`
+  stepping until that is fixed. It is inactive in the new test image.
 
 - 2026-10-20 (session 8, Codex): **CPU driver matching mismatch found in the
   source; hardware verification pending.** This supersedes the final session-7
@@ -33,7 +66,7 @@
     types, Sweet's existing Qualcomm match, `cpus=1`, and the normal kperf wait.
     `tools/nord2-mkpatch.sh` now includes `iokit/KernelConfigTables.cpp`.
     Build with Apple clang via CI; do not use fake `__builtin_xnu_*` fallbacks.
-  - Next test: CI kernel + new ADT, `nord2stopat=0008` (after kperf, before
+  - Next test: CI kernel + new ADT, `nord2stopat=8` (after kperf, before
     `bsd_init`). Expected evidence: `SWEET CPU: requested=1 selected=1`,
     `1/1 CPUs initialized, SGI1 verified`, stop 8, chain-back to Android.
     A failure may expose a further CPU/GIC issue; do not claim a working fix
@@ -41,9 +74,9 @@
   - Phone checked at session start: Android `sys.boot_completed=1`, rooted,
     full boot partition SHA-256
     `04e84c4a14e5c3cb77d0e587da93b5a7e720e8c5b2a3a51ab3ef4cda746e1f01`,
-    matching `backup/nord2/boot.img`; pstore empty. No flash/reboot this
-    session yet. Previous per-test approvals were completed; prepare and
-    verify the new image before requesting the next boot-only test.
+    matching `backup/nord2/boot.img`; pstore empty. This was the state before
+    the session-8 test authorized above. Older per-test approvals were
+    completed.
   - `gh` is now installed/authenticated for `frxncyyy/ios-sweet`; branch
     `codex/nord2-bringup`, starting commit `168c6b4`. Existing untracked `kmod/`
     belongs to the previous work and has been left untouched.

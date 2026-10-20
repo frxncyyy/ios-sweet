@@ -32,7 +32,7 @@ trap 'rm -rf "$tmp"' EXIT
 CT=../toolchains/cctools/bin/aarch64-apple-darwin
 "$CT-strip" -S -x "$kernel" -o "$tmp/kernel.strip"
 python3 tools/mkadt-nord2.py "$tmp/nord2.adt"
-cmdline=${*:-"debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=0002"}
+cmdline=${*:-"debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=2"}
 python3 tools/mkpayload.py "$tmp/kernel.strip" "$tmp/nord2.adt" "$tmp/payload.bin" \
     --cmdline "$cmdline"
 python3 tools/nord2-pack-xnu.py backup/nord2/boot.img shim/out/nord2-xnu/loader-Image \

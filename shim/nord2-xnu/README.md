@@ -91,8 +91,11 @@ available for regressions.
 
 ### Later stops
 
-Use `nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=000N` to run to a later
-stop and chain back. Leading zeros reserve space for in-place arguments.
+Use `nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=N` to run to a later
+stop and chain back. Use ordinary decimal or explicit hexadecimal (`0x08`),
+never zero-padded decimal: XNU parses `0007` as octal 7 but `0008` as a
+string, so it does not select point 8. The legacy automatic VM gate walker
+also writes zero-padded decimal and must be corrected before reuse.
 
 | N | Stop |
 | --- | --- |
@@ -131,7 +134,7 @@ Package a CI kernel with the existing loader:
 tools/nord2-image-from-kernel.sh PATH/TO/kernel.development.sweet \
   shim/out/nord2-xnu/NEW-TEST.img \
   debug=0xc cpus=1 keepsyms=1 -noprogress \
-  nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=0008
+  nord2stop=0 nord2vm=1 nord2fb=1 nord2stopat=8
 ```
 
 The helper strips symbols, builds the current ADT and payload, packs the

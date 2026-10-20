@@ -201,6 +201,11 @@ class Checker:
         cmdline = p[0x48:0x48 + 608].split(b'\0')[0].decode()
         self.check('cmdline carries the escalation boot arguments',
                    'nord2stop=' in cmdline, cmdline)
+        stops = [arg for arg in cmdline.split()
+                 if arg.split('=', 1)[0] in ('nord2stopat', 'nord2vmstop', 'nord2vmloop')]
+        self.check('stop arguments avoid implicit octal/string parsing',
+                   all(re.fullmatch(r'[^=]+=(?:0|[1-9][0-9]*|0x[0-9a-fA-F]+)', arg)
+                       for arg in stops), ', '.join(stops))
 
 
 def main():
