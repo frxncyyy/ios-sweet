@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MEASURED: UFS G4x1 RATE B; NEXT RTC-SKIP/LIMITS SOURCE READY.**
+  Authorized8eb3f477 boot reports all6DME_GET valid0x3f: RX/TXgear4,1laneeach,
+  HSseries2,pwrmode0x11, noerror/pending. BeforeGUIownership:57793commands,
+ 51995reads/5586writes/210syncs,2462855168B read/92409856B write,
+  cmd126888358ticks=9.76064s,doorbell120998182ticks=9.30755s@13MHz,
+  errors0/timeouts0. This is aggregate command time, NOT full boot throughput.
+  Console W0C/rate fix:423completedpushes,0busy/frame timeouts,2183skips;
+  framebuffer4.82882s vs58.4852s prior; GUIownership93.68362s (notlockscreen).
+  First2presentsdone1; userstillseesconsole andpowerdims. No enabledlayerlogs.
+  Hardware snapshot+SHA/result under ufs-profile/, livecapturestillrunning.
+  MissingIORTC sourcewait30s found beforeuserspace. New opt-in nord2nortc=1
+  skips only that wait, retains clock_initialize_calendar andlogsrawtiming.
+  ExactC++hostmodel/default/skip/timeout/callorder +localcompile PASS.
+  UFSprofile now also reads8allowlistedlocalGETs (available/connectedRX/TX,
+  terminations,UniProversion,TXadapt) andrawAHIT/HCS/IS. First6fieldsunchanged;
+  separateLIMITSvalid/understood/error/result output, pendingrecoveryretained.
+  ExactCsanitizers+localcompile+vendorregression+peerreview PASS. NoSET/tuning.
+  Nextimage includes these plus existinge3a9afaGUIretry/diag/vendorprobe.
+  CI39490076167/e3a9afa PASSED; notpacked/flashed, supersededbynextcandidate.
+  Hypotheticalx2IOtime improvement savesatmostabout4.9s ofmeasured93.7s;
+  driver/callerCPUwaits andactualcriticalpath stillunmeasured. Futurex2test
+  must be before rootpublication/writableenable; noSETimplementation yet.
+
 - **UFS PROFILE IMAGE FLASHED; HARDWARE CAPTURE RUNNING.**
   User authorized exact8eb3f477…ec01dfe8 and suppliedfastboot. Guarded
   ufs-profile/run-approved-boot.py EXECUTED: boot-only flash/reboot OKAY at

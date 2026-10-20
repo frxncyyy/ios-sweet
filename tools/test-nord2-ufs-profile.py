@@ -43,6 +43,7 @@ static int sweet_ufs_lock, held, prints;
 static uint64_t ticks, frequency, step;
 static uint32_t regs[64], attr_value, result_code, irq_on_complete;
 static unsigned writes, submits, status_reads, complete_after, delay_calls;
+static unsigned fail_submit, timeout_submit;
 static bool complete_enabled, ready_enabled, recovering, completion_fired;
 static int impl_error;
 static uint64_t fake_counter(const char *name) {
@@ -58,10 +59,10 @@ static int fake_printf(const char *f, ...) { (void)f; assert(!held); prints++; r
 #define printf fake_printf
 static uint32_t ufs_rd(uint32_t off) {
  assert(off%4==0 && off/4<64);
- if (off==REG_IS && submits && complete_enabled && !completion_fired && ++status_reads >= complete_after) {
+ if (off==REG_IS && submits && submits!=timeout_submit && complete_enabled && !completion_fired && ++status_reads >= complete_after) {
   completion_fired=true; regs[REG_IS/4] |= 0x400 | irq_on_complete;
   if (ready_enabled) regs[REG_HCS/4] |= 8;
-  regs[0x98/4]=result_code; regs[0x9c/4]=attr_value;
+  regs[0x98/4]=submits==fail_submit?9:result_code; regs[0x9c/4]=attr_value;
  }
  return regs[off/4];
 }
@@ -100,6 +101,8 @@ static void scsi_ack(void) {
 static void reset(void) {
  memset(regs,0,sizeof(regs)); memset(&nord2_ufs_stats,0,sizeof(nord2_ufs_stats));
  memset(&nord2_ufs_link,0,sizeof(nord2_ufs_link));
+ memset(&nord2_ufs_limits,0,sizeof(nord2_ufs_limits));
+ fail_submit=timeout_submit=0;
  su.regs=1; su.probe_only=false; nord2_root_owned=true;
  nord2_ufs_profile_enabled=true; nord2_ufs_profile_reported=false;
  nord2_ufs_uic_pending=false; prints=writes=submits=status_reads=delay_calls=0;
@@ -110,10 +113,11 @@ static void reset(void) {
 }
 int main(void) {
  uint32_t v,r;
- // Exhaustive address allowlist: only six local PA attributes can dispatch.
+ // Exhaustive address allowlist: only the14 local observation attributes can dispatch.
  for (unsigned attr=0; attr<65536; attr++) {
   reset(); bool allowed=false;
   for (unsigned i=0;i<6;i++) if(attr==nord2_ufs_attrs[i]) allowed=true;
+  for (unsigned i=0;i<N2_LIMIT_COUNT;i++) if(attr==nord2_ufs_limit_attrs[i]) allowed=true;
   int e=nord2_ufs_dme_get(attr,&v,&r);
   assert(e==(allowed?0:EPERM)); assert(submits==(unsigned)allowed);
   if (allowed) assert(v==4 && r==0 && !nord2_ufs_uic_pending);
@@ -175,7 +179,36 @@ int main(void) {
  assert(nord2_ufs_dme_get(0x1583,&v,&r)==ETIMEDOUT && nord2_ufs_uic_pending);
  // Six-field snapshot stops on failure with explicit validity mask.
  reset(); nord2_ufs_profile_link(); assert(nord2_ufs_link.valid_mask==63);
- assert(nord2_ufs_link.completed==6 && submits==6);
+ assert(nord2_ufs_link.completed==6 && submits==14);
+ assert(nord2_ufs_limits.valid_mask==255 && nord2_ufs_limits.attempted==8);
+ assert(nord2_ufs_limits.context_valid && nord2_ufs_limits.is==0);
+ // First six values and report semantics remain unchanged; limits are separate.
+ for(unsigned i=0;i<6;i++)assert(nord2_ufs_link.values[i]==4);
+ reset(); attr_value=1; regs[0x18/4]=0x1234; regs[REG_HCS/4]|=0x500;
+ nord2_ufs_profile_link();assert(nord2_ufs_limits.understood_mask==255);
+ assert(nord2_ufs_limits.ahit==0x1234 && ((nord2_ufs_limits.hcs>>8)&7)==5);
+ // A completed optional unsupported GET records per-field result and continues.
+ for(unsigned f=0;f<8;f++) {
+  reset();fail_submit=7+f; nord2_ufs_profile_link();
+  assert(nord2_ufs_link.valid_mask==63 && !nord2_ufs_link.error);
+  assert(nord2_ufs_limits.valid_mask==(255u&~(1u<<f)) && submits==14);
+  assert(nord2_ufs_limits.results[f]==9 && nord2_ufs_limits.errors[f]==EIO);
+ }
+ // Late limits completion preserves pending; never dispatches subsequent GETs.
+ for(unsigned f=0;f<8;f++) {
+  reset();timeout_submit=7+f;nord2_ufs_profile_link();
+  assert(nord2_ufs_link.valid_mask==63 && !nord2_ufs_link.error);
+  assert(submits==7+f && nord2_ufs_limits.attempted==f+1);
+  assert(nord2_ufs_limits.valid_mask==((1u<<f)-1));
+  assert(nord2_ufs_limits.errors[f]==ETIMEDOUT && nord2_ufs_uic_pending);
+ }
+ // Raw values are retained independently of understood ranges; never clamp.
+ reset();attr_value=0;nord2_ufs_profile_link();
+ assert(nord2_ufs_limits.valid_mask==255 && nord2_ufs_limits.understood_mask==0xb0);
+ reset();attr_value=3;nord2_ufs_profile_link();
+ assert(nord2_ufs_limits.valid_mask==255 && nord2_ufs_limits.understood_mask==0x40);
+ reset();attr_value=0x15;nord2_ufs_profile_link();
+ assert(nord2_ufs_limits.values[6]==0x15 && nord2_ufs_limits.understood_mask==0x40);
  reset(); result_code=2; nord2_ufs_profile_link();
  assert(nord2_ufs_link.valid_mask==0 && nord2_ufs_link.error==EIO && submits==1);
  reset(); nord2_ufs_profile_enabled=false; nord2_ufs_profile_link(); assert(!writes);
@@ -198,7 +231,7 @@ int main(void) {
  assert(!nord2_ufs_stats.commands && !prints && !writes);
  // Once-only report copies under lock then prints exclusively after unlocking.
  reset(); held=0; nord2_ufs_profile_report(); nord2_ufs_profile_report();
- assert(prints==2 && held==0 && !writes);
+ assert(prints==3 && held==0 && !writes);
 }
 '''
 with tempfile.TemporaryDirectory(prefix='nord2-ufs-profile-') as tmp:
@@ -207,4 +240,4 @@ with tempfile.TemporaryDirectory(prefix='nord2-ufs-profile-') as tmp:
     subprocess.run(['clang','-std=c11','-O1','-g','-Wall','-Wextra','-Werror',
                     '-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
-print('PASS: production DME_GET/poll/drain/restore/profile/report; 65536 addresses, ownership/active-command gates, timeouts/late completion/stalled clock, stats/default/report-lock')
+print('PASS: production DME_GET/poll/drain/restore/profile/report; 65536 addresses, ownership/active-command gates, timeouts/late completion/stalled clock, stats/default/report-lock; separate8-field LIMITS validity/results/context and every optional failure')

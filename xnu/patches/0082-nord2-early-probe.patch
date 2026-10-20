@@ -2721,7 +2721,7 @@
  } su;
  
  static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
-@@ -141,13 +149,209 @@
+@@ -141,13 +149,268 @@
  	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
  }
  
@@ -2763,7 +2763,7 @@
 +#if defined(NORD2)
 +/* Opt-in observation only. All updates and snapshots use sweet_ufs_lock.
 + * DME_GET is a UIC transaction, not a passive MMIO read: command writes are
-+ * restricted to six local PA attributes, with no SET/peer/power commands. */
++ * restricted to local PA observation attributes, with no SET/peer/power commands. */
 +#define N2_UIC_CMD 0x90u
 +#define N2_UIC_ARG1 0x94u
 +#define N2_UIC_ARG2 0x98u
@@ -2789,6 +2789,24 @@
 +	0x1580, /* PA_ACTIVERXDATALANES */ 0x1560, /* PA_ACTIVETXDATALANES */
 +	0x156a, /* PA_HSSERIES */ 0x1571 /* PA_PWRMODE: RX high/TX low nibble */
 +};
++
++/* Additional local GETs: selected Android unipro.h:95–96,113–117,
++ * 126,143–149. Command validity and understood value ranges are separate;
++ * unknown/reserved values are retained, never clamped or used for tuning. */
++#define N2_LIMIT_COUNT 8u
++static const uint16_t nord2_ufs_limit_attrs[N2_LIMIT_COUNT] = {
++	0x1540, 0x1520, /* PA_AVAILRXDATALANES / PA_AVAILTXDATALANES */
++	0x1581, 0x1561, /* PA_CONNECTEDRXDATALANES / PA_CONNECTEDTXDATALANES */
++	0x1584, 0x1569, /* PA_RXTERMINATION / PA_TXTERMINATION */
++	0x15a9, 0x15d4  /* PA_LOCALVERINFO / PA_TXHSADAPTTYPE */
++};
++static struct nord2_ufs_limit_stats {
++	uint32_t values[N2_LIMIT_COUNT], results[N2_LIMIT_COUNT];
++	int errors[N2_LIMIT_COUNT];
++	uint32_t valid_mask, understood_mask, attempted;
++	uint32_t ahit, hcs, is;
++	bool context_valid;
++} nord2_ufs_limits;
 +
 +static uint64_t
 +nord2_ufs_counter(void)
@@ -2837,6 +2855,9 @@
 +	for (unsigned i = 0; i < 6; i++) {
 +		if (attr == nord2_ufs_attrs[i]) { allowed = true; }
 +	}
++	for (unsigned i = 0; i < N2_LIMIT_COUNT; i++) {
++		if (attr == nord2_ufs_limit_attrs[i]) { allowed = true; }
++	}
 +	if (!allowed || !value || !result || !nord2_ufs_profile_enabled) { return EPERM; }
 +	/* Caller owns root controller and its mutex; never interfere with SCSI,
 +	 * task management, an inherited completion, or enabled interrupt handling. */
@@ -2876,6 +2897,32 @@
 +		nord2_ufs_link.valid_mask |= 1u << i;
 +		nord2_ufs_link.completed++;
 +	}
++	/* Baseline UFSHCI context is read-only and captured after six successful
++	 * gated GETs while the caller still holds the controller mutex. AHIT is
++	 * raw, HCS UPMCRS bits10:8 are context, not proof of a new transition. */
++	nord2_ufs_limits.ahit = ufs_rd(0x18);
++	nord2_ufs_limits.hcs = ufs_rd(REG_HCS);
++	nord2_ufs_limits.is = ufs_rd(REG_IS);
++	nord2_ufs_limits.context_valid = true;
++	for (unsigned i = 0; i < N2_LIMIT_COUNT; i++) {
++		uint32_t value = 0, result = 0;
++		nord2_ufs_limits.attempted++;
++		int error = nord2_ufs_dme_get(nord2_ufs_limit_attrs[i], &value, &result);
++		nord2_ufs_limits.results[i] = result;
++		nord2_ufs_limits.errors[i] = error;
++		if (error) {
++			/* A completed unsupported attribute may be followed by another
++			 * gated GET; timeout/ownership loss stops without retry/reset. */
++			if (error == EIO) { continue; }
++			break;
++		}
++		nord2_ufs_limits.values[i] = value;
++		nord2_ufs_limits.valid_mask |= 1u << i;
++		bool understood = i < 4 ? (value >= 1 && value <= 2) :
++		    i < 6 ? value <= 1 : i == 6 ?
++		    ((value & 0xf) >= 1 && (value & 0xf) <= 5) : value <= 1;
++		if (understood) { nord2_ufs_limits.understood_mask |= 1u << i; }
++	}
 +}
 +
 +static void
@@ -2896,12 +2943,14 @@
 +	if (!nord2_ufs_profile_enabled) { return; }
 +	struct nord2_ufs_profile_stats stats;
 +	struct nord2_ufs_link_stats link;
++	struct nord2_ufs_limit_stats limits;
 +	bool pending;
 +	lck_mtx_lock(&sweet_ufs_lock);
 +	if (nord2_ufs_profile_reported) { lck_mtx_unlock(&sweet_ufs_lock); return; }
 +	nord2_ufs_profile_reported = true;
 +	stats = nord2_ufs_stats;
 +	link = nord2_ufs_link;
++	limits = nord2_ufs_limits;
 +	pending = nord2_ufs_uic_pending;
 +	lck_mtx_unlock(&sweet_ufs_lock);
 +	printf("NORD2 UFS PROFILE: freq=%llu commands=%llu reads=%llu writes=%llu syncs=%llu read_bytes=%llu write_bytes=%llu cmd_ticks=%llu cmd_max=%llu doorbell_ticks=%llu doorbell_max=%llu errors=%llu timeouts=%llu\n",
@@ -2913,6 +2962,16 @@
 +	    link.valid_mask, link.completed, link.error, link.result, pending,
 +	    link.values[0], link.values[1], link.values[2], link.values[3],
 +	    link.values[4], link.values[5]);
++	printf("NORD2 UFS LIMITS: valid=%#x understood=%#x attempted=%u rx_available=%u tx_available=%u rx_connected=%u tx_connected=%u rx_term=%u tx_term=%u local_ver=%#x unipro=%u tx_adapt=%#x context=%u ahit=%#x hcs=%#x upmcrs=%u is=%#x results=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x errors=%d/%d/%d/%d/%d/%d/%d/%d\n",
++	    limits.valid_mask, limits.understood_mask, limits.attempted,
++	    limits.values[0], limits.values[1], limits.values[2], limits.values[3],
++	    limits.values[4], limits.values[5], limits.values[6], limits.values[6] & 0xf,
++	    limits.values[7], limits.context_valid, limits.ahit, limits.hcs,
++	    (limits.hcs >> 8) & 7, limits.is,
++	    limits.results[0], limits.results[1], limits.results[2], limits.results[3],
++	    limits.results[4], limits.results[5], limits.results[6], limits.results[7],
++	    limits.errors[0], limits.errors[1], limits.errors[2], limits.errors[3],
++	    limits.errors[4], limits.errors[5], limits.errors[6], limits.errors[7]);
 +}
 +#endif /* NORD2 */
 +
@@ -2932,7 +2991,7 @@
  	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
  	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
  	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
-@@ -204,6 +408,9 @@
+@@ -204,6 +467,9 @@
  	}
  	__builtin_arm_dsb(0xf);
  
@@ -2942,7 +3001,7 @@
  	ufs_wr(REG_UTRLDBR, 1);
  	uint64_t deadline;
  	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
-@@ -219,6 +426,9 @@
+@@ -219,6 +485,9 @@
  	while (ufs_rd(REG_UTRLDBR) & 1) {
  		uint64_t now = mach_absolute_time();
  		if (now > deadline) {
@@ -2952,7 +3011,7 @@
  			ufs_wr(REG_UTRLCLR, ~1u);
  			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
  			return ETIMEDOUT;
-@@ -234,8 +444,19 @@
+@@ -234,8 +503,19 @@
  			delay(1);
  		}
  	}
@@ -2972,7 +3031,7 @@
  
  	dma_sync(DMA_UTRL, sizeof(*utrd));
  	if (su.cache) {
-@@ -253,9 +474,44 @@
+@@ -253,9 +533,44 @@
  		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
  		return EIO;
  	}
@@ -3017,7 +3076,7 @@
  /* READ(10) of count device blocks at lba into the bounce buffer. */
  static int
  ufs_read_blocks(uint64_t lba, uint32_t count)
-@@ -374,6 +630,12 @@
+@@ -374,6 +689,12 @@
  	ufs_wr(REG_IE, 0);                      /* polled operation */
  	ufs_wr(REG_IS, ufs_rd(REG_IS));
  	ufs_wr(REG_UTRLRSR, 0);
@@ -3030,7 +3089,7 @@
  	uint64_t list = su.dma_pa + DMA_UTRL;
  	ufs_wr(REG_UTRLBA, (uint32_t)list);
  	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
-@@ -387,6 +649,488 @@
+@@ -387,6 +708,488 @@
  	return 0;
  }
  
@@ -3519,7 +3578,7 @@
  static int
  sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
  {
-@@ -599,15 +1343,43 @@
+@@ -599,15 +1402,43 @@
  		return ENXIO;
  	}
  	PE_parse_boot_argn("ufsroot", want, sizeof(want));
@@ -3563,7 +3622,7 @@
  	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
  	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
  		printf("SWEET UFS: no contiguous DMA memory\n");
-@@ -619,31 +1391,72 @@
+@@ -619,31 +1450,72 @@
  	}
  	su.dma_pa = ptoa_64(pn);
  	su.lun = 0;
@@ -3640,7 +3699,7 @@
  	}
  	su.bdev = makedev(su.bmajor, 0);
  	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
-@@ -654,13 +1467,27 @@
+@@ -654,13 +1526,27 @@
  	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
  	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
@@ -5479,7 +5538,63 @@
  void IORegistrySetOSBuildVersion(char * build_version);
  void IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t theme);
  
-@@ -186,6 +189,9 @@
+@@ -68,6 +71,9 @@
+ 
+ #include <kern/clock.h>
+ #include <sys/time.h>
++#if defined(NORD2)
++#include <pexpert/pexpert.h>
++#endif
+ 
+ void
+ IOKitInitializeTime( void )
+@@ -76,11 +82,27 @@
+ 
+ 	t.tv_sec = 30;
+ 	t.tv_nsec = 0;
++#if defined(NORD2)
++	/* Opt-in only: this board has no IORTC provider. Keep calendar setup
++	 * below even when bypassing the missing-resource wait. No fake RTC. */
++	uint32_t no_rtc_wait = 0;
++	PE_parse_boot_argn("nord2nortc", &no_rtc_wait, sizeof(no_rtc_wait));
++	bool skip_rtc_wait = no_rtc_wait == 1;
++	uint64_t rtc_begin = __builtin_arm_rsr64("CNTVCT_EL0");
++#endif
+ 
+ // RTC is not present on this target
+ #ifndef BCM2837
+-	IOService::waitForService(
+-		IOService::resourceMatching("IORTC"), &t );
++#if defined(NORD2)
++	if (!skip_rtc_wait)
++#endif
++	{
++		IOService::waitForService(
++			IOService::resourceMatching("IORTC"), &t );
++	}
++#endif
++#if defined(NORD2)
++	uint64_t rtc_end = __builtin_arm_rsr64("CNTVCT_EL0");
+ #endif
+ #if defined(__i386__) || defined(__x86_64__)
+ 	IOService::waitForService(
+@@ -88,6 +110,15 @@
+ #endif
+ 
+ 	clock_initialize_calendar();
++#if defined(NORD2)
++	static bool rtc_reported;
++	if (!rtc_reported) {
++		rtc_reported = true;
++		IOLog("NORD2 BOOT RTC: skip=%u begin_ticks=%llu end_ticks=%llu elapsed_ticks=%llu freq=%llu\n",
++		    skip_rtc_wait, rtc_begin, rtc_end, rtc_end - rtc_begin,
++		    __builtin_arm_rsr64("CNTFRQ_EL0"));
++	}
++#endif
+ }
+ 
+ void
+@@ -186,6 +217,9 @@
  	if (__improbable(!ok)) {
  		panic("Failed to start IOService matching");
  	}
