@@ -19,9 +19,27 @@
   Local three-C-file compilation and exact-source SMP/USB/UFS host tests
   PASS, including wrong partition, missing/truncated config, wrong CPU
   count/write flags, UFS pre-MMIO denial and forced read-only. RCpc2 clean.
-  Patch applies and matches source. Next full CI and frozen boot candidate,
-  prepare constrained ADB installer/readback verification, then request
-  exact installation+boot authorization. Current phone is root ADB rescue.
+  Patch applies and matches source. Full CI39446150677 PASSED/sourcec992fd5:
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39446150677
+  Kernel17263080B SHA-256
+  `8a610dcca545a8c5d96b2ea8fd73dd396c99e5cb8086af59ac1dc59e55c9c5d9`;
+  downloaded checksum verified; all1097 captured SWEET compile commands use
+  generic ARMv8.2+crypto. Linked stop22 config and UFS write-flag/readiness
+  checks inspected: forced zero write flag/readiness precede MMIO mapping.
+  Candidate compression in progress; next freeze/verify it and request exact
+  installation+boot authorization.
+  tools/nord2-install-root.py defaults to READ-ONLY preflight, pins this
+  image size/hash, verifies original/rescue backups, root rescue marker,
+  exact userdata path/start/size and absence of any block/data mount.
+  Explicit --write-userdata streams only the16GiB prefix through shell-v2
+  dd (nocreat,notrunc,fsync), then hashes the complete prefix on-device.
+  No reboot/boot flash/GPT writes. Failed/partial writes remain recorded as
+  started but incomplete, and readback mismatch is never marked verified.
+  tools/nord2-check-install.py passes with a fake local ADB: default no-write,
+  binary stream integrity, wrong geometry/mount/device/image refusal,
+  partial-write and corrupt-readback failures. Real preflight initially
+  found the phone back in fastboot; rebooted the existing point21 image
+  without flashing to regain ADB rescue, then retry preflight only.
   Root16GiB SHA reverified:
   `8b1d9de6775674afe790a161419ea23e824c5e045f21a66c6fc886125c991cb3`.
   Evidence research/nord2/ios-userland/. After userdata becomes HFS, fallback
