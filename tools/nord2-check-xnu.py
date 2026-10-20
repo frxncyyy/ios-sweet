@@ -217,6 +217,14 @@ class Checker:
             self.check('point 13 keeps both disk write flags disabled',
                        [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
                        [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
+        if 'nord2stopat=14' in args:
+            self.check('point 14 has the bounded native MTU3 USB console',
+                       b'NORD2 USB: native console for 45 seconds; EP0 PIO, no DMA' in kernel and
+                       b'after bounded MTU3 USB console' in kernel and
+                       b'NORD2 USB: inherited QMU active; refused' in kernel)
+            self.check('point 14 keeps both disk write flags disabled',
+                       [a for a in args if a.startswith('ufsrw=')] == ['ufsrw=0'] and
+                       [a for a in args if a.startswith('rootrw=')] == ['rootrw=0'])
         chosen = next((n for n in root.children if n.name == 'chosen'), None)
         mmap = next((n for n in chosen.children if n.name == 'memory-map'), None) if chosen else None
         ramdisk = mmap.prop('RAMDisk') if mmap else None

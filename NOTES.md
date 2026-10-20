@@ -3,7 +3,41 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **CURRENT DEVICE: USB point13 passed; phone is in ADB RAM rescue.
+- **CURRENT DEVICE: USB point14 returned to ADB RAM rescue; native USB did
+  NOT enumerate. Userdata unchanged. Boot still contains point14.**
+  User approved the exact boot-only image and original-boot restoration if
+  rescue return fails, then brought the phone to fastboot. Product oplus6893,
+  boot size32MiB, non-userspace bootloader and both image/backup hashes checked.
+  Flash/reboot passed at 2026-10-20 12:20 CEST. XNU reached the native-console
+  loop and completed it: resets=0 requests=0 log_reads=0 stalls=0, then point14
+  stop and Linux return. ADB rescue returned at12:23; root shell/marker verified,
+  no block-backed filesystem or /data mounted. User also saw the return marker.
+  No original-boot restore needed (authorized only if rescue return failed).
+  Saved pmsg `backup/nord2/logs/20261020-122100-usb-console-stop14/pstore/pmsg-ramoops-0`,
+  14850B, SHA-256
+  `c79bb0e57bd96a114f2637d5debe4a7ab15a2a4bb4e242a5b7f21f404f99a58a`.
+  Host journal shows no native connection during the XNU window, only Linux
+  ADB afterward. Reader timed out; no live log was captured. Evidence:
+  `research/nord2/usb/ep0/hardware-test/{verified.json,host-kernel.log}`.
+  Next: inspect/restore USB2 PHY state as well as MAC. Point13 proved clocks
+  and MAC registers readable, not that the analog PHY remained operational.
+  Linux `phy-mtk-tphy.c` uses generic-tphy-v2 COM at11e40300 and explicitly
+  clears suspend/termination/pulldown/UART overrides, BC1.1 switch and GPIO
+  mode during power-on. These have not been read or restored by XNU yet.
+  Image `shim/out/nord2-xnu/nord2-usb-console-stop14.img`,33312768B, SHA-256
+  `80d3b5f0e3b428f5036784e924082e419f933bd95d59ef088f4dd239df159c6f`;
+  payload `48fde2c0e404f2d45f53f08e08bd9f53a41c436774ace1358c633ac9bcc30800`.
+  Kernel `research/nord2/usb/ep0/kernel.nord2-usb-console`, SHA-256
+  `ed3456bbe6e2eba48336e97354f451d1d2674dc8267c92772f542dd26b9ffa8d`.
+  Logs/evidence in `research/nord2/usb/ep0/{hardware-test,hardware-live,client-hardware.log}`.
+  Initial reader expired while waiting for user/continuation, before flash;
+  `client.log` is that pre-test timeout, not a hardware failure.
+  Cmdline `debug=0xc cpus=1 keepsyms=1 -noprogress nord2stop=0 nord2vm=1
+  nord2fb=1 nord2stopat=14 rd=ufsroot0 ufsrw=0 rootrw=0`.
+  Static checks passed, including original Linux kernel/DT and tested rescue
+  ramdisk preserved exactly, source-end bound and no root mount before stop14.
+
+- **Previous device state: USB point13 passed; phone was in ADB RAM rescue.
   Userdata unchanged.** Boot still contains the combined point13 image.
   No restore was required (authorization requested restoration on failure).
   Saved pmsg `backup/nord2/logs/20261020-115727-usb-snapshot-stop13/pstore/pmsg-ramoops-0`,
@@ -20,8 +54,40 @@
   hardware initialization for an EP0 enumeration test; it does not prove
   USB enumeration/data transport in XNU.
   Full Apple-clang CI at head `c3d382778d27086fd09a54c5998a6dae5373e8c1`
-  is running: https://github.com/frxncyyy/ios-sweet/actions/runs/39404509443
-  (`research/ci-39404509443/`). Current tree through c3d3827 pushed to fork.
+  PASSED: https://github.com/frxncyyy/ios-sweet/actions/runs/39404509443
+  (`research/ci-39404509443/`, run.json/build.log/xnu-kernel).
+  CI kernel17207320B SHA
+  `00229d652c6cede97fea1e66266eefdd230795908e938f8d7da9064f25fa78e7`,
+  matches published SHA256SUMS. Tree through c3d3827 pushed to fork;
+  local follow-up8ffa8c0 records the point13 result.
+  **Native USB console at point14 (hardware result above).**
+  This is EP0 enumeration + bounded vendor-IN log/status requests, not yet
+  CDC-ECM/data endpoints or full iOS USB. No DMA is enabled. Refuses active
+  inherited QMU queues or an already-connected MAC; uses verified existing
+  clocks/PHY/VBUS. Serves for45s with interrupts masked and explicit watchdog
+  service, then disconnects/restores MAC state and returns to ADB rescue.
+  Generic panic return also calls its no-op-unless-owned cleanup.
+  - Native descriptor uses the current recovery VID18d1/PIDd001 to reuse
+    the existing host udev access rule, but product is "Nord2 XNU console",
+    serial "nord2-xnu", vendor interfaceff/53/01 (NOT ADB).
+    `tools/nord2-usb-console.py OUTPUT [--wait 180]` selects that exact product
+    via sysfs/libusb, reads protocol status request0x52 and pmsg request0x51
+    (wValue=byte offset, wIndex0, max1024 per transfer). System libusb used,
+    no pip/global packages or host network setup needed. Start it BEFORE
+    flashing/rebooting the eventual authorized point14 image.
+  - EP0 descriptor/decoder and pmsg reader tests pass ASan/UBSan, including
+    100000 malformed requests and boundary/header validation. Read-only
+    point13 harness still passes. Native client ignores current ADB recovery
+    (negative selection test passed). Hardware test did not enumerate;
+    bounded loop and disconnect/return path did complete.
+    Files: `tools/nord2-check-usb-control.py`, `tools/nord2-check-usb-probe.py`;
+    evidence `research/nord2/usb/ep0/`. Both changed C files compile.
+  - Working sources edited in `research/ci-39158169212/buildtree/xnu`,
+    patch0082 regenerated; updated header copied to compilation tree
+    `research/ci-39398655023/buildtree/xnu/osfmk/arm64/sweet_early.h`.
+    Relink replaces sweet_usb.o/sweet_early.o in a COPY of the tested
+    point13 archive. `nord2-usb-console-stop14.img` Zopfli build passed;
+    exact candidate and authorization are recorded above.
   Standalone ADB RAM rescue was tested successfully earlier:
   User explicitly authorized boot-only `nord2-adb-rescue.img`, SHA-256
   `d78bf9fe720a1d293b863ea0a8b30e0df4b5eafb097b1343a3c30e7c3d03bac5`,

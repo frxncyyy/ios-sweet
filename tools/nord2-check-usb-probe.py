@@ -12,7 +12,7 @@ source = Path(sys.argv[1]).read_text()
 out = Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 code = source.split("static uint32_t\nnord2_usb_read", 1)[1]
-code = "static uint32_t\nnord2_usb_read" + code.split("#else /* Qualcomm", 1)[0]
+code = "static uint32_t\nnord2_usb_read" + code.split("/* NORD2 USB CONTROL:", 1)[0]
 code = code.replace('__asm__ volatile("dmb oshld" ::: "memory");', '')
 code = code.replace('*(volatile uint32_t *)(base + offset)', 'checked_read(base, offset)')
 prelude = r'''
@@ -25,6 +25,7 @@ prelude = r'''
 #include <sys/mman.h>
 typedef uintptr_t vm_offset_t;
 typedef size_t vm_size_t;
+static void nord2_usb_enumerate(vm_offset_t mac) { (void)mac; assert(0); }
 static const uintptr_t pa[4] = {0x10001000, 0x10000000, 0x11203e00, 0x11201000};
 static const size_t lengths[4] = {0x1000, 0x1000, 0x100, 0x2e00};
 static uint8_t *regions[4];
