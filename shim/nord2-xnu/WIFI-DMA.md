@@ -22,9 +22,13 @@ engines must remain disabled and stable. Unknown counts are refused.
 Only this unprogrammed, stable snapshot permits source-ordered region18 SET calls
 (group 1, then group 0). Both raw x0 status values must be zero; all returned
 registers are logged. SET may lock and is never retried or rolled back. The
-full pool is mapped once outside XNU's high DRAM window using the existing
-Device mapping path; only the first 128 KiB is zeroed and read back as aligned
-32-bit words. The final hardware operation releases the new AP vote.
+full pool is mapped once outside XNU's high DRAM window using
+`ml_io_map_unmappable(..., VM_WIMG_IO)`. This keeps Device attributes while
+allocating virtual space in `kernel_map`; ordinary `ml_io_map` uses an 8 MiB
+permanent submap and cannot hold this 15.125 MiB claim. The mapping is retained
+for the entire DMA lifetime, including uncertain failures. Only the first
+128 KiB is zeroed and read back as aligned 32-bit words. The final hardware
+operation releases the new AP vote.
 
 This phase does not enable DMA, submit descriptors, copy the main firmware,
 calibrate the radio, scan, or expose a network interface. The pool's CPU
@@ -40,3 +44,9 @@ Run `python3 tools/test-nord2-wifi-dma.py` for FDT collision/claim encoding,
 112-read preflight faults, actual native binding, receipt/claim guards,
 128 KiB boundaries and retained-failure tests. Full kernel CI and exact
 image verification remain necessary before each hardware test.
+
+The first accepted count-512 hardware run completed both SET calls, then
+panicked with `KERN_NO_SPACE` while mapping the whole pool through the
+8 MiB submap. Its preserved boot log establishes this allocation failure;
+it does not establish zeroing, DMA enable or main-firmware startup. The
+kernel-map correction still needs its own hardware test.

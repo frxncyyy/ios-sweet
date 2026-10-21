@@ -39,9 +39,13 @@ static int SecureDTGetProperty(DTEntry e,const char *key,const void **p,unsigned
  if(!strcmp(key,"dram-base")){*p=&dram_base;*n=8;return 0;}
  if(!strcmp(key,"dram-size")){*p=&dram_size;*n=8;return 0;}
  return -1;}
+enum {VM_WIMG_IO=7}; /* source osfmk/arm/memory_types.h */
 static vm_offset_t ml_io_map(uintptr_t p,size_t n){m.maps++;
- if(p==0x18024000){assert(n==0x2000);return p;}
- assert(p==NDP_POOL_BASE&&n==NDP_POOL_BYTES);
+ /* Small MMIO only: the real permanent io_submap is just 8 MiB. */
+ assert(p==0x18024000&&n==0x2000);return p;
+}
+static vm_offset_t ml_io_map_unmappable(uintptr_t p,size_t n,unsigned flags){m.maps++;
+ assert(p==NDP_POOL_BASE&&n==NDP_POOL_BYTES&&flags==VM_WIMG_IO);
  return m.map_bad?0:(vm_offset_t)m.pool;
 }
 static uint32_t ni_rd(vm_offset_t base,unsigned off){assert(!m.after_sleep);m.reads++;if(m.fail_read&&m.reads==m.fail_read)return 0xffffffffu;

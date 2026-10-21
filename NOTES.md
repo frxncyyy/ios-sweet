@@ -3,6 +3,57 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **POOL KERNEL-MAP FIX READY FOR CI.**
+  BinderSHA2d3b2116c79c43be9defbb7c6e25a2930bb912301cd5abc2218791fa70c34183:
+  full15.125MiB map now ml_io_map_unmappable(...VM_WIMG_IO), no changed
+  physicaladdress/attributes/ownership/cleanup. Native header/prototype
+  included explicitly for BSDTU. HostASan/UBSan actualbinder/guard suites
+  PASS and actualsweet_touch ARM64PASS; independentpool-map-review.jsonPASS.
+  Patch13711lines reproduces. Othernewmain permanent mappings<=0x124000;
+  static subtotalnotruntimefree-space proof. Currentphone restoredhealthy
+  e0d3; original368062de evidence frozen. Newstage wifi-main-map/ios being
+  prepared with closedgates; no newimage or flashapproval yet.
+
+
+- **e0d3 RESTORED AND HUMAN-CONFIRMED HEALTHY; DMA MAP PANIC LOCATED.**
+  Restore of exacte0d3 boot-only OKAY; nativeUSB90s271273B captured with
+  preservedfailedboot prefix46972B plus currentrestored224301B. Preserve
+  originals and split logs/restoration-report.json under wifi-main/ios.
+  Failedboot actually completed ROM and bothregion18SETs, then panicked at
+  DMAstage8 map: kmem_alloc15859712(flags100021) failed3. Sourceio_map.c has
+  permanent io_submap8MiB:15.125MiB can neverfit. No evidence ofzero/mainFW.
+  Narrowfix changes onlypoolmapping to ml_io_map_unmappable(kernel_map,
+  sameVM_WIMG_IOattrs), retaining lifetime/fullphysicalclaim. Tests separate
+  smallMMIO/permanent fromlargepoolmap; hostguards/sanitizersPASS; focused
+  compile+independentreview underway. Newimage+newapproval required.
+  User confirms restoredlockscreen/touch/buttons. Collectors stopped.
+  AudioOpenCode session nowrunning visible desktop3, actualprovider/model
+  opencode-go/deepseek-v4.1-flash(max), session ses_ea1c1e193ffeylJx9etgp2e09D,
+  privateaudio/deepseek-4.1-flash/work. ParentverifiedmappedFootwindow3 and
+  livePID268484; session.json/privateprompt/logs saved. No audio integration.
+
+
+- **MAIN-FW368062de HARDWARE BOOTLOOP; RESTORE e0d3 PENDING FASTBOOT.**
+  Authorized boot-only flash/reboot OKAY, nativeUSB connected then READ54
+  timeout(libUSB-7). Original44000B SHAd31e7796...05da834; separate retry
+ 44795B shows a different boot. Both end after ROMPREP/coldpowerbegin;
+  no finalROM/DMA/MAIN receipt captured. User confirms bootloop. Do not claim
+  mainfirmware executed or reachedFW_READY. Both collectors stopped; never
+  rerun one-use boot runner. User asked to enter fastboot; exact healthy
+  e0d3 restore already authorized. Private hardware-bootloop-report.json
+  stores evidence, hashes and prior battery observations (bus7/11success,
+  SOC100/100,voltage8687mV,temp3063dK,charger3f/fault0). Realbattery readings
+  succeeded, but currentimage notstable. Investigating sourceboundary.
+
+
+- **MAIN-FW368062de AUTHORIZED; ONE-USE BOOT RUNNER STARTING.**
+  Human explicitly authorized exact image and reported fastboot ready.
+  Private authorization includes RF calibration and conditional RAMrescue/
+  restore of healthy e0d3. Run once, then capture native USB180s. Never rerun
+  runner after flash.log or hardware-live exists. MainFW and battery hardware
+  outcomes remain pending. No userdata rewrite or other partition flash.
+
+
 - **MAIN-FW + BATTERY IMAGE VERIFIED; EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-battery-stop23.img`,33345536B,
   SHA256368062de75a2bcf8b44954c61a1a924cbd01ebd77083d4691144c7604af73521.

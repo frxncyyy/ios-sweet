@@ -5,6 +5,9 @@
 #ifndef NPP_NATIVE_HOST_TEST
 #include <pexpert/device_tree.h>
 #include <pexpert/arm64/boot.h>
+#include <vm/memory_types.h>
+/* This BSD TU does not expose MACH_KERNEL_PRIVATE machine prototypes. */
+extern vm_offset_t ml_io_map_unmappable(vm_offset_t,vm_size_t,uint32_t);
 #endif
 static struct {
  struct nppa probe;struct ndp_claim claim;struct ndp_subpool layout;
@@ -148,7 +151,11 @@ static int nppa_xnu_map(void *c,uint64_t base,uint64_t bytes)
  nppa_native.map_arm=true;
  printf("NORD2 WIFI DMA ARM: stage=%u action=map base=%#llx bytes=%#llx\n",
   s->stage,(unsigned long long)base,(unsigned long long)bytes);
- nppa_native.pool=ml_io_map((vm_offset_t)base,(vm_size_t)bytes);
+ /* Permanent ml_io_map uses XNU's 8 MiB io_submap. This retained 15.125 MiB
+  * external-DRAM claim must use kernel_map instead, with the same Device
+  * attributes. Keep the mapping for the entire DMA lifetime; never unmap
+  * it while hardware may retain a descriptor or buffer address. */
+ nppa_native.pool=ml_io_map_unmappable((vm_offset_t)base,(vm_size_t)bytes,VM_WIMG_IO);
  return nppa_native.pool?0:-1;
 }
 static int nppa_xnu_word(void *c,uint32_t off,uint32_t *v,unsigned write)
