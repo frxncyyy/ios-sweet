@@ -3,6 +3,33 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **PERSISTENT RADIO c6cb126f HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
+  Boot-only authorized runner EXECUTED once; flash/reboot OKAY. Native USB180s
+  exit0,228082-byte log SHA256
+  9476ee36c8f8f457704c10774447cc32537d09903ffa2c18fdf5de5f1bdb1613.
+  Final strict report complete/no issues, phase10 retained1, ADIE66358a11,
+  HW handoff2; outer stage3 success1/retained1/restored0. No panic/USB error/
+  capacity loss. Human confirms lockscreen/touch/buttons working. Current
+  phone c6cb126f is healthy; collector stopped. Previous8ca8/rescue preserved.
+  This proves source radio initialization only; no firmware execution/network
+  interface/effective DRAM permission inferred. No new flash authorization.
+  Final evidence research/nord2/wifi-persistent/ios/hardware-report-final.json.
+  Native private AP-wake binding independently reviewed PASS at
+  next-stage/ap-wake-candidate/native-binding/independent-review.json;
+  separate wake lifetime, explicit default-off flag, source balanced sleep,
+  no post-sleep MMIO or old persistent state changes. Parent will promote,
+  compile/test/build exact next image, then seek new boot-only approval.
+  UFS/boot tuning remains closed; all agents are Wi-Fi only.
+
+
+
+- **PERSISTENT RADIO c6cb126f AUTHORIZED; RUNNER STARTING ONCE.**
+  Human: "Autorizzo, pronto in fastboot" for exactc6cb126f…a4192b8e image.
+  Known Nord2 is the sole fastboot device. Private authorization records boot
+  only and conditional tested rescue/working8ca8 restoration after manual
+  reset. Parent owns USB; run once and collect180s, never repeat after flash.log
+  or hardware-live exists. No MPU SET/DRAM firmware writes/CPU release.
+
 
 - **PERSISTENT RADIO IMAGE READY; AWAIT EXACT BOOT-ONLY APPROVAL.**
   shim/out/nord2-xnu/nord2-ios-wifi-persistent-stop23.img,33,288,192B,
