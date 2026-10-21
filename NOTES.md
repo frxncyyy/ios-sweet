@@ -4,6 +4,51 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **STATE-CHECK IMAGE VERIFIED; EXACT NEW FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-state-battery-stop23.img`, 33345536 bytes,
+  SHA256 0ce012687f2e8266a9ca28edc18101e772ef34db304874b85526a00d279f9ea5.
+  Payload 67ec29a6790194ae4e06e4c90ea1013a0021f6c16b9e3822981256c016e70a67.
+  CI39597568934/source852b935b2fa1044ba37e5ec6baae10ac02c83e5a; kernel
+  62f0fb751d8650e7cc881a4a557c1f27d50c641c80a1fd9f4f8088f66ad77f94.
+  Fullmask3/captureddiagnostics/structoffsets linked review PASS; poolmap
+  route still correct. Bounded1GiB packing exit0 and full independent loader,
+  payload/ADT/calibration, Linux/DT/CPIO and Androidheader checks PASS.
+  Boot spare 208896 bytes. Private wifi-main-state/ios
+  identity/schema/prepared gates true, authorizationFALSE and runnerNEVERrun.
+  Ask NEW exact boot-only/RF approval with e0d3/RAMrescue conditionalfallback.
+  Current phone remains e0d3, human-confirmed lockscreen/touch/buttons healthy.
+  No collector active. Original b60dd9bc completefailed log51448B remains
+  frozen: DMAinitialized, failurebeforepatchcopy, originalsyncunknown.
+  UFS/boot speed closed/unchanged; audio4 and nextWiFipackages private only.
+
+
+
+- **STATE-CHECK CI39597568934 SUCCESS; IMAGE PACKING.**
+  Source852b935b2fa1044ba37e5ec6baae10ac02c83e5a, kernel17479696 bytes,
+  SHA25662f0fb751d8650e7cc881a4a557c1f27d50c641c80a1fd9f4f8088f66ad77f94.
+  Artifact and1134generic ARMv8.2+crypto compile invocations verified.
+  Private wifi-main-state/ios identity/schema gates true; 1 GiB-bounded
+  packing and targeted linked review underway. Prepared/authorization gates
+  remain false. Currente0d3 healthyhumanconfirmed; no device operations.
+  Private audio/revision4 manifest969df856 narrow0xec I3C correction reviewed
+  PASS, actualnormalARM64 objects. after-fw-ready normal-init59c31970 also
+  reviewed PASS, alongside runtime05f1707f and scan-bssb7649200. All remain
+  private/unintegrated, no runtime capability/scan/networking claim.
+
+
+
+- **STATE-CHECK FIX CI39597568934 RUNNING.**
+  Source852b935b2fa1044ba37e5ec6baae10ac02c83e5a; full SW_SYNC readiness
+  correction and captured PRESPAN/PREORDER diagnostics. Current e0d3 phone
+  is human-confirmed healthy; failed b60dd9bc complete logs are preserved.
+  New private wifi-main-state/ios has all gatesfalse; needs successful CI,
+  exact source/artifact verification, targeted linked review and bounded
+  image packing before asking a NEW exact boot-only approval.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39597568934
+  Private audio revision4 narrow register correction underway, no integration.
+
+
+
 - **PRE-SPAN STATE CORRECTION PROMOTED; READY FOR CI.**
   Private pre-span-fix manifest6d51d655 independently reviewed PASS. Three
   canonical files promoted together: firmware C/header and coordinator.

@@ -31,8 +31,8 @@ values still need testing on the next approved image.
 
 Source pin: `frxncyyy/android_kernel_oplus_mt6893` commit
 `04d00c2565764c3922c9b4826b5acff1106e533f`. Host verification:
-`python3 tools/test-nord2-battery.py`. The actual gauge/charger reads have
-not yet been observed on the phone.
+`python3 tools/test-nord2-battery.py`. Actual gauge/charger observations are
+recorded below; they do not establish charging control or full UI validation.
 
 ## First hardware handoff result
 
@@ -55,3 +55,15 @@ inference; no MT6893 field specification was located. Upper bits remain
 unnamed. Captured FIFO_STAT 0x840 has count zero under this convention;
 nonzero counts are refused. START, DMA, interrupt-error and completion-latch
 checks remain independent, and there is no drain/reset/retry fallback.
+
+## Observed reads with the FIFO correction
+
+The 368062de and b60dd9bc images successfully read both I2C buses before
+their separate Wi-Fi failures. The latter captured SOC100/100, pack voltage
+`0x21e7` (8679 mV), temperature `0xbf6` (3062 decikelvin), charger status
+`0x3f/0x3f` and faults0. This is a measured 100%, not the prior constant
+fallback. The source's active-low MP2650 power-good bit was not asserted;
+that observation alone does not establish USB cable detection or charging
+configuration. Current remains unavailable pending gauge identification.
+The restored e0d3 fallback predates this FIFO fix, so its battery behaviour
+must not be used as validation of the newer provider.
