@@ -3,6 +3,55 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **POOL MAP FIX IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-map-battery-stop23.img`, 33345536 bytes,
+  SHA256 b60dd9bc3935d5e30ac7ef740310e41d5198752fb6d4ce244c5a0617b58065b4.
+  Payload b5541b28fcfc22a409c80adba60c4902dcc49c6c7d3ac3b4132f29ee73ef14ff.
+  CI39594356768/source a1b90e3fa9e786b9b0fc0201db080faeede7b024; kernel
+  0e754ab6dda77ace4d9407686b6af878fbafd066880b833866e877f74d27d9a7.
+  Targeted linked review confirms full 15.125 MiB claim reaches kernel_map
+  through ml_io_map_unmappable with Device flags7; retained guards unchanged.
+  Bounded 1 GiB packing exited0. Fresh loader, complete payload segments,
+  sole calibration ADT addition, Linux/dual DT/raw rescue and Android header
+  verification PASS. Boot partition spare208896 bytes. New private stage
+  research/nord2/wifi-main-map/ios has identity/schema/prepared gates true;
+  human/RF/recovery authorization still FALSE and runner NEVER executed.
+  Next: ask exact boot-only approval for b60dd9bc, then run its one-use runner
+  only after approval and physical fastboot. Conditional fallback is healthy
+  e0d3 or tested RAM rescue; NEVER normal Android over installed iOS userdata.
+  Current phone remains e0d3, human-confirmed healthy; no USB collector active.
+  The main-image368062de failed evidence and restoration remain frozen.
+  Capability runtime05f1707f and pure scan/BSS b7649200 independently reviewed
+  PASS in private after-fw-ready; neither integrated nor hardware-tested.
+  DeepSeek audio session remains visible desktop3; no audio integration.
+
+
+
+- **POOL MAP FIX CI39594356768 SUCCEEDED; IMAGE PACKING.**
+  Exact source a1b90e3fa9e786b9b0fc0201db080faeede7b024. Kernel 17463256 bytes,
+  SHA256 0e754ab6dda77ace4d9407686b6af878fbafd066880b833866e877f74d27d9a7.
+  Artifact SHA256SUMS and 1134 actual generic ARMv8.2+crypto compiler
+  invocations pass, including the main firmware translation units. New
+  private wifi-main-map/ios identity/schema verified; 1 GiB-bounded image
+  packing is running alongside targeted linked allocator review. Prepared
+  image and exact hardware authorization remain false. Current e0d3 remains
+  human-confirmed healthy; no new device actions or collectors.
+  The private after-fw-ready/runtime capability candidate (manifest05f1707f)
+  passed independent source review and sanitizer fault tests; not integrated.
+  Further scan/BSS work is private. DeepSeek audio session remains on desktop3.
+
+
+- **POOL MAP FIX CI39594356768 RUNNING.**
+  Sourcea1b90e3fa9e786b9b0fc0201db080faeede7b024, onlyruntimechange is
+  fullDMAclaim virtualmap route (physicalrange/Deviceattrs unchanged).
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39594356768
+  Newprivate stage wifi-main-map/ios has allgatesfalse; samecmdline/calADT/
+  e0d3fallback with distinctimage/approvalscope. Source/templates review
+  beforeidentityfill; actualnewlinkedallocator proof andimagepacking next.
+  Currente0d3 healthyhumanconfirmed, collectorsstopped. AudioDeepSeeklive3.
+
+
 - **POOL KERNEL-MAP FIX READY FOR CI.**
   BinderSHA2d3b2116c79c43be9defbb7c6e25a2930bb912301cd5abc2218791fa70c34183:
   full15.125MiB map now ml_io_map_unmappable(...VM_WIMG_IO), no changed
