@@ -4,6 +4,48 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **BASIC IMAGE VERIFIED; EXACT BOOT-ONLY APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-basic-config-battery-stop23.img`,
+  33357824 bytes, SHA256
+  89b3eb2abe4e906f420263803033a2a33a3717b23aecdafd488344e168e42066.
+  Payload966922ed566e37add4908467e01c47d27624d327ac51c46e41cfc0a003354009.
+  CI39648973050/source c4a34727819024714da1b2cab1ab1ffc37fc5067.
+  Independent actual-linked review298f8aee PASS; root verified all evidence
+  hashes and reviewed actual lease/guard/terminal paths. Bounded image pack
+  exit0; independent loaded-kernel/loader/ADT/calibration/original-Linux/dualDT/
+  rescue/header verification and existing-image check PASS;196608 spare bytes.
+  e0d3 fallback and RAM rescue hashes verified. CI/schema/prepared true;
+  human/RF/recovery false. Fresh runner unused; no device action. Phone remains
+  healthy0e949521. Test adds one CID2/no-response after actual CAP receipt and
+  logs real resource/TAG3/PHY metadata; no scan or interface yet.
+  Ask exact boot-only approval plus conditional e0d3/rescue recovery; manual
+  fastboot may be required. Never boot stock Android over installed iOS root.
+  Parallel iOS-service bridge has third private milestonec1f128b6: raw13-byte
+  capabilities and bounded completed-cache semantics. Earlier scan helper has
+  a dormant naming bug (+4 BSS type mislabeled scan type; actual type+52),
+  documented in peer-review erratum aea3e859; author correcting in a new
+  passive-scan contract revision before integration. No native service exposed.
+
+
+- **BASIC CI39648973050 SUCCESS; new image packing, no hardware action.**
+  Source c4a34727819024714da1b2cab1ab1ffc37fc5067; fully downloaded kernel
+  17464832 bytes, SHA256 e64638ee7d34e15eb585721b6bf554f63c7709cce81f50bb892d1a3b43524ca1.
+  Artifact SHA256SUMS and successful CI head match. 1140 compiler invocations
+  on1139 lines carry generic ARMv8.2+crypto flags. One new partial echo has
+  complete target flags but an unrecoverable source suffix; its exact hash and
+  interleaved header-install context are preserved, not inherited/exempted
+  from the previous run. Four new TUs and sweet_touch each have full echoes.
+  CI/schema gates true; independent linked review active. Exact491-byte image
+  is packing with1GiB address-space limit (session2801). Prepared and human
+  approval gates remain false. Current phone remains healthy0e949521.
+  Service-bridge second private milestone6baac3c4 has exact scan request/result
+  and async-event layouts, plus unregistered refusal-only userclient scaffolding;
+  peer review underway. New work traces capability bits/initial queries/cache
+  semantics; no service/interface is published. Private regulatory evaluator
+  b8fdaf76 is complete with explicit country provenance and no TX authority;
+  actual runtime TAG3/PHY/country/power prerequisites still gate its use.
+
+
 - **BASIC_CONFIG promoted; local validation passed, full CI next.**
   Exact candidate7dcc9883, independent native reviewf037648f and root review
   are saved under wifi-basic-config. Adds default-off nord2wifibasic=1 for one
