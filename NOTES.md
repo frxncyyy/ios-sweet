@@ -4,6 +4,36 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **b60dd9bc BOOTLOOP LOG RECOVERED; e0d3 RESTORED.**
+  Exact authorized new boot flashed/rebooted OKAY14:00. Initial USB97000B
+  (SHA a9a1e6254c720532173aa7fd3a76de9dd257f6f5d61c4e4363f7bf526bc2d52d)
+  ended with READ54 timeout. User confirmed bootloop. Separate STATUS52 retry
+  timed out, no successful second capture. User entered fastboot; authorized
+  boot-only e0d3 restore/reboot OKAY14:02. Restore USB90s275510B complete;
+  original and split evidence plus reports under wifi-main-map/ios.
+  Preserved failed prefix51448B SHA a61b4959fbf2b75065aef0904a98a17c77bdfab77e654f664257d88704bf4403
+  proves DMA pool mapping/zero verification PASS, full initializer phase5,
+  scheduler99/register92/memory2123 succeeded. MAINstage3 patch-copy failed
+  before any span writes/commands/PHY: explicit retained-state panic, not an
+  unexplained controller crash. Nativeerror21 is coordinator overwrite;
+  original guard reason/pre_sync raw were not logged. Source defect found:
+  pre_sync rejects ANY readiness bit though selected ready mask3 requires both;
+  actual trigger remains unknown. Private narrow correction plus captured
+  diagnostics/tests in progress; no new CI/image/approval. Current e0d3
+  USB/display logs healthy, human confirmation pending. All collectors stopped.
+  Never rerun executed b60dd9bc runner. UFS/boot speed remain unchanged.
+
+
+
+- **POOL MAP IMAGE b60dd9bc AUTHORIZED; ONE-USE RUNNER STARTED.**
+  User explicitly authorized exact image, RF calibration, boot-only flash and
+  conditional recovery to healthy e0d3/RAM rescue, and reports fastboot ready.
+  New runner research/nord2/wifi-main-map/ios/run-approved-boot.py started
+  exactly once; collect native USB180s. Never rerun after flash.log exists.
+  Runtime DMA/main firmware outcomes are pending; no networking claim.
+
+
+
 - **POOL MAP FIX IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-map-battery-stop23.img`, 33345536 bytes,
   SHA256 b60dd9bc3935d5e30ac7ef740310e41d5198752fb6d4ce244c5a0617b58065b4.
