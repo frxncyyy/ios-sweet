@@ -56,14 +56,14 @@ int nbg_i2c_read(const struct nbg_i2c_io *o,void *c,struct nbg_i2c_state *s,
  R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;} /* never touch inheritedDMA */
  R(base+0x0c,2,&v);s->prior_irq=v;
  if(v!=0&&v!=1){s->failure=8;goto unknown;} /* preserve errors/unknown status */
- R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;} /* conservative: no inherited FIFO state */
+ R(base+0xf4,2,&v);if(v&0x1f){s->failure=9;goto unknown;} /* MTK v2 receive-count convention: i3c-master-mtk.c:776,843. */
  /* Source clears latched TRANSAC_COMP before a new transfer. Adopt only
   * exact completion, with no inherited START/DMA/FIFO and stable status.
   * This is AP-local boot handoff; no concurrent bus owner is permitted. */
  if(s->prior_irq==1){
   R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
   R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;}
-  R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;}
+  R(base+0xf4,2,&v);if(v&0x1f){s->failure=9;goto unknown;}
   R(base+0x0c,2,&v);if(v!=1){s->failure=8;goto unknown;}
   W(base+0x0c,2,1);s->prior_ack=1;
   R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;}

@@ -10809,14 +10809,14 @@
 + R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;} /* never touch inheritedDMA */
 + R(base+0x0c,2,&v);s->prior_irq=v;
 + if(v!=0&&v!=1){s->failure=8;goto unknown;} /* preserve errors/unknown status */
-+ R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;} /* conservative: no inherited FIFO state */
++ R(base+0xf4,2,&v);if(v&0x1f){s->failure=9;goto unknown;} /* MTK v2 receive-count convention: i3c-master-mtk.c:776,843. */
 + /* Source clears latched TRANSAC_COMP before a new transfer. Adopt only
 +  * exact completion, with no inherited START/DMA/FIFO and stable status.
 +  * This is AP-local boot handoff; no concurrent bus owner is permitted. */
 + if(s->prior_irq==1){
 +  R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
 +  R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;}
-+  R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;}
++  R(base+0xf4,2,&v);if(v&0x1f){s->failure=9;goto unknown;}
 +  R(base+0x0c,2,&v);if(v!=1){s->failure=8;goto unknown;}
 +  W(base+0x0c,2,1);s->prior_ack=1;
 +  R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;}
@@ -11657,7 +11657,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_dma_preflight.c
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,54 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_dma_preflight.h"
@@ -11690,7 +11690,14 @@
 +  for(unsigned w=0;w<4;w++){
 +   if(rd(o,c,s,t->address+4*w,&t->raw[w]))return -1;
 +   t->valid|=1u<<w;
-+   if(t->raw[w]&masks[w])mismatch(s,2,t->address+4*w,t->raw[w],masks[w]);
++   /* Count alone does not program a descriptor pointer. Current retained
++    * ROM boot observes 512 on all27 rings, with base/ext/indices zero and
++    * both engines disabled. Accept only zero or this observed count; the
++    * independent base/ext/index checks remain mandatory. This is not a
++    * claim that selected CODA documents a reset default. */
++   uint32_t checked=t->raw[w]&masks[w];
++   if(w==1&&(checked&0xfffu)==0x200u)checked&=~0xfffu;
++   if(checked)mismatch(s,2,t->address+4*w,t->raw[w],masks[w]);
 +  }
 + }
 + if(n!=NWDP_RINGS){s->error=3;return -1;}

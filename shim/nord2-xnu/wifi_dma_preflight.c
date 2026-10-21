@@ -28,7 +28,14 @@ int nwdp_capture(const struct nwdp_io *o,void *c,struct nwdp_state *s,unsigned o
   for(unsigned w=0;w<4;w++){
    if(rd(o,c,s,t->address+4*w,&t->raw[w]))return -1;
    t->valid|=1u<<w;
-   if(t->raw[w]&masks[w])mismatch(s,2,t->address+4*w,t->raw[w],masks[w]);
+   /* Count alone does not program a descriptor pointer. Current retained
+    * ROM boot observes 512 on all27 rings, with base/ext/indices zero and
+    * both engines disabled. Accept only zero or this observed count; the
+    * independent base/ext/index checks remain mandatory. This is not a
+    * claim that selected CODA documents a reset default. */
+   uint32_t checked=t->raw[w]&masks[w];
+   if(w==1&&(checked&0xfffu)==0x200u)checked&=~0xfffu;
+   if(checked)mismatch(s,2,t->address+4*w,t->raw[w],masks[w]);
   }
  }
  if(n!=NWDP_RINGS){s->error=3;return -1;}

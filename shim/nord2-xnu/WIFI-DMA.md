@@ -14,7 +14,12 @@ Android initialization. A complete inherited or unstable configuration
 returns status 1 after balanced sleep, without setting memory protection or
 writing the pool. Unknown failures retain resources for manual reset.
 
-Only an empty, stable snapshot permits source-ordered region18 SET calls
+The accepted unprogrammed profile requires zero base addresses, extensions
+and producer/consumer indices, with counts either zero or the observed 512.
+512 is an observed boot value, not a source-documented reset default. Both
+engines must remain disabled and stable. Unknown counts are refused.
+
+Only this unprogrammed, stable snapshot permits source-ordered region18 SET calls
 (group 1, then group 0). Both raw x0 status values must be zero; all returned
 registers are logged. SET may lock and is never retried or rolled back. The
 full pool is mapped once outside XNU's high DRAM window using the existing

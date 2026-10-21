@@ -3,6 +3,18 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **NARROW DMA COUNT / BATTERY FIFO FIXES PROMOTED; NO NEW FLASH.**
+  DMA accepts zero or observed512 count only with zero base/ext/indices and
+  disabled/stable engines. Battery uses selected same-IP V2 low5 receive
+  count; cross-driver inference and unnamed upperbits documented explicitly.
+  Original e0d3 refusal evidence/parser frozen. Canonical ASan/UBSan suites
+  pass including profile mutations; actual two active ARM64 objects pass
+  normal CI-derived flags with system clang23 (no forced NORD2). Patch11738
+  lines applies/reproduces. MainFW native integration waits shared-lifetime
+  halt fix and actual binding/coordinator independent review; no CI yet.
+  Phone remains e0d3 healthy with collector stopped. UFS unchanged.
+
+
 - **DMA e0d3a50f BOOT HEALTHY; PREFLIGHT REFUSAL RECORDED.**
   Authorized boot-only flash/reboot OKAY; one-use runner executed, never rerun.
   Native USB180s exit0, 238276B SHA256

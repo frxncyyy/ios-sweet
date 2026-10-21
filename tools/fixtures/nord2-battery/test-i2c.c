@@ -14,7 +14,7 @@ static int read(void *p,uint32_t a,unsigned width,uint32_t *v){struct mock*m=p;i
  else if((a&0xfff)==0xc){m->irq_reads++;*v=m->started?(m->timeout?0:m->error?2:1):((m->acked&&!m->sticky)?0:((m->changing&&m->irq_reads==2)?2:m->prior));}
  else if((a&0xfff)==0x24)*v=(++m->start_reads==2&&m->busy_second)?1:0;
  else if((a&0xfff)==0x10)*v=(++m->dma_reads==2&&m->dma_second)?4:m->regs[4];
- else if((a&0xfff)==0xf4)*v=m->prior_fifo||(++m->fifo_reads==2&&m->fifo_second);
+ else if((a&0xfff)==0xf4)*v=m->prior_fifo|((++m->fifo_reads==2&&m->fifo_second)?1:0);
  else if(a==0x11d03000||a==0x1101a000){assert(width==1);*v=(m->data++==0)?43:0;}
  else *v=m->regs[(a&0xfff)/4];
  return 0;
@@ -64,5 +64,14 @@ int main(void){struct nbg_i2c_state s={0};struct mock m={.gate=8};uint16_t value
  }
  s=(struct nbg_i2c_state){0};m=(struct mock){.prior=1,.sticky=1};
  assert(nbg_i2c_read(&io,&m,&s,7,0x55,0x2c,2,&value)&&s.offline&&m.acked==1&&!m.start&&s.failure==8);
+ /* Actual captured raw status and all nonzero count mutations. */
+ for(unsigned irq=0;irq<=1;irq++){
+  s=(struct nbg_i2c_state){0};m=(struct mock){.prior=irq,.prior_fifo=0x840};
+  assert(!nbg_i2c_read(&io,&m,&s,7,0x55,0x2c,2,&value)&&m.start==1&&value==43);
+  for(unsigned count=1;count<=31;count++){
+   s=(struct nbg_i2c_state){0};m=(struct mock){.prior=irq,.prior_fifo=0x840|count};
+   assert(nbg_i2c_read(&io,&m,&s,7,0x55,0x2c,2,&value)&&s.failure==9&&!m.start&&!m.acked);
+  }
+ }
  return 0;
 }

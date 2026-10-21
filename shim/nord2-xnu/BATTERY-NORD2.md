@@ -46,3 +46,12 @@ changing state, nonempty FIFO and uncertain callbacks still leave the bus
 offline. No reset, retry, FIFO discard or pinmux change is introduced.
 Captured NORD2 BAT PREFLIGHT reports the prior latch and returned acknowledgement;
 actual SOC/charger success still requires a new hardware test.
+
+The V2 FIFO preflight uses the low five receive-count bits, following the
+selected tree's `drivers/i3c/master/i3c-master-mtk.c` receive paths at lines
+776 and 843. Its expanded register map matches `i2c-mtk.h` V2, including
+FIFO_STAT at 0xf4. Applying that convention to I2Cv2 is a shared-IP source
+inference; no MT6893 field specification was located. Upper bits remain
+unnamed. Captured FIFO_STAT 0x840 has count zero under this convention;
+nonzero counts are refused. START, DMA, interrupt-error and completion-latch
+checks remain independent, and there is no drain/reset/retry fallback.
