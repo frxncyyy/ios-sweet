@@ -3,6 +3,73 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **SWINT IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-swint-battery-stop23.img`,
+  33349632 bytes, SHA256
+  fa13be9baa232b26c89994998cd566fa2ec4e0d96748b5420f1c6504ba203be7.
+  Payload5086ccea1a0c72d343cc25f5cc92ace6196603395d24f89489bd7edbeeed602c.
+  CI39630376895/source520525269d472e34af34449a9444dd00f822c8ee;
+  kernel17479800 bytes SHA45adc8ea5f5d0c7de88221fb7fad4ab2537de71d161c71563c46f0ad5d05bcf5.
+  Targeted linked narrow CID41 gate/pendingSTA29 fail-stop/noextraIO/ABI PASS.
+  Bounded1GiB pack exit0; fresh independent loader/segments/ADT/privatecal/
+  Linux/dualDT/raw rescue/header checks PASS;204800 bytes spare. Existing
+  manifest/payload rechecked, actual e0d3/rescue hashes verified. Stage CI/
+  schema/prepared true; human exact/RF/recovery false; runner NEVER executed.
+  Same main firmware/calibration attempt permits only observed late ENA29,
+  refuses unhandled actual pendingSWINT. Real ACK/FW_READY still required;
+  new test can fail. Keep30s drain/manualfastboot conditional e0d3/rescue.
+  Ask exact new boot-only approval. Currentphone e0d3 human-healthy, all
+  collectors finished. Privatecapability32a1e5d0 reviewed, not integrated;
+  audio0680eaaa reviewed uncalled, hardware ownership blockers remain.
+  UFS/boot speed unchanged.
+
+
+- **PRIVATE NEXT-STAGE REVIEWS COMPLETE; NO ACTIVATION.**
+  Capability runtime-current-owner9ddf7902 updates actual nwt1176/nwi3040/
+  nwfn7472,43-field ABI and synthetic actual-owner query proof. First bounded
+  query performs all callbacks at completed3 then parks at4: no ENA gate
+  widening needed, deliberate further-owner call refuses. Separate
+  runtime-failure-drain32a1e5d0 adds only existing nwm_failure_drain after
+  common halt/report before panic; independent sanitizer/review PASS.
+  Hardware FW_READY still required before promotion; normal E000 RX format
+  unproven and no scan/interface provided. Qualified private mixed-header
+  compiles are not full production CI; integration mapping requirements
+  need refresh from old7440 snapshots before future canonical promotion.
+  Audio silent-afe-adapter-v2 0680eaaa independently PASS for worker receipt
+  consumedonce and existing16KiB AFE VA+2000 reuse; uncalled/private. Actual
+  sameboot coldstate and SRAM/audio-master exclusivity remain unproven.
+  Current SWINT image still packing; no hardware action pending except a
+  future exact new approval. e0d3 phone remains human-healthy.
+
+
+- **SWINT CI39630376895 SUCCESS; IMAGE PACKING.**
+  Source520525269d472e34af34449a9444dd00f822c8ee; kernel17479800 bytes,
+  SHA45adc8ea5f5d0c7de88221fb7fad4ab2537de71d161c71563c46f0ad5d05bcf5.
+  Full download/SHA/source checks PASS;1134 genericARMv8.2+crypto commands
+  across1131 lines (3 interleavedpairs). Linked policy review pending; stage
+  CI/schema true, prepared/human approval false. Bounded1GiB pack underway.
+  Phone e0d3 healthy, collectors finished. Audio silent-afe-adapter-v2
+  0680eaaa fixes privatev1 findings; peer review pending, no runtime caller.
+  UFS/boot speed unchanged.
+
+
+- **PARALLEL AUDIO ADAPTER REVIEW: PRIVATE v1 NEEDS CHANGES.**
+  Frozen silent-afe-adapter c47a9444 has no caller and is not integrated.
+  Independent source review found missing actual amp-measurement-thread
+  binding and a duplicate SRAM mapping inside the existing16KiB AFE Device
+  mapping. Author is preparing separate privatev2 with captured measurement
+  worker receipt and reuse of AFE VA+2000; originalv1 preserved. Hardware
+  coldstate/master ownership still unproven. Do not activate based on host
+  tests. Wi-Fi fullCI39630376895 remains current priority; phone e0d3 healthy.
+
+
+- **SWINT POLICY FULL CI39630376895 RUNNING.**
+  Source520525269d472e34af34449a9444dd00f822c8ee; narrowly permits measured
+  late ENA29 and rejects actual pendingSWINT. Full artifact/link/image checks
+  pending; no new hardware approval. Current e0d3 human-healthy, no collectors.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39630376895
+
+
 - **MEASURED LATE MCU INTERRUPT ENABLE POLICY PROMOTED; CI NEXT.**
   Independently reviewed mcu-swint-enable-v2 manifestfbb8a9cf, single binder
   53ef37d1 promoted exactly with native fixture. Allows only DMA1 ENA29 at
