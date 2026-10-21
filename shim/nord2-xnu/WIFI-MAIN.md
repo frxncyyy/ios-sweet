@@ -103,3 +103,23 @@ drain remains. Struct fields are appended and all consuming translation units
 must rebuild together. Host tests include the measured shape with synthetic
 RX, invalid zero-control forms and a wrong response sequence; hardware success
 remains unverified.
+
+The a8cc8050 test accepted the measured TX completion and copied a 36-byte
+RX frame (RXD count36, INIT count12). It then failed the packet-type/EID/
+sequence guard before event completion or status/CID validation. The raw
+header was not logged, so none of those four bytes is known yet. No PHY or
+main firmware-ready result was reached. The phone was restored to healthy
+e0d3. The lengths fit the selected RXD24 + INIT8 + result4 layout but do not
+establish response identity or success.
+
+Captured-only RXDESC/RXWORDS/RXHEADER diagnostics now record the existing
+read's descriptor, expected buffer, DIDX and bounded copied header fields.
+Validity bits distinguish expected context (1), captured DIDX (2), descriptor
+(4), header (8) and status/CID (16). Status/CID are recorded only for a copied
+frame of at least34 bytes with packet type0xe000 and EID1; PHY payload is not
+logged. The trace is the latest captured data, not an atomic hardware snapshot.
+Acceptance, rearm, polling and backend accesses are unchanged. The selected
+source checks EID, sequence and status; the native CID comparison is an extra
+strict check, and native polling budgets are shorter than the source's
+response budgets. Neither difference explains this earlier header refusal
+without the missing raw data. Appended state requires all consumers rebuilt.

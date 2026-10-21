@@ -59,6 +59,14 @@ static void nwfn_main_diagnostics(void)
   t->tx_submitted[0],t->tx_submitted[1],t->tx_submitted[2],t->tx_submitted[3]);
  printf("NORD2 WIFI MAIN TXOBSERVED: raw=%#x/%#x/%#x/%#x\n",
   t->tx_observed[0],t->tx_observed[1],t->tx_observed[2],t->tx_observed[3]);
+ printf("NORD2 WIFI MAIN RXDESC: addr=%#llx buffer=%#llx didx=%u valid=%#x reason=%u\n",
+  (unsigned long long)t->rx_descriptor_address,(unsigned long long)t->rx_expected_buffer,
+  t->rx_didx,t->rx_diag_valid,t->rx_failure_reason);
+ printf("NORD2 WIFI MAIN RXWORDS: raw=%#x/%#x/%#x/%#x\n",
+  t->rx_descriptor_raw[0],t->rx_descriptor_raw[1],t->rx_descriptor_raw[2],t->rx_descriptor_raw[3]);
+ printf("NORD2 WIFI MAIN RXHEADER: expected=%#x/%u type=%#x event=%#x/%u status=%#x cid=%#x valid=%#x\n",
+  t->rx_expected_eid,t->rx_expected_sequence,t->rx_packet_type,
+  t->rx_event_eid,t->rx_event_sequence,t->rx_status,t->rx_cid,t->rx_diag_valid);
  printf("NORD2 WIFI MAIN DMASTATUS: raw=%#x/%#x valid=%#x\n",
   t->irq_status[0],t->irq_status[1],t->irq_status_valid);
  printf("NORD2 WIFI MAIN SPANS: stage=%u completed=%u next=%u dirty=%u halt=%u words=%u/%u remaps=%u barriers=%u error=%d\n",

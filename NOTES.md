@@ -9,6 +9,47 @@
 
 
 
+
+
+- **RX HEADER DIAGNOSTICS PROMOTED; READY FOR FULL CI.**
+  Reviewedcandidate6d8d00f8 adds captured-only RXdescriptor/expectedbuffer/
+  DIDX/validity/reason and bounded type/EID/seq/status/CID fields; noadditional
+  backendIO or acceptance/rearm/poll changes. New RXDESC/RXWORDS/RXHEADER.
+  Exactcanonical3files+transportfixture promoted together; focused transport/
+  initializer/native/halt ASanUBSanPASS; actualgenerated sweet_touch/transport
+  normalcontextARM64PASS. Patch13835 applies/reproduces. Independent host+
+  ARM64 layoutPASS:nwt1176/nwi3040/nwfn7440; transportoffset1864unchanged,
+  downstreamownerfields+72. FullallTUrebuild/linkedreview required. New
+  wifi-main-rxheader/ios schema/sourcepinned, CI/prepared/approvalfalse.
+  Currente0d3 humanhealthy/allcollectorsfinished; UFS/boot speed unchanged.
+
+- **TX WRITEBACK TEST REACHED RX; e0d3 RESTORED/HUMAN-HEALTHY.**
+  Authorized a8cc8050 boot-only flash/reboot OKAY; TXconsumedzero accepted,
+  mismatch0/used68/DIDX1. Actual RX descriptor accepted and36bytescopied:
+  descriptor/mac/init lengths36/36/12, but error21/events0/finish0 at
+  packettype/EID/sequenceguard BEFORE status/CIDwrapper. NoPHY/mainready.
+  DMA1status08000001 = normalTX17+RX0completion. Immutablefailure152411B
+  SHA647683c0e4ec07049bd234366f09be012960166342c3c0e770ae669d2a0b7415.
+  Rawheaderunknown: do not inferwhichfieldmismatched. Selectedsourceaudit
+  rx-header36-audit/report.json8b0db51e findsno staticdefect; lengthsfit
+  RXD24+INIT8+RESULT4 but aloneprove noidentity/status. Existing reviewed
+  RXdiag captures allfourfailingbytes, no extrareads or guardrelaxation.
+  Usermanuallyenteredfastboot; authorized e0d3 boot-only restore/reboot OKAY.
+  USB90s capture223459B SHA
+  a4d6528b7c6dbfdb462383418c7fdfec02c820ab9cd9c1134ce590d43eea7797;
+  humanconfirms lockscreen/touch/buttons. No preservedprefix. Allcollectors
+  finished. Evidence wifi-main-txwriteback/ios; NEVER rerun either executed
+  runner/restoration. UFS/boot speed unchanged.
+
+
+- **TX WRITEBACK a8cc8050 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exactimage/same mainfirmware+calibration attempt/conditional
+  e0d3 or RAMrescue recovery; fastboot identity confirmed privately. New
+  wifi-main-txwriteback/ios runner executes once; USB180s collector starts
+  before reboot. Do not rerun onceflash.log exists. Runtime result pending.
+  UFS/boot speed unchanged.
+
+
 - **TX WRITEBACK IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-txwriteback-battery-stop23.img`,
   33347584B SHA256 a8cc8050f041ef423343576a22c965d8592618061ae030d6ce3111892fb04ad6.

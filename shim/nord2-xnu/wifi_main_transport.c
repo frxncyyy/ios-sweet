@@ -76,6 +76,11 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
  if(idx!=s->tx_index)return fail(s,13);
  uint64_t txd=s->tx_ring+16u*s->tx_index,rxd=s->rx_ring+16u*s->rx_index;
  uint64_t rxbuf=s->rx_buffers+4096u*s->rx_index;
+ s->rx_descriptor_address=rxd;s->rx_expected_buffer=rxbuf;
+ s->rx_diag_valid=1;s->rx_failure_reason=0;s->rx_didx=0;
+ s->rx_expected_eid=eid;s->rx_expected_sequence=s->next_sequence;
+ s->rx_packet_type=s->rx_event_eid=s->rx_event_sequence=s->rx_status=s->rx_cid=0;
+ for(unsigned word=0;word<4;word++)s->rx_descriptor_raw[word]=0;
  if(nwt_tx_desc(d,s->command,used))return fail(s,14);
  s->tx_descriptor_address=txd;s->tx_used=(uint32_t)used;s->tx_descriptor_valid=1;
  s->tx_mismatch=0;s->tx_ddone_waits=0;s->tx_consumed_zero=0;s->tx_didx=s->tx_index;
@@ -114,27 +119,33 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
  }
  if(!s->tx_done)return fail(s,17);
  for(i=0;i<1000;i++){
-  if(i&&wait(o,c,s))return -1;
-  if(coherent(o,c,s))return -1;
-  if(rr(o,c,s,RXBASE+12,&idx))return -1;
+  if(i&&wait(o,c,s)){s->rx_failure_reason=6;return -1;}
+  if(coherent(o,c,s)){s->rx_failure_reason=5;return -1;}
+  if(rr(o,c,s,RXBASE+12,&idx)){s->rx_failure_reason=6;return -1;}
+  s->rx_didx=idx;s->rx_diag_valid|=2;
   s->polls++;
-  if(idx>=NWT_RX_COUNT)return fail(s,18);
+  if(idx>=NWT_RX_COUNT){s->rx_failure_reason=1;return fail(s,18);}
   if(idx==s->rx_index)continue;
-  if(sync(o,c,s,rxd,16,2)||mr(o,c,s,rxd,d,16))return -1;
+  if(sync(o,c,s,rxd,16,2)||mr(o,c,s,rxd,d,16)){s->rx_failure_reason=6;return -1;}
+  for(unsigned word=0;word<4;word++)s->rx_descriptor_raw[word]=get32(d+4*word);
+  s->rx_diag_valid|=4;
   if(!(get32(d+4)&(1u<<31)))continue;
-  if(nwt_rx_complete(d,rxbuf,NWT_RX_BYTES,&bytes)||bytes<32||bytes>capacity)return fail(s,19);
-  if(sync(o,c,s,rxbuf,(uint32_t)bytes,2)||mr(o,c,s,rxbuf,frame,(uint32_t)bytes))return -1;
+  if(nwt_rx_complete(d,rxbuf,NWT_RX_BYTES,&bytes)||bytes<32||bytes>capacity){s->rx_failure_reason=2;return fail(s,19);}
+  if(sync(o,c,s,rxbuf,(uint32_t)bytes,2)||mr(o,c,s,rxbuf,frame,(uint32_t)bytes)){s->rx_failure_reason=6;return -1;}
+  s->rx_packet_type=(unsigned)frame[26]|(unsigned)frame[27]<<8;
+  s->rx_event_eid=frame[28];s->rx_event_sequence=frame[29];s->rx_diag_valid|=8;
+  if(bytes>=34&&s->rx_packet_type==0xe000&&frame[28]==1){s->rx_status=frame[32];s->rx_cid=frame[33];s->rx_diag_valid|=16;}
   s->rx_descriptor_bytes=(uint32_t)bytes;
   s->rx_mac_bytes=get32(frame)&0xffffu;
   s->rx_init_bytes=(uint32_t)frame[24]|(uint32_t)frame[25]<<8;
-  if(frame[26]!=0||frame[27]!=0xe0||frame[28]!=eid||frame[29]!=s->next_sequence)return fail(s,21);
+  if(frame[26]!=0||frame[27]!=0xe0||frame[28]!=eid||frame[29]!=s->next_sequence){s->rx_failure_reason=3;return fail(s,21);}
   s->rx_done=1;break;
  }
- if(!s->rx_done)return fail(s,22);
- if(coherent(o,c,s))return -1;
+ if(!s->rx_done){s->rx_failure_reason=4;return fail(s,22);}
+ if(coherent(o,c,s)){s->rx_failure_reason=5;return -1;}
  /* Rearm only aftermatchingeventcopied/validated; stillownmemoryuntilreset. */
- if(nwt_rx_desc(d,rxbuf,NWT_RX_BYTES))return fail(s,23);
- if(mw(o,c,s,rxd,d,16)||sync(o,c,s,rxd,16,1)||rw(o,c,s,RXBASE+8,s->rx_index))return -1;
+ if(nwt_rx_desc(d,rxbuf,NWT_RX_BYTES)){s->rx_failure_reason=2;return fail(s,23);}
+ if(mw(o,c,s,rxd,d,16)||sync(o,c,s,rxd,16,1)||rw(o,c,s,RXBASE+8,s->rx_index)){s->rx_failure_reason=6;return -1;}
  s->tx_index=next;s->rx_index=(s->rx_index+1)%NWT_RX_COUNT;s->next_sequence++;
  s->completed++;s->submit_attempted=0;s->tx_done=s->rx_done=0;*received=bytes;
  return 0;
