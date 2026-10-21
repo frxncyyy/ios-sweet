@@ -4,6 +4,25 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **PRE-SPAN STATE CORRECTION PROMOTED; READY FOR CI.**
+  Private pre-span-fix manifest6d51d655 independently reviewed PASS. Three
+  canonical files promoted together: firmware C/header and coordinator.
+  Full SW_SYNC0 ready mask3 replaces unsupported any-bit inference; all
+  receipt/owner checks retained. Captured PRESPAN/PREORDER logs distinguish
+  refusal reasons and retain raw sync/original native error before generic21.
+  Actual prior failure value remains unknown. Focused canonical ASan/UBSan
+  regression PASS; actual generated sweet_touch and firmware ARM64 compile
+  PASS using CI-derived flags/source headers, no extra bsd/dev include or
+  forced NORD2. Patch13746 lines applies/reproduces. New private stage
+  wifi-main-state/ios has false identity/prepared/approval/schema gates;
+  source/marker pins populated, awaiting full CI. No new flash authorization.
+  e0d3 restoration now HUMAN-CONFIRMED: lockscreen/touch/buttons work;
+  restoration-report.json updated, collectors stopped. Audio private review
+  PARENT-REVIEW.md found revision3 I3C guard wrong offsete4 vs sourceec and
+  corrected handoff's false claim revision2 compile was empty. No audio merge.
+
+
+
 - **b60dd9bc BOOTLOOP LOG RECOVERED; e0d3 RESTORED.**
   Exact authorized new boot flashed/rebooted OKAY14:00. Initial USB97000B
   (SHA a9a1e6254c720532173aa7fd3a76de9dd257f6f5d61c4e4363f7bf526bc2d52d)

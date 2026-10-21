@@ -4,11 +4,25 @@
 #include "wifi_main_halt.h"
 #include "wifi_rom_xnu.h"
 #include "wifi_rom_powered_adapter.h"
+#ifdef NFP_PRESPAN_HOST_TEST
+#include <errno.h>
+#include <stdio.h>
+typedef uintptr_t vm_offset_t;
+typedef size_t vm_size_t;
+extern int PE_parse_boot_argn(const char *,void *,int);
+#else
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <pexpert/pexpert.h>
+#endif
 extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
 extern void delay(int);
+#ifdef NFP_PRESPAN_HOST_TEST
+#define NFP_NATIVE_BARRIER() nfp_test_barrier()
+extern void nfp_test_barrier(void);
+#else
+#define NFP_NATIVE_BARRIER() __asm__ volatile("dsb sy":: :"memory")
+#endif
 struct nfp_native nfp_native;
 static int halt(void){
  nfp_native.halt=1;
@@ -38,20 +52,28 @@ static int spans_disjoint(const struct nrb_native *r){
  }
  return 0;
 }
-static int same(void){
+static unsigned same_bits(void){
  const struct nrb_native *r=nwfn_native.rom;
  const struct npp_state *p=nwfn_native.pool;
  const struct nwi_state *i=&nwfn_native.init;
- return !nfp_native.prepared||nfp_native.halt||!r||!p||!r->enabled||
-  !nrpc_receipt_ok(r)||!r->io||
-  p!=i->pool||p->stage!=NPP_DONE||!p->mapped||
-  !p->verified||!p->zero_complete||!p->balanced||!p->asleep||p->halt||
-  !i->initialized||i->phase!=5||i->halt||!i->driver_owned||
-  i->transport.phase!=2||i->transport.halt||
-  nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||
-  !nwfn_native.wf_owned||nwfn_native.asleep||nwfn_native.halt||
-  nwfn_native.claim.base!=UINT64_C(0x90000000)||
-  nwfn_native.claim.bytes!=UINT64_C(0xf20000);
+ unsigned bits=0;
+ if(!nfp_native.prepared||nfp_native.halt)bits|=1u;
+ if(!r||!r->enabled||!nrpc_receipt_ok(r)||!r->io)bits|=2u;
+ if(!p||p!=i->pool||p->stage!=NPP_DONE||!p->mapped||!p->verified||
+    !p->zero_complete||!p->balanced||!p->asleep||p->halt)bits|=4u;
+ if(!i->initialized||i->phase!=5||i->halt||!i->driver_owned)bits|=8u;
+ if(i->transport.phase!=2||i->transport.halt)bits|=16u;
+ if(nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||
+    !nwfn_native.wf_owned||nwfn_native.asleep||nwfn_native.halt)bits|=32u;
+ if(nwfn_native.claim.base!=UINT64_C(0x90000000)||
+    nwfn_native.claim.bytes!=UINT64_C(0xf20000))bits|=64u;
+ return bits;
+}
+static int same(void){unsigned bits=same_bits();if(bits)nfp_native.same_bits=bits;return bits!=0;}
+static int pre_span_fail(unsigned reason){
+ nfp_native.pre_span_reason=reason;
+ nfp_native.original_native_error=nwfn_native.error;
+ return halt();
 }
 static int owner(void *c){(void)c;return same()||nwfn_owner(&nwfn_native);}
 static const struct nmt_span *current(void){
@@ -66,7 +88,7 @@ static int remap(void *c,uint32_t target){
  if(!s||s->space!=NMT_AP2WF_WINDOW||
     s->firmware_target!=target||!nfp_native.cfg_io||owner(c))return -1;
  *(volatile uint32_t *)(nfp_native.cfg_io+0x120)=target;
- __asm__ volatile("dsb sy":: :"memory");return 0;
+ NFP_NATIVE_BARRIER();return 0;
 }
 static int address(enum nmt_space space,uint32_t pa){
  const struct nmt_span *s=current();uint32_t start;
@@ -88,7 +110,7 @@ static int read32(void *c,enum nmt_space space,uint32_t pa,uint32_t *value){
   pa-UINT32_C(0x8fb00000);
  *value=*(volatile const uint32_t *)(base+offset);return 0;
 }
-static int barrier(void *c){(void)c;__asm__ volatile("dsb sy":: :"memory");return 0;}
+static int barrier(void *c){(void)c;NFP_NATIVE_BARRIER();return 0;}
 static const struct nfp_io io={owner,remap,write32,read32,barrier};
 int nfp_xnu_prepare(uintptr_t cfg_io,uintptr_t host_io){
  const struct nrb_native *r=nwfn_native.rom;
@@ -117,23 +139,25 @@ int nfp_xnu_prepare(uintptr_t cfg_io,uintptr_t host_io){
  nfp_native.prepared=1;return 0;
 }
 int nfp_xnu_span(unsigned index){
- if(same())return halt();
+ nfp_native.pre_span_index=index;
+ if(same())return pre_span_fail(NFP_PRE_SAME);
  if(index==0&&!nfp_native.pre_sync_valid){
-  if(nwfn_owner(&nwfn_native))return halt();
+  if(nwfn_owner(&nwfn_native))return pre_span_fail(NFP_PRE_OWNER);
   nfp_native.pre_sync=*(volatile const uint32_t *)(nfp_native.host_io+0xf0);
   nfp_native.pre_sync_valid=1;
-  if(nfp_native.pre_sync&3u)return halt();/* inherited running FW */
+  /* Selected ready mask requires both bits, not any INIT_DONE bit. */
+  if((nfp_native.pre_sync&3u)==3u)return pre_span_fail(NFP_PRE_READY);
  }
  if(index<=1){
   if(nwfn_native.init.transport.completed||
-     nwfn_native.init.transport.finish_phase||nfp_native.coex_attempted)return halt();
+     nwfn_native.init.transport.finish_phase||nfp_native.coex_attempted)return pre_span_fail(NFP_PRE_ORDER);
  }else if(index<=6){
   if(nwfn_native.init.transport.completed!=2||
      nwfn_native.init.transport.finish_phase!=1||
      !nfa_native.exchange.event_valid||
      !nfa_native.exchange.backup_valid||
      !nfa_native.exchange.backup.valid||
-     !nfp_native.coex_done)return halt();
+     !nfp_native.coex_done)return pre_span_fail(NFP_PRE_ORDER);
  }
  printf("NORD2 WIFI MAIN SPAN ARM: index=%u stage=%u finish=%u events=%u coex=%u\n",
   index,nfp_native.state.stage,nwfn_native.init.transport.finish_phase,
@@ -156,9 +180,9 @@ int nfp_xnu_coex(void){
   0x10003314u,nfa_native.exchange.event.emi_offset,
   nfa_native.exchange.event.emi_bytes);
  *(volatile uint32_t *)(nfp_native.coex_io+0x314)=0;
- __asm__ volatile("dsb sy":: :"memory");
+ NFP_NATIVE_BARRIER();
  *(volatile uint32_t *)(nfp_native.coex_io+0x314)=1;
- __asm__ volatile("dsb sy":: :"memory");
+ NFP_NATIVE_BARRIER();
  nfp_native.coex_done=1;return 0;
 }
 int nfp_xnu_finish(void){

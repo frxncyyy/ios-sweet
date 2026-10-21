@@ -27,7 +27,20 @@ acquiring hardware or changing DMA/firmware state retains the owned memory
 and resources and requires a manual reset; it never chains to Android.
 A clean refusal before mutation may continue booting iOS.
 
+The pre-copy SW_SYNC0 check treats only the full mask `3` as an already
+running main firmware. Bit0 is INIT_DONE and bit1 is N9_DONE; either bit
+alone is not the selected driver's ready condition. Refusing the full mask
+before download is an additional conservative policy: the selected ROM/patch
+download path omits that precheck. Receipt and ownership checks still apply.
+`PRESPAN` and `PREORDER` log captured refusal reasons, SW_SYNC0 validity/value,
+state groups and the original native error before the coordinator marks the
+shared lifetime failed. These diagnostics perform no additional MMIO reads.
+The b60dd9bc hardware test completed DMA initialization but stopped before
+patch copy; its original SW_SYNC0 value was not logged, so this source defect
+is not yet proven to be that test's cause.
+
 Run `python3 tools/test-nord2-wifi-main.py` for host protocol, scheduler,
-initializer and transport checks. Full kernel CI, packed-image verification
+initializer and transport checks, or add `--only pre-span` for the focused
+native readiness/refusal regression. Full kernel CI, packed-image verification
 and a separately authorized hardware test are still required. UFS and the
 working display/input paths are unchanged.

@@ -2,9 +2,11 @@
  * implementations are separate TUs. Hook immediately after nppa_after_rom. */
 #include "wifi_main_fw_xnu.h"
 #include "wifi_main_phy_xnu.h"
-static struct {unsigned attempted,stage,ready,halt;int error;}nwfn_main;
+static struct {unsigned attempted,stage,ready,halt;int error;unsigned original_native_error,original_native_halt;}nwfn_main;
 static void nwfn_main_failure(int error)
 {
+ nwfn_main.original_native_error=nwfn_native.error;
+ nwfn_main.original_native_halt=nwfn_native.halt;
  nwfn_main.error=error;nwfn_main.halt=1;
  nwfn_stop(&nwfn_native,21);
  nfp_native.halt=1;nfp_native.state.halt=1;
@@ -20,6 +22,13 @@ static void nwfn_main_arm(unsigned stage,const char *action)
 }
 static void nwfn_main_diagnostics(void)
 {
+ printf("NORD2 WIFI MAIN PRESPAN: reason=%u same=%#x sync=%#x valid=%u native_before=%u/%u span_native=%u\n",
+  nfp_native.pre_span_reason,nfp_native.same_bits,nfp_native.pre_sync,
+  nfp_native.pre_sync_valid,nwfn_main.original_native_error,
+  nwfn_main.original_native_halt,nfp_native.original_native_error);
+ printf("NORD2 WIFI MAIN PREORDER: index=%u events=%u finish=%u coex=%u prepared=%u\n",
+  nfp_native.pre_span_index,nwfn_native.init.transport.completed,
+  nwfn_native.init.transport.finish_phase,nfp_native.coex_attempted,nfp_native.prepared);
  const struct nwi_state *i=&nwfn_native.init;
  const struct nwt_state *t=&i->transport;
  const struct nfp_state *f=&nfp_native.state;

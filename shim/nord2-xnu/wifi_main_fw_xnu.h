@@ -8,7 +8,9 @@ struct nfp_native {
  unsigned attempted,prepared,halt,coex_attempted,coex_done;
  unsigned pre_sync_valid,finish_attempted,finish_done,ready,ready_polls;
  uint32_t pre_sync,ready_raw;
+ unsigned pre_span_reason,pre_span_index,same_bits,original_native_error;
 };
+enum nfp_pre_span_reason {NFP_PRE_NONE,NFP_PRE_SAME,NFP_PRE_OWNER,NFP_PRE_READY,NFP_PRE_ORDER};
 extern struct nfp_native nfp_native;
 /* Sleepable source selection after nwfn_prepare, before fresh WFDMA start.
  * cfg_io is the already mapped npa_native.cfg Device page in the owning TU.
