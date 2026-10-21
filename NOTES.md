@@ -3,6 +3,42 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **CAPABILITY 6ddf FAILURE CAPTURED; e0d3 RESTORED AND HUMAN-HEALTHY.**
+  Conditional boot-only restore/reboot OKAY;90s USB collector exit0,
+  deadline/no transport error. Immutable restore224264 bytes SHA256
+  88cef153775bda44943b6fd75cdeef03eaa70f193c7d05eea8ea8e78f695126d.
+  Valid1125x2436 frames and user confirms lockscreen/touch/buttons
+  (call_696825c6493f4458920b383563977ce2). Recovery complete; no collector
+  running and NEVER rerun executed capability/restore runner.
+  Actual capability EIDec504-byte response remains unparsed: inner type
+  value unobserved, E000 guard rejected. Selected Android query/waiter
+  does not enforce that inner field; private exact-EID source-parity fix
+  plus bounded36-byte header diagnostics under independent review.
+  No scan/interface/connection. Currentphone e0d3; UFS/boot speed unchanged.
+
+- **CAPABILITY REPLY RECEIVED BUT INNER HEADER REFUSED; RESTORING e0d3.**
+  Authorized6ddf boot flash/rebootOKAY; main actualFWREADY succeeded.
+  CAP phase4/error20, TXdone1/events1/rearmed0: actualEIDec/seq4,
+  outerclass3800,504bytes with declared504/480. Size/outerclass match;
+  inner bytes26/27 differ from expectedE000 but value UNLOGGED, not inferred.
+ 30sdrain ran; collector ended USBtimeout-7. First/full immutable154846bytes
+  SHA580fc8aa79a393afd2cc72a0f211b36945d2f11b723cc1a191e4d30f4255d21d.
+  Both snapshots saved, strict parser refuses success. Collector finished.
+  User returnedfastboot; conditional authorized e0d3 boot-only restore
+  starting, then90sUSBcapture. Never rerun executed capability/restore runner.
+  Actual header diagnostics being prepared privately; no format relaxed.
+
+
+- **CAPABILITY 6ddf8c15 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exact boot-only image and conditional e0d3/RAM-rescue
+  recovery (call_66dd891bf947492d86cb1d0397f58a33, answer autorizzo).
+  Sole fastboot device matches prior authorized identity; productoplus6893,
+  bootcapacity2000000 and bootloader/non-userspace checked privately.
+  USB collector starts before reboot. NEVER rerun capability runner after
+  flash.log exists. Real capability reply and humanhealth pending.
+
+
 - **CAPABILITY IMAGE VERIFIED; EXACT NEW FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-capability-battery-stop23.img`,
   33353728bytes SHA256
