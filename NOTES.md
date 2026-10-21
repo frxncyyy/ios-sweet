@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WFSYS49c8c3ee HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
+  Boot-only flash/reboot OKAY, runner EXECUTED once; never rerun.
+  NativeUSB180s completed, 230446B SHA256 734345bbddd24c4a3a1a3efd5e0b9447eb468439ba35e25cbd255809caa8ba66.
+  Strict report complete/no issues; human lockscreen/touch/buttons confirmed.
+  WFSYS status0 stage11 local_id1 cpu_held1 balanced1 halt/dirty/unverified/
+  error0; all owned AP/WF/sem/clock/power/protection votes0, asleep1.
+  CONN20010101 local20010000 clock4006 IRQ1 initialAFE4400 finalPWR582fb00.
+  Coldvalid1f CPU0/top12/PWR582fb00/BGFCPU0/BGFtop12.
+  Polls AP3 WF1 cfg2 power2 protection4 ID1 off2 sem1 sem_off1 clock6.
+  Common phase10 remains retained. No ROM/CPU release/RF/network claim.
+  USB collector stopped; current49c8c3ee iOS healthy, previous49f177ec and
+  tested RAM rescue preserved. Final report wifi-wfsys/ios/hardware-report-final.json.
+  Next combined ROM_DONE PRIVATE candidates: hardened rom-native-candidate
+  current-boot FDT claim, reviewed/tested rom-loader-candidate (20228B linked),
+  rom-native-binding actual sourceSET/4span persistent copy tests passed;
+  rom-powered-core under construction. No new image/flash authorization.
+  Fuel gauge private realI2C provider and presentation candidate under peer
+  review; knownfake100/chargingfallback identified. UFS/boot unchanged.
+
+
+- **WFSYS49c8c3ee AUTHORIZED; ONE-USE RUNNER STARTING.**
+  Human "Autorizzo, pronto in fastboot" for exact49c8c3ee...5e465131.
+  Known Nord2 sole fastboot device; no USB collector. Private authorization
+  records boot-only plus conditional testedRAMrescue/current49 restoration.
+  Parent executes once/captures180s. Never rerun after flash.log/hardware-live.
+  ROM/CPUrelease/network not part of this image; UFS/boot unchanged.
+
+
 - **WFSYS IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
   shim/out/nord2-xnu/nord2-ios-wifi-wfsys-stop23.img, 33296384B,
   SHA256 49c8c3ee9ff78336358201d176ef9ccc32e44a99e0a39c7f9fced1995e465131.
