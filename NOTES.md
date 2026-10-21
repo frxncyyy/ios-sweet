@@ -3,6 +3,18 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CAPABILITY RECEIPT/IMAGE SOURCE CONTRACT REVIEWED.**
+  New private stage wifi-capability/ios stagepin5f561142 (templates only,
+  excludes mutable gates) and strict parser7c5bdf4f reviewed by parent.
+  Actual emitter8records, RXslot advancement, retained worker, exact main
+  receipt and bounded supported debug events checked.13syntheticpositive/
+  163negative capability cases PASS; actual main fullsnapshot correctly
+  refuses capability completion because it has no capability rows.
+  Native source/schema gate true; CI/image/authorization still false.
+  Parent review saved privately; no device action. Actual normal capability
+  E000 response remains unproven. UFS/boot speed remain unchanged.
+
+
 - **CAPABILITY FULL CI39637874421 STARTED.**
   Sourcece8f968afa45303c9ba3ccaa3e7c01aa9d755e7e; canonical capability CID8a/EIDec query,
   defaultoff,3s/16events/oneworker, no scan/interface. Local validation PASS.
