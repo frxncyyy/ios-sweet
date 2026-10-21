@@ -3,6 +3,42 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **RX FORMAT HARDWARE: PATCH AND PHY PASS; N9 OWNER GUARD STOPS; RESTORED.**
+  Authorized8f1824f1 boot-only flash/reboot OKAY. Patch-finish ACK accepted;
+  PHY60-byte EID5/response81/status0 and 30720-byte calibration backup pass.
+  All seven firmware spans verified (244752 words), then N9 finish CID41 TX
+  72 bytes consumed (DIDX3/DDONE80000000). During third RX wait: events2,
+  finish1, polls872, transporterror2 owner callback, RXDIDX2/valid3/reason5;
+  no third header/descriptor and no FW_READY. Native20/21 overwrite original
+  guard reason1..6/22; DMAstatusvalid0 does NOT establish actual owner-bit or
+  coherent fault. Do not infer a specific predicate until captured.
+  First immutable log139839 bytes SHAe4f88896748bc014ce91dc672d3be6f032e29217aed4a2a230a6c1c0702294e2;
+  complete155085 bytes SHA12ae689aa07f461b346f6211703fdff31cf2b34cff463dd62698e3632932f529.
+  Conditional e0d3 restore/reboot OKAY; USB90s capture223320 bytes,
+  SHA43ce701f01433f1e83243a62fb6518bf79866c03bda3bcb1e2bd649d49a026d2.
+  User confirms lockscreen/touch/buttons healthy; all collectors finished.
+  Evidence wifi-main-rxformat/ios; NEVER rerun executed runner/restoration.
+  Private first-owner-reason diagnostic candidate and selected dynamic N9
+  ACK/source audit underway. UFS/boot speed unchanged.
+
+- **AUDIO REVISION5 PRIVATE SALVAGE REVIEWED; UNCALLED.**
+  revision5-review inputmanifest547baeeb; candidate9d5be791 preserves Claude
+  partial work, adds stricter fullword SPM/ADSP cold gates, repairs AFE build
+  wiring and stale I2C8 saved-value fixture. Author host ASan/UBSan and normal
+  helper ARM64 checks pass; independent SOURCE review PASS for uncalled
+  private plan. No native SRAM/phase-value adapter, exclusive worker or
+  production callsite yet; no audio hardware/playback claim. Preserve this
+  candidate and INDEPENDENT-REVIEW.json; original Claude candidate-next intact.
+
+
+- **RX FORMAT 8f1824f1 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exact boot-only image/same calibration and main-firmware
+  attempt/conditional e0d3 or verified RAM-rescue recovery. Fastboot identity
+  confirmed privately. wifi-main-rxformat/ios runner executes once with USB
+  collector before reboot; NEVER rerun after flash.log exists. Actual ACK,
+  PHY and main firmware result pending. UFS/boot speed unchanged.
+
+
 - **RX FORMAT IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-rxformat-battery-stop23.img`,
   33347584 bytes, SHA256
