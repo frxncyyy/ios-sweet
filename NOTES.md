@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **DMA POOL + BATTERY SOURCE READY FOR FULL CI (2026-10-21).**
+  Promoted frozen pool manifest3ac8f504/native4b3fad0d after independent
+  core/native/loader review. Actual canonical host ASan/UBSan tests PASS:
+  FDT claim/collision, 112read27ring snapshot/224callback faults, defaultoff,
+  same-ROM/persistent owner, exact source region18 SET, first128KiB
+  zero/readback, inherited refusal and retained failure; actual receipt
+  guards/192claim mutations/word bounds. Five active ARM64 objects PASS with
+  CI-derived flags and no forcedNORD2. Fresh canonical loader builds; patch
+  11731lines applies/reproduces. Frozen UFS hash unchanged1ef095f3... .
+  Next image nord2-ios-wifi-dma-battery-stop23.img uses current23a9 args plus
+  nord2wifidma=1; includes prior battery completion-latch fix. FullCI/linked/
+  image checks still pending; no new flash approval. Phone stays23a9 healthy.
+  MainFW transport/calibration work continues privately in parallel.
+  External Opus hit session limit mid-audio-revision (reported16:20 local
+  reset); incomplete files preserved, no audio integrated. Sol wifi_evidence
+  now completes/reviews a separate private audio/revision-completion copy.
+
+
 - **BATTERY LATCH FIX PROMOTED; DMA POOL/PREFLIGHT CANDIDATE IN PROGRESS.**
   Runtime-first manifest9b0fa59f...d847789 reviewed and promoted exactly:
   completion-only INTR_STAT1 accepted only after repeated idle/DMAoff/FIFOempty,

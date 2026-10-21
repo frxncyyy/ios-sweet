@@ -22,7 +22,17 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "wifi_rom_contract.h"
+#include "dma_pool_contract.h"
 static struct nrc_claim nrc_loader_owner;
+static struct ndp_claim ndp_loader_owner;
+/* The freestanding selected loader has no libc. Clang lowers the fixed
+ * region18 intent struct copy to this symbol at -O2. */
+void *memcpy(void *to,const void *from,size_t n)
+{
+    unsigned char *d=to;const unsigned char *s=from;
+    for(size_t i=0;i<n;i++)d[i]=s[i];
+    return to;
+}
 
 #define PSTORE_BASE 0x48090000UL
 #define PSTORE_SIZE 0xe0000UL
@@ -384,6 +394,32 @@ static int nrc_loader_optin(const char *line, size_t cap)
     return (int)enabled;
 }
 
+/* Distinct image gate. A DMA claim requires the ROM firmware image in the
+ * same boot; malformed or duplicate tokens fail before touching hardware. */
+static int ndp_loader_optin(const char *line, size_t cap)
+{
+    const char key[] = "nord2wifidma=";
+    unsigned seen = 0;
+    size_t n = 0;
+    while (n < cap && line[n]) n++;
+    if (n == cap) return -1;
+    for (size_t i = 0; i < n;) {
+        while (i < n && line[i] == ' ') i++;
+        size_t start = i;
+        while (i < n && line[i] != ' ') i++;
+        size_t len = i - start, j = 0;
+        while (j < sizeof(key)-1 && j < len && line[start+j] == key[j]) j++;
+        if (j != sizeof(key)-1) continue;
+        if (++seen != 1 || len != sizeof(key) || line[start+j] != '1') return -1;
+    }
+    return (int)seen;
+}
+static int ndp_overlap(uint64_t base,uint64_t bytes)
+{
+    if (!bytes || bytes > UINT64_MAX-base) return 1;
+    return base < NDP_POOL_BASE+NDP_POOL_BYTES && NDP_POOL_BASE < base+bytes;
+}
+
 /* ---- ADT: fill in the /chosen chain-back properties ---- */
 
 /* ADT integers are little-endian (unlike the FDT, which is big-endian). */
@@ -419,7 +455,7 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
     unsigned char *node = p;
     uint32_t cnprops = adt_le32(node);
     unsigned char *q = node + 8;
-    int seen = 0, conn_seen = 0;
+    int seen = 0, conn_seen = 0, dma_seen = 0;
     for (uint32_t i = 0; i < cnprops; i++) {
         if (q + 36 > end) {
             fatal("ADT truncated");
@@ -430,7 +466,13 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
         if (val + len > end) {
             fatal("ADT truncated");
         }
-        if (same(name, "nord2-conn-claim")) {
+        if (same(name, "nord2-wifi-dma-claim")) {
+            if (len != 24 || dma_seen++) fatal("ADT DMA claim encoding");
+            if (ndp_loader_owner.valid) {
+                if (ndp_claim_encode(&ndp_loader_owner, val))
+                    fatal("ADT DMA claim refused");
+            }
+        } else if (same(name, "nord2-conn-claim")) {
             if (len != 24 || conn_seen++) fatal("ADT CONN claim encoding");
             for (unsigned b = 0; b < 8; b++) {
                 val[b] = (unsigned char)(nrc_loader_owner.base >> (8*b));
@@ -468,7 +510,8 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
         }
         q = val + ((len + 3) & ~3U);
     }
-    if (seen != 3 || (nrc_loader_owner.source != NRC_CLAIM_NONE && conn_seen != 1)) {
+    if (seen != 3 || (nrc_loader_owner.source != NRC_CLAIM_NONE && conn_seen != 1) ||
+        (ndp_loader_owner.valid && dma_seen != 1)) {
         fatal("ADT missing chain-back properties");
     }
 }
@@ -554,7 +597,9 @@ void xnu_main(uintptr_t dtb)
         fatal("payload ADT out of range");
     }
     int rom_opt = nrc_loader_optin(pl->cmdline, sizeof(pl->cmdline));
-    if (rom_opt < 0) fatal("invalid ROM opt-in");
+    int dma_opt = ndp_loader_optin(pl->cmdline, sizeof(pl->cmdline));
+    if (rom_opt < 0 || dma_opt < 0 || (dma_opt && !rom_opt))
+        fatal("invalid Wi-Fi opt-in");
     if (rom_opt) {
         const unsigned char *fdt = (const unsigned char *)dtb;
         uint32_t fdt_bytes = be32(fdt + 4);
@@ -564,6 +609,20 @@ void xnu_main(uintptr_t dtb)
             nrc_ios_fixed_claim_from_fdt(fdt, fdt_bytes, &nrc_loader_owner))
             fatal("current-boot CONN claim refused");
         puts_log("NORD2-XNU LOADER: CONN fixed claim recorded; no DRAM write\n");
+    }
+    if (dma_opt) {
+        const unsigned char *fdt = (const unsigned char *)dtb;
+        uint32_t fdt_bytes = be32(fdt + 4);
+        if (fdt_bytes < 40 || fdt_bytes > 0x100000 ||
+            ndp_overlap(dtb,fdt_bytes) ||
+            ndp_overlap(STOCK_KERNEL_PA,0x6000000) ||
+            ndp_overlap(0x40080000,0x200000) || /* current loader text/stack */
+            ndp_overlap(payload_pa,payload_limit) ||
+            ndp_overlap(PSTORE_BASE,PSTORE_SIZE) ||
+            ndp_overlap(NORD2_XNU_PHYS_BASE,NORD2_XNU_MEM_SIZE) ||
+            ndp_fixed_claim_from_fdt(fdt,fdt_bytes,&ndp_loader_owner))
+            fatal("current-boot DMA pool claim refused");
+        puts_log("NORD2-XNU LOADER: DMA fixed claim recorded; no pool write\n");
     }
     puts_log("NORD2-XNU LOADER: payload ok\n");
     hex_log("nsegs", pl->nsegs);

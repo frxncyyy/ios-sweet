@@ -2684,7 +2684,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +660,9 @@
+@@ -648,3 +660,14 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2694,6 +2694,11 @@
 +bsd/dev/wifi_rom_xnu.c			standard
 +bsd/dev/wifi_rom_powered.c			standard
 +bsd/dev/wifi_rom_powered_adapter.c			standard
++
++bsd/dev/dma_pool_contract.c			standard
++bsd/dev/pool_probe.c			standard
++bsd/dev/pool_adapter.c			standard
++bsd/dev/wifi_dma_preflight.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -4767,7 +4772,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,899 @@
+@@ -1,3 +1,901 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5383,6 +5388,7 @@
 +#include "wifi_wfsys_adapter.h"
 +#include "wifi_wfsys_bind.inc"
 +#include "wifi_rom_bind.inc"
++#include "pool_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
 + * Fresh powered reset/master predicates are checked in adapter.c; these
 + * software baselines were captured before original outer PMIC/power changes.
@@ -5493,7 +5499,8 @@
 +		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
 +		nawa_after_persistent(); /* explicit separate wake diagnostic only */
 +		nwsa_after_persistent(); /* separate CPU-held WFSYS diagnostic */
-+		nrpa_after_persistent(); /* exact nord2wifirom=1, prepared before probe */
++		nrpa_after_persistent();
++    nppa_after_rom(); /* exact nord2wifirom=1, prepared before probe */
 +	} else {
 +		ncc_power_window(host, conn, id);
 +	}
@@ -5667,7 +5674,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1554,4 @@
+@@ -658,3 +1556,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -10971,4 +10978,754 @@
 +#define NBG_CLOCK_LOG "NORD2 BAT CLK: bus=%u mux=%#x parent_hz=%u pins=%#x gate=%#x irq=%#x polls=%u seen=%#x\n"
 +#define NBG_PREFLIGHT_LOG "NORD2 BAT PREFLIGHT: bus=%u prior_irq=%#x ack_returned=%u\n"
 +#define NBG_RAW_LOG "NORD2 BAT RAW: rc=%d seen=%#x soc=%#x/%#x volt=%#x temp=%#x cur=%#x chg=%#x/%#x fault=%#x soc_valid=%u charger_valid=%u\n"
++#endif
+--- /dev/null
++++ b/bsd/dev/dma_pool_contract.c
+@@ -0,0 +1,64 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "dma_pool_contract.h"
++
++static int exact(const struct ndp_claim *c) {
++    return c && c->valid == 1u && c->source == NDP_SOURCE_IOS_FIXED &&
++           c->base == NDP_POOL_BASE && c->bytes == NDP_POOL_BYTES;
++}
++static uint32_t le32(const uint8_t *p) {
++    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
++           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++}
++static uint64_t le64(const uint8_t *p) {
++    return (uint64_t)le32(p) | ((uint64_t)le32(p+4) << 32);
++}
++static void put64(uint8_t *p,uint64_t v) {
++    for(unsigned i=0;i<8;i++)p[i]=(uint8_t)(v>>(8u*i));
++}
++static void put32(uint8_t *p,uint32_t v) {
++    for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(v>>(8u*i));
++}
++int ndp_claim_encode(const struct ndp_claim *c,uint8_t wire[24]) {
++    if(!exact(c)||!wire)return -1;
++    put64(wire,c->base);put64(wire+8,c->bytes);
++    put32(wire+16,c->source);put32(wire+20,c->valid);
++    return 0;
++}
++int ndp_claim_decode(const void *wire,size_t length,struct ndp_claim *out) {
++    struct ndp_claim x;
++    const uint8_t *p=wire;
++    if(!wire||!out||length!=24)return -1;
++    x.base=le64(p);x.bytes=le64(p+8);x.source=le32(p+16);x.valid=le32(p+20);
++    if(!exact(&x))return -1;
++    *out=x;return 0;
++}
++int ndp_region18_set_intent(const struct ndp_claim *c,struct ndp_smc_request out[2]) {
++    if(!exact(c)||!out)return -1;
++    /* mt6893 plat_priv.c:289-313: region18, AP0/CONN2 unrestricted,
++     * all other domains forbidden=5, lock=true. 64KiB inclusive range. */
++    out[0]=(struct ndp_smc_request){{UINT64_C(0xc200050b),0,UINT64_C(0x12009000),
++        UINT64_C(0x010090f1),UINT64_C(0x00b6db6d),0,0,0}};
++    out[1]=(struct ndp_smc_request){{UINT64_C(0xc200050b),0,UINT64_C(0x12009000),
++        UINT64_C(0x000090f1),UINT64_C(0x80b6da28),0,0,0}};
++    return 0;
++}
++int ndp_both_raw_zero(const uint64_t raw[2][4]) {
++    if(!raw)return -1;
++    return (raw[0][0] || raw[1][0]) ? -1 : 0;
++}
++int ndp_subpool_layout(const struct ndp_claim *c,struct ndp_subpool *out) {
++    struct ndp_subpool x;
++    if(!exact(c)||!out)return -1;
++    /* 0x16000 occupied, rounded to two 64KiB MPU granules. */
++    x.tx_desc=c->base+0x0000u; x.tx_desc_bytes=1024u*16u;
++    x.rx_desc=c->base+0x4000u; x.rx_desc_bytes=16u*16u;
++    x.tx_cmd=c->base+0x5000u; x.tx_cmd_bytes=4096u;
++    x.rx_events=c->base+0x6000u; x.rx_event_stride=4096u;
++    x.rx_event_count=16u;
++    if(x.rx_events+((uint64_t)x.rx_event_stride*x.rx_event_count)>
++       c->base+NDP_SUBPOOL_BYTES || NDP_SUBPOOL_BYTES>c->bytes)return -1;
++    *out=x;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/dma_pool_contract.h
+@@ -0,0 +1,40 @@
++#ifndef NORD2_DMA_POOL_CONTRACT_H
++#define NORD2_DMA_POOL_CONTRACT_H
++#include <stddef.h>
++#include <stdint.h>
++
++/* Explicit iOS fixed selection candidate, not a recovered LK allocation. */
++#define NDP_POOL_BASE UINT64_C(0x90000000)
++#define NDP_POOL_BYTES UINT64_C(0x00f20000)
++#define NDP_POOL_ALIGN UINT64_C(0x01000000)
++#define NDP_SUBPOOL_BYTES UINT64_C(0x00020000)
++#define NDP_REGION 18u
++#define NDP_SOURCE_IOS_FIXED 3u
++
++struct ndp_claim { uint64_t base, bytes; uint32_t source, valid; };
++struct ndp_smc_request { uint64_t x[8]; };
++struct ndp_subpool {
++    uint64_t tx_desc, rx_desc, tx_cmd, rx_events;
++    uint32_t tx_desc_bytes, rx_desc_bytes, tx_cmd_bytes;
++    uint32_t rx_event_stride, rx_event_count;
++};
++
++/* Includes the existing current-FDT CONN validator, then checks the pool's
++ * distinct DRAM containment, Wi-Fi dynamic-node shape, phandle and exclusion
++ * from all explicit reserved reg/memreserve spans. No memory is claimed or
++ * mapped merely by returning zero. */
++int ndp_fixed_claim_from_fdt(const void *fdt, size_t bytes,
++                             struct ndp_claim *out);
++/* Same 24-byte LE /chosen wire layout as nord2-conn-claim. */
++int ndp_claim_encode(const struct ndp_claim *claim, uint8_t wire[24]);
++int ndp_claim_decode(const void *wire, size_t length, struct ndp_claim *out);
++/* Source-selected region18 group1 then group0 intent. Never issues SMC. */
++int ndp_region18_set_intent(const struct ndp_claim *claim,
++                            struct ndp_smc_request out[2]);
++/* Actual native caller must retain both full raw returns; only x0 carries
++ * the selected monitor status. The remaining registers are observations. */
++int ndp_both_raw_zero(const uint64_t raw[2][4]);
++/* Bounded first-stage suballocation inside the full source-sized pool.
++ * Ring17 count1024, RX event count16; exactly one TX cmd in flight. */
++int ndp_subpool_layout(const struct ndp_claim *claim, struct ndp_subpool *out);
++#endif
+--- /dev/null
++++ b/bsd/dev/pool_probe.c
+@@ -0,0 +1,98 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "pool_probe.h"
++#define AP 0x180601a0u
++#define WF 0x180601a4u
++#define ACK 0x18060184u
++#define CFG 0x18001000u
++#define CPU 0x18000010u
++#define TOP 0x18000000u
++#define PWR 0x180602ccu
++#define PROT 0x18001620u
++#define DMA_PROT 0x18001624u
++#define LOCAL 0x184b0010u
++#define ROM 0x184c1604u
++
++static int fail(struct npp_state *s,int e){s->error=e;s->halt=!!(s->ap_owned||s->wf_owned||s->set_attempted||s->mapped||s->zero_attempted);s->uncertain=s->halt;return e;}
++static int check(const struct npp_ops *o,void *c,struct npp_state *s){return o->proof(c,s->stage)?fail(s,-2):0;}
++static int rd(const struct npp_ops *o,void *c,struct npp_state *s,uint32_t a,uint32_t *v){return check(o,c,s)||o->read(c,a,v)?fail(s,-3):0;}
++static int wr(const struct npp_ops *o,void *c,struct npp_state *s,uint32_t a,uint32_t v){return check(o,c,s)||o->write(c,a,v)?fail(s,-4):0;}
++static int wait_us(const struct npp_ops *o,void *c,struct npp_state *s,unsigned us){return check(o,c,s)||o->delay_us(c,us)?fail(s,-5):0;}
++static int poll(const struct npp_ops *o,void *c,struct npp_state *s,uint32_t a,uint32_t mask,uint32_t want,unsigned limit,unsigned us,unsigned *count,uint32_t *last){
++ for(unsigned i=0;i<limit;i++){if(i&&wait_us(o,c,s,us))return s->error;if(rd(o,c,s,a,last))return s->error;++*count;if((*last&mask)==want)return 0;}return fail(s,-6);
++}
++static int version(const struct npp_ops *o,void *c,struct npp_state *s,uint32_t a,uint32_t want,unsigned limit,unsigned us,unsigned *count,uint32_t *last){
++ for(unsigned i=0;i<limit;i++){if(i&&us&&wait_us(o,c,s,us))return s->error;if(rd(o,c,s,a,last))return s->error;++*count;if(*last==want)return 0;}return fail(s,-7);
++}
++static int sleep_votes(const struct npp_ops *o,void *c,struct npp_state *s){
++ uint32_t v;s->stage=NPP_RELEASE;
++ if(rd(o,c,s,WF,&v))return s->error;
++ if(!(v&1u)||v!=(s->wf_initial|1u))return fail(s,-8);
++ if(wr(o,c,s,WF,v&~1u))return s->error;
++ s->wf_owned=0;
++ /* AP literal zero is the final MMIO; no further proof/readable/log MMIO. */
++ if(wr(o,c,s,AP,0))return s->error;
++ s->ap_owned=0;s->asleep=1;s->balanced=1;s->uncertain=0;s->halt=0;s->stage=NPP_DONE;return 0;
++}
++int npp_run(const struct npp_ops *o,void *c,const struct ndp_claim *claim,struct npp_state *s,unsigned opt){
++ uint32_t v;struct ndp_smc_request req[2];struct ndp_subpool sub;
++ if(!s||!claim||opt!=1||s->entered)return -1;
++ __builtin_memset(s,0,sizeof(*s));s->entered=1;s->stage=NPP_PREWAKE;
++ if(!o||!o->ready||!o->proof||!o->read||!o->write||!o->delay_us||
++    !o->readable||!o->preflight||!o->smc||!o->map||!o->word||!o->barrier||
++    ndp_region18_set_intent(claim,req)||ndp_subpool_layout(claim,&sub)||o->ready(c,claim))return fail(s,-1);
++ s->claim_ready=1;
++ if(rd(o,c,s,AP,&v))return s->error;
++ if(v)return fail(s,-9);
++ s->ap_owned=1;if(wr(o,c,s,AP,1))return s->error;
++ s->stage=NPP_AP_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->ap_polls,&v))return s->error;
++ if(check(o,c,s)||o->readable(c))return fail(s,-10);
++ s->stage=NPP_AP_READY;
++ if(version(o,c,s,CFG,0x20010101u,10,0,&s->cfg_polls,&s->cfg_id))return s->error;
++ if(rd(o,c,s,WF,&v))return s->error;
++ if(v&1u)return fail(s,-11);
++ s->wf_initial=v;s->wf_owned=1;if(wr(o,c,s,WF,v|1u))return s->error;
++ s->stage=NPP_WF_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->wf_polls,&v))return s->error;
++ if(check(o,c,s)||o->readable(c))return fail(s,-10);
++ s->stage=NPP_LIVE;
++ if(version(o,c,s,CFG,0x20010101u,12,1000,&s->cfg_polls,&s->cfg_id))return s->error;
++ /* Running ROM remains untouched. Prove release, power, protection and both IDs. */
++ const uint32_t addr[5]={CPU,TOP,PWR,PROT,DMA_PROT};
++ for(unsigned i=0;i<5;i++){if(rd(o,c,s,addr[i],&s->live[i]))return s->error;s->live_valid|=1u<<i;}
++ if(!(s->live[0]&1u)||!(s->live[1]&0x80u)||!(s->live[2]&4u)||
++    (s->live[3]&9u)||(s->live[4]&9u))return fail(s,-12);
++ if(version(o,c,s,LOCAL,0x20010000u,12,500,&s->local_polls,&s->local_id))return s->error;
++ if(version(o,c,s,ROM,0x1d1eu,12,1000,&s->rom_polls,&s->rom_done))return s->error;
++ s->stage=NPP_PREFLIGHT;
++ if(check(o,c,s))return s->error;
++ int pre=o->preflight(c,&s->dma);
++ if(pre<0||!s->dma.complete)return fail(s,-13);
++ s->preflight_complete=1;
++ if(pre==1){s->inherited_dma=1;if(sleep_votes(o,c,s))return s->error;return 1;}
++ if(pre!=0||!s->dma.observed_empty||!s->dma.stable)return fail(s,-13);
++ for(unsigned g=0;g<2;g++){
++  s->stage=g?NPP_SET0:NPP_SET1;s->set_attempted|=1u<<g;s->possibly_locked=1;
++  if(check(o,c,s)||o->smc(c,req[g].x,s->raw[g]))return fail(s,-14);
++  s->raw_valid|=1u<<g;if(s->raw[g][0])return fail(s,-15);s->set_accepted++;
++ }
++ if(s->set_accepted!=2||s->raw_valid!=3)return fail(s,-15);
++ s->stage=NPP_MAP;
++ if(check(o,c,s)||o->map(c,claim->base,claim->bytes))return fail(s,-16);
++ s->mapped=1;s->stage=NPP_ZERO;s->zero_attempted=1;
++ for(uint32_t off=0;off<NDP_SUBPOOL_BYTES;off+=4){v=0;
++  if(check(o,c,s)||o->word(c,off,&v,1))return fail(s,-17);
++  s->words_written++;
++ }
++ if(check(o,c,s)||o->barrier(c))return fail(s,-18);
++ s->zero_complete=1;s->stage=NPP_VERIFY;
++ for(uint32_t off=0;off<NDP_SUBPOOL_BYTES;off+=4){v=0;
++  if(check(o,c,s)||o->word(c,off,&v,0))return fail(s,-19);
++  s->words_read++;if(v)return fail(s,-20);
++ }
++ if(check(o,c,s)||o->barrier(c))return fail(s,-18);
++ s->verified=1;return sleep_votes(o,c,s);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/pool_probe.h
+@@ -0,0 +1,41 @@
++#ifndef PRIVATE_NORD2_POOL_PROBE_H
++#define PRIVATE_NORD2_POOL_PROBE_H
++#include <stdint.h>
++#include "dma_pool_contract.h"
++#include "wifi_dma_preflight.h"
++
++enum npp_stage { NPP_PREWAKE, NPP_AP_ACK, NPP_AP_READY, NPP_WF_ACK,
++ NPP_LIVE, NPP_PREFLIGHT, NPP_SET1, NPP_SET0, NPP_MAP,
++ NPP_ZERO, NPP_VERIFY, NPP_RELEASE, NPP_DONE };
++struct npp_state {
++ unsigned entered,stage,ap_owned,wf_owned,asleep,balanced,halt,uncertain;
++ unsigned inherited_dma,claim_ready,live_valid,preflight_complete;
++ unsigned set_attempted,set_accepted,raw_valid,possibly_locked;
++ unsigned mapped,zero_attempted,zero_complete,verified,words_written,words_read;
++ unsigned ap_polls,wf_polls,cfg_polls,local_polls,rom_polls;
++ uint32_t cfg_id,local_id,rom_done,live[5],wf_initial;
++ uint64_t raw[2][4];struct nwdp_state dma;
++ int error;
++};
++struct npp_ops {
++ /* ready ties the exact current-boot claim and completed nrpa/nrb receipt to
++  * a new persistent common owner; proof rechecks that owner before every IO. */
++ int (*ready)(void *,const struct ndp_claim *);
++ int (*proof)(void *,unsigned);
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t);
++ int (*delay_us)(void *,unsigned);
++ int (*readable)(void *);
++ int (*preflight)(void *,struct nwdp_state *); /* 0 idle, 1 inherited, -1 unknown */
++ int (*smc)(void *,const uint64_t[8],uint64_t[4]);
++ int (*map)(void *,uint64_t,uint64_t);
++ int (*word)(void *,uint32_t,uint32_t *,unsigned); /* offset, value, write? */
++ int (*barrier)(void *);
++};
++/* One-shot. Complete inherited WFDMA preflight returns 1 after balanced
++ * sleep and performs no SET. Any uncertainty after a vote/SET retains all
++ * owned votes and requires manual reset. Success keeps the full pool mapped
++ * and protected; this probe neither starts DMA nor copies firmware. */
++int npp_run(const struct npp_ops *,void *,const struct ndp_claim *,
++            struct npp_state *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/pool_adapter.c
+@@ -0,0 +1,148 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "pool_adapter.h"
++#define AP 0x180601a0u
++#define WF 0x180601a4u
++#define ACK 0x18060184u
++#define CLOCK 0x18060000u
++#define IRQ 0x180602d4u
++
++/* Same six always-on guards and clock/readability bound as accepted ROM
++ * adapter. Never touch a sleeping WFSYS register before fresh AP wake. */
++static int guard(struct nppa *a,unsigned st){
++ static const uint32_t addr[6]={0x10006304u,0x1000616cu,0x10006170u,
++  0x1020e504u,0x10001228u,0x10001724u};
++ static const uint32_t mask[6]={0x1fu,2u,2u,1u,0x2000u,4u};
++ static const uint32_t want[6]={0xdu,2u,2u,1u,0,0};
++ uint32_t v;
++ if(!a||a->asleep||a->blocked||!a->hw||a->state.stage!=st||a->hw->owner(a->ctx)){
++  if(a)a->blocked=1;
++  return -1;
++ }
++ /* Device-word loops are bounded to 128 KiB; their native software owner
++  * remains checked per word. AP guard registers are rechecked at release. */
++ if(st==NPP_ZERO||st==NPP_VERIFY)return 0;
++ for(unsigned i=0;i<6;i++)if(a->hw->read32(a->ctx,addr[i],&v)||(v&mask[i])!=want[i]){
++  a->blocked=1;return -1;
++ }
++ return 0;
++}
++static int allowed(unsigned st,uint32_t addr,int write){
++ switch(st){
++ case NPP_PREWAKE:return addr==AP;
++ case NPP_AP_ACK:case NPP_WF_ACK:return !write&&addr==ACK;
++ case NPP_AP_READY:return addr==WF||(!write&&addr==0x18001000u);
++ case NPP_LIVE:return !write&&(addr==0x18001000u||addr==0x18000010u||
++  addr==0x18000000u||addr==0x180602ccu||addr==0x18001620u||
++  addr==0x18001624u||addr==0x184b0010u||addr==0x184c1604u);
++ case NPP_RELEASE:return addr==WF||(write&&addr==AP);
++ default:return 0;
++ }
++}
++static int proof(void *p,unsigned st){return guard(p,st);}
++static int ready(void *p,const struct ndp_claim *claim){
++ struct nppa *a=p;struct ndp_smc_request req[2];
++ return !a||!claim||ndp_region18_set_intent(claim,req)||
++  !a->hw||a->hw->owner(a->ctx);
++}
++static int rd(void *p,uint32_t addr,uint32_t *v){
++ struct nppa *a=p;unsigned st=a->state.stage;
++ if(!v||!allowed(st,addr,0)||guard(a,st)||a->hw->read32(a->ctx,addr,v))return -1;
++ a->last_addr=addr;a->last_value=*v;a->last_valid=1;return 0;
++}
++static int wr(void *p,uint32_t addr,uint32_t v){
++ struct nppa *a=p;unsigned st=a->state.stage;
++ if(!allowed(st,addr,1)||guard(a,st))return -1;
++ if(addr==AP){
++  if(!((st==NPP_PREWAKE&&v==1&&a->last_valid&&a->last_addr==AP&&a->last_value==0)||
++       (st==NPP_RELEASE&&v==0&&!a->state.wf_owned)))return -1;
++ }else if(addr==WF){
++  if(!a->last_valid||a->last_addr!=WF||
++   !((st==NPP_AP_READY&&v==(a->last_value|1u)&&!(a->last_value&1u))||
++     (st==NPP_RELEASE&&v==(a->last_value&~1u)&&a->state.wf_owned)))return -1;
++ }else return -1;
++ if(a->hw->write32(a->ctx,addr,v))return -1;
++ a->last_valid=0;
++ if(addr==AP&&st==NPP_RELEASE)a->asleep=1;
++ return 0;
++}
++static int delay_us(void *p,unsigned us){struct nppa *a=p;
++ if(us!=1&&us!=10&&us!=500&&us!=1000)return -1;
++ return guard(a,a->state.stage)||a->hw->delay_us(a->ctx,us);
++}
++static int direct_read(struct nppa *a,unsigned st,uint32_t addr,uint32_t *v){return guard(a,st)||a->hw->read32(a->ctx,addr,v);}
++static int direct_write(struct nppa *a,unsigned st,uint32_t addr,uint32_t v){return guard(a,st)||a->hw->write32(a->ctx,addr,v);}
++static int direct_delay(struct nppa *a,unsigned st,unsigned us){return guard(a,st)||a->hw->delay_us(a->ctx,us);}
++static int readable(void *p){
++ struct nppa *a=p;unsigned st=a->state.stage,spent=0,d=1;uint32_t v=0;
++ if(st!=NPP_AP_ACK&&st!=NPP_WF_ACK)return -1;
++ for(unsigned i=0;i<1600&&spent<16000;i++){
++  if(direct_read(a,st,CLOCK,&v)||direct_write(a,st,CLOCK,v|1u)||
++     direct_delay(a,st,d))return -1;
++  spent+=d;if(direct_read(a,st,CLOCK,&v))return -1;
++  a->clock_last=v;a->clock_polls++;if((v&6u)==6u)break;d=10;
++ }
++ a->clock_spent+=spent;if((v&6u)!=6u||spent>=16000)return -1;
++ if(direct_read(a,st,IRQ,&v))return -1;
++ a->irq_last=v;
++ if(!(v&1u))return -1;
++ if(direct_read(a,st,ACK,&v))return -1;
++ return (v&(1u<<5))?-1:0;
++}
++static int dma_owner(void *p){struct nppa *a=p;return guard(a,NPP_PREFLIGHT);}
++static int dma_addr(uint32_t addr){
++ for(unsigned dma=0;dma<2;dma++){
++  uint32_t base=0x18024000u+dma*0x1000u;
++  if(addr==base+0x208u)return 1;
++  for(unsigned r=0;r<28;r++){
++   if((!dma&&r<20)||(dma&&r>=23)||
++      (dma&&r<20&&((r>=6&&r<8)||(r>=14&&r<16))))continue;
++   uint32_t ring=base+(r<20?0x300u+16u*r:0x500u+16u*(r-20u));
++   if(addr==ring||addr==ring+4u||addr==ring+8u||addr==ring+12u)return 1;
++  }
++ }
++ return 0;
++}
++static int dma_read(void *p,uint32_t addr,uint32_t *v){
++ struct nppa *a=p;
++ if(a->state.stage!=NPP_PREFLIGHT||!v||!dma_addr(addr)||
++    guard(a,NPP_PREFLIGHT))return -1;
++ return a->hw->read32(a->ctx,addr,v);
++}
++static int preflight(void *p,struct nwdp_state *out){
++ static const struct nwdp_io io={dma_owner,dma_read};
++ struct nppa *a=p;if(a->state.stage!=NPP_PREFLIGHT||guard(a,NPP_PREFLIGHT))return -1;
++ return nwdp_capture(&io,a,out,1);
++}
++static int smc(void *p,const uint64_t x[8],uint64_t out[4]){
++ struct nppa *a=p;if((a->state.stage!=NPP_SET1&&a->state.stage!=NPP_SET0)||
++  guard(a,a->state.stage))return -1;
++ return a->hw->smc(a->ctx,x,out);
++}
++static int map(void *p,uint64_t base,uint64_t size){
++ struct nppa *a=p;if(a->state.stage!=NPP_MAP||guard(a,NPP_MAP))return -1;
++ return a->hw->map(a->ctx,base,size);
++}
++static int word(void *p,uint32_t off,uint32_t *v,unsigned write){
++ struct nppa *a=p;if((a->state.stage!=(write?NPP_ZERO:NPP_VERIFY))||
++  !v||off>=NDP_SUBPOOL_BYTES||(off&3u)||guard(a,a->state.stage))return -1;
++ return a->hw->word(a->ctx,off,v,write);
++}
++static int barrier(void *p){struct nppa *a=p;
++ return guard(a,a->state.stage)||a->hw->barrier(a->ctx);
++}
++int nppa_start(struct nppa *a,const struct nppa_hw *h,void *c,
++ const struct ndp_claim *claim,unsigned opt){
++ struct npp_ops x={0};
++ if(!a||!h||!claim||opt!=1||a->state.entered||!h->owner||!h->read32||
++   !h->write32||!h->delay_us||!h->smc||!h->map||!h->word||!h->barrier)return -1;
++ a->hw=h;a->ctx=c;
++ /* Native owner/claim is checked before the first hardware read. */
++ if(h->owner(c))return -1;
++ x.ready=ready;
++ x.proof=proof;x.read=rd;x.write=wr;x.delay_us=delay_us;x.readable=readable;
++ x.preflight=preflight;x.smc=smc;x.map=map;x.word=word;x.barrier=barrier;
++ return npp_run(&x,a,claim,&a->state,opt);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/pool_adapter.h
+@@ -0,0 +1,21 @@
++#ifndef PRIVATE_NORD2_POOL_ADAPTER_H
++#define PRIVATE_NORD2_POOL_ADAPTER_H
++#include "pool_probe.h"
++struct nppa_hw {
++ int (*owner)(void *); /* persistent phase10, ROM receipt, pool claim */
++ int (*read32)(void *,uint32_t,uint32_t *);
++ int (*write32)(void *,uint32_t,uint32_t);
++ int (*delay_us)(void *,unsigned);
++ int (*smc)(void *,const uint64_t[8],uint64_t[4]);
++ int (*map)(void *,uint64_t,uint64_t);
++ int (*word)(void *,uint32_t,uint32_t *,unsigned);
++ int (*barrier)(void *);
++};
++struct nppa {
++ const struct nppa_hw *hw;void *ctx;struct npp_state state;
++ unsigned blocked,asleep,clock_polls,clock_spent;
++ uint32_t clock_last,irq_last,last_addr,last_value;unsigned last_valid;
++};
++int nppa_start(struct nppa *,const struct nppa_hw *,void *,
++               const struct ndp_claim *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/pool_bind.inc
+@@ -0,0 +1,243 @@
++/* PRIVATE candidate, include after wifi_rom_bind.inc in sweet_touch. The
++ * only boot flag is nord2wifidma=1 together with nord2wifirom=1. No old
++ * nrpa/nwsa/nawa callback or wake lifetime is reused. */
++#include "pool_adapter.h"
++#ifndef NPP_NATIVE_HOST_TEST
++#include <pexpert/device_tree.h>
++#include <pexpert/arm64/boot.h>
++#endif
++static struct {
++ struct nppa probe;struct ndp_claim claim;struct ndp_subpool layout;
++ vm_offset_t wfdma,pool;bool active,attempted,prepared;
++ bool preflight_arm,map_arm,zero_arm;
++ int prepare_status;
++} nppa_native;
++
++static int nppa_claim_current(void)
++{
++ DTEntry e;const void *p=0;unsigned n=0;
++ if(SecureDTLookupEntry(NULL,"/chosen",&e)!=kSuccess||
++    SecureDTGetProperty(e,"nord2-wifi-dma-claim",&p,&n)!=kSuccess||
++    ndp_claim_decode(p,n,&nppa_native.claim)||
++    ndp_subpool_layout(&nppa_native.claim,&nppa_native.layout))return -1;
++ /* nrb is the exact native object used for the now-complete ROM release.
++  * The loader's same-boot FDT proof is carried by this distinct ADT claim. */
++ if(!nrpc_receipt_ok(&nrpa_native.rom)||
++    nrpa_native.rom.claim.base!=NRC_CONN_BASE||
++    nrpa_native.rom.claim.bytes!=NRC_CONN_BYTES||
++    nrpa_native.rom.claim.source!=NRC_CLAIM_IOS_FIXED)return -1;
++ const boot_args *b=(const boot_args *)PE_state.bootArgs;
++ const void *dbp=0,*dsp=0;unsigned dbn=0,dsn=0;uint64_t db=0,ds=0;
++ if(!b||b->physBase!=UINT64_C(0x142000000)||
++    b->memSize!=UINT64_C(0x3e000000)||b->memSizeActual!=b->memSize||
++    SecureDTGetProperty(e,"dram-base",&dbp,&dbn)!=kSuccess||
++    SecureDTGetProperty(e,"dram-size",&dsp,&dsn)!=kSuccess||
++    dbn!=8||dsn!=8||!dbp||!dsp)return -1;
++ memcpy(&db,dbp,8);memcpy(&ds,dsp,8);
++ return db!=b->physBase||ds!=b->memSize;
++}
++static int nppa_source_owner(void)
++{
++ const struct nrpc_state *r=&nrpa_native.diag.state;
++ if(!nppa_native.active||!nppa_native.prepared||!npa_persistent_lifetime||
++    !npa_native.outer_retained||!npa_native.state.entered||
++    !npa_native.state.retained||npa_native.state.fatal||
++    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
++    !npa_native.state.result.retained||npa_native.state.result.halt||
++    npa_native.state.sema11||npa_native.state.sema19||
++    npa_native.state.spi_inflight||!ni_saved||!ncc_fresh_owned||
++    !nw.saved||!nw.domain_touched||ncc_latched_dirty||
++    nawa_native.active||nawa_native.diag.result.entered||
++    nwsa_native.active||nwsa_native.diag.state.entered||
++    nrpa_native.active||!nrpa_native.run_attempted||
++    !r->entered||r->stage!=NRPC_RUNNING||!r->rom_ready||
++    !r->cpu_release_attempted||!r->cpu_released||
++    !r->power||!r->protection||!r->balanced||r->halt||r->dirty||
++    r->unverified||r->ap_vote||r->wf_vote||r->sem20||r->clock_vote||
++    r->rom_done!=0x1d1eu||!nrpa_native.diag.asleep||
++    !nrpc_receipt_ok(&nrpa_native.rom)||
++    !nw.spm||!nw.infra||!nw.gals||!npa_native.host||
++    !npa_native.cfg||!npa_native.rgu||!nrpa_native.local||
++    !nrpa_native.rom_done)return -1;
++ return 0;
++}
++static int nppa_xnu_owner(void *c){(void)c;return !nppa_native.wfdma||nppa_source_owner();}
++static vm_offset_t nppa_xnu_base(uint32_t p)
++{
++ switch(p){
++ case 0x10006304:case 0x1000616c:case 0x10006170:return nw.spm;
++ case 0x10001228:case 0x10001724:return nw.infra;
++ case 0x1020e504:return nw.gals;
++ case 0x180601a0:case 0x180601a4:case 0x18060184:
++ case 0x18060000:case 0x180602d4:case 0x180602cc:return npa_native.host;
++ case 0x18001000:case 0x18001620:case 0x18001624:return npa_native.cfg;
++ case 0x18000010:case 0x18000000:return npa_native.rgu;
++ case 0x184b0010:return nrpa_native.local;
++ case 0x184c1604:return nrpa_native.rom_done;
++ default:break;
++ }
++ if(p>=0x18024000u&&p<0x18026000u)return nppa_native.wfdma;
++ return 0;
++}
++static int nppa_xnu_read(void *c,uint32_t p,uint32_t *v)
++{
++ (void)c;vm_offset_t base=nppa_xnu_base(p);
++ if(!v||!base||nppa_native.probe.asleep)return -1;
++ if(p>=0x18024000u&&p<0x18026000u&&!nppa_native.preflight_arm){
++  if(nppa_native.probe.state.stage!=NPP_PREFLIGHT)return -1;
++  nppa_native.preflight_arm=true;
++  printf("NORD2 WIFI DMA ARM: stage=%u action=preflight base=%#x rings=%u\n",
++   nppa_native.probe.state.stage,0x18024000u,NWDP_RINGS);
++ }
++ *v=ni_rd(base,p>=0x18024000u&&p<0x18026000u?(p-0x18024000u):(p&0xfffu));
++ return 0;
++}
++static int nppa_xnu_write(void *c,uint32_t p,uint32_t v)
++{
++ (void)c;vm_offset_t base=nppa_xnu_base(p);unsigned st=nppa_native.probe.state.stage;
++ if(!base||nppa_native.probe.asleep)return -1;
++ if(p==0x180601a0u){
++  if(!((st==NPP_PREWAKE&&v==1)||
++       (st==NPP_RELEASE&&v==0&&!nppa_native.probe.state.wf_owned)))return -1;
++ }else if(p==0x180601a4u){
++  if(st!=NPP_AP_READY&&st!=NPP_RELEASE)return -1;
++ }else if(p==0x18060000u){
++  if(st!=NPP_AP_ACK&&st!=NPP_WF_ACK)return -1;
++ }else return -1;
++ ni_wr(base,p&0xfffu,v);NCC_DEVICE_BARRIER();return 0;
++}
++static int nppa_xnu_delay(void *c,unsigned us)
++{(void)c;if(nppa_native.probe.asleep)return -1;delay(us);return 0;}
++static int nppa_xnu_smc(void *c,const uint64_t x[8],uint64_t out[4])
++{
++ (void)c;struct npp_state *s=&nppa_native.probe.state;
++ struct ndp_smc_request expected[2];unsigned g=s->stage==NPP_SET1?0u:1u;
++ if((s->stage!=NPP_SET1&&s->stage!=NPP_SET0)||
++    s->set_attempted!=(g?3u:1u)||nppa_source_owner()||
++    ndp_region18_set_intent(&nppa_native.claim,expected))return -1;
++ for(unsigned i=0;i<8;i++)if(x[i]!=expected[g].x[i])return -1;
++ /* Pstore-visible captured request before either one-way call. */
++ printf("NORD2 WIFI DMA SMC ARM: group=%u base=%#llx bytes=%#llx x0=%#llx x1=%#llx x2=%#llx x3=%#llx x4=%#llx\n",
++  g?0u:1u,(unsigned long long)nppa_native.claim.base,
++  (unsigned long long)nppa_native.claim.bytes,
++  (unsigned long long)x[0],(unsigned long long)x[1],
++  (unsigned long long)x[2],(unsigned long long)x[3],
++  (unsigned long long)x[4]);
++#ifdef NPP_NATIVE_HOST_TEST
++ return nppa_host_smc(x,out);
++#elif defined(__aarch64__)
++ register uint64_t x0 __asm__("x0")=x[0],x1 __asm__("x1")=x[1];
++ register uint64_t x2 __asm__("x2")=x[2],x3 __asm__("x3")=x[3];
++ register uint64_t x4 __asm__("x4")=x[4],x5 __asm__("x5")=x[5];
++ register uint64_t x6 __asm__("x6")=x[6],x7 __asm__("x7")=x[7];
++ __asm__ volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3),
++  "+r"(x4),"+r"(x5),"+r"(x6),"+r"(x7) : :
++  "x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","cc","memory");
++ out[0]=x0;out[1]=x1;out[2]=x2;out[3]=x3;return 0;
++#else
++ (void)out;return -1;
++#endif
++}
++static int nppa_xnu_map(void *c,uint64_t base,uint64_t bytes)
++{
++ (void)c;const struct npp_state *s=&nppa_native.probe.state;
++ if(nppa_source_owner()||s->stage!=NPP_MAP||s->set_accepted!=2||
++    s->raw_valid!=3||s->inherited_dma||!s->dma.complete||
++    !s->dma.observed_empty||!s->dma.stable||nppa_native.pool||
++    base!=NDP_POOL_BASE||bytes!=NDP_POOL_BYTES)return -1;
++ nppa_native.map_arm=true;
++ printf("NORD2 WIFI DMA ARM: stage=%u action=map base=%#llx bytes=%#llx\n",
++  s->stage,(unsigned long long)base,(unsigned long long)bytes);
++ nppa_native.pool=ml_io_map((vm_offset_t)base,(vm_size_t)bytes);
++ return nppa_native.pool?0:-1;
++}
++static int nppa_xnu_word(void *c,uint32_t off,uint32_t *v,unsigned write)
++{
++ (void)c;const struct npp_state *s=&nppa_native.probe.state;
++ if(nppa_source_owner()||!nppa_native.pool||!v||(off&3u)||
++    off>=NDP_SUBPOOL_BYTES||s->set_accepted!=2||s->raw_valid!=3||
++    s->stage!=(write?NPP_ZERO:NPP_VERIFY))return -1;
++ volatile uint32_t *p=(volatile uint32_t *)(nppa_native.pool+off);
++ if(write){
++  if(*v)return -1;
++  if(!nppa_native.zero_arm){
++   nppa_native.zero_arm=true;
++   printf("NORD2 WIFI DMA ARM: stage=%u action=zero base=%#llx bytes=%#x\n",
++    s->stage,(unsigned long long)nppa_native.claim.base,(unsigned)NDP_SUBPOOL_BYTES);
++  }
++  *p=0;
++ }else *v=*p;
++ return 0;
++}
++static int nppa_xnu_barrier(void *c)
++{(void)c;if(nppa_source_owner()||!nppa_native.pool)return -1;
++ NCC_DEVICE_BARRIER();return 0;}
++static const struct nppa_hw nppa_xnu_hw={nppa_xnu_owner,nppa_xnu_read,
++ nppa_xnu_write,nppa_xnu_delay,nppa_xnu_smc,nppa_xnu_map,
++ nppa_xnu_word,nppa_xnu_barrier};
++
++/* Call only after nrpa_after_persistent has completed and returned. ROM
++ * power/firmware remain running; a new AP/WF wake is owned by this object. */
++static void nppa_after_rom(void)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifidma",&opt,sizeof(opt));
++ if(opt!=1)return;
++ if(nppa_native.attempted)panic("NORD2 WIFI DMA: reentry; manual reset");
++ nppa_native.attempted=true;
++ unsigned rom_opt=0;PE_parse_boot_argn("nord2wifirom",&rom_opt,sizeof(rom_opt));
++ if(rom_opt!=1||nppa_claim_current()){
++  printf("NORD2 WIFI DMA PREP: status=-1 claim=0 reason=rom-or-claim\n");return;
++ }
++ nppa_native.prepared=true;nppa_native.active=true;
++ if(nppa_source_owner()){
++  nppa_native.active=false;
++  printf("NORD2 WIFI DMA PREP: status=-3 claim=1 reason=owner\n");return;
++ }
++ nppa_native.wfdma=ml_io_map(0x18024000,0x2000);
++ if(!nppa_native.wfdma){
++  nppa_native.active=false;
++  printf("NORD2 WIFI DMA PREP: status=-2 claim=1 reason=wfdma-map\n");return;
++ }
++ printf("NORD2 WIFI DMA PREP: status=0 claim=1 base=%#llx bytes=%#llx layout=%#x\n",
++  (unsigned long long)nppa_native.claim.base,
++  (unsigned long long)nppa_native.claim.bytes,(unsigned)NDP_SUBPOOL_BYTES);
++ int status=nppa_start(&nppa_native.probe,&nppa_xnu_hw,0,&nppa_native.claim,1);
++ const struct npp_state *s=&nppa_native.probe.state;
++ /* Stored observations only. No hardware access after AP sleep. */
++ printf("NORD2 WIFI DMA: status=%d stage=%u inherited=%u preflight=%u idle=%u stable=%u reads=%u halt=%u error=%d\n",
++  status,s->stage,s->inherited_dma,s->preflight_complete,
++  s->dma.observed_empty,s->dma.stable,s->dma.reads,s->halt,s->error);
++ printf("NORD2 WIFI DMA SET: attempted=%u accepted=%u raw_valid=%u raw1=%#llx raw0=%#llx mapped=%u zero=%u verified=%u words=%u/%u\n",
++  s->set_attempted,s->set_accepted,s->raw_valid,
++  (unsigned long long)s->raw[0][0],(unsigned long long)s->raw[1][0],
++  s->mapped,s->zero_complete,s->verified,s->words_written,s->words_read);
++ for(unsigned g=0;g<2;g++)if(s->raw_valid&(1u<<g))
++  printf("NORD2 WIFI DMA RAW: group=%u x=%#llx/%#llx/%#llx/%#llx\n",
++   g?0u:1u,(unsigned long long)s->raw[g][0],
++   (unsigned long long)s->raw[g][1],(unsigned long long)s->raw[g][2],
++   (unsigned long long)s->raw[g][3]);
++ printf("NORD2 WIFI DMA OWNER: ap=%u wf=%u asleep=%u balanced=%u possible_lock=%u live=%#x cfg=%#x local=%#x done=%#x first=%u/%#x/%#x/%#x\n",
++  s->ap_owned,s->wf_owned,s->asleep,s->balanced,s->possibly_locked,
++  s->live_valid,s->cfg_id,s->local_id,s->rom_done,
++  s->dma.first_reason,s->dma.first_addr,s->dma.first_raw,s->dma.first_mask);
++ printf("NORD2 WIFI DMA LIVE: cpu=%#x top=%#x power=%#x protection=%#x dma_protection=%#x\n",
++  s->live[0],s->live[1],s->live[2],s->live[3],s->live[4]);
++ if(s->preflight_complete){
++  printf("NORD2 WIFI DMA CFG: before=%#x/%#x after=%#x/%#x valid=%#x\n",
++   s->dma.cfg[0],s->dma.cfg[1],s->dma.cfg_after[0],
++   s->dma.cfg_after[1],s->dma.cfg_valid);
++  for(unsigned i=0;i<NWDP_RINGS;i++){
++   const struct nwdp_ring *r=&s->dma.rings[i];
++   printf("NORD2 WIFI DMA RING: n=%u addr=%#x raw=%#x/%#x/%#x/%#x valid=%#x\n",
++    i,r->address,r->raw[0],r->raw[1],r->raw[2],r->raw[3],r->valid);
++  }
++ }
++ if(status<0&&!s->halt&&!s->ap_owned&&!s->wf_owned&&
++    !s->set_attempted&&!s->mapped&&!s->zero_attempted){
++  nppa_native.active=false;return; /* no new owned state was acquired */
++ }
++ if(status<0||s->halt||s->uncertain||!s->balanced||!s->asleep||
++    s->ap_owned||s->wf_owned)
++  panic("NORD2 WIFI DMA: uncertain stage%u; retain resources; manual reset",s->stage);
++ nppa_native.active=false;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_dma_preflight.c
+@@ -0,0 +1,47 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_dma_preflight.h"
++static int rd(const struct nwdp_io *o,void *c,struct nwdp_state *s,uint32_t a,uint32_t *v){
++ if(o->owner(c)){s->error=1;return -1;}
++ if(o->read32(c,a,v)){s->error=2;return -1;}
++ s->reads++;return 0;
++}
++static void mismatch(struct nwdp_state *s,unsigned why,uint32_t a,uint32_t raw,uint32_t mask){
++ s->observed_empty=0;
++ if(!s->first_reason){s->first_reason=why;s->first_addr=a;s->first_raw=raw;s->first_mask=mask;}
++}
++int nwdp_capture(const struct nwdp_io *o,void *c,struct nwdp_state *s,unsigned opt){
++ if(!o||!o->owner||!o->read32||!s||opt!=1||s->entered)return -1;
++ s->entered=1;s->observed_empty=1;s->stable=1;
++ for(unsigned dma=0;dma<2;dma++){
++  uint32_t a=0x18024208u+dma*0x1000;
++  if(rd(o,c,s,a,&s->cfg[dma]))return -1;
++  s->cfg_valid|=1u<<dma;
++  if(s->cfg[dma]&15)mismatch(s,1,a,s->cfg[dma],15);
++ }
++ unsigned n=0;
++ for(unsigned dma=0;dma<2;dma++)for(unsigned r=0;r<28;r++){
++  if((!dma&&r<20)||(dma&&r>=23)||(dma&&r<20&&((r>=6&&r<8)||(r>=14&&r<16))))continue;
++  struct nwdp_ring *t=&s->rings[n++];
++  t->address=0x18024000u+dma*0x1000+(r<20?0x300+16*r:0x500+16*(r-20));
++  /* CODA base31:0; count11:0 +baseextension19:16; indices11:0.
++   * Reservedbits are captured but NEVER requiredzero. */
++  const uint32_t masks[4]={0xffffffffu,0x000f0fffu,0xfffu,0xfffu};
++  for(unsigned w=0;w<4;w++){
++   if(rd(o,c,s,t->address+4*w,&t->raw[w]))return -1;
++   t->valid|=1u<<w;
++   if(t->raw[w]&masks[w])mismatch(s,2,t->address+4*w,t->raw[w],masks[w]);
++  }
++ }
++ if(n!=NWDP_RINGS){s->error=3;return -1;}
++ for(unsigned dma=0;dma<2;dma++){
++  uint32_t a=0x18024208u+dma*0x1000;
++  if(rd(o,c,s,a,&s->cfg_after[dma]))return -1;
++  s->cfg_valid|=1u<<(dma+2);
++  if(s->cfg_after[dma]&15)mismatch(s,1,a,s->cfg_after[dma],15);
++  if((s->cfg[dma]^s->cfg_after[dma])&15){s->stable=0;mismatch(s,3,a,s->cfg_after[dma],15);}
++ }
++ s->complete=1;return s->observed_empty&&s->stable?0:1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_dma_preflight.h
+@@ -0,0 +1,21 @@
++#ifndef PRIVATE_WIFI_DMA_PREFLIGHT_H
++#define PRIVATE_WIFI_DMA_PREFLIGHT_H
++#include <stdint.h>
++#define NWDP_RINGS 27u
++struct nwdp_io {int (*owner)(void *);int (*read32)(void *,uint32_t,uint32_t *);};
++struct nwdp_ring {uint32_t address,raw[4];unsigned valid;};
++struct nwdp_state {
++ unsigned entered,complete,observed_empty,stable,reads,error;
++ unsigned cfg_valid,first_reason;uint32_t cfg[2],cfg_after[2];
++ uint32_t first_addr,first_raw,first_mask;
++ struct nwdp_ring rings[NWDP_RINGS];
++};
++/* Onlysource-definedaddresses/masks. Sourcefullinit manualprefetch affects
++ * DMA0RX0..7, DMA1RX0..2/TX0..5/8..13/16..19. Never readsreservedringholes.
++ * Zeroenabled/busy/configuredfields is observation,NOT ownershippermission.
++ * Fullsnapshot continuesaftermismatch; callbackerror stops immediately.
++ * Return0=complete+observedempty/stable;1=completeknowninherited/change
++ * refusal (caller may balance awakevotes withoutSET);-1=unknown/callbackfailure
++ * (caller retains/manualhalt). No write/memory/DMA callback exists. Freshparentwakeowner perread required. */
++int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif

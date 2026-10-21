@@ -84,6 +84,7 @@ def build(product_adt=None):
         ('nord2-stock-dtb', u64(0)),
         ('nord2-xnu-region', u64(0, 0)),
         ('nord2-conn-claim', u64(0, 0) + u32(0, 0)),
+        ('nord2-wifi-dma-claim', u64(0, 0) + u32(0, 0)),
     ], [node('memory-map', [phandle()]),
         node('asmb', [phandle(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
 
