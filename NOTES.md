@@ -3,6 +3,22 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **BATTERY LATCH FIX PROMOTED; DMA POOL/PREFLIGHT CANDIDATE IN PROGRESS.**
+  Runtime-first manifest9b0fa59f...d847789 reviewed and promoted exactly:
+  completion-only INTR_STAT1 accepted only after repeated idle/DMAoff/FIFOempty,
+  one-bit ack and zero readback. Canonical source/publishing/telemetry/fault
+  tests PASS; private identical-source normal CI-flag ARM64 checks PASS.
+  Patch10974 lines applies/reproduces. No new CI/image/flash yet. Current23a9
+  human-confirmed healthy ROM boot remains running, USB idle.
+  Next combined candidate: battery fix plus separate current-boot low32 Wi-Fi
+  DMA pool claim0x90000000+0xf20000, source region18 SET, fresh post-ROM wake
+  and read-only WFDMA preflight. Full transport remains private until global
+  DMA ownership/init and source PHY-calibration obligations are discharged.
+  External Opus completed audio draft; independent review found shared-I2C8
+  takeover/recovery/stickyhalt/variant issues and one host fixture failure.
+  A private Opus revision is now running in same visible output session.
+
+
 - **ROM23a9bd30 HARDWARE SUCCESS; BATTERY INITIAL IRQ-LATCH REFUSAL.**
   Boot-only flash/reboot OKAY; one-use runner executed, never rerun.
   NativeUSB180s completed exit0; 248475B SHA256 ce199484b0b5320f2a3db92e434630340837f4a6666b1f5f5df857fe3cc09771.

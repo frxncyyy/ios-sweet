@@ -57,8 +57,9 @@ rc=-1;b.pollNord2();assert(b.fields["CurrentCapacity"]==0&&b.fields["MaxCapacity
 static unsigned lines;
 static void IOLog(const char *fmt,...){char line[512];va_list args;va_start(args,fmt);int n=vsnprintf(line,sizeof(line),fmt,args);va_end(args);assert(n>0&&n<255);lines++;}
 '''+reports+'static void sample_report(nbg_sample *s,int e){'+raw+'}'+r'''
-int main(){nbg_i2c_state s={};report_bus(7,-1,&s);assert(lines==2);report_bus(7,-1,&s);assert(lines==2);s.failure=4;report_bus(7,-1,&s);assert(lines==4);report_bus(11,-1,&s);assert(lines==6);
-nbg_sample sample={};sample_report(&sample,-1);assert(lines==7);sample_report(&sample,-1);assert(lines==7);sample.raw_valid=3;sample_report(&sample,-1);assert(lines==8);
+int main(){nbg_i2c_state s={};s.prior_irq=1;s.prior_ack=1;report_bus(7,-1,&s);assert(lines==3);report_bus(7,-1,&s);assert(lines==3);s.failure=4;report_bus(7,-1,&s);assert(lines==6);report_bus(11,-1,&s);assert(lines==9);
+nbg_sample sample={};sample_report(&sample,-1);assert(lines==10);sample_report(&sample,-1);assert(lines==10);sample.raw_valid=3;sample_report(&sample,-1);assert(lines==11);
+IOLog(NBG_PREFLIGHT_LOG,UINT_MAX,UINT_MAX,UINT_MAX);
 IOLog(NBG_I2C_LOG,UINT_MAX,INT_MIN,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX);
 IOLog(NBG_CLOCK_LOG,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX);
 IOLog(NBG_RAW_LOG,INT_MIN,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX);
@@ -67,4 +68,4 @@ IOLog(NBG_RAW_LOG,INT_MIN,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX,
  file=Path(d)/'telemetry.cpp';file.write_text(telemetry);exe=Path(d)/'telemetry'
  subprocess.run(['c++','-std=c++17','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(P),str(file),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True)
-print('PASS: source-derived SOC/charger/invalid samples, actual canonical publishing method, injected PIO success/26M+PLL timing/all callback faults+offline no replay/2000poll bound; telemetry62callbacks unchanged/first-change-dedup/255byte bound; no native hardware')
+print('PASS: source-derived SOC/charger/invalid samples, actual canonical publishing method, injected PIO success/26M+PLL timing/all callback faults+offline no replay/2000poll bound; 62callbacks unchanged/68 inherited completion/all callback faults; telemetry first-change-dedup/255byte bound; no native hardware')

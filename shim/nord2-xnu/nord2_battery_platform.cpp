@@ -31,6 +31,7 @@ static void report_bus(unsigned bus,int rc,const struct nbg_i2c_state *s){
  bus_logged[i]=1;bus_last_stage[i]=s->stage;bus_last_failure[i]=s->failure;bus_last_rc[i]=rc;
  IOLog(NBG_I2C_LOG,bus,rc,s->stage,s->failure,s->observed,s->offline,s->inflight,
   s->last_addr,s->last_value,s->last_valid,s->last_write,s->last_width);
+ IOLog(NBG_PREFLIGHT_LOG,bus,s->prior_irq,s->prior_ack);
  IOLog(NBG_CLOCK_LOG,bus,s->mux,s->parent_hz,s->pinmux,s->initial_gate,s->completion_irq,s->polls,s->observed);
 }
 static vm_offset_t address(uint32_t p,unsigned bytes){

@@ -33,3 +33,16 @@ Source pin: `frxncyyy/android_kernel_oplus_mt6893` commit
 `04d00c2565764c3922c9b4826b5acff1106e533f`. Host verification:
 `python3 tools/test-nord2-battery.py`. The actual gauge/charger reads have
 not yet been observed on the phone.
+
+## First hardware handoff result
+
+The initial23a9bd30 boot refused bus7 before any gauge command: INTR_STAT
+contained only TRANSAC_COMP (bit0), with START idle and DMA off. This is an
+inherited completion latch, not a gauge NACK. The selected Android driver
+clears latched status before transfers. Native preflight now adopts only
+exact status1 after empty FIFO and repeated idle/DMAdisabled/FIFOempty/status1
+checks, acknowledges precisely bit0, and requires status0 readback. Errors,
+changing state, nonempty FIFO and uncertain callbacks still leave the bus
+offline. No reset, retry, FIFO discard or pinmux change is introduced.
+Captured NORD2 BAT PREFLIGHT reports the prior latch and returned acknowledgement;
+actual SOC/charger success still requires a new hardware test.

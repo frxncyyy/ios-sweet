@@ -12,7 +12,7 @@ struct nbg_i2c_io {
  * observed bits:1mux,2parentHz,4pinmux,8initialgate,16completionIRQ. */
 struct nbg_i2c_state {unsigned entered,inflight,offline,polls;int error;
  unsigned stage,failure,observed,last_width,last_write,last_valid;
- uint32_t last_addr,last_value,mux,parent_hz,pinmux,initial_gate,completion_irq;
+ uint32_t last_addr,last_value,mux,parent_hz,pinmux,initial_gate,completion_irq,prior_irq,prior_ack;
 };
 /* Exact board buses/slaves/RO commands. Parent serializes complete sample.
  * No DMA/reset/pinmux/PLL change. Unknown completion ->offline, no cleanup.

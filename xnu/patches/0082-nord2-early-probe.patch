@@ -10743,7 +10743,7 @@
 +#endif
 --- /dev/null
 +++ b/iokit/Kernel/arm/mtk_i2c_read.c
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,104 @@
 +#if defined(KERNEL)
 +#include <pexpert/arm64/board_config.h>
 +#endif
@@ -10764,7 +10764,7 @@
 + uint32_t next[]={0,0,0x3a,1,2,10,0x1b,0x8001,0x1a,0,3,1,0,0x404};
 + uint32_t old[14];s->entered=1;s->polls=0;s->error=-1;
 + s->stage=1;s->failure=s->observed=s->last_valid=0;
-+ s->mux=s->parent_hz=s->pinmux=s->initial_gate=s->completion_irq=0;
++ s->mux=s->parent_hz=s->pinmux=s->initial_gate=s->completion_irq=0;s->prior_irq=s->prior_ack=0;
 +#define R(pa,w,out) do{s->last_addr=(pa);s->last_width=(w);s->last_write=0;s->last_valid=0;s->last_value=0;if(o->read(c,pa,w,out)){s->failure=10;goto unknown;}s->last_value=*(out);s->last_valid=1;}while(0)
 +#define W(pa,w,val) do{s->last_addr=(pa);s->last_width=(w);s->last_write=1;s->last_value=(val);s->last_valid=1;if(o->write(c,pa,w,val)){s->failure=11;goto unknown;}}while(0)
 + /* Read selected source PLL/mux, never retune it, before controller access. */
@@ -10800,8 +10800,20 @@
 + if(oldgate&bit){gate_changed=1;W(gate+0xe04,4,bit);R(gate+0xe00,4,&v);if(v&bit){s->failure=5;goto unknown;}}
 + s->stage=6;R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
 + R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;} /* never touch inheritedDMA */
-+ R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;} /* do not discard another transaction's IRQ */
++ R(base+0x0c,2,&v);s->prior_irq=v;
++ if(v!=0&&v!=1){s->failure=8;goto unknown;} /* preserve errors/unknown status */
 + R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;} /* conservative: no inherited FIFO state */
++ /* Source clears latched TRANSAC_COMP before a new transfer. Adopt only
++  * exact completion, with no inherited START/DMA/FIFO and stable status.
++  * This is AP-local boot handoff; no concurrent bus owner is permitted. */
++ if(s->prior_irq==1){
++  R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
++  R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;}
++  R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;}
++  R(base+0x0c,2,&v);if(v!=1){s->failure=8;goto unknown;}
++  W(base+0x0c,2,1);s->prior_ack=1;
++  R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;}
++ }
 + s->stage=7;for(unsigned i=0;i<14;i++)R(base+offs[i],2,&old[i]);
 + s->stage=8;for(unsigned i=0;i<14;i++){
 +  uint32_t n=next[i];if(i==0)n=slave<<1;if(i==12)n=count;
@@ -10853,7 +10865,7 @@
 + * observed bits:1mux,2parentHz,4pinmux,8initialgate,16completionIRQ. */
 +struct nbg_i2c_state {unsigned entered,inflight,offline,polls;int error;
 + unsigned stage,failure,observed,last_width,last_write,last_valid;
-+ uint32_t last_addr,last_value,mux,parent_hz,pinmux,initial_gate,completion_irq;
++ uint32_t last_addr,last_value,mux,parent_hz,pinmux,initial_gate,completion_irq,prior_irq,prior_ack;
 +};
 +/* Exact board buses/slaves/RO commands. Parent serializes complete sample.
 + * No DMA/reset/pinmux/PLL change. Unknown completion ->offline, no cleanup.
@@ -10862,7 +10874,7 @@
 +#endif
 --- /dev/null
 +++ b/iokit/Kernel/arm/nord2_battery_platform.cpp
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,86 @@
 +#if defined(KERNEL)
 +#include <pexpert/arm64/board_config.h>
 +#endif
@@ -10896,6 +10908,7 @@
 + bus_logged[i]=1;bus_last_stage[i]=s->stage;bus_last_failure[i]=s->failure;bus_last_rc[i]=rc;
 + IOLog(NBG_I2C_LOG,bus,rc,s->stage,s->failure,s->observed,s->offline,s->inflight,
 +  s->last_addr,s->last_value,s->last_valid,s->last_write,s->last_width);
++ IOLog(NBG_PREFLIGHT_LOG,bus,s->prior_irq,s->prior_ack);
 + IOLog(NBG_CLOCK_LOG,bus,s->mux,s->parent_hz,s->pinmux,s->initial_gate,s->completion_irq,s->polls,s->observed);
 +}
 +static vm_offset_t address(uint32_t p,unsigned bytes){
@@ -10950,11 +10963,12 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/iokit/Kernel/arm/nbg_telemetry.h
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,8 @@
 +#ifndef NBG_TELEMETRY_H
 +#define NBG_TELEMETRY_H
 +/* Separate bounded software-only log lines; all captured fields are32bit. */
 +#define NBG_I2C_LOG "NORD2 BAT I2C: bus=%u rc=%d stage=%u why=%u seen=%#x off=%u flight=%u last=%#x value=%#x valid=%u wr=%u width=%u\n"
 +#define NBG_CLOCK_LOG "NORD2 BAT CLK: bus=%u mux=%#x parent_hz=%u pins=%#x gate=%#x irq=%#x polls=%u seen=%#x\n"
++#define NBG_PREFLIGHT_LOG "NORD2 BAT PREFLIGHT: bus=%u prior_irq=%#x ack_returned=%u\n"
 +#define NBG_RAW_LOG "NORD2 BAT RAW: rc=%d seen=%#x soc=%#x/%#x volt=%#x temp=%#x cur=%#x chg=%#x/%#x fault=%#x soc_valid=%u charger_valid=%u\n"
 +#endif

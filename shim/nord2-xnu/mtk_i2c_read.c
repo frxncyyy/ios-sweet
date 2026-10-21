@@ -18,7 +18,7 @@ int nbg_i2c_read(const struct nbg_i2c_io *o,void *c,struct nbg_i2c_state *s,
  uint32_t next[]={0,0,0x3a,1,2,10,0x1b,0x8001,0x1a,0,3,1,0,0x404};
  uint32_t old[14];s->entered=1;s->polls=0;s->error=-1;
  s->stage=1;s->failure=s->observed=s->last_valid=0;
- s->mux=s->parent_hz=s->pinmux=s->initial_gate=s->completion_irq=0;
+ s->mux=s->parent_hz=s->pinmux=s->initial_gate=s->completion_irq=0;s->prior_irq=s->prior_ack=0;
 #define R(pa,w,out) do{s->last_addr=(pa);s->last_width=(w);s->last_write=0;s->last_valid=0;s->last_value=0;if(o->read(c,pa,w,out)){s->failure=10;goto unknown;}s->last_value=*(out);s->last_valid=1;}while(0)
 #define W(pa,w,val) do{s->last_addr=(pa);s->last_width=(w);s->last_write=1;s->last_value=(val);s->last_valid=1;if(o->write(c,pa,w,val)){s->failure=11;goto unknown;}}while(0)
  /* Read selected source PLL/mux, never retune it, before controller access. */
@@ -54,8 +54,20 @@ int nbg_i2c_read(const struct nbg_i2c_io *o,void *c,struct nbg_i2c_state *s,
  if(oldgate&bit){gate_changed=1;W(gate+0xe04,4,bit);R(gate+0xe00,4,&v);if(v&bit){s->failure=5;goto unknown;}}
  s->stage=6;R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
  R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;} /* never touch inheritedDMA */
- R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;} /* do not discard another transaction's IRQ */
+ R(base+0x0c,2,&v);s->prior_irq=v;
+ if(v!=0&&v!=1){s->failure=8;goto unknown;} /* preserve errors/unknown status */
  R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;} /* conservative: no inherited FIFO state */
+ /* Source clears latched TRANSAC_COMP before a new transfer. Adopt only
+  * exact completion, with no inherited START/DMA/FIFO and stable status.
+  * This is AP-local boot handoff; no concurrent bus owner is permitted. */
+ if(s->prior_irq==1){
+  R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
+  R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;}
+  R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;}
+  R(base+0x0c,2,&v);if(v!=1){s->failure=8;goto unknown;}
+  W(base+0x0c,2,1);s->prior_ack=1;
+  R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;}
+ }
  s->stage=7;for(unsigned i=0;i<14;i++)R(base+offs[i],2,&old[i]);
  s->stage=8;for(unsigned i=0;i<14;i++){
   uint32_t n=next[i];if(i==0)n=slave<<1;if(i==12)n=count;
