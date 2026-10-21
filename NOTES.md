@@ -3,6 +3,52 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **OWNER DIAGNOSTICS IMAGE VERIFIED; NEW EXACT APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-ownerdiag-battery-stop23.img`,
+  33347584 bytes, SHA256
+  e011b66da1b49367f22dfb1d01cedc7712f306f98673752c46c05fa9c08fb4b7.
+  Payload b8e84df972bc3affff573994a69c8a92acd1827aea2f6868f7ee6af564235e60.
+  CI39626548042/source88588a074718e54dd4f1fa63142c304899fff0f4,
+  kernel17479800 bytes SHAfb4d1a2772b3b9cd451cbc7d4e75fd3af5ccd14042935ec99bc68a45d322c1e9.
+  Targeted linked first-error/guard/raw/reader-writer7472 layout review PASS.
+  Bounded1GiB packing exit0; independent fresh loader/segments/ADT/private
+  calibration/Linux/dualDT/raw rescue/header ID verification PASS;206848 spare.
+  Existing manifest/payload rechecked; actual e0d3/RAM-rescue hashes rechecked.
+  Stage identity/schema/prepared true; human exact/RF/conditional-recovery
+  authorization FALSE; one-use runner NEVER executed. Same main/calibration
+  attempt plus first-failed-predicate diagnostics, no relaxed guard or retry.
+  First actual failed predicate and FW_READY remain unknown. Failure may
+  recur;30s USB drain and manual fastboot conditional e0d3/rescue recovery.
+  Ask NEW exact boot-only approval. Phone e0d3 human-healthy; no collectors.
+  Private guard-reference.json maps18 hardware cases to selected Android
+  source and next investigation; not permission to ignore any failure.
+  Audio private ID integration independently reviewed; silent AFE adapter
+  preparation continues privately. UFS/boot speed unchanged.
+
+
+- **OWNER DIAGNOSTICS CI39626548042 SUCCESS; IMAGE PREPARATION.**
+  Source88588a074718e54dd4f1fa63142c304899fff0f4; kernel17479800 bytes,
+  SHA256 fb4d1a2772b3b9cd451cbc7d4e75fd3af5ccd14042935ec99bc68a45d322c1e9.
+  Downloaded artifact/SHA/source checked;1134 generic ARMv8.2+crypto compiler
+  invocations (three interleaved pairs and one exact split command preserved).
+  Targeted linked review pending; stage CI/schema true, prepared/approval false.
+  Bounded1GiB packing next. Phone e0d3 human-healthy; no collectors running.
+  Private audio ID integration b479fba2 independently reviewed PASS: default
+  off/no-MMIO, modes1/2, no AFE cycle caller, patch reproduction, nonempty ARM64
+  objects and host ASan/UBSan. Compilation uses documented mixed focused
+  headers, not full current CI/link. Audio remains private/out of this image.
+  UFS/boot speed unchanged.
+
+
+- **OWNER DIAGNOSTICS CI39626548042 RUNNING.**
+  Source88588a074718e54dd4f1fa63142c304899fff0f4 preserves first owner error
+  and adds captured-only diagnostics. Full linked/image verification pending;
+  CI/prepared/human approval gates closed. Current phone e0d3 human-healthy,
+  all collectors finished; UFS/boot speed unchanged. Audio ID integration
+  preparation continues privately, with no AFE streaming call site.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39626548042
+
+
 - **FIRST OWNER-FAILURE DIAGNOSTICS PROMOTED; READY FOR FULL CI.**
   Reviewed private owner-guard-diagnostics-v2 manifest9a8b2a3f promoted:
   native header, adapter and coordinator plus native fixture. Only trailing
