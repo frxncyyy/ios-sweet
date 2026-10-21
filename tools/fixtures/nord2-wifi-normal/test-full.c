@@ -1,3 +1,4 @@
+#include "wifi_default_feature.h"
 static void full_test_probe(unsigned);
 static void nrd_forbid_write(void);
 static unsigned long long full_clock_extra(void);
@@ -67,8 +68,18 @@ static void deliver(unsigned k,const uint8_t*frame,unsigned n,unsigned ddone){
 }
 static void beacon(unsigned k,unsigned id,unsigned ddone){uint8_t p[63]={0};w16(p,63);w16(p+2,0x3801);put32(p+8,12u<<8);put32(p+12,6u<<8);p[24]=0x80;p[34]=2;p[40]=2;w16(p+56,100);p[60]=0;p[61]=1;p[62]=(uint8_t)id;deliver(k,p,sizeof(p),ddone);}
 static void full_deliver(const unsigned char*cmd){
+ if(cmd[36]==0x70){
+  unsigned ix=nct_native.session.cursor-NCFG_COMMANDS;uint8_t expected[284];
+  assert(ix<3&&!ndf_body(ix,expected)&&!memcmp(cmd+64,expected,sizeof(expected)));
+  assert(cmd[0]==92&&cmd[1]==1&&cmd[3]==1&&cmd[6]==1&&cmd[32]==60&&cmd[33]==1&&cmd[37]==0xa0&&cmd[38]==1);
+ }
+ if(cmd[36]==0x0a){
+  assert(nct_native.session.cursor==NCFG_COMMANDS+3);
+  assert(cmd[0]==132&&cmd[1]==0&&cmd[2]==0&&cmd[3]==1&&cmd[6]==1&&cmd[32]==100&&cmd[33]==0&&cmd[37]==0xa0&&cmd[38]==1&&cmd[64]==12);
+  for(unsigned k=65;k<132;k++)assert(!cmd[k]);
+ }
  if(cmd[36]!=3)return;
- assert(!delivered++&&nct_native.session.cursor==21&&nct_native.session.record[21].publication_attempted&&!nct_native.session.record[21].published);
+ assert(!delivered++&&nct_native.session.cursor==(NCB_COMMANDS-1)&&nct_native.session.record[NCB_COMMANDS-1].publication_attempted&&!nct_native.session.record[NCB_COMMANDS-1].published);
  beacon(0,'X',mode!=2&&mode!=4);if(mode==4){struct ncr_queue*q=&ncb_native.rx.queue[0];uint8_t*b=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;w16(b+2,6u<<11);}beacon(2,'Y',1);
  uint8_t p[512]={0};w16(p,32);w16(p+2,6u<<11);deliver(3,p,32,1);w16(p+2,11u<<11);deliver(4,p,32,1);
  if(mode==1)return; /* actual no completion => bounded truthful partial */
@@ -77,21 +88,28 @@ static void full_deliver(const unsigned char*cmd){
 static void setup(unsigned which){ready_fixture();memset(&ncb_native,0,sizeof(ncb_native));memset(&nct_native,0,sizeof(nct_native));mode=which;delivered=no_board=probe_memory=probe_write=delayed_trigger=0;normal_enabled=1;scan_flag=1;normal_pubs=normal_no_ddone=normal_wrong_didx=0;basic_flag=1;}
 int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(f&&fread(authenticated_board,1,sizeof(authenticated_board),f)==sizeof(authenticated_board));fclose(f);
  setup(0);run_worker();struct nct_session*t=&nct_native.session;struct ncr_state*r=&ncb_native.rx;
- assert(!manual_halts&&ncd_native.parked&&t->phase==NCT_DONE&&t->completed==22&&normal_pubs==22&&ncb_native.prepared);
+ assert(!manual_halts&&ncd_native.parked&&t->phase==NCT_DONE&&t->completed==NCB_COMMANDS&&normal_pubs==NCB_COMMANDS&&ncb_native.prepared);
  assert(r->scan_requested&&r->scan.done&&!r->scan.timed_out&&!r->scan.partial&&r->scan.count==2&&r->scan.frames==2&&r->drain_passes==1&&t->scan_complete);
  assert(r->packets==5&&r->rearmed==5&&r->msdu_reports==1&&r->rx_reports==1&&r->history_count==1&&r->history[0].inner==0x1234&&probe_memory==31&&probe_write==31);
  for(unsigned k=0;k<5;k++)assert(r->queue[k].packets==1&&r->queue[k].rearmed==1&&r->queue[k].raw[0]==0xdeadbeef);
  assert(r->scan.completion.version==2&&r->scan.completion.beacons==13&&r->scan.completion.beacons_2g==8&&r->scan.completion.beacons_5g==5&&r->scan.completion.pno==1&&r->scan.completion.channel_count==2&&r->scan.completion.channels[0]==6&&r->scan.completion.idle[1]==0xabcd&&r->scan.completion.scan_time[1]==0xa55a);
  assert(!nwfn_read_allowed(0x18024680)&&!nwfn_read_allowed(0x1802468c));
  assert(r->readback[0].complete&&r->readback[0].reason==NRD_BASELINE&&r->readback[1].complete&&r->readback[1].reason==NRD_SCAN_DONE);
- assert(t->pse_total==3&&t->basic_spent==1&&t->capacity==2&&t->available==2&&!t->reserved&&t->acquired==22&&t->released==22&&nwfn_native.init.transport.completed==27);
+ {uint8_t out[132],before[132];size_t used=999;memset(out,0xa5,sizeof(out));memcpy(before,out,sizeof(out));
+ assert(ncb_native.plan.prepared);
+ for(unsigned cap=0;cap<132;cap++){assert(ncb_build(&ncb_native.plan,NCFG_COMMANDS+3,out,cap,&used)<0&&used==999&&!memcmp(out,before,sizeof(out)));}
+ }
+ {uint8_t out[348],before[348];size_t used=999;memset(out,0xa5,sizeof(out));memcpy(before,out,sizeof(out));
+ for(unsigned index=NCFG_COMMANDS;index<NCFG_COMMANDS+3;index++)for(unsigned cap=0;cap<348;cap++)assert(ncb_build(&ncb_native.plan,index,out,cap,&used)<0&&used==999&&!memcmp(out,before,sizeof(out)));
+ }
+ assert(t->pse_total==3&&t->basic_spent==1&&t->capacity==2&&t->available==2&&!t->reserved&&t->acquired==NCB_COMMANDS&&t->released==NCB_COMMANDS&&nwfn_native.init.transport.completed==(NCB_COMMANDS+5));
  unsigned reads=mmio_reads,writes=mmio_writes;assert(!nct_native_owner_window(&nwfn_native)&&nct_native_run(0,0)<0&&reads==mmio_reads&&writes==mmio_writes);
- setup(1);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->scan.timed_out&&r->scan.partial&&!r->scan.done&&r->scan.count==2&&r->readback[1].complete&&r->readback[1].reason==NRD_SCAN_EXPIRED);
- setup(2);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->queue[0].wait_ddone&&!r->queue[0].rearmed);
- setup(4);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&delayed_trigger&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->scan_expired&&r->scan.timed_out&&r->scan.partial);
- setup(3);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(manual_halts==1&&nwm_drain_entered&&drain_blocks==1&&t->halt&&r->halt&&r->error==20&&t->completed==21&&normal_pubs==22&&t->available==2&&!t->reserved);
+ setup(1);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==NCB_COMMANDS&&t->service_timed_out&&!t->scan_complete&&r->scan.timed_out&&r->scan.partial&&!r->scan.done&&r->scan.count==2&&r->readback[1].complete&&r->readback[1].reason==NRD_SCAN_EXPIRED);
+ setup(2);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==NCB_COMMANDS&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->queue[0].wait_ddone&&!r->queue[0].rearmed);
+ setup(4);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&delayed_trigger&&ncd_native.parked&&t->completed==NCB_COMMANDS&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->scan_expired&&r->scan.timed_out&&r->scan.partial);
+ setup(3);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(manual_halts==1&&nwm_drain_entered&&drain_blocks==1&&t->halt&&r->halt&&r->error==20&&t->completed==(NCB_COMMANDS-1)&&normal_pubs==NCB_COMMANDS&&t->available==2&&!t->reserved);
  setup(0);no_board=1;run_worker();assert(!manual_halts&&ncd_native.parked&&!nct_native.attempted&&!normal_pubs&&ncb_native.refusal==2&&nwfn_native.init.transport.completed==5);
  setup(0);scan_flag=0;run_worker();assert(!manual_halts&&ncd_native.parked&&!nct_native.attempted&&!ncb_native.attempted&&!normal_pubs&&nwfn_native.init.transport.completed==5);
  assert(nrd_calls&&nrd_calls==nrd_restored&&nrd_checked==nrd_calls);
- puts("PASS readonly snapshots/phase restoration/no writes or queue mutation + actual22 sourceconfig/pinnedboard+BSS/scan coordinator, real native lease and five RXrings/opaque descriptors, copiedBSS+matchingdone, softwarecredits/noACK, retained clean timeout/DDONEpending partial, firmwareerror actual30sdrain, missingboard/defaultoff preIO refusal. Synthetic only; no hardware scan claim.");return 0;
+ puts("PASS readonly snapshots/phase restoration/no writes or queue mutation + actual26 sourceconfig/pinnedboard+BSS/scan coordinator, real native lease and five RXrings/opaque descriptors, copiedBSS+matchingdone, softwarecredits/noACK, retained clean timeout/DDONEpending partial, firmwareerror actual30sdrain, missingboard/defaultoff preIO refusal. Synthetic only; no hardware scan claim.");return 0;
 }

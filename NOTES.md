@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Receive lifecycle26 integrated; source and independent reviews PASS.**
+  Adds three public OnePlus CID70 SET/no-response default batches (11keys,
+  body284/frame348, grouping4/4/3) and CID0a RXfilter0xc (body68/frame132)
+  before AISactivation/passive scan. These are proven Linux startup omissions,
+  not yet proven cause of zero RF reception. Selected source flags/original
+  serializer verified; no invented cfg/EEPROM/FEM values or speculativeDMA writes.
+  Runtime20d876dd/review74ec8f2b; wirev2e58fe1e5/reviewcdd8c617;
+  parser26 82201436/review9b19e96c (769positive/2107negative,10nativeblocks).
+  New wifi_default_feature TU linked via bsd/conf/files and generated0082;
+  patch applies clean/matches, normalARM64 default/backend/owner compile PASS.
+  Canonical full26/450RXfaults/185BASICfaults/65578decoder PASS; CI next.
+  Fresh research/nord2/wifi-rx-lifecycle/ios allgatesfalse/runnerUNUSED,
+  healthy1c5 fallback pinned. Current phone remains humanhealthy1c5,
+  no active collector/device action/approval question. Next one cohesiveCI,
+  exact artifact/linked/image validation, then exact new boot-only approval.
+  Bounded pre-scan audit061f9b71 finds no additional proven mandatory command;
+  optional lowlatency-disable startup difference documented, not added blindly.
+
+
 - **Async image1c5aa596 HARDWARE-HEALTHY; scan still zero networks.**
   User confirms lockscreen/touch/buttons call_d3dc9bad9f2f4b759f4020859fcf39e7.
   MAIN/CAP/BASIC pass; all22normal commands and22channel scan complete;

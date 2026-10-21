@@ -7,11 +7,11 @@ static void scenario(unsigned cap,unsigned pre,unsigned post,unsigned state){
 }
 void success(unsigned cap,unsigned pre,unsigned post,unsigned state){
  scenario(cap,pre,post,state);run_worker();struct nbc_state*b=&nbc_native.state;struct ncd_state*c=&ncd_native.diag;
- assert(!manual_halts&&ncd_native.parked&&b->completed&&b->tx_done&&b->publications==1&&basic_pubs==1&&normal_pubs==22&&nwfn_native.init.transport.completed==27);
+ assert(!manual_halts&&ncd_native.parked&&b->completed&&b->tx_done&&b->publications==1&&basic_pubs==1&&normal_pubs==NCB_COMMANDS&&nwfn_native.init.transport.completed==(NCB_COMMANDS+5));
  assert(c->events==cap+1&&c->rearmed==cap+1&&c->matched&&c->history[c->events-1].kind==1&&!c->debug_events&&c->sequence_echo==1&&!c->sequence_mismatches);
  for(unsigned k=0;k<cap;k++)assert(c->history[k].kind==3&&c->history[k].eid==7&&c->history[k].debug_type==state&&c->history[k].sequence==255);
  assert(b->sleepy_events==pre+post&&!b->debug_events&&b->rearmed==pre+post&&b->last_sleepy==(pre+post?state:0));
- assert(b->budget.reserved&&b->budget.pse_remaining==2&&nct_native.session.acquired==22&&nct_native.session.released==22);
+ assert(b->budget.reserved&&b->budget.pse_remaining==2&&nct_native.session.acquired==NCB_COMMANDS&&nct_native.session.released==NCB_COMMANDS);
  if(pre+post)assert(b->last_debug.kind==3&&b->last_debug.debug_type==state&&!b->last_debug.debug_id&&!b->last_debug.debug_bytes);
 }
 
