@@ -3,6 +3,21 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **VCN33 image6a6a2ef7 VERIFIED; exact boot-only approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-vcn33-battery-stop23.img33390592B
+  SHA6a6a2ef79f03eaef540f4247016234217d5f8655b320c6afdf5dd81485c155ad
+  payloadde67271427569078c6544727fe73c459943679f5f453b7b0bbdbe78823318341;
+  bootspare163840B. CI39684479974/source97c2150d/kernelce122a75.
+  Bounded1GiB pack and independent loader/segment/ADT/privatecal/rescue/Linux/
+  DT/header checks plus --check-existing PASS. Fresh wifi-vcn33/ios prepared,
+  identity/schema true; all human authorization flags false, runner UNUSED.
+  Pending async question asks exact image plus conditional healthyc31/RAMrescue
+  recovery and physical fastboot. Do not flash until reply explicitly approves.
+  Phone still human-healthy c31, no collector or device action on this turn.
+  Next approved fresh runner only, collect fullUSB/strictVCN33+26/RXRF receipt,
+  compare actual MON/nominalselectors and RF counters without assuming success.
+  No fresh network interface/association/iOS service bridge activation yet.
+
 - **VCN33 CI39684479974 SUCCESS; verified kernel and linked review, packing.**
   Source97c2150d0f7e77b2a00af18a9c5d081017b00652; kernel17535336B
   SHAce122a75228da792a25c2fc448d9bfd7904fe751f4b1d976a9079936e19a6e2d.
