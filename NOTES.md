@@ -3,6 +3,21 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WFSYS FULL CI39572918115 RUNNING.**
+  Source61398cb6675e8e7b5701c8fa6ea0da1bc067f5b9 pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39572918115
+  Private wifi-wfsys/ios build/verification/one-use runner/evidence templates
+  reviewed; negative parser/default-false gates PASS. Identity/approval false.
+  Next image nord2-ios-wifi-wfsys-stop23.img; exact49 args replacing only
+  nord2wifiwake=1 with nord2wifiwfsys=1. Current49/manual RAM rescue fallback.
+  Await artifact/source/flags and linked path verification, then package and
+  ask concrete boot-only approval. Phone remains49 healthy; no USB collector.
+  User asks faster visible Wi-Fi progress: prepare combined ROM_DONE path
+  concurrently (fixed current-boot CONN ownership + source region27 policy +
+  authenticated ROM spans + CPU release), after WFSYS acceptance. No estimate
+  or firmware/network success implied; UFS/boot work remains closed.
+
+
 - **WFSYS CPU-HELD SOURCE READY FOR CI; NO NEW DEVICE AUTHORIZATION.**
   AP wake49f177ec remains healthy, human lockscreen/input confirmed; USB idle.
   Canonical wifi_wfsys core/adapter/bind now behind nord2wifiwfsys=1; next
