@@ -3,6 +3,44 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **SWINT fa13be9b STABLE; FULL CAPTURE AND HUMAN HEALTH CONFIRMED.**
+  USB180s capture completed without transport error; full236116 bytes SHA
+  7e177f368be4f854fb7a43c305cf4a27dcae5f48f31959d186ad9522b246d69b. Matching N9 ACK and real FW_READY confirmed, no
+  native error; valid iOS frames and user confirms lockscreen/touch/buttons.
+  All collectors finished; phone remains on successful fa13be9b. No restore
+  performed or needed. Preserve executed SWINT evidence; runner is one-use.
+  e0d3 remains tested fallback for next explicit approval until successor
+  recovery policy is set. Capability integration/source review in progress.
+  New strict diagnostic parser awaiting peerreview; old parser result kept.
+
+
+- **SWINT HARDWARE SUCCESS: REAL N9 ACK AND FW_READY OBSERVED.**
+  Authorized fa13be9b boot-only flash/reboot OKAY. MAIN status0/stage9/
+  ready1/halt0/error0/events3/finish2. Third RX EID1/seq3/type7/status0
+  matches expected; source-guarded readiness register180600f0 raw3/polls1.
+  All7 spans verified, PHY backup30720, coex done, nativeerror0/guard0;
+  DMA statusvalid3 with no pendingSWINT/coherent bits at captured checks.
+  First immutable snapshot137952 bytes SHA
+  c655aacb2a502ed9decece7abec1057860b51edc3fa03cbb9406c4a34ab6271c.
+  Independent source+log review PASS. Existing frozen parser returns
+  incomplete solely for10 newer unknown diagnostic record types; preserve
+  that result, don't falsely report it passed. Separate strict evidence-v2
+  parser being prepared. USB180s capture still active; valid1125x2436 frames
+  observed; human health confirmation pending. No recovery needed from
+  current observations; NEVER rerun executed SWINT runner. Current boot is
+  fa13be9b, not e0d3. Capability production integration being prepared
+  privately from reviewed32a1e5d0 now actual readiness prerequisite is met.
+  UFS/boot speed unchanged; no scan/association/network interface yet.
+
+
+- **SWINT fa13be9b AUTHORIZED; ONE-USE RUNNER STARTING.**
+  Exact user approval for boot-only main firmware/calibration attempt and
+  conditional e0d3 or verified RAM-rescue recovery. Sole device identity,
+  product/capacity verified privately. USB collector before reboot; NEVER
+  rerun wifi-main-swint/ios runner after flash.log exists. Actual ACK and
+  FW_READY pending. UFS/boot speed unchanged.
+
+
 - **SWINT IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-swint-battery-stop23.img`,
   33349632 bytes, SHA256
