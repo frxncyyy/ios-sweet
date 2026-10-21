@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **AP-WAKE49f177ec HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
+  Authorized boot-only runner EXECUTED once; flash/reboot OKAY. NativeUSB180s
+  exit0,227028-byte log SHA256
+  67a6cc65a29da2ac815f9f3b00494a038c6a3f3d748352cf8a849c9c3987d5f0.
+  Strict final report complete/no issues: persistentphase10 retained/handoff2,
+  wake status0/phase7/balanced1/ref0/halt0, ID20010101/clock4006/IRQ1;
+  ackpolls3/clockpolls1/IDpolls1; coldvalid1f CPU0/top12/power0582fb00/
+  BGCPU0/BGtop12. Own AP wake vote balanced, common power remains retained.
+  No panic/USB transport error/capacity loss. Human confirms lockscreen,
+  touch and buttons. Current phone49f177ec healthy; USB collector STOPPED.
+  Final evidence wifi-ap-wake/ios/hardware-report-final.json. Previousc6cb,
+  8ca8 and tested rescue preserved. No new flash approval; never rerun runner.
+  No firmware execution/RF/network connectivity or DRAM permission inferred.
+  Private wfsys-rom-plan.md now pins meaningful next CPU-held WFSYS local-ID
+  stage and exact later four ROM spans. Static saved FDTs contain dynamic CONN
+  size/no-map only, no current fixedbase tag. Current carveout/alias ownership
+  and reviewed region27 sourceSET lifetime are future ROM design tasks, not
+  grounds to fabricate permission callbacks or experiment with alternateSMCs.
+  /root/wifi_rom_plan implementing PRIVATE CPU-held WFSYS source core/contract;
+  no production/device/CI change. Source-subset success poweroff follows actual
+  protect->clockoff->poweroff order; no byte-exact restoration claim. UFS/boot
+  work remains closed. Parent next reviews source/tests/native integration.
+
+
+- **AP-WAKE49f177ec AUTHORIZED; RUNNER STARTING ONCE.**
+  Human: "Autorizzo, pronto in fastboot" for exact49f177ec…ad8e9310 image.
+  Known Nord2 is sole fastboot device. Private authorization records boot-only
+  plus conditional tested rescue/currentc6cb restoration after manual reset.
+  Parent owns USB; run once and collect180s, never repeat after flash.log or
+  hardware-live exists. No DRAM/MPU/ROM/CPU-release/network operation.
+
+
 - **AP-WAKE IMAGE READY; AWAIT EXACT NEW BOOT-ONLY APPROVAL.**
   shim/out/nord2-xnu/nord2-ios-wifi-ap-wake-stop23.img,33,292,288B,
   SHA25649f177ec5d977d4f7c0d1407c78f585e5704ccc85c1cf17804f6c940ad8e9310.
