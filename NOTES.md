@@ -4,6 +4,27 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **PERSISTENT RADIO SOURCE INTEGRATED; READY FOR FULL CI.**
+  Canonical wifi_persistent core/adapter/bind and explicit nord2wifipersist=1
+  branch promoted from independently reviewed native v2. Two separate guarded
+  BSD translation units; ordinary restoring diagnostics unchanged. Source
+  buildword3 and persistent-only SW_LP-before-enable order pinned. Register-only
+  remap, cold16KiB SYSRAM initialization, E3/efuse read/AFE/PLL/RC/HW handoff;
+  WFSYS/BGFSYS remain off/reset, no DRAM firmware access or CPU release.
+  Before mutation latch retained lifetime; source phase10 skips teardown;
+  uncertain failure retains state and requires manual reset. No post-handoff
+  CONN checks. Production parity review PASS; focused ARM64 all3 files PASS;
+  canonical ASan/UBSan core8725/native269468/PMIC order/failure suites PASS.
+  Generated patch8508lines reproduces tree. UFS remains byte-exact
+  1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
+  New private image templates research/nord2/wifi-persistent/ios remain blank
+  identity/approval until CI/source/kernel pinning and image verification.
+  Planned args: working8ca8 minus old common/ADIE opt-ins plus persist1;
+  legacy observer absent, EMI0, all other args unchanged. Current phone97922165
+  healthy; USB stopped. Next commit/push/CI, linked review, build exact image,
+  then NEW boot-only authorization. Previous97922165 approval is consumed.
+
+
 - **LEGACY EMI TEST FINISHED: REQUEST REFUSED; IOS REMAINS HEALTHY.**
   Authorized97922165 runner EXECUTED, never rerun. Flash/reboot OKAY, native
   USB180s exit0;238102-byte log SHA256
@@ -25,7 +46,10 @@
   Native private v2 corrects source Kbuild BUILD_MODE3 and persistent-only
   PMIC SW_LP before enable. Saved conninfra.cfg absence of tcxo_gpio plus parser
   zero-init selects26M_COTMS, no missing GPIO155 TCXO mux. WholecandidateARM64
-  and targeted tests PASS; independent review/production-named copies pending.
+  and targeted tests PASS. Independent focused native v2 review PASS, pinned in
+  post-id-candidate/native-candidate/v2/independent-review.json; no concrete
+  register-only source blocker remains. Production-named integration/link/CI
+  and device behavior remain pending.
 
 
 - **LEGACY EMI 97922165 AUTHORIZED; RUNNER STARTING ONCE.**

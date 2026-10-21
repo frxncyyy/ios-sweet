@@ -2665,7 +2665,7 @@
  	if (disableConsoleOutput) {
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,12 @@
+@@ -108,6 +108,14 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
@@ -2674,6 +2674,8 @@
 +bsd/dev/wifi_emi_snapshot.c		standard
 +bsd/dev/wifi_emi_probe.c			standard
 +bsd/dev/wifi_emi_legacy.c			standard
++bsd/dev/wifi_persistent.c			standard
++bsd/dev/wifi_persistent_adapter.c		standard
 +bsd/dev/zoom_reset.c			standard
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
@@ -4751,7 +4753,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,826 @@
+@@ -1,3 +1,890 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5215,6 +5217,7 @@
 + * MT6359P addresses below match mt6885 upmu_hw.h, NOT mt6359/registers.h.
 + * The existing input thread is the sole PMIF/GPIO owner during this probe. */
 +static bool ncc_fresh_owned, ncc_latched_dirty;
++static bool npa_persistent_lifetime; /* PRIVATE persistent owner, never restore */
 +static struct {
 +	vm_offset_t spm, infra, gals;
 +	uint32_t cfg, pwr, prot, prot2, clock, mux21, mux22, drive, pd, pu;
@@ -5264,6 +5267,29 @@
 +	return ok;
 +}
 +
++/* PRIVATE persistent-mode refinement: selected4.19 source sets SW_LP
++ * before regulator_enable, rather than combining bits1|0. Fixed slots only;
++ * same ordered PMIF and full-word readback as original helper. */
++static bool
++npa_pmic_source_enable(unsigned slot)
++{
++ if(!nw.saved||(slot!=2&&slot!=5))return false;
++ for(unsigned phase=0;phase<2;phase++){
++  uint16_t current=0,got=0,addr=nw_addr[slot];
++  uint16_t expected=phase?2:0, next=phase?3:2;
++  if(!ni_pmic_read(addr,&current))return false;
++  if((current&3)!=expected || (current&~3u)!=(nw.pmic[slot]&~3u))return false;
++  uint16_t want=(current&~3u)|next;
++  if(!nw_wait(ni_pwrap,0xca8,0x800e,0x8000))return false;
++  ni_pwrap_owned=true;
++  ni_wr(ni_pwrap,0xc84,want);
++  ni_wr(ni_pwrap,0xc80,(1u<<29)|addr);
++  if(!nw_wait(ni_pwrap,0xca8,0x800e,0x8000))return false;
++  if(!ni_pmic_read(addr,&got)||got!=want)return false;
++ }
++ return true;
++}
++
 +static bool
 +nw_rail_wait(uint16_t addr, uint16_t mask, uint16_t want)
 +{
@@ -5282,6 +5308,7 @@
 +static bool
 +nw_restore(void)
 +{
++	if (npa_persistent_lifetime) { return false; } /* no MMIO while retained */
 +	if (ncc_latched_dirty) { return false; } /* preserve dirty common ownership */
 +	if (!nw.saved) { return true; }
 +	if (nw.domain_touched) {
@@ -5335,10 +5362,29 @@
 +}
 +
 +#include "wifi_common_adapter.inc"
++#include "wifi_persistent_adapter.h"
++#include "wifi_persistent_bind.inc"
++/* Same input-thread caller owns PMIF and this retained radio lifetime.
++ * Fresh powered reset/master predicates are checked in adapter.c; these
++ * software baselines were captured before original outer PMIC/power changes.
++ * Parent-approved policy is historical CONN/CCCI remap only, no DRAMaccess.
++ * Selected source clock function is26MHz; initial outer RC/voltage guards
++ * and unmodified6msXOsettle remain mandatory. No static bool grants a cold
++ * predicate: adapter repeatedly reads live AP/WFSYS/BGFSYS idle state. */
++static int npa_source_owner_proof(void *cookie)
++{
++ (void)cookie;
++ if(!ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty)return -1;
++ if((nw.pwr&0x1f)!=0x12||(nw.clock&1)||(nw.mux21&0xffff0000)||(nw.mux22&0x0fffffff))return -1;
++ for(unsigned i=0;i<6;i++)if(nw.pmic[i]&nw_mask[i])return -1;
++ return 0;
++}
++
 +
 +static void
 +ni_wifi_power_probe(void)
 +{
++	if (npa_persistent_lifetime) { panic("NORD2 WIFI PERSIST: refuse reentry; retain lifetime"); }
 +	if (ncc_latched_dirty) { panic("NORD2 WIFI COMMON: dirty; refuse another probe"); }
 +	ncc_fresh_owned = false;
 +	int enabled = 0;
@@ -5381,8 +5427,12 @@
 +	bool success = false;
 +	uint32_t id = 0, cfg_id = 0;
 +	printf("NORD2 WIFI: cold power probe begin; no firmware/DMA/RF\n");
++	unsigned persistent_power = 0;
++	PE_parse_boot_argn("nord2wifipersist", &persistent_power, sizeof(persistent_power));
 +	for (unsigned i = 0; i < 6; i++) {
-+		if (!nw_pmic_write(i, false)) { goto out; }
++		if (persistent_power == 1 && (i == 2 || i == 5)) {
++			if (!npa_pmic_source_enable(i)) { goto out; }
++		} else if (!nw_pmic_write(i, false)) { goto out; }
 +	}
 +	if (!nw_rail_wait(0x1c32, 3, 3) || !nw_rail_wait(0x1c20, 3, 3)) { goto out; }
 +	stage = 2;
@@ -5416,11 +5466,26 @@
 +	id = ni_rd(conn, 0);
 +	if (id != 0x20010101) { goto out; }
 +	cfg_id = ni_rd(conn, 4);
-+	ncc_power_window(host, conn, id);
++	unsigned persistent = 0;
++	PE_parse_boot_argn("nord2wifipersist", &persistent, sizeof(persistent));
++	if (persistent == 1) {
++		int retained = npa_persistent_window(host, conn, id,
++		    npa_source_owner_proof, 0, 0x8fb00000, 0x8a000000, 3);
++		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
++	} else {
++		ncc_power_window(host, conn, id);
++	}
 +	success = true;
 +out:
 +	printf("NORD2 WIFI: power probe stage=%u id=%#x cfg=%#x success=%d\n",
 +	    stage, id, cfg_id, success);
++	if (npa_persistent_lifetime) {
++		if (npa_native.state.fatal || npa_native.state.result.phase != 10) {
++			panic("NORD2 WIFI PERSIST: incomplete retained state; manual reset");
++		}
++		printf("NORD2 WIFI: retained=1 restored=0 persistent source stage10\n");
++		return; /* skip outer teardown ONLY explicit retained mode */
++	}
 +	bool restored = nw_restore();
 +	printf("NORD2 WIFI: power probe restored=%d\n", restored);
 +	if (!restored) { panic("NORD2 WIFI: restoration failed; refuse Linux return"); }
@@ -5429,6 +5494,7 @@
 +int
 +nord2_input_prepare_return(void)
 +{
++	if (npa_persistent_lifetime) { return -1; } /* no reset/power/PMIF cleanup */
 +	if (ncc_latched_dirty) { return -1; } /* refuse Linux-return preparation */
 +	/* Called only after all other cores are OFF. Never take a thread lock. */
 +	if (!nw_restore()) { return -1; }
@@ -5578,7 +5644,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1481,4 @@
+@@ -658,3 +1545,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -7970,3 +8036,473 @@
 +int wifi_emi_legacy_collect(wifi_emi_legacy_call_fn,void *,struct wifi_emi_legacy_snapshot *);
 +int wifi_emi_legacy_probe(void);
 +#endif
+--- /dev/null
++++ b/bsd/dev/wifi_persistent.c
+@@ -0,0 +1,153 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Derivative of MediaTek mt6893_pos.c GPL-2.0, selected04d00c25.
++ * Vendor order/values preserved; stronger fail-stop checked transport.
++ * Porting scope and source references: WIFI-PERSISTENT.md. */
++#include "wifi_persistent.h"
++#include "wifi_common.h"
++struct core {const struct npc_ops *o;void *c;struct npc_result *r;};
++static int ck(struct core *s){return s->o->check(s->c,NPC_REQUIRED);}
++static int rd(struct core *s,uint32_t a,uint32_t *v){return ck(s)||s->o->read(s->c,a,v);}
++static int wr(struct core *s,uint32_t a,uint32_t v){
++ if(ck(s))return -1;
++ s->r->mutated=s->r->retained=1;s->r->writes++;
++ return s->o->write(s->c,a,v);
++}
++static int mask(struct core *s,uint32_t a,uint32_t m,uint32_t v){uint32_t old;
++ if(rd(s,a,&old))return -1;
++ return wr(s,a,(old&~m)|(v&m));
++}
++static int waitus(struct core *s,unsigned n){return ck(s)||s->o->delay_us(s->c,n);}
++static int take(struct core *s){if(ck(s))return -1;
++ /* Callback failure conservatively may have acquired: retain semaphore. */
++ s->r->sema_held=1;return s->o->sema(s->c,11,1);
++}
++static int release(struct core *s){if(ck(s)||s->o->sema(s->c,11,0))return -1;
++ s->r->sema_held=0;return 0;
++}
++static int xfer(struct core *s,unsigned a,int w,uint32_t *v){
++ if(ck(s)||!s->r->sema_held)return -1;
++ s->r->transfers++;
++ if(w)s->r->mutated=s->r->retained=1;
++ return s->o->spi(s->c,a,w,v);
++}
++static int sr(struct core *s,unsigned a,uint32_t *v){return xfer(s,a,0,v);}
++static int sw(struct core *s,unsigned a,uint32_t v){return xfer(s,a,1,&v);}
++static int sm(struct core *s,unsigned a,uint32_t m,uint32_t v){uint32_t old;
++ if(sr(s,a,&old))return -1;
++ return sw(s,a,(old&~m)|(v&m));
++}
++static int sem19(struct core *s,int on){
++ if(ck(s))return -1;
++ if(on)s->r->sema19_held=1;
++ if(s->o->sema(s->c,19,on))return -1;
++ if(!on)s->r->sema19_held=0;
++ return 0;
++}
++/* Exact source macro initialread + while(cnt>100) + reread/delay5. */
++static int topclock(struct core *s,int on){uint32_t v;unsigned count=0;
++ if(mask(s,0x18001900,2,on?2:0)||rd(s,0x18005008,&v))return -1;
++ while(v&(1u<<26)){
++  if(count>100)return -1;
++  if(rd(s,0x18005008,&v)||waitus(s,5))return -1;
++  count++;s->r->clock_polls++;
++ }
++ return 0;
++}
++#define DO(x) do{if((x)){r->error=-(int)r->phase;goto fail;}}while(0)
++int npc_run(const struct npc_ops *o,void *c,unsigned opt,unsigned buildmode,struct npc_result *r){
++ struct core s={o,c,r};uint32_t v,e[4]={0};
++ if(!r)return -1;
++ *r=(struct npc_result){0};
++ if(opt!=1||buildmode>3||!o||!o->check||!o->read||!o->write||!o->delay_us||!o->sema||!o->spi){r->error=-100;return -1;}
++ r->phase=1;DO(ck(&s));
++ /* D-die handoff precedes hardware retention/SPI, even though vendor
++  * A-die later clears entire SRAM. Do not move these words after clear. */
++ DO(rd(&s,0x18001818,&v));DO(wr(&s,0x18052820,v));
++ if(buildmode)DO(wr(&s,0x18052838,buildmode));
++ for(unsigned i=0;i<NCC_COUNT;i++)DO(mask(&s,ncc_table[i].address,ncc_table[i].mask,ncc_table[i].value));
++ r->phase=2;
++ for(unsigned i=0;i<0x4000;i+=4)DO(wr(&s,0x18050000+i,0));
++ /* GPIO180 SET aliases; MODE22 actual mask bits18:16 (70000). */
++ DO(wr(&s,0x10005054,0x100000));DO(wr(&s,0x10005154,0x100000));
++ DO(mask(&s,0x10005460,0x70000,0));DO(mask(&s,0x18001900,1,1));
++ DO(take(&s));DO(sr(&s,0x02c,&r->chip));DO(release(&s));
++ if(r->chip!=0x66358a11){r->error=-101;goto fail;}
++ DO(wr(&s,0x18052800,r->chip));
++ DO(take(&s));DO(sw(&s,0x064,0x7700));DO(release(&s));
++ DO(take(&s));DO(sw(&s,0x0bc,0x21));DO(release(&s));
++ DO(mask(&s,0x1800400c,0x80ff,0));DO(wr(&s,0x18002018,0x50305a00));
++ r->phase=3;DO(take(&s));
++ DO(sr(&s,0x108,&v));
++ /* Initial busy => state not ours; never clear/retrigger an active read. */
++ if(v&0x40000000){r->error=-102;goto fail;}
++ DO(sw(&s,0x108,v&~0x40000000u));
++ DO(sr(&s,0x108,&v));DO(sw(&s,0x108,(v&~0x43ff00c0u)|0x40000000));
++ DO(sr(&s,0x108,&v));
++ while((v&0x40000000)&&r->efuse_polls<70){r->efuse_polls++;DO(waitus(&s,30));DO(sr(&s,0x108,&v));}
++ if(v&0x40000000){r->error=-103;goto fail;}
++ DO(sr(&s,0x108,&v));r->efuse_valid=(v>>29)&1;
++ /* Vendor invalid-efuse branch zeroes software thermal data then continues.
++  * Private core records validity only; never publishes/logs efuse payload. */
++ if(r->efuse_valid){
++  DO(sr(&s,0x130,&e[0]));DO(wr(&s,0x18052804,e[0]));
++  DO(sr(&s,0x134,&e[1]));DO(wr(&s,0x18052808,e[1]));
++  if(e[1]&0x80){DO(sm(&s,0x034,0xf000,((e[1]>>3)&15)<<12));DO(sm(&s,0x038,0x03800000,(e[1]&7)<<23));}
++  if(e[1]&0x8000)DO(sm(&s,0x038,0x0c000000,((e[1]>>13)&3)<<26));
++  DO(sr(&s,0x138,&e[2]));DO(wr(&s,0x1805280c,e[2]));
++  DO(sr(&s,0x13c,&e[3]));DO(wr(&s,0x18052810,e[3]));
++ }
++ DO(release(&s));r->phase=4;
++ const uint32_t tail[][2]={{0x070,0x80000000},{0x380,0xe8002},{0x390,0xe8002},{0xa18,0xf6e8fff5},{0xa1c,0x55555fff},{0x384,0x2008},{0x394,0x2008}};
++ for(unsigned i=0;i<7;i++){DO(take(&s));DO(sw(&s,tail[i][0],tail[i][1]));DO(release(&s));}
++ DO(mask(&s,0x10005460,0x70000,0x10000));
++ r->phase=5;
++ const uint32_t afe[][2]={{0x10,0},{0x18,0x144b0160},{0x40,0x10990c13},{0x100,0x10990c13},{0x58,0xcd258051},{0x78,0xc5258251},{0x94,0xc5258251}};
++ for(unsigned i=0;i<7;i++)DO(wr(&s,0x18003000+afe[i][0],afe[i][1]));
++ DO(mask(&s,0x18003000,1,1));DO(waitus(&s,60));DO(mask(&s,0x18003000,1,0));
++ DO(mask(&s,0x18003008,1u<<21,1u<<21));DO(waitus(&s,30));
++ DO(mask(&s,0x18003008,1u<<20,1u<<20));DO(waitus(&s,60));
++ for(int bit=21;bit>=17;bit--)DO(mask(&s,0x18003000,1u<<bit,1u<<bit));
++ DO(waitus(&s,800));
++ for(int bit=21;bit>=17;bit--)DO(mask(&s,0x18003000,1u<<bit,0));
++ DO(mask(&s,0x18003008,1u<<21,0));DO(mask(&s,0x18003008,1u<<20,0));
++ DO(take(&s));DO(sw(&s,0x070,5));DO(release(&s));
++ r->phase=6;DO(mask(&s,0x180030f4,0x7fff7fff,0x03140521));DO(mask(&s,0x18003004,0xcf,0x4f));
++ r->phase=7;
++ /* WiFi radio3. Source voltage callback returns0 for drv_type!=0;
++  * NO invented VCN13 raise/PMIC write in this WiFi-only path. */
++ DO(sem19(&s,1));DO(mask(&s,0x18052834,8,8));DO(sem19(&s,0));
++ r->phase=8;
++ /* First-subsystem-on RC path, positive RC mode must be in entry proof. */
++ DO(mask(&s,0x18060184,0xe00,0xe00));DO(mask(&s,0x18001860,0xf000,0x1000));
++ const uint32_t rc[][2]={{0x183c,0x1838},{0x1844,0x1840},{0x184c,0x1848},{0x1854,0x1850}};
++ for(unsigned i=0;i<4;i++){DO(wr(&s,0x18000000+rc[i][0],0x02080706));DO(mask(&s,0x18000000+rc[i][1],0x8000,0));}
++ DO(mask(&s,0x18001834,0x10,0x10));DO(mask(&s,0x18001834,0x20,0x20));DO(mask(&s,0x18001834,0x40,0x40));
++ DO(mask(&s,0x18001c00,1,1));DO(mask(&s,0x18001834,1,0));
++ DO(mask(&s,0x18001c00,0x40000,0x40000));DO(mask(&s,0x18001c00,0x7ff0,0x3ff0));
++ /* E3 uses e2_default. HOST_CONNINFRA topclock type4, mask7f. */
++ DO(sem19(&s,1));DO(rd(&s,0x18052830,&v));
++ if(!(v&0x7f))DO(topclock(&s,1));
++ DO(mask(&s,0x18052830,0x10,0x10));DO(sem19(&s,0));
++ DO(take(&s));DO(sm(&s,0xa18,0xc180,0xc180));DO(sm(&s,0xa1c,0xf0ff0080,0x50550080));DO(release(&s));
++ DO(sem19(&s,1));DO(rd(&s,0x18052830,&v));
++ if(v&0x10){DO(mask(&s,0x18052830,0x10,0));DO(rd(&s,0x18052830,&v));if(!(v&0x7f))DO(topclock(&s,0));}
++ DO(sem19(&s,0));
++ DO(mask(&s,0x18001a00,1u<<28,1u<<28));DO(mask(&s,0x180010f0,0x1b,0x1b));
++ /* WiFi-only skips BGF power workaround. Source config/debug sequence. */
++ DO(wr(&s,0x1800f000,0x32c8001c));DO(mask(&s,0x18001b00,7,0));DO(wr(&s,0x18000090,6));
++ DO(mask(&s,0x18001860,0x200,0x200));
++ r->phase=9;
++ /* No extra CONN read/check after source switches bus control toHW.
++  * Last guarded operation below; then ONLY source1860read/write. */
++ DO(mask(&s,0x18001a00,1u<<23,0));
++ DO(o->read(c,0x18001860,&v));r->writes++;
++ DO(o->write(c,0x18001860,v|1));
++ /* Selected platform PMIC ops has no common_power_low_power_mode hook:
++  * pmic_mng wrapper returns0, no transport/callback is emitted. */
++ r->phase=10;return 0;
++fail:
++ r->halt=r->mutated||r->sema_held||r->sema19_held;return -1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_persistent.h
+@@ -0,0 +1,32 @@
++#ifndef NORD2_WIFI_PERSISTENT_H
++#define NORD2_WIFI_PERSISTENT_H
++#include <stdint.h>
++/* A private core, NOT a native adapter. Entry proof must be fresh:
++ * exclusive WiFi-only owner; AP CONN power/readability20010101; WFSYS+BGFSYS
++ * CPU reset and power OFF; all DMA/firmware/radios idle; 26MHz selected; source RC mode positively selected;
++ * exact owned SRAM18050000+4000; EMI remap complete; software lock held.
++ * Retain all power/common/strap state on success AND after first mutation.
++ * No caller teardown after dirty/halt. check must distinguish owned A-die
++ * reset deassertion from forbidden WFSYS/BGFSYS reset release. */
++#define NPC_REQUIRED 0x3ffu
++struct npc_ops {
++ int (*check)(void *,unsigned);
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t); /* completed ordered32-bit MMIO */
++ int (*delay_us)(void *,unsigned); /* bounded, no allocations */
++ int (*sema)(void *,unsigned,int); /*11/19 only; take1 bounded;release0 */
++ /* TOPSPI TOP only: bounded idle-before+busy-after checks; command readb000,
++  * writea000; no retries/replay after ambiguous trigger. NO internal sema. */
++ int (*spi)(void *,unsigned,int,uint32_t *); /*address,write1/read0,value*/
++};
++struct npc_result {
++ unsigned phase,mutated,halt,retained,sema_held,efuse_valid,efuse_polls;
++ unsigned transfers,writes,sema19_held,clock_polls; int error;
++ uint32_t chip; /* NEVER expose raw efuse values */
++};
++/* Implements Ddie->SPIcommon->SYSRAMclear->AdieE3->AFE->PLL->WiFi status->RC lowpower. Does NOT claim hardware-ready networking; selected RC lowpower/status included; WiFi voltage and final PMIC LP are selected no-ops.
++ * Returns0 only phase10 source-common-retained; error after mutation requires manualreset.
++ * buildmode0 omits compile-time optional Android buildword;1..3 reproducesit.
++ * optin exactly1, no default action. NO automatic restoration whatsoever. */
++int npc_run(const struct npc_ops *,void *,unsigned,unsigned,struct npc_result *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_persistent_adapter.c
+@@ -0,0 +1,155 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Platform-bound implementation; selected MT6893 GPL-2.0 derivative. */
++#include "wifi_persistent_adapter.h"
++#include "wifi_common.h"
++struct field {uint32_t a,mask;};
++static const struct field fields[]={
++ {0x18001900,3},{0x10005460,0x70000},{0x1800400c,0x80ff},
++ {0x18002018,~0u},{0x18003000,0x3e0001},{0x18003004,0xcf},
++ {0x18003008,0x300000},{0x18003010,~0u},{0x18003018,~0u},
++ {0x18003040,~0u},{0x18003100,~0u},{0x18003058,~0u},
++ {0x18003078,~0u},{0x18003094,~0u},{0x180030f4,0x7fff7fff},
++ {0x18060184,0xe00},{0x18001860,0xf201},
++ {0x1800183c,~0u},{0x18001844,~0u},{0x1800184c,~0u},{0x18001854,~0u},
++ {0x18001838,0x8000},{0x18001840,0x8000},{0x18001848,0x8000},{0x18001850,0x8000},
++ {0x18001834,0x71},{0x18001c00,0x47ff1},{0x18001a00,0x10800000},
++ {0x180010f0,0x1b},{0x1800f000,~0u},{0x18001b00,7},{0x18000090,~0u},
++ {0x180601c4,0xfffff},{0x180601cc,0xfffff},{0x180601d4,0xfffff},
++ {0x180601d8,0xfffff},{0x180601dc,0xfffff}
++};
++static int rawread(struct npa *s,uint32_t a,uint32_t *v){return s->hw->read32(s->cookie,a,v);}
++static int ap(struct npa *s){return s->fatal||s->hw_handoff||s->hw->ap(s->cookie);}
++static int cold(struct npa *s){
++ static const struct field p[]={
++ {0x18000010,1},{0x18000000,0x80},{0x180602cc,4},
++ {0x18000008,0x80},{0x18000014,1},{0x18000114,0x03000000},
++ {0x18000124,0x01000003},{0x18001874,1},{0x18001878,1},
++ {0x18008040,1},{0x180601a8,1},{0x180601ac,1},{0x180601b0,1}};
++ uint32_t v;
++ if(ap(s)||s->hw->proof(s->cookie))return -1;
++ for(unsigned i=0;i<sizeof(p)/sizeof(*p);i++){
++  if(ap(s)||rawread(s,p[i].a,&v)||(v&p[i].mask))return -1;
++ }
++ /* RC positive source gate is AP-side; no clock-mux guessing. */
++ if(ap(s)||rawread(s,0x10006504,&v)||!(v&1))return -1;
++ return 0;
++}
++static uint32_t maskfor(uint32_t a){
++ if(a>=0x18050000&&a<0x18054000&&!(a&3))return ~0u;
++ for(unsigned i=0;i<NCC_COUNT;i++)if(ncc_table[i].address==a)return ncc_table[i].mask;
++ for(unsigned i=0;i<sizeof(fields)/sizeof(*fields);i++)if(fields[i].a==a)return fields[i].mask;
++ return 0;
++}
++static int ck(void *c,unsigned required){struct npa *s=c;
++ return required!=NPC_REQUIRED||!s->entered||!s->remap_done||cold(s);
++}
++static int rd(void *c,uint32_t a,uint32_t *v){struct npa *s=c;
++ if(!v||(a&3)||(!maskfor(a)&&a!=0x18001818&&a!=0x18005008))return -1;
++ if(s->hw_handoff){
++  if(s->fatal||s->hw_handoff!=1||a!=0x18001860)return -1;
++ }else if(cold(s))return -1;
++ if(rawread(s,a,v))return -1;
++ s->last_address=a;s->last_value=*v;return 0;
++}
++static int rawwrite(struct npa *s,uint32_t a,uint32_t v){
++ s->retained=1;s->mmio_writes++;
++ return s->hw->write32(s->cookie,a,v);
++}
++static int wr(void *c,uint32_t a,uint32_t v){struct npa *s=c;uint32_t m=maskfor(a);
++ if(s->fatal)return -1;
++ if(s->hw_handoff){
++  if(s->hw_handoff!=1||a!=0x18001860||s->last_address!=a||v!=(s->last_value|1u))return -1;
++  int e=rawwrite(s,a,v);if(!e)s->hw_handoff=2;return e;
++ }
++ if(cold(s))return -1;
++ if(a==0x10005054||a==0x10005154){if(v!=0x100000)return -1;}
++ else{
++  if(!m||(a&3))return -1;
++  if(m!=~0u&&(s->last_address!=a||((v^s->last_value)&~m)))return -1;
++ }
++ /* Latch terminal path BEFORE exact source bus-SW-control clear. */
++ if(a==0x18001a00&&s->result.phase==9&&!(v&(1u<<23)))s->hw_handoff=1;
++ return rawwrite(s,a,v);
++}
++static int dl(void *c,unsigned usec){struct npa *s=c;
++ if(usec!=1&&usec!=5&&usec!=10&&usec!=30&&usec!=50&&usec!=60&&usec!=800)return -1;
++ return cold(s)||s->hw->delay_us(s->cookie,usec);
++}
++/* Source clock detector is measurement trigger, not analog restoration. */
++static int clockok(struct npa *s){uint32_t v;
++ if(cold(s)||rawread(s,0x18060000,&v))return -1;
++ if(rawwrite(s,0x18060000,v|1))return -1;
++ for(unsigned i=0;i<1600;i++){
++  if(dl(s,i?10:1)||ap(s)||rawread(s,0x18060000,&v))return -1;
++  s->clock_polls++;
++  if((v&6)==6)break;
++ }
++ if((v&6)!=6||ap(s)||rawread(s,0x180602d4,&v)||!(v&1))return -1;
++ return 0;
++}
++static int sem(void *c,unsigned n,int on){struct npa *s=c;uint32_t v;
++ if(n!=11&&n!=19)return -1;
++ unsigned *held=n==11?&s->sema11:&s->sema19;
++ if(cold(s))return -1;
++ if(on){
++  if(*held||s->sema11||s->sema19||clockok(s))return -1;
++  for(unsigned i=0;i<1000;i++){
++   if(cold(s)||rawread(s,0x18072000+n*4,&v))return -1;
++   if(v&1){*held=1;return 0;}
++   if(dl(s,1))return -1;
++  }
++  return -1;
++ }
++ if(!*held||s->spi_inflight)return -1;
++ if(rawwrite(s,0x18072200+n*4,1))return -1;
++ *held=0;return 0;
++}
++static int busy(struct npa *s){uint32_t v;unsigned count=0;
++ if(cold(s)||rawread(s,0x18004000,&v))return -1;
++ while(v&0x20){
++  if(count>100)return -1;
++  if(cold(s)||rawread(s,0x18004000,&v)||dl(s,50))return -1;
++  count++;
++ }
++ return 0;
++}
++static int spiok(unsigned a,int w){
++ static const unsigned reads[]={0x02c,0x108,0x130,0x134,0x138,0x13c,0x034,0x038,0xa18,0xa1c};
++ static const unsigned writes[]={0x064,0x0bc,0x108,0x034,0x038,0x070,0x380,0x390,0xa18,0xa1c,0x384,0x394};
++ const unsigned *t=w?writes:reads;unsigned n=w?sizeof(writes)/sizeof(*writes):sizeof(reads)/sizeof(*reads);
++ for(unsigned i=0;i<n;i++)if(t[i]==a)return 1;
++ return 0;
++}
++static int spi(void *c,unsigned a,int write,uint32_t *v){struct npa *s=c;
++ if(!v||!s->sema11||s->sema19||s->spi_inflight||!spiok(a,write)||busy(s))return -1;
++ if(rawwrite(s,0x18004050,(write?0xa000:0xb000)|a))return -1;
++ s->spi_inflight=1; /* trigger may commit even when callback reports failure */
++ if(rawwrite(s,0x18004054,write?*v:0)||busy(s))return -1;
++ s->spi_inflight=0;
++ return write?0:(cold(s)||rawread(s,0x18004058,v));
++}
++static const struct npc_ops ops={ck,rd,wr,dl,sem,spi};
++static int remap(struct npa *s){
++ const uint32_t a[]={0x180601c4,0x180601d4,0x180601d8,0x180601dc,0x180601cc};
++ uint32_t value[]={s->conn_base>>16,0x1000,0x1000,0x1000,s->mcif_base>>16},v;
++ unsigned n=s->mcif_base?5:4;
++ for(unsigned i=0;i<n;i++){
++  if(cold(s)||rawread(s,a[i],&v)||rawwrite(s,a[i],(v&~0xfffffu)|(value[i]&0xfffff)))return -1;
++  if(cold(s)||rawread(s,a[i],&v)||(v&0xfffff)!=(value[i]&0xfffff))return -1;
++ }
++ s->remap_done=1;return 0;
++}
++int npa_start(struct npa *s,const struct npa_hw *hw,void *c,unsigned opt,uint32_t conn,uint32_t mcif,unsigned build){
++ if(opt!=1)return -1;
++ if(!s||s->entered||s->retained||s->fatal||!hw||!hw->ap||!hw->proof||!hw->read32||!hw->write32||!hw->delay_us||conn!=0x8fb00000||(mcif&&mcif!=0x8a000000)||build>3)return -1;
++ s->hw=hw;s->cookie=c;s->conn_base=conn;s->mcif_base=mcif;s->entered=1;
++ if(cold(s)||remap(s)||npc_run(&ops,s,1,build,&s->result)){
++  s->fatal=s->retained||s->result.halt||s->spi_inflight||s->sema11||s->sema19;
++  return -1;
++ }
++ if(s->hw_handoff!=2){s->fatal=1;return -1;}
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_persistent_adapter.h
+@@ -0,0 +1,29 @@
++#ifndef NORD2_WIFI_PERSISTENT_ADAPTER_H
++#define NORD2_WIFI_PERSISTENT_ADAPTER_H
++#include "wifi_persistent.h"
++/* Backend is bound only by the new persistent outer owner. AP check reuses
++ * ncc_ap_check before HW handoff; proof validates cold subsystem SRAM ownership and reviewed historical remap policy,
++ * initial source rail/clock setup and exclusive software power lifetime.
++ * No claim that this software proof establishes effective EMI permission. */
++struct npa_hw {
++ int (*ap)(void *);
++ int (*proof)(void *); /*fresh external owner/26MHz/RC/reservation proof*/
++ int (*read32)(void *,uint32_t,uint32_t *);
++ int (*write32)(void *,uint32_t,uint32_t); /* includes dsb sy */
++ int (*delay_us)(void *,unsigned);
++};
++struct npa {
++ const struct npa_hw *hw;void *cookie;struct npc_result result;
++ uint32_t conn_base,mcif_base,last_address,last_value;
++ unsigned entered,retained,fatal,hw_handoff,remap_done,sema11,sema19;
++ unsigned spi_inflight,clock_polls,mmio_writes;
++};
++/* initialize storage before first call; never memset after entered/retained.
++ * Return0 only source-common retained; -1 failure (inspect fatal/retained).
++ * optin!=1 performs ZERO callbacks and leaves owner untouched.
++ * conn/mcif must match the parent-approved historical Android/source address policy;
++ * hard pins reject source Android expectation drift, not prove current DRAM allocation.
++ * No MMIO is allowed after result.halt/fatal. Manualreset remains sole recovery.
++ */
++int npa_start(struct npa *,const struct npa_hw *,void *,unsigned,uint32_t,uint32_t,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_persistent_bind.inc
+@@ -0,0 +1,86 @@
++/* Opt-in XNU binding for the persistent radio initialization.
++ * Include after wifi_common_adapter.inc so AP proof/ni_rd/ni_wr are available.
++ * Raw32 access is allowlisted by wifi_persistent_adapter.c, not these maps.
++ * Bind the *reviewed* external owner proof at the outer call. Passing NULL
++ * refuses, never weakens proof. No reserved-RAM physical mapping is created.
++ */
++#include "wifi_persistent_adapter.h"
++static struct {
++ struct npa state;
++ vm_offset_t rgu,cfg,thermal,afe,spi,table,fm,debug,sram,host,sem;
++ int (*proof)(void *);void *proof_cookie;
++ bool outer_retained;
++} npa_native;
++static vm_offset_t npa_base(uint32_t a)
++{
++ if(a>=0x18050000&&a<0x18054000)return npa_native.sram;
++ switch(a&~0xfffu){
++ case 0x10005000:return ni_gpio;
++ case 0x10006000:return nw.spm;
++ case 0x18000000:return npa_native.rgu;
++ case 0x18001000:return npa_native.cfg;
++ case 0x18002000:return npa_native.thermal;
++ case 0x18003000:return npa_native.afe;
++ case 0x18004000:return npa_native.spi;
++ case 0x18005000:return npa_native.table;
++ case 0x18008000:return npa_native.fm;
++ case 0x1800f000:return npa_native.debug;
++ case 0x18060000:return npa_native.host;
++ case 0x18072000:return npa_native.sem;
++ default:return 0;
++ }
++}
++static unsigned npa_off(uint32_t a)
++{return a>=0x18050000&&a<0x18054000?a-0x18050000:a&0xfff;}
++static int npa_xnu_read(void *c,uint32_t a,uint32_t *v)
++{
++ (void)c;vm_offset_t b=npa_base(a);if(!b||!v)return -1;
++ *v=ni_rd(b,npa_off(a));return 0;
++}
++static int npa_xnu_write(void *c,uint32_t a,uint32_t v)
++{
++ (void)c;vm_offset_t b=npa_base(a);if(!b)return -1;
++ /* Before even a remap/clockdetector write: outer lifetime must retain.
++  * nw_restore/suspend/Linux-return hooks must honor this separate latch.
++  * DO NOT set ncc_latched_dirty here: existing AP guard requires it false. */
++ npa_native.outer_retained=true;
++ npa_persistent_lifetime=true;
++ ni_wr(b,npa_off(a),v);NCC_DEVICE_BARRIER();return 0;
++}
++static int npa_xnu_ap(void *c){(void)c;return ncc_ap_check();}
++static int npa_xnu_proof(void *c){(void)c;return npa_native.proof?npa_native.proof(npa_native.proof_cookie):-1;}
++static int npa_xnu_delay(void *c,unsigned us){(void)c;delay(us);return 0;}
++static const struct npa_hw npa_xnu_ops={npa_xnu_ap,npa_xnu_proof,npa_xnu_read,npa_xnu_write,npa_xnu_delay};
++/* Hook at same owned-power point as ncc_power_window, selected BEFORE the
++ * legacy common diagnostic. Tri-state:0notselected/-1premutationrefusal/
++ *1retainedsuccess. Fatal after mutation panics without any cleanup. */
++static int npa_persistent_window(vm_offset_t host,vm_offset_t cfg,uint32_t id,
++ int (*proof)(void *),void *cookie,uint32_t conn,uint32_t mcif,unsigned build)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifipersist",&opt,sizeof(opt));
++ if(opt!=1)return 0;
++ if(npa_native.state.entered||npa_native.outer_retained)
++  panic("NORD2 WIFI PERSIST: reentry; manual reset required");
++ if(!proof)return -1;
++ npa_native.proof=proof;npa_native.proof_cookie=cookie;
++ ncc_native.host=host;ncc_native.cfg=cfg;ncc_native.id=id;
++ if(ncc_ap_check())return -1;
++ npa_native.cfg=cfg;npa_native.host=host;
++#define NPA_MAP(field,pa,sz) do{npa_native.field=ml_io_map(pa,sz);if(!npa_native.field)return -1;}while(0)
++ NPA_MAP(rgu,0x18000000,0x1000);NPA_MAP(thermal,0x18002000,0x1000);
++ NPA_MAP(afe,0x18003000,0x1000);NPA_MAP(spi,0x18004000,0x1000);
++ NPA_MAP(table,0x18005000,0x1000);NPA_MAP(fm,0x18008000,0x1000);
++ NPA_MAP(debug,0x1800f000,0x1000);NPA_MAP(sram,0x18050000,0x4000);
++ NPA_MAP(sem,0x18072000,0x1000);
++#undef NPA_MAP
++ int e=npa_start(&npa_native.state,&npa_xnu_ops,0,1,conn,mcif,build);
++ if(e){
++  if(npa_native.state.fatal||npa_native.outer_retained)
++   panic("NORD2 WIFI PERSIST: fatal phase%u; retain owner/power; manual reset",npa_native.state.result.phase);
++  return -1;
++ }
++ /* No MMIO/guard after source HW handoff. These are software result fields. */
++ printf("NORD2 WIFI PERSIST: retained=1 phase=%u id=%#x handoff=%u\n",
++  npa_native.state.result.phase,npa_native.state.result.chip,npa_native.state.hw_handoff);
++ return 1;
++}
