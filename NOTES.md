@@ -3,6 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **ROM23a9bd30 HARDWARE SUCCESS; BATTERY INITIAL IRQ-LATCH REFUSAL.**
+  Boot-only flash/reboot OKAY; one-use runner executed, never rerun.
+  NativeUSB180s completed exit0; 248475B SHA256 ce199484b0b5320f2a3db92e434630340837f4a6666b1f5f5df857fe3cc09771.
+  Final strict report complete/noissues; independent review PASS. Human
+  lockscreen/touch/buttons confirmed. ROMstatus0 stage16 done1d1e37polls;
+  twoSET raw0/0, receipt88writes176reads2barriers, CPUreleased1. Retained
+  power/protection1 and AP/WF/sem/clock0, asleep/balanced1 as designed.
+  This proves ROM firmware startup, not mainN9/scan/networking. Current23a9
+  remains running healthy; collector stopped. Exact49c8 and testedRAMrescue
+  retained, never normalAndroid over iOS userdata. Battery did not issue any
+  gauge command: preflight saw INTR_STAT1 (prior completion), STARTidle/DMAoff,
+  FIFO not yet read. Private runtime-first narrow latch adoption ready/review
+  pending; no reset/retry. Main-fw WFDMA transport/low32pool implementation
+  proceeds privately. External Opus audio identification candidate private,
+  parent ownership/recovery review pending. UFS/boot unchanged.
+
+
+- **ROM + BATTERY23a9bd30 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  Human "Autorizzo, pronto in fastboot" for exact23a9bd30...63fd1b90.
+  Known Nord2 sole fastboot device; private authorization records boot-only
+  plus conditional testedRAMrescue/current49c8 restoration. Parent executes
+  once/captures180s. Never rerun after flash.log/hardware-live exists.
+  Real ROM and battery hardware results still pending. UFS/boot unchanged.
+
+
 
 - **ROM + BATTERY IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
   shim/out/nord2-xnu/nord2-ios-wifi-rom-battery-stop23.img,33314816B,
