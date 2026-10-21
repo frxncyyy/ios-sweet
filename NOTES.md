@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Async CI39672757944 SUCCESS; bounded image pack in progress.**
+  Exact source361b8eac9be79101091a86471d4fd3f43fd44099, kernel17534512B
+  SHA8bc54611a1fee1b099ec126bbf0e8b40f0ff7b3b325920f433f2dbe134b47205.
+  All158 generated/source files match CI;12 actual genericARMv8.2 compiles,
+  2,241,245 decoded instructions contain no LDAPUR/STLUR. Linked review
+  ff66a789/manifest808aa7d7 PASS: three async consumers/budget16, actual
+  native22-worker/lease, fiveRXqueues, readonlysnapshots, zeroBSSID and
+  fatal30sdrain preserved. Identity/schema gates true; root pack session80567
+  under1GiB address limit. No exact image approval or device action yet.
+  Current phone c3 humanhealthy. Fresh wifi-async-scan/ios runner UNUSED.
+  Parallel private native lifecycle v2 dba1e0c4/reviewbc2cc6dc passes96checks
+  and1000closeprobes+selectedXNU ARM64 compile. V1 missing OOLprepare found
+  and fixed; v2 pairs prepare/read/complete with failure/close serialization.
+  No native link/registration/backend binding; future live callbacks still
+  need generation/inflight drain. CARDv2 f11c4f8c/reviewfcc1a99c retained.
+  Next: finish pack, independently verify exact image, then exact new boot
+  approval with healthyc3/RAMrescue fallback. No executed runner reuse.
+
 - **Async source361b8eac CI39672757944 submitted, waiting for macOS runner.**
   Root watcher session63069 will save run.json/build.log/artifacts under
   research/ci-39672757944 on successful completion. No new image or approval.
