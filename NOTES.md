@@ -4,6 +4,38 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **CAPABILITY FORMAT IMAGE VERIFIED; EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-capability-format-battery-stop23.img`,
+  33353728bytes SHA256
+  0e949521b82795c69d8539043cc3c921c31f9de265cee6b72d12e90aff9877a2.
+  Payloadf726b5f852dcc9d7b63c31435cf69c838748fd0d03678e2c4cb74bbb799d6129.
+  CI39642478606/source5ac2355a3d121984565682aa8486ffc5b1d1cacc;
+  kernel17464304/cb4356e1367ecbd13d1282ab38631e00f3b81e239925c79b9729bd2d6ce14930.
+  Actuallinkedreview0ec2c1cf PASS; root checked changedbranch and all evidence
+  hashes. Bounded1GiB packexit0; freshindependentloader/segments/ADT/privatecal/
+  originalLinux/dualDT/rescueCPIO/headerchecks PASS; existingprepared image
+  reverified;200704sparebytes. Exact474byte commandline matches6ddf. Actual
+  e0d3/rescuehashes verified. CI/schema/prepared true; human/RF/recoveryfalse.
+  New one-use runner NEVER executed. Test only same onecapquery with corrected
+  EIDec innerpolicy+headerdiagnostics; no scan/interface/association.
+  Ask exactboot-onlyapproval +conditional e0d3/rescue,manualfastbootifneeded.
+  Currentphone e0d3restored humanhealthy; no hardware actions afterrestore.
+  Privatefuture regulatory-policy707e8b79 awaitingpeerreview, notpromoted;
+  runtimeTAG3/PHY,regulatoryruleevaluation,conditionalpowerlimitinputs pending.
+  UFS/bootspeed closed unchanged; executed stages immutable.
+
+
+- **FORMAT CI39642478606 SUCCESS; IMAGE PACKING WITH 1GiB LIMIT.**
+  Source5ac2355a3d121984565682aa8486ffc5b1d1cacc; kernel17464304 bytes
+  SHA256cb4356e1367ecbd13d1282ab38631e00f3b81e239925c79b9729bd2d6ce14930.
+  Fullydownloaded/artifactSHA/source verified;1136 genericARMv8.2+crypto
+  compilerinvocations on1135 lines, one dualcommand line and one truncated
+  pathprefix echo saved explicitly (fulltargetflags/source retained).
+  Newstage preflightPASS; CI/schema true, prepared/human false. Boundedpack
+  session38616 running; independent linked-format review in progress.
+  No hardware action. Currentphone e0d3 humanhealthy; executedstages untouched.
+
+
 - **FORMAT STAGE REVIEW PASS; CI39642478606 BUILDING.**
   Freshstage wifi-capability-format/ios pin1a70f0a073d79548a5eaebde91300c4d54511b459c33b4ab5b02558d1408c742;
   parserbdda5dd9bba42c0f667e57eda9747f324301130ee18b9418bd55638768a330ba,
