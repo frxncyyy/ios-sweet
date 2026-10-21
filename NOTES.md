@@ -4,6 +4,51 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **e0d3 RECOVERED AND HUMAN-HEALTHY; BASIC89b3 stage closed/immutable.**
+  User confirms lockscreen/touch/buttons call_2c6e0543be0c4694a71cbc345fa775fc.
+  Restore90s collector exit0/deadline/no transporterror; immutable222928B,
+  SHA256086fd13b5c74ce9aa11637c57070b49cf278d70978b3e9bfec60e4a9685bb439.
+  No collector remains; never rerun BASIC or restore runner. Current phone is
+  e0d3, not89b3 or0e949521. Agent cap_stage preparing source-parity DDONE
+  completion correction with captured raw words; format_stage reviews.
+  Exact failed field remains unknown, but error17's linked branch proves
+  DMADONE1 was seen before extra echo checks. Loggedcontrol0 was untouched
+  state, not an observed returned word. Do not rewrite the failed evidence.
+  Service bridge passive v2 manifest6aca308e / review0bb57356 fixes output
+  capacity and old BSS/type labeling; event-pipe private9764b2c3 adds copied
+  ring helpers, still no active producer/service/backend publication.
+
+
+- **BASIC89b3 failed completion guard; e0d3 restore flashed/rebooted OKAY.**
+  Actual BASIC status-1/phase3/error17, one publication attempt, DIDX5,
+  sharedcompleted4. Exact rejected field UNKNOWN: raw returned descriptor
+  words were not logged and tx_control was assigned only after the guard.
+  First immutable log123061B/b94b01cbd0b3f03110f7811b3b5996cc2b562279448762392dfba01aee378084;
+  final157474B/df8037ca4ea66e0901c9e7f17956c3096ab3109b83607affe81a72f1458b163e.
+  Collectorexit0 but stop_reason usb_error/libusb-7, NOT a full180s success;
+  no final panic text captured. Both files are preserved in executed stage.
+  Real metadata: PSE data/command128/3, PLE912/0, page128/64, extra8;
+  onePSE debit leaves2. TAG3 absent(sku0), PHY present,5GHz1/BW2/NSS2/path0xf.
+  Native BASIC did not complete; no firmware ACK or networking inferred.
+  Selected Android AXI command completion checks DIDX/softwareownedcell and
+  DMADONE, not returned address/length/extra echoes. Agent preparing private
+  source-parity correction+rawdiagnostics, independentreview assigned; exact
+  failed word remains unknown. No guessed correction or new flash approved.
+  Conditional recovery authorized previously; user supplied fastboot
+  call_45d64c3c0f8f43df9b259cd573f36c82. Fresh one-use e0d3 restore script
+  wrote onlyboot and rebooted OKAY.90s collector session87951 active;
+  human lockscreen/input confirmation pending. Never rerun either runner.
+
+
+- **BASIC89b3 AUTHORIZED AND BOOT-ONLY FLASHED; live result pending.**
+  Exact image approved call_1625b7d33b6c44b9bc553f887bfe3305, including
+  conditional e0d3/RAM-rescue recovery. Expected single Nord2 fastboot identity
+  verified privately; product/capacity/non-userspace checks passed. Flash boot
+  and reboot both OKAY. One-use runner session14204 collecting USB180s;
+  NEVER rerun executed wifi-basic-config/ios runner. No source/result claims
+  from the hardware yet. No stock Android boot permitted.
+
+
 - **BASIC IMAGE VERIFIED; EXACT BOOT-ONLY APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-basic-config-battery-stop23.img`,
   33357824 bytes, SHA256
