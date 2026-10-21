@@ -3,6 +3,48 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **AP-WAKE IMAGE READY; AWAIT EXACT NEW BOOT-ONLY APPROVAL.**
+  shim/out/nord2-xnu/nord2-ios-wifi-ap-wake-stop23.img,33,292,288B,
+  SHA25649f177ec5d977d4f7c0d1407c78f585e5704ccc85c1cf17804f6c940ad8e9310.
+  Payloadf8bdf45a4dff930f4dfe9402f3753878fa9bd2bbf7c1eff8aca8a2778ef144a6.
+  CI39568093909/source6978794fde46fd1410c631eb0ee4b918a6065c2a;
+  kernelff0657a709b4555c97711358c85dc62f3a0d3ec454c295e852a7794aa065ff30.
+  Source/artifact/all1107 compiler invocations/linked review PASS. Exact loaded
+  kernel segments, Linux,bothDTs,raw rescueCPIO,productADT,Androidheader verified;
+  262144B spare. Args exact currentc6cb plus nord2wifiwake=1 only. No firmware
+  execution, DRAM/MPU write, WFSYS CPU release or networking in this image.
+  Private wifi-ap-wake/ios identity/manifest/prepared filled; authorization
+  FALSE; runner NEVER EXECUTED. After exact approval and physical fastboot,
+  record private boot-only authorization and conditional tested rescue/current
+  c6cb restoration, then run ONCE --authorized-wifi-ap-wake-boot/capture180s.
+  Never rerun if flash.log/hardware-live exists. Parse final full capture with
+  new AP-wake parser: phase10 plus status0/phase7/balanced1/ref0/halt0, validID/
+  clockIRQ/cold masks and baseline health required; human GUI/input separately.
+  Recovery manual after reset only; never normal Android over iOS userdata.
+  Current phone c6cb remains healthy, collector stopped; 8ca8/rescue preserved.
+  /root/wifi_after_id and /root/wifi_evidence pending tasks interrupted during
+  handoff; parent completed private template review/tests. New Sol
+  /root/wifi_rom_plan audits future WFSYS/ROM prerequisites privately, no active
+  changes. UFS/boot-speed work remains closed. Calibration inventory saved at
+  research/nord2/wifi/next-stage/calibration-source.md, no private values in git.
+
+
+- **AP-WAKE CI39568093909 SUCCEEDED; LINKED REVIEW PASS; IMAGE PACKING.**
+  Source6978794fde46fd1410c631eb0ee4b918a6065c2a, job119115205909.
+  Kernel17,355,960B SHA256
+  ff0657a709b4555c97711358c85dc62f3a0d3ec454c295e852a7794aa065ff30.
+  Artifact/source/all1107 genericARMv8.2-a+crypto invocations verified.
+  Linked retained-only call/default-off/software owner/separate wake reference/
+  final sleep/no-postsleep-I/O review PASS. Private identity now pinned;
+  bounded image packing in progress. Parent tested/reviewed private templates,
+  took ownership from evidence agent; authorization remains FALSE. Current
+  c6cb phone healthy, no USB client/device operation. Full-image verification
+  and prepared identity still pending; do not request/execute flash yet.
+  Calibration source report confirms saved per-device WIFI/WIFI_CUSTOM exist
+  privately; firmware copies are distinct from NVRAM/calibration. Future native
+  buffer handoff and selected configuration still need implementation.
+
+
 - **AP-WAKE FULL CI39568093909 RUNNING.**
   Source6978794fde46fd1410c631eb0ee4b918a6065c2a pushed to fork.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39568093909
