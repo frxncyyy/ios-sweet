@@ -4,6 +4,43 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **Scan receive image f53ad2b7 VERIFIED; exact boot-only approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-scan-receive-battery-stop23.img33386496B
+  SHA256f53ad2b7875ed7435b1cbaaf3b9173df72565459295b7ea91fb6b9c9d8653bda
+  payload36a6a8ec6a8e654a461ff6c405b6057c78f4dac4a2ecfec6da526f7167744fea;
+  boot spare167936B. CI39667598700/source035793eb6971be129d8ab0514c1b64e4157df7db.
+  Linkedreviewc492d264/manifestb2a7a19d PASS: actual checked readonly helper,
+  baseline/done/expiry hooks, zeroextendedBSSID, actual worker/reports/drain.
+  Bounded1GiB packexit0; independent imagecontents and --check-existing PASS:
+  exactsegments/loader/ADT/privateboard/rescue/originalLinux/dualDT/header.
+  Fresh wifi-scan-receive/ios source/schema/CI/prepared gates true; human exact
+  image/RF/conditionalrecovery remain FALSE. Runner UNUSED; no device action.
+  Current phone stays c3ce7dcf healthy; recovery-image.json pins that image.
+  New candidate corrects six scanrequestbytes + captures DMA/RF evidence;
+  no hardware zero-BSS cause proved, no iOS interface/association yet.
+  Next: exact-image approval+physicalfastboot, fresh one-use runner ONLY,
+  collect and parse with pinned RX/RFv2; conditional healthyc3/RAMrescue.
+  No previous runner reuse or stockAndroid boot over iOSuserdata.
+  Private bridge bind d220338c review0d4e15a0 PASS; no native activation.
+
+- **Scan receive CI39667598700 SUCCESS; exact source035793eb6971be129d8ab0514c1b64e4157df7db.**
+  Kernel17534512B SHA2445e75edb05da8599b08fa5da8aa869c43ae30b7edc790d5db0131ee9c21db5
+  matches artifactSUMS. All157generated/buildtree files equal;12 actual compiler
+  invocations generic ARMv8.2;2,241,168 decoded instructions noLDAPUR/STLUR.
+  Final root canonical22/fivequeues+450faults/sourceoracle257/CAPBASIC8 PASS.
+  Fresh wifi-scan-receive/ios identity true; schema awaiting independent linked
+  review under combined-backend/scan-receive-linked-review (after_id).
+  No image prepared/approval/device action; current c3ce7dcf humanhealthy and
+  exact recovery file reverified. CI watcher completed0; no collectors.
+  Private servicebridge age evidence811a7dfd/adapterb016ddbd handlesms and
+  signed32 bound with explicit hosttimestamps (26checks); rate map890f6447
+  remains unresolved, compared implementations cannot validate exact mapping.
+  Bind-policyd220338c resolves selector1controlIOUC/selector5mappedpipe and
+  request43 DRIVER_VERSION boundedidentity;559checks and normalARM64 PASS,
+  independent review pending. No native service publication or ADT change.
+  Next: finish linkedreview, open schema only on verifiedpass, pack under1GiB,
+  independent imageverify, exactboot-only approval using healthyc3 recovery.
+
 - **Cohesive scan receive correction promoted; next CI/image not yet run.**
   Corrected ordinary V2 extended BSSID to zero according to selected Android
   cfg80211→AIS→SCN source; source oracle257cases matches all1188 scan bytes
