@@ -4,6 +4,52 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **ROM + BATTERY IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
+  shim/out/nord2-xnu/nord2-ios-wifi-rom-battery-stop23.img,33314816B,
+  SHA256 23a9bd30b7fc5d439bafcd10104932884a1a145afc2f5d34cd8dd6d463fd1b90.
+  Payload0a21b1298834a2233571b3f8cd61b8e25421dc476a9dc6cbdbf4354c9988c403.
+  CI39578688632/source3e1351fa02995bb3fcec11272436565821639414;
+  kernel f9d2cf13b361c25a3e7667012ca30fc865f88ca9b9250ae1b0b0991d6535792c.
+  All1118 compiler invocations/linked review PASS. Exact rebuilt loader plus
+  full2MiB zero padding, loadedkernel/fixups, static24BzeroCONNclaim/productADT,
+  Linux/bothDTs/rawrescueCPIO/Androidheader byte checks PASS;239616B spare.
+  Private wifi-rom/ios identity/prepared pinned TRUE; human approval FALSE;
+  runner NEVER EXECUTED. Args current49c8 minuswfsys1 plusrom1+battery1.
+  Next exact approval/physicalfastboot, then one-use runner and180sUSBcapture.
+  ROM_DONE is only radio firmware startup; not scanning/networking. Battery
+  values unknown until actual I2C results. Failure retains resources/manual
+  reset; conditional testedRAMrescue/current49c8 restore, never normalAndroid.
+  Phone remains49c8 healthy, USB collector stopped. UFS/boot work unchanged.
+  Private next main-fw-transport source plan/helpers complete: selected path
+  requires32-bit device-visible DMA; highXNU PA must not be truncated. Separate
+  dynamically described Wi-Fi DMA pool lacks fixed current-iOS claim. No active
+  transport changes. External Opus audio worker continues; live viewer desktop1.
+
+
+
+- **ROM + BATTERY CI SUCCEEDED; LINKED REVIEW PASS; IMAGE PACKING.**
+  CI39578688632/source3e1351fa02995bb3fcec11272436565821639414, job119150585846.
+  Kernel17409456B SHA256 f9d2cf13b361c25a3e7667012ca30fc865f88ca9b9250ae1b0b0991d6535792c.
+  All1118 actual compiler invocations generic armv8.2-a+crypto verified.
+  Linked review pins actual prepare/claim/SET/copy/receipt/CPU-release/ROM102
+  and battery poll->native sample->collector chain. Report under ci39578688632.
+  Exact private identity supplied; bounded1GiB image packing in progress.
+  Human approval remains false; runner never executed. Current49c8 phone
+  unchanged. External Opus audio is writing a private identification candidate;
+  parent pending review notes flag shared I2C8 DDR/UFS regulator bus, GPIO
+  takeover/unknown-transaction recovery concerns. No audio code is integrated.
+
+
+- **ROM + BATTERY FULL CI39578688632 RUNNING.**
+  Source3e1351fa02995bb3fcec11272436565821639414 pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39578688632
+  Wait for source/artifact/flags, final linked check and bounded image packing.
+  Current49c8 phone remains healthy and USB idle; no new flash approval.
+  External Claude Opus audio task continues in its separate private workspace
+  with live output visible in foot. Parent owns all integration/device work.
+
+
+
 - **ROM + BATTERY SOURCE READY FOR FULL CI.**
   Canonical source, loader and generated patch integrated. Actual canonical
   loader/contract/placement/native/core/binding host tests passed: 539
