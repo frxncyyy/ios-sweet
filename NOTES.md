@@ -4,6 +4,41 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **c3 recovery complete and HUMAN-HEALTHY after failedf53 test.**
+  User confirms lockscreen/touch/buttons call_7cbc3ffb5d7b4dfe9555d7bb01c996e5.
+  Restore90s collector closed; immutable restore-c3/restored-full.log and
+  result.json saved under wifi-scan-receive/ios. No collector remains.
+  Current phone c3; failedtest/restore runners both USED, neverrerun.
+  New cohesive sourcefix handles unsolicited EID7 acrossCAP/BASIC/normal;
+  rawstate unknown infailedlog, never infer0/1. Sourceaudit5d6ff119 proves
+  rawuint8 state/noCMDseq correlation/noautomatic FW-own. Agents working
+  private source/real-ownerfault tests/parser; no newCI/image/approval yet.
+  Fresh wifi-async-scan/ios template created ALL gatesfalse/runnerunused;
+  exact healthyc3 fallback pinned. Restore238590B SHA3d07868a0a8972231f83756567101da3d28ec2faf2af4ce0c2811d5122b5bbb9,
+  v3parserPASS, deadline/noUSBerror. Root can continue offline sourcework.
+
+- **f53ad2b7 FAILED before scan; healthy c3 restore FLASHED/rebooted OKAY.**
+  Actual MAIN/CAP pass, BASICerror23 rejected40B EID7sleepy/seq0/outerinner3800
+  afterCID2 completeddescriptor: txdone1/callbacks73/completed4. No NORMAL/
+  scan request reached; six-byte scanfix and newRXRF diagnostics UNTESTED.
+  Immutable first/final157371B SHA c12ecd8d0c2d865adddcc1822b3ca06c864e38a9520bfd9fbb1c6e8bfd355861
+  under wifi-scan-receive/ios/backend-first-receipt.log/backend-failed-full.log.
+  Finalcollector exit0 but usb_error/libusb-7 (NOT clean180s); no extra panic
+  tail captured. Failure drain30s observed. Never rerun failed stage runner.
+  User physicalfastboot call_9c2d996548a642e493b3f6312c6cc440; existing conditional
+  approval used for exactc3 restore. Fresh restore-c3 runner USED; boot/reboot
+  OKAY. Currentphone c3; root session2145 collecting90s, humanhealth pending.
+  cap_stage preparing source-exact boundedasync EID7 handling and realnative
+  timing/fault fixtures in combined-backend/basic-sleepy-race; format independent
+  source/phase audit andreview. Root solecanonical/deviceowner. No newimageyet.
+
+- **f53ad2b7 AUTHORIZED and boot-only FLASHED/rebooted OKAY; result pending.**
+  User approval call_07a2a2f7c15c46ef81b1a5e7eabac20f includes conditional
+  healthyc3/RAMrescue recovery. Single knownNord2 fastboot/productoplus6893/
+  boot0x2000000/nonuserspace checked. Fresh wifi-scan-receive/ios runner USED;
+  NEVER rerun. Root session14928 collects USB180s; currentphone f53ad2b7,
+  notc3. No hardware scan/health result yet. Originalstock boot prohibited.
+
 - **Scan receive image f53ad2b7 VERIFIED; exact boot-only approval pending.**
   shim/out/nord2-xnu/nord2-ios-wifi-scan-receive-battery-stop23.img33386496B
   SHA256f53ad2b7875ed7435b1cbaaf3b9173df72565459295b7ea91fb6b9c9d8653bda
