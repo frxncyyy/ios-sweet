@@ -3,6 +3,32 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MAIN-FW + BATTERY SOURCE READY FOR FULL CI.**
+  Native/coordinator e1bfc6cf and firmware/PHYv2 0856bff4 independently PASS;
+  promoted with include-name-only normalization to wifi_main_* canonical files.
+  Actual main0/patch1 blobs, shared halt, retained finish buffers, bounded
+  source-ordered40→8→41 and RF/EMIbackup/PCCIF/FW_READY sequence integrated.
+  Canonical sanitizer suites pass including actualnative/coordinator fault
+  paths and privatefirmware/calibration fixtures. All12new actual ARM64 TUs
+  plus entire active sweet_touch compile under normal CI flags/no forcedNORD2.
+  Patch13704lines applies/reproduces. Frozen UFS1ef095f3 unchanged. Next fullCI,
+  linkedreview, boundedimagepack with privatecalADT, then exactnewapproval.
+  Currente0d3 phone stays human-confirmed healthy; no collector/device action.
+  Audio remains private. No scan/association/iOSnetworkinterface claim.
+
+
+- **MAIN-FW INTEGRATION IN PROGRESS; PHONE STILL HEALTHY e0d3.**
+  Reviewed WFDMA callbackv2 a10267a1 promoted as flat wifi_main_* helper
+  names/includes; canonical host ASan/UBSan suites and6normal ARM64 TUs pass.
+  Actual native owner/coordinator and mainFW/PHY wrapper still private pending
+  frozen final review. Parent caught main blob index2 bug against actual
+  wifi_firmware.c order (main0/patch1/ROM2/3); author fixes it in privatev2
+  together with reviewer's shared-lifetime halt propagation. Original files
+  remain frozen. Full source integration/CI/image still pending; next flag
+  nord2wifimain=1 will include actual RF calibration, never imply networking.
+  New private wifi-main/ios stage has all gates closed. No new device action.
+
+
 - **NARROW DMA COUNT / BATTERY FIFO FIXES PROMOTED; NO NEW FLASH.**
   DMA accepts zero or observed512 count only with zero base/ext/indices and
   disabled/stable engines. Battery uses selected same-IP V2 low5 receive

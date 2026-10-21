@@ -2684,7 +2684,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +660,14 @@
+@@ -648,3 +660,26 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2699,6 +2699,18 @@
 +bsd/dev/pool_probe.c			standard
 +bsd/dev/pool_adapter.c			standard
 +bsd/dev/wifi_dma_preflight.c			standard
++bsd/dev/wifi_main_command.c			standard
++bsd/dev/wifi_main_dmashdl.c			standard
++bsd/dev/wifi_main_init_plan.c			standard
++bsd/dev/wifi_main_initializer.c			standard
++bsd/dev/wifi_main_transport.c			standard
++bsd/dev/wifi_main_layout.c			standard
++bsd/dev/wifi_main_fw_place.c			standard
++bsd/dev/wifi_main_fw_xnu.c			standard
++bsd/dev/wifi_main_phy_backup.c			standard
++bsd/dev/wifi_main_phy_exchange.c			standard
++bsd/dev/wifi_main_phy_force.c			standard
++bsd/dev/wifi_main_phy_xnu.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -4772,7 +4784,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,901 @@
+@@ -1,3 +1,904 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5389,6 +5401,8 @@
 +#include "wifi_wfsys_bind.inc"
 +#include "wifi_rom_bind.inc"
 +#include "pool_bind.inc"
++#include "wifi_main_wfdma_bind.inc"
++#include "wifi_main_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
 + * Fresh powered reset/master predicates are checked in adapter.c; these
 + * software baselines were captured before original outer PMIC/power changes.
@@ -5501,6 +5515,7 @@
 +		nwsa_after_persistent(); /* separate CPU-held WFSYS diagnostic */
 +		nrpa_after_persistent();
 +    nppa_after_rom(); /* exact nord2wifirom=1, prepared before probe */
++    nwfn_after_pool(); /* separate nord2wifimain=1; real firmware/calibration */
 +	} else {
 +		ncc_power_window(host, conn, id);
 +	}
@@ -5674,7 +5689,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1556,4 @@
+@@ -658,3 +1559,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -11736,3 +11751,1954 @@
 + * (caller retains/manualhalt). No write/memory/DMA callback exists. Freshparentwakeowner perread required. */
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_command.c
+@@ -0,0 +1,34 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_command.h"
++static void put32(uint8_t *p,uint32_t x){for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(x>>(8*i));}
++static uint32_t get32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++static void zero(uint8_t *p,size_t n){for(size_t i=0;i<n;i++)p[i]=0;}
++static int range(uint64_t dma,size_t n){return !dma||!n||n>0x3fff||dma>UINT32_MAX||n-1>UINT32_MAX-dma;}
++int nwt_finish(uint8_t *out,size_t capacity,uint8_t cid,uint8_t seq,size_t *used){
++ if(!out||!used||(cid!=0x40&&cid!=0x41))return -1;
++ size_t len=cid==0x40?68:72;if(capacity<len)return -1;
++ zero(out,len);put32(out,(uint32_t)len|(2u<<23));put32(out+4,1u<<16);
++ /* MAC32 + INIT32; INIT PQ_ID remains zero in selected fill function,
++  * notwithstanding stale struct comment saying8000. Zeroed reservedDW. */
++ out[32]=(uint8_t)(len-32);out[36]=cid;out[37]=0xa0;out[39]=seq;
++ /* patch ucCheckCrc0; N9 override0,address0 sourceexact payloads. */
++ *used=len;return 0;
++}
++int nwt_tx_desc(uint8_t out[16],uint64_t dma,size_t n){
++ if(!out||range(dma,n))return -1;
++ zero(out,16);put32(out,(uint32_t)dma);
++ put32(out+4,((uint32_t)n<<16)|(1u<<30));return 0;
++}
++int nwt_rx_desc(uint8_t out[16],uint64_t dma,size_t n){
++ if(!out||range(dma,n))return -1;
++ zero(out,16);put32(out,(uint32_t)dma);put32(out+4,(uint32_t)n<<16);return 0;
++}
++int nwt_rx_complete(const uint8_t d[16],uint64_t dma,size_t capacity,size_t *bytes){
++ if(!d||!bytes||range(dma,capacity)||get32(d)!=(uint32_t)dma||get32(d+8))return -1;
++ uint32_t flags=get32(d+4);size_t n=(flags>>16)&0x3fff;
++ if((flags&0xc0000000u)!=0xc0000000u||!n||n>capacity||(flags&0x3fff))return -1;
++ *bytes=n;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_command.h
+@@ -0,0 +1,12 @@
++#ifndef PRIVATE_WFDMA_COMMAND_H
++#define PRIVATE_WFDMA_COMMAND_H
++#include <stdint.h>
++#include <stddef.h>
++/* Pure selected SOC3_0 wire formats. No IO, DMAownership or permission proof. */
++int nwt_finish(uint8_t *,size_t,uint8_t cid,uint8_t sequence,size_t *used);
++int nwt_tx_desc(uint8_t out[16],uint64_t dma,size_t bytes);
++int nwt_rx_desc(uint8_t out[16],uint64_t dma,size_t capacity);
++/* Call only after actual owned RX completion/acquire barrier. This cannot
++ * establish hardware completion; returns bounded descriptor bytecount. */
++int nwt_rx_complete(const uint8_t desc[16],uint64_t expected_dma,size_t capacity,size_t *bytes);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_dmashdl.c
+@@ -0,0 +1,40 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_dmashdl.h"
++static void add(struct nwt_plan_op *p,size_t *n,uint32_t a,uint32_t mask,uint32_t v){p[*n]=(struct nwt_plan_op){a,mask,v,1};(*n)++;}
++int nwdm_plan(struct nwt_plan_op *p,size_t capacity,size_t *used){
++ if(!p||!used||capacity<99)return -1;
++ size_t n=0;static const uint8_t q[32]={0,0,0,0,2,2,2,2,0,0,0,0,2,2,2,2,0,0,0,2,2,2,2,2,0,0,0,2,2,2,2,2};
++ add(p,&n,0x1802601c,0xfff,1);
++ for(unsigned i=0;i<16;i++){
++  unsigned en=i==0||i==2||i==4;uint32_t mask=1u<<(16+i);
++  add(p,&n,0x18026010,mask,en?0:mask);
++  add(p,&n,0x18026020+4*i,0x0fff0000,en?(0x15du<<16):0);
++  add(p,&n,0x18026020+4*i,0x00000fff,en?0x10:0);
++ }
++ for(unsigned i=0;i<32;i++)add(p,&n,0x180260d0+4*(i/8),0xfu<<(4*(i%8)),(uint32_t)q[i]<<(4*(i%8)));
++ for(unsigned i=0;i<16;i++)add(p,&n,0x180260b0+4*(i/8),0xfu<<(4*(i%8)),i<<(4*(i%8)));
++ add(p,&n,0x1802600c,0x10000,0);
++ add(p,&n,0x18026008,0xffffff,0x30015);
++ *used=n;return n==99?0:-1;
++}
++static int fail(struct nwdm_state *s,unsigned e){s->error=e;s->halt=1;return -1;}
++int nwdm_apply(const struct nwt_io *o,void *c,struct nwdm_state *s,unsigned opt){
++ struct nwt_plan_op plan[99];size_t n=0;uint32_t v;
++ if(!o||!o->owner||!o->reg_read||!o->reg_write||!s||opt!=1||s->entered)return -1;
++ s->entered=1;
++ if(nwdm_plan(plan,99,&n))return fail(s,1);
++ const struct nwdp_io ro={o->owner,o->reg_read};int pre=nwdp_capture(&ro,c,&s->snapshot,1);
++ if(pre){s->error=pre==1?2:3;s->halt=pre<0;return pre==1?1:-1;}
++ for(size_t i=0;i<n;i++){
++  if(o->owner(c)||o->reg_read(c,plan[i].physical,&v))return fail(s,4);
++  v=(v&~plan[i].clear)|plan[i].set;
++  if(o->owner(c))return fail(s,5);
++  s->dirty=1;
++  if(o->reg_write(c,plan[i].physical,v))return fail(s,6);
++  s->operations++;
++ }
++ s->complete=1;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_dmashdl.h
+@@ -0,0 +1,12 @@
++#ifndef PRIVATE_DMASHDL_H
++#define PRIVATE_DMASHDL_H
++#include "wifi_main_transport.h"
++#include "wifi_main_init_plan.h"
++#include "wifi_dma_preflight.h"
++struct nwdm_state {unsigned entered,complete,dirty,halt,error,operations;struct nwdp_state snapshot;};
++/* Actual selected99RMW initialization subset. Freshsourceowner required, and
++ * internalread-onlypreflight runs immediately beforefirstmutation. DoesNOT
++ * enableDMA, resetindices, or minttransportphase2. Failureafterwrite retains. */
++int nwdm_apply(const struct nwt_io *,void *,struct nwdm_state *,unsigned);
++int nwdm_plan(struct nwt_plan_op *,size_t,size_t *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_init_plan.c
+@@ -0,0 +1,39 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_init_plan.h"
++int nwt_cfg_plan(unsigned dma,unsigned enable,struct nwt_rmw *o){
++ if(!o||dma>1||enable>1)return -1;
++ o->physical=0x18024208+0x1000*dma;
++ if(!enable){o->clear=(1u<<0)|(1u<<2)|(1u<<15)|(1u<<21)|(1u<<27)|(1u<<28);o->set=0;}
++ else {
++  /* sourcecontrol(enable), then finaltx/rx enable + selectedaddr_extfalse.
++   * SourceDMA0 doesnotassignomit_rx_info; preserveit incombinedRMW. */
++  o->clear=(3u<<4)|(1u<<26);
++  o->set=(3u<<4)|(1u<<6)|(1u<<12)|(1u<<15)|(1u<<21)|(1u<<28)|(1u<<30)|5u;
++  if(dma)o->set|=1u<<27;
++ }
++ return 0;
++}
++static void emit(struct nwt_plan_op *p,size_t *n,uint32_t a,uint32_t clr,uint32_t set,unsigned rmw){p[*n]=(struct nwt_plan_op){a,clr,set,rmw};(*n)++;}
++int nwt_prefetch_plan(struct nwt_plan_op *p,size_t cap,size_t *used){
++ /*2CFG+11RX+6TX+6overwriteTX+6TX8..13+4TX16..19+2priority+4reset+AXI=42*/
++ if(!p||!used||cap<42)return -1;
++ size_t n=0;uint32_t value=4;
++ emit(p,&n,0x18024208,1u<<15,0,1);emit(p,&n,0x18025208,1u<<15,0,1);
++ for(unsigned i=0;i<8;i++){emit(p,&n,0x18024680+4*i,0,value,0);value+=0x400000;}
++ for(unsigned i=0;i<3;i++){emit(p,&n,0x18025680+4*i,0,value,0);value+=0x400000;}
++ uint32_t def=value;
++ for(unsigned i=0;i<6;i++){emit(p,&n,0x18025600+4*i,0,value,0);value+=0x400000;}
++ /* Actual soc3_0ResetTxDataRingPrefetch overwrites all3data pairs with
++  * same def/def+400000, does NOT simply continue increasingvalues. */
++ for(unsigned i=0;i<3;i++){emit(p,&n,0x18025600+8*i,0,def,0);emit(p,&n,0x18025604+8*i,0,def+0x400000,0);}
++ for(unsigned i=8;i<=13;i++){emit(p,&n,0x18025600+4*i,0,value,0);value+=0x400000;}
++ for(unsigned i=16;i<=19;i++){emit(p,&n,0x18025600+4*i,0,value,0);value+=0x400000;}
++ emit(p,&n,0x18024298,0,0xf0,1);emit(p,&n,0x18025298,0,2,1);
++ emit(p,&n,0x1802420c,0,0xffffffffu,0);emit(p,&n,0x1802520c,0,0xffffffffu,0);
++ emit(p,&n,0x18024280,0,0xffffffffu,0);emit(p,&n,0x18025280,0,0xffffffffu,0);
++ emit(p,&n,0x18027500,0,0x800,1);
++ *used=n;return n==42?0:-2;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_init_plan.h
+@@ -0,0 +1,14 @@
++#ifndef PRIVATE_WFDMA_INIT_PLAN_H
++#define PRIVATE_WFDMA_INIT_PLAN_H
++#include <stdint.h>
++#include <stddef.h>
++struct nwt_rmw {uint32_t physical,clear,set;};
++/* Exact selected source globalCFG transforms, not IO. Caller must firstown
++ * ALL sourceaffectedglobals/rings+DMASHDL and pass standalonepreflight. */
++int nwt_cfg_plan(unsigned dma,unsigned enable,struct nwt_rmw *);
++/* Pure source manualprefetch ordered writes/RMW plan. Includesexactsourceindexresets:
++ * source reset operations are represented as pure data; noexecutor exists.
++ * reset/enable must remain gated until fullsourceinitownership implemented. */
++struct nwt_plan_op {uint32_t physical,clear,set;unsigned rmw;};
++int nwt_prefetch_plan(struct nwt_plan_op *,size_t,size_t *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_initializer.c
+@@ -0,0 +1,124 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_initializer.h"
++#define LPCTL 0x18060010u
++static int fail(struct nwi_state*s,unsigned e){s->error=e;s->halt=1;return -1;}
++static int owner(const struct nwt_io*o,void*c,struct nwi_state*s){uint32_t v;
++ if(o->owner(c))return fail(s,1);
++ if(s->driver_owned&&(o->reg_read(c,LPCTL,&v)||(v&4)))return fail(s,2);
++ return 0;
++}
++static int rr(const struct nwt_io*o,void*c,struct nwi_state*s,uint32_t a,uint32_t*v){return owner(o,c,s)||o->reg_read(c,a,v)?fail(s,3):0;}
++static int rw(const struct nwt_io*o,void*c,struct nwi_state*s,uint32_t a,uint32_t v){if(owner(o,c,s))return -1;s->dirty=1;if(o->reg_write(c,a,v))return fail(s,4);s->reg_writes++;return 0;}
++static int rmw(const struct nwt_io*o,void*c,struct nwi_state*s,uint32_t a,uint32_t clr,uint32_t set){uint32_t v;if(rr(o,c,s,a,&v))return -1;return rw(o,c,s,a,(v&~clr)|set);}
++static int delay(const struct nwt_io*o,void*c,struct nwi_state*s){return owner(o,c,s)||o->delay_us(c,1000)?fail(s,5):0;}
++static int mw(const struct nwt_io*o,void*c,struct nwi_state*s,uint64_t a,const void*p,uint32_t n){
++ if(!n||n>4096||a<s->claim.base||a-s->claim.base>s->claim.bytes||n>s->claim.bytes-(a-s->claim.base)||owner(o,c,s))return fail(s,6);
++ s->dirty=1;if(o->mem_write(c,a,p,n)||owner(o,c,s)||o->sync(c,a,n,1))return fail(s,7);s->memory_writes++;return 0;
++}
++static void put(uint8_t*p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(v>>(8*i));}
++int nwi_prepare(struct nwi_state*s,const struct ndp_claim*c,const struct npp_state*p){
++ struct ndp_subpool sub;if(!s||s->prepared||s->entered||!p||ndp_subpool_layout(c,&sub)||
++ p->error||!p->claim_ready||p->live_valid!=0x1f||!p->preflight_complete||p->stage!=NPP_DONE||!p->entered||!p->verified||!p->zero_complete||p->halt||p->uncertain||
++ !p->balanced||!p->asleep||p->ap_owned||p->wf_owned||p->inherited_dma||
++ p->set_attempted!=3||p->set_accepted!=2||p->raw_valid!=3||p->raw[0][0]||p->raw[1][0]||
++ p->words_written!=32768||p->words_read!=32768||!p->mapped)return -1;
++ s->claim=*c;s->pool=p;s->command=sub.tx_cmd;uint64_t pos=c->base+0x20000;
++ const uint32_t txhw[4]={0,2,17,16};
++ for(unsigned i=0;i<4;i++){
++  s->rings[i]=(struct nwi_ring){.descriptors=i==2?sub.tx_desc:pos,.base=0x18025300+16*txhw[i],.count=1024,.ext=0x18025600+4*txhw[i]};
++  if(i!=2)pos+=0x4000;
++ }
++ const unsigned rxhw[5]={0,0,1,2,3},rxdma[5]={0,1,0,0,0},count[5]={1024,16,1024,16,16};
++ for(unsigned i=0;i<5;i++){
++  /* Selected generic ext helper uses DMA1 ext base when wfdma1 supported,
++   * even for data rings; preserve that transient source write. Manual
++   * prefetch subsequently programs both DMA blocks. */
++  s->rings[4+i]=(struct nwi_ring){.descriptors=i==1?sub.rx_desc:pos,.base=0x18024500+0x1000*rxdma[i]+16*rxhw[i],.count=count[i],.ext=0x18025680+4*rxhw[i],.rx=1};
++  if(i!=1)pos+=16*count[i];
++ }
++ pos=(pos+4095)&~UINT64_C(4095);
++ for(unsigned i=4;i<9;i++){s->rings[i].buffers=i==5?sub.rx_events:pos;if(i!=5)pos+=4096u*s->rings[i].count;}
++ if(pos>c->base+c->bytes||pos>UINT32_MAX)return -1;
++ s->end=pos;s->prepared=1;return 0;
++}
++static int idle(const struct nwt_io*o,void*c,struct nwi_state*s,unsigned dma){uint32_t v;
++ for(unsigned i=0;i<102;i++){if(i&&delay(o,c,s))return -1;if(rr(o,c,s,0x18024208+dma*0x1000,&v))return -1;s->idle_polls++;if(!(v&10))return 0;}return fail(s,8);
++}
++struct scheduler_context {const struct nwt_io *io;void *context;struct nwi_state *state;};
++static int scheduler_owner(void *v){struct scheduler_context *c=v;return owner(c->io,c->context,c->state);}
++static int scheduler_read(void *v,uint32_t a,uint32_t *p){struct scheduler_context *c=v;return c->io->reg_read(c->context,a,p);}
++static int scheduler_write(void *v,uint32_t a,uint32_t p){struct scheduler_context *c=v;return c->io->reg_write(c->context,a,p);}
++int nwi_initialize(const struct nwt_io*o,void*c,struct nwi_state*s,unsigned opt){
++ if(!o||!o->owner||!o->reg_read||!o->reg_write||!o->mem_write||!o->sync||!o->delay_us||!s||opt!=1||!s->prepared||s->entered)return -1;
++ s->entered=1;s->phase=1;const struct nwdp_io ro={o->owner,o->reg_read};int pre=nwdp_capture(&ro,c,&s->preflight,1);
++ if(pre){if(pre<0)return fail(s,9);s->error=10;return 1;}
++ /* Polling derivative: no peripheral interrupt output is enabled. Refuse
++  * inherited defined interrupt enables before any mutation. Reserved bits
++  * are captured but ignored, using the selected CODA field masks. */
++ const uint32_t irq_defined[2]={0x33f800ffu,0x7d37ffffu};
++ for(unsigned dma=0;dma<2;dma++){
++  if(rr(o,c,s,0x18024204+dma*0x1000,&s->irq_initial[dma]))return -1;
++  if(s->irq_initial[dma]&irq_defined[dma]){s->error=16;return 1;}
++  if(rr(o,c,s,0x18024200+dma*0x1000,&s->irq_status_initial[dma]))return -1;
++  s->irq_status_initial_valid|=1u<<dma;
++  if(s->irq_status_initial[dma]&0x00300000u){s->error=18;return 1;}
++ }
++ uint32_t v;if(rr(o,c,s,LPCTL,&v))return -1;
++ if(v&4){s->driver_requested=1;if(rw(o,c,s,LPCTL,2))return -1;
++  for(unsigned i=0;i<1000;i++){if(i&&delay(o,c,s))return -1;if(rr(o,c,s,LPCTL,&v))return -1;if(!(v&4))break;if(i==999)return fail(s,11);}
++ }
++ s->driver_owned=1;s->phase=2;
++ /* Source halHifSwInfoInit: DMASHDL before ring allocation/init. */
++ struct scheduler_context sc={o,c,s};
++ const struct nwt_io scheduler_io={.owner=scheduler_owner,.reg_read=scheduler_read,.reg_write=scheduler_write};
++ int d=nwdm_apply(&scheduler_io,&sc,&s->scheduler,1);if(d){if(s->scheduler.dirty)s->dirty=1;return fail(s,12);}s->dirty=1;
++ uint8_t buffer[4096]={0};
++ for(unsigned r=0;r<9;r++){
++  struct nwi_ring*t=&s->rings[r];
++  if(t->rx)for(unsigned i=0;i<t->count;i++)if(mw(o,c,s,t->buffers+4096u*i,buffer,3840))return -1;
++  for(unsigned first=0;first<t->count;first+=256){unsigned n=t->count-first;if(n>256)n=256;
++   for(unsigned j=0;j<n;j++){uint8_t*desc=buffer+16*j;for(unsigned k=0;k<16;k++)desc[k]=0;
++    if(t->rx){if(nwt_rx_desc(desc,t->buffers+4096u*(first+j),3840))return fail(s,13);}else put(desc+4,1u<<31);
++   }
++   if(mw(o,c,s,t->descriptors+16u*first,buffer,16u*n))return -1;
++  }
++  for(unsigned j=0;j<4096;j++)buffer[j]=0;
++ }
++ s->phase=3;
++ for(unsigned dma=0;dma<2;dma++){
++  struct nwt_rmw cfg;if(nwt_cfg_plan(dma,0,&cfg)||rmw(o,c,s,cfg.physical,cfg.clear,cfg.set)||idle(o,c,s,dma)||rw(o,c,s,0x1802420c+dma*0x1000,0xffffffffu)||rw(o,c,s,0x18024280+dma*0x1000,0xffffffffu))return -1;
++ }
++ /* Selected pdmaSetup(FALSE) clears only its source interrupt masks. */
++ const uint32_t irq[2]={0xfu,0x2c200151u};
++ for(unsigned dma=0;dma<2;dma++)if(rw(o,c,s,0x1802422c+dma*0x1000,irq[dma]))return -1;
++ for(unsigned r=0;r<9;r++){struct nwi_ring*t=&s->rings[r];
++  if(rw(o,c,s,t->base,(uint32_t)t->descriptors)||rw(o,c,s,t->base+8,t->rx?t->count-1:0)||rw(o,c,s,t->base+4,t->count)||rw(o,c,s,t->ext,4))return -1;
++ }
++ struct nwt_plan_op plan[42];size_t n;if(nwt_prefetch_plan(plan,42,&n))return fail(s,14);
++ for(size_t i=0;i<n;i++)if(plan[i].rmw?rmw(o,c,s,plan[i].physical,plan[i].clear,plan[i].set):rw(o,c,s,plan[i].physical,plan[i].set))return -1;
++ s->phase=4;
++ for(unsigned dma=0;dma<2;dma++){
++  /* Source control(enable) sets flags before interruptSET and final DMAenable. */
++  struct nwt_rmw cfg;if(nwt_cfg_plan(dma,1,&cfg))return fail(s,15);
++  if(rmw(o,c,s,cfg.physical,cfg.clear&~(1u<<26),cfg.set&~5u))return -1;
++ }
++ /* Deliberately omit Linux interrupt SET: XNU has no handler for this
++  * polling-only transaction. Require defined peripheral enables remain off. */
++ for(unsigned dma=0;dma<2;dma++){
++  if(rr(o,c,s,0x18024204+dma*0x1000,&s->irq_final[dma]))return -1;
++  if(s->irq_final[dma]&irq_defined[dma])return fail(s,17);
++ }
++ for(unsigned dma=0;dma<2;dma++)if(rmw(o,c,s,0x18024208+dma*0x1000,1u<<26,5))return -1;
++ /* Selected bus setDummyReg is NULL; handshake hook sets MCU DMA0 dummy bit1. */
++ if(rmw(o,c,s,0x18402120,0,2))return -1;
++ for(unsigned dma=0;dma<2;dma++){
++  if(rr(o,c,s,0x18024200+dma*0x1000,&s->irq_status_final[dma]))return -1;
++  s->irq_status_final_valid|=1u<<dma;
++  if(s->irq_status_final[dma]&0x00300000u)return fail(s,19);
++ }
++ s->transport=(struct nwt_state){.entered=1,.preflight_complete=1,.phase=2,.tx_ring=s->rings[2].descriptors,.rx_ring=s->rings[5].descriptors,.rx_buffers=s->rings[5].buffers,.command=s->command,.next_sequence=1};
++ s->initialized=1;s->phase=5;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_initializer.h
+@@ -0,0 +1,26 @@
++#ifndef PRIVATE_WFDMA_INITIALIZER_H
++#define PRIVATE_WFDMA_INITIALIZER_H
++#include "wifi_main_dmashdl.h"
++#include "pool_probe.h"
++struct nwi_ring {uint64_t descriptors,buffers;uint32_t base,count,ext;unsigned rx;};
++struct nwi_state {
++ unsigned prepared,entered,phase,halt,dirty,error,driver_requested,driver_owned;
++ unsigned memory_writes,reg_writes,idle_polls,initialized;
++ unsigned irq_status_initial_valid,irq_status_final_valid;
++ uint32_t irq_initial[2],irq_final[2],irq_status_initial[2],irq_status_final[2];
++ struct nwi_ring rings[9];uint64_t command,end;
++ const struct npp_state *pool;struct ndp_claim claim;
++ struct nwdp_state preflight;struct nwdm_state scheduler;
++ struct nwt_state transport;
++};
++/* Consume actual retained pool receipt, not a permission callback. Pure plan.
++ * Four source-configured TX rings0,2,17,16; RX DMA0 0..3 +DMA1event0.
++ * Caller must retain same current claim/ROM/pool and fresh AP/WF ownership. */
++int nwi_prepare(struct nwi_state *,const struct ndp_claim *,const struct npp_state *);
++/* Actual source init derivative through enabled host WFDMA. Private only.
++ * Owner callback must prove fresh AP/WF/readability/clock/ROM/pool lifetime and
++ * platform IRQ disabled. Internal driver-own readback gates configuration.
++ * Read-only inherited-state refusal before writes returns1; all uncertain
++ * errors retain resources. No native invocation is wired. */
++int nwi_initialize(const struct nwt_io *,void *,struct nwi_state *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_transport.c
+@@ -0,0 +1,136 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_transport.h"
++#include "wifi_main_layout.h"
++#define DMA0 UINT32_C(0x18024000)
++#define DMA1 UINT32_C(0x18025000)
++#define TXBASE (DMA1+0x410)
++#define RXBASE (DMA1+0x500)
++static uint32_t get32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++static int fail(struct nwt_state *s,unsigned e){s->error=e;s->halt=s->dirty||s->phase==2;return -1;}
++static int own(const struct nwt_io *o,void *c,struct nwt_state *s){
++ if(o->owner(c))return fail(s,2);
++ s->callback_count++;return 0;
++}
++static int rr(const struct nwt_io *o,void *c,struct nwt_state *s,uint32_t a,uint32_t *v){if(own(o,c,s))return -1;return o->reg_read(c,a,v)?fail(s,3):0;}
++static int rw(const struct nwt_io *o,void *c,struct nwt_state *s,uint32_t a,uint32_t v){if(own(o,c,s))return -1;s->dirty=1;return o->reg_write(c,a,v)?fail(s,4):0;}
++static int mr(const struct nwt_io *o,void *c,struct nwt_state *s,uint64_t a,void *p,uint32_t n){if(own(o,c,s))return -1;return o->mem_read(c,a,p,n)?fail(s,5):0;}
++static int mw(const struct nwt_io *o,void *c,struct nwt_state *s,uint64_t a,const void *p,uint32_t n){if(own(o,c,s))return -1;s->dirty=1;return o->mem_write(c,a,p,n)?fail(s,6):0;}
++static int sync(const struct nwt_io *o,void *c,struct nwt_state *s,uint64_t a,uint32_t n,unsigned way){if(own(o,c,s))return -1;return o->sync(c,a,n,way)?fail(s,7):0;}
++static int wait(const struct nwt_io *o,void *c,struct nwt_state *s){if(own(o,c,s))return -1;return o->delay_us(c,1000)?fail(s,8):0;}
++static int valid(const struct nwt_io *o){return o&&o->owner&&o->reg_read&&o->reg_write&&o->mem_read&&o->mem_write&&o->sync&&o->delay_us;}
++int nwt_preflight(const struct nwt_io *o,void *c,struct nwt_state *s,unsigned opt){
++ if(!valid(o)||!s||opt!=1||s->entered)return -1;
++ s->entered=1;s->missing_init=NWT_REQUIRED_FULL_INIT;
++ for(unsigned dma=0;dma<2;dma++){
++  uint32_t b=dma?DMA1:DMA0;
++  if(rr(o,c,s,b+0x208,&s->cfg[dma]))return -1;
++  s->cfg_reads++;
++  if(s->cfg[dma]&15)return fail(s,10); /*enables/busy: no mutation allowed*/
++  /* Exact defined rings changed by selectedmanualprefetch: DMA0RX0..7;
++   * DMA1RX0..2 andTX0..5,8..13,16..19. No guessedreservedringreads. */
++  for(unsigned r=0;r<28;r++){
++   if((!dma&&r<20)||(dma&&r>=23)||(dma&&r<20&&((r>=6&&r<8)||(r>=14&&r<16))))continue;
++   for(unsigned w=0;w<4;w++){
++   uint32_t a=b+(r<20?0x300+16*r:0x500+16*(r-20))+4*w;
++   if(rr(o,c,s,a,&s->ring[dma][r][w]))return -1;
++   s->ring_reads++;
++   if(s->ring[dma][r][w])return fail(s,11);
++   }
++  }
++ }
++ s->preflight_complete=1;s->phase=1;
++ return fail(s,20); /*finiteunsupportedfullinit;neverresetunknownhardware*/
++}
++/* IRQ output is disabled: poll source-defined RX/TX coherent faults.
++ * Never acknowledge, reset or attempt recovery on this path. */
++static int coherent(const struct nwt_io *o,void *c,struct nwt_state *s){
++ s->irq_status_valid=0;
++ for(unsigned dma=0;dma<2;dma++){
++  if(rr(o,c,s,0x18024200u+0x1000u*dma,&s->irq_status[dma]))return -1;
++  s->irq_status_valid|=1u<<dma;
++  if(s->irq_status[dma]&0x00300000u)return fail(s,24);
++ }
++ return 0;
++}
++static int extent(uint64_t a,uint32_t n){return !a||a>UINT32_MAX||n-1>UINT32_MAX-a;}
++int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
++ const uint8_t *cmd,size_t used,uint8_t eid,uint8_t *frame,size_t capacity,size_t *received){
++ uint8_t d[16];size_t bytes=0;uint32_t idx,cfg;
++ if(received)*received=0;
++ if(!s||!cmd||used<64||used>4096||!frame||capacity<32||capacity>3840||!received||
++ cmd[36]==0||cmd[37]!=0xa0||cmd[39]!=s->next_sequence)return -1;
++ if(!valid(o)||!s||s->halt||s->missing_init||!s->preflight_complete||
++    s->phase!=2||s->submit_attempted||s->tx_index>=NWT_TX_COUNT||s->rx_index>=NWT_RX_COUNT||
++    extent(s->tx_ring,16384)||extent(s->rx_ring,256)||extent(s->rx_buffers,65536)||extent(s->command,4096)||
++    (s->tx_ring&15)||(s->rx_ring&15)||(s->rx_buffers&4095)||(s->command&4095))return -1;
++ const uint64_t ranges[4]={s->tx_ring,s->rx_ring,s->rx_buffers,s->command};
++ const uint32_t sizes[4]={16384,256,65536,4096};
++ for(unsigned a=0;a<4;a++)for(unsigned b=a+1;b<4;b++)
++  if(ranges[a]<ranges[b]+sizes[b]&&ranges[b]<ranges[a]+sizes[a])return -1;
++
++ /* Globalactualinit/sourceownership receipt must already exist. Checkselected
++  * enable+addressmode beforeIO; this is not asubstitute for missinginit. */
++ if(coherent(o,c,s))return -1;
++ if(rr(o,c,s,DMA1+0x208,&cfg))return -1;
++ if((cfg&5)!=5||(cfg&(1u<<26)))return fail(s,12);
++ if(rr(o,c,s,TXBASE+8,&idx))return -1;
++ if(idx!=s->tx_index)return fail(s,13);
++ uint64_t txd=s->tx_ring+16u*s->tx_index,rxd=s->rx_ring+16u*s->rx_index;
++ uint64_t rxbuf=s->rx_buffers+4096u*s->rx_index;
++ if(nwt_tx_desc(d,s->command,used))return fail(s,14);
++ if(mw(o,c,s,s->command,cmd,(uint32_t)used)||sync(o,c,s,s->command,(uint32_t)used,1)||mw(o,c,s,txd,d,16)||sync(o,c,s,txd,16,1))return -1;
++ unsigned next=(s->tx_index+1)%NWT_TX_COUNT;s->submit_attempted=1;
++ if(rw(o,c,s,TXBASE+8,next))return -1;
++ unsigned i;
++ for(i=0;i<1000;i++){
++  if(i&&wait(o,c,s))return -1;
++  if(coherent(o,c,s))return -1;
++  if(rr(o,c,s,TXBASE+12,&idx))return -1;
++  s->polls++;
++  if(idx>=NWT_TX_COUNT)return fail(s,15);
++  if(idx==s->tx_index)continue;
++  if(idx!=next)return fail(s,15);
++  if(sync(o,c,s,txd,16,2)||mr(o,c,s,txd,d,16))return -1;
++  if(get32(d)!=(uint32_t)s->command||((get32(d+4)>>16)&0x3fff)!=used||get32(d+8)||get32(d+12))return fail(s,16);
++  if(get32(d+4)&(1u<<31)){s->tx_done=1;break;}
++ }
++ if(!s->tx_done)return fail(s,17);
++ for(i=0;i<1000;i++){
++  if(i&&wait(o,c,s))return -1;
++  if(coherent(o,c,s))return -1;
++  if(rr(o,c,s,RXBASE+12,&idx))return -1;
++  s->polls++;
++  if(idx>=NWT_RX_COUNT)return fail(s,18);
++  if(idx==s->rx_index)continue;
++  if(sync(o,c,s,rxd,16,2)||mr(o,c,s,rxd,d,16))return -1;
++  if(!(get32(d+4)&(1u<<31)))continue;
++  if(nwt_rx_complete(d,rxbuf,NWT_RX_BYTES,&bytes)||bytes<32||bytes>capacity)return fail(s,19);
++  if(sync(o,c,s,rxbuf,(uint32_t)bytes,2)||mr(o,c,s,rxbuf,frame,(uint32_t)bytes))return -1;
++  s->rx_descriptor_bytes=(uint32_t)bytes;
++  s->rx_mac_bytes=get32(frame)&0xffffu;
++  s->rx_init_bytes=(uint32_t)frame[24]|(uint32_t)frame[25]<<8;
++  if(frame[26]!=0||frame[27]!=0xe0||frame[28]!=eid||frame[29]!=s->next_sequence)return fail(s,21);
++  s->rx_done=1;break;
++ }
++ if(!s->rx_done)return fail(s,22);
++ if(coherent(o,c,s))return -1;
++ /* Rearm only aftermatchingeventcopied/validated; stillownmemoryuntilreset. */
++ if(nwt_rx_desc(d,rxbuf,NWT_RX_BYTES))return fail(s,23);
++ if(mw(o,c,s,rxd,d,16)||sync(o,c,s,rxd,16,1)||rw(o,c,s,RXBASE+8,s->rx_index))return -1;
++ s->tx_index=next;s->rx_index=(s->rx_index+1)%NWT_RX_COUNT;s->next_sequence++;
++ s->completed++;s->submit_attempted=0;s->tx_done=s->rx_done=0;*received=bytes;
++ return 0;
++}
++
++int nwt_exchange(const struct nwt_io *o,void *c,struct nwt_state *s,uint8_t cid){
++ uint8_t cmd[72],frame[3840];size_t used=0,received=0;
++ if(!s||cid!=(s->finish_phase?0x41:0x40)||s->finish_phase>1||nwt_finish(cmd,sizeof(cmd),cid,s->next_sequence,&used))return -1;
++ if(nwt_capture(o,c,s,cmd,used,1,frame,sizeof(frame),&received))return -1;
++ /* Selected source parses status and CID, ignoring embedded length fields.
++  * Descriptor length need only contain the fields, within the owned buffer. */
++ if(received<34||frame[32]!=0||frame[33]!=cid){s->dirty=1;return fail(s,21);}
++ s->finish_phase++;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_transport.h
+@@ -0,0 +1,40 @@
++#ifndef PRIVATE_WFDMA_TRANSPORT_H
++#define PRIVATE_WFDMA_TRANSPORT_H
++#include "wifi_main_command.h"
++#define NWT_TX_COUNT 1024u
++#define NWT_RX_COUNT 16u
++#define NWT_RX_BYTES 3840u
++#define NWT_REQUIRED_FULL_INIT 0x3fu
++/* Legacy unsupported-initializer model flags; actual initializer is separate. */
++struct nwt_io {
++ int (*owner)(void *);
++ int (*reg_read)(void *,uint32_t,uint32_t *);
++ int (*reg_write)(void *,uint32_t,uint32_t);
++ int (*mem_read)(void *,uint64_t,void *,uint32_t);
++ int (*mem_write)(void *,uint64_t,const void *,uint32_t);
++ int (*sync)(void *,uint64_t,uint32_t,unsigned); /*1toDevice,2fromDevice*/
++ int (*delay_us)(void *,unsigned);
++};
++struct nwt_state {
++ unsigned entered,preflight_complete,phase,halt,dirty,missing_init,error;
++ unsigned cfg_reads,ring_reads,callback_count,polls,submit_attempted,tx_done,rx_done,completed;
++ uint32_t cfg[2],ring[2][28][4];
++ uint64_t tx_ring,rx_ring,rx_buffers,command;
++ unsigned tx_index,rx_index,finish_phase;uint8_t next_sequence;
++ uint32_t irq_status[2];unsigned irq_status_valid;
++ uint32_t rx_descriptor_bytes,rx_mac_bytes,rx_init_bytes;
++};
++/* Read-only exactaffected-domain preflight. ALWAYS refuses initialization
++ * until finite full-source initport is completed. Never resets/enables DMA.
++ * All ringsmust have zero base/count/index, bothGLOenable/busybitszero. */
++int nwt_preflight(const struct nwt_io *,void *,struct nwt_state *,unsigned);
++/* Capture a bounded owned RX event after one command. The source EID/sequence
++ * checks apply; caller validates command-specific payload before another
++ * command. Raw counts are captured, without inventing equality constraints.
++ * Caller must retain the actual initializer and pool lifetime. On semantic
++ * payload failure caller must latch halt before any further IO. */
++int nwt_capture(const struct nwt_io *,void *,struct nwt_state *,
++ const uint8_t *,size_t,uint8_t,uint8_t *,size_t,size_t *);
++/* Source finish-command status/CID wrapper. */
++int nwt_exchange(const struct nwt_io *,void *,struct nwt_state *,uint8_t cid);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_layout.c
+@@ -0,0 +1,98 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_layout.h"
++#include <string.h>
++
++#define NMT_MAIN_BYTES 973648u
++#define NMT_PATCH_BYTES 5726u
++#define NMT_MAIN_TAIL 36u
++#define NMT_REGION_TAIL 40u
++#define NMT_REGIONS 5u
++#define NMT_PATCH_HEADER 30u
++#define NMT_CONN_BASE UINT32_C(0x8fb00000)
++#define NMT_CONN_BYTES UINT32_C(0x00450000)
++#define NMT_FW_EMI_BASE UINT32_C(0xf0000000)
++#define NMT_WINDOW_BYTES UINT32_C(0x00010000)
++
++static uint32_t le32(const uint8_t *p) {
++    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
++           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++}
++static int zero(const uint8_t *p, size_t n) {
++    while (n--) if (*p++) return 0;
++    return 1;
++}
++static int set_emi(struct nmt_span *s, const uint8_t *data,
++                   uint32_t len, uint32_t target) {
++    if (target < NMT_FW_EMI_BASE || !len ||
++        target - NMT_FW_EMI_BASE > NMT_CONN_BYTES ||
++        len > NMT_CONN_BYTES - (target - NMT_FW_EMI_BASE)) return -1;
++    s->data = data; s->length = len; s->firmware_target = target;
++    s->host_physical = NMT_CONN_BASE + target - NMT_FW_EMI_BASE;
++    s->space = NMT_CONN_EMI;
++    return 0;
++}
++static int set_window(struct nmt_span *s, const uint8_t *data,
++                      uint32_t len, uint32_t target) {
++    if (!len || len > NMT_WINDOW_BYTES || (target & 3u)) return -1;
++    s->data = data; s->length = len; s->firmware_target = target;
++    s->host_physical = 0; s->space = NMT_AP2WF_WINDOW;
++    return 0;
++}
++int nmt_parse_fixed_layout(const uint8_t *main_image, size_t main_length,
++                           const uint8_t *patch_image, size_t patch_length,
++                           struct nmt_layout *out) {
++    static const uint32_t target[5] = {
++        0x00104000u, 0x00201c00u, 0x00404000u, 0xf031e000u, 0xf03c3800u
++    };
++    static const uint32_t length[5] = { 5744u, 5168u, 29408u, 675456u, 257520u };
++    const uint8_t *common, *regions;
++    struct nmt_layout x;
++    uint32_t offset = 0;
++    if (!main_image || !patch_image || !out ||
++        main_length != NMT_MAIN_BYTES || patch_length != NMT_PATCH_BYTES) return -1;
++    memset(&x, 0, sizeof(x));
++    /* Selected v1 patch, exact header. The final date byte in this artifact
++     * is LF and is copied as part of the source's 16-byte date code. */
++    if (memcmp(patch_image + 16, "ALPS", 4) ||
++        le32(patch_image + 20) != 0x108a108au ||
++        le32(patch_image + 24) != 0x00100000u ||
++        le32(patch_image + 24) == UINT32_MAX) return -1;
++    if (set_window(&x.patch, patch_image + NMT_PATCH_HEADER,
++                   NMT_PATCH_BYTES - NMT_PATCH_HEADER, 0x00100000u) ||
++        set_emi(&x.patch_date, patch_image, 16u, 0xf027f0d0u)) return -1;
++    common = main_image + main_length - NMT_MAIN_TAIL;
++    regions = common - NMT_REGION_TAIL * NMT_REGIONS;
++    if (common[0] != 12u || common[1] != 0u || common[2] != NMT_REGIONS ||
++        common[3] != 2u || common[4] != 1u || !zero(common + 5, 2)) return -1;
++    for (unsigned i = 0; i < NMT_REGIONS; ++i) {
++        const uint8_t *r = regions + i * NMT_REGION_TAIL;
++        uint8_t feature = i < 3 ? 0u : 0x80u;
++        if (!zero(r, 16) || le32(r + 16) != target[i] ||
++            le32(r + 20) != length[i] || r[24] != feature ||
++            !zero(r + 25, 15) || offset > (uint32_t)(regions - main_image) ||
++            length[i] > (uint32_t)(regions - main_image) - offset) return -1;
++        if (i < 3) {
++            if (set_window(&x.main[i], main_image + offset, length[i], target[i])) return -1;
++        } else if (set_emi(&x.main[i], main_image + offset, length[i], target[i])) return -1;
++        offset += length[i];
++    }
++    /* The remaining 116 bytes are release info, not a sixth region. */
++    if ((uint32_t)(regions - main_image) - offset != 116u) return -1;
++    x.main_entry_override = 0;
++    *out = x;
++    return 0;
++}
++int nmt_validate_init_result(const uint8_t *frame, size_t frame_length,
++                             uint8_t expected_sequence, uint8_t expected_cid) {
++    const uint8_t *e;
++    if (!frame || frame_length != 24u + 8u + 4u ||
++        (expected_cid != 0x40u && expected_cid != 0x41u)) return -1;
++    e = frame + 24u;
++    if (e[2] != 0x00u || e[3] != 0xe0u || e[4] != 1u ||
++        e[5] != expected_sequence || e[8] != 0u ||
++        e[9] != expected_cid) return -1;
++    return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_layout.h
+@@ -0,0 +1,28 @@
++#ifndef NORD2_MAIN_FW_LAYOUT_H
++#define NORD2_MAIN_FW_LAYOUT_H
++#include <stddef.h>
++#include <stdint.h>
++
++/* Structural description only. Call after nwf_load has authenticated and
++ * retained blobs[0] (main) and blobs[1] (patch); this does not grant IO. */
++enum nmt_space { NMT_AP2WF_WINDOW = 1, NMT_CONN_EMI = 2 };
++struct nmt_span {
++    const uint8_t *data;
++    uint32_t length;
++    uint32_t firmware_target;
++    uint32_t host_physical; /* zero for dynamic AP2WF window */
++    enum nmt_space space;
++};
++struct nmt_layout {
++    struct nmt_span patch, patch_date, main[5];
++    uint32_t main_entry_override; /* zero: source firmware default */
++};
++int nmt_parse_fixed_layout(const uint8_t *main_image, size_t main_length,
++                           const uint8_t *patch_image, size_t patch_length,
++                           struct nmt_layout *out);
++
++/* Pure 24-byte RXD + 8-byte INIT_WIFI_EVENT + 4-byte CMD_RESULT validator.
++ * This checks a supplied frame; it does not establish DMA completion. */
++int nmt_validate_init_result(const uint8_t *frame, size_t frame_length,
++                             uint8_t expected_sequence, uint8_t expected_cid);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_fw_place.c
+@@ -0,0 +1,74 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_fw_place.h"
++#define WINDOW_PA UINT32_C(0x18500000)
++#define WINDOW_BYTES UINT32_C(0x10000)
++#define CONN_BASE UINT32_C(0x8fb00000)
++#define CONN_BYTES UINT32_C(0x450000)
++#define OWNER_CHUNK UINT32_C(4096)
++static int fail(struct nfp_state *s,int e){s->error=e;s->halt=!!s->dirty;return e;}
++static int own(const struct nfp_io *o,void *c,struct nfp_state *s){return o->owner(c)?fail(s,-2):0;}
++static const struct nmt_span *span(const struct nmt_layout *l,unsigned i){
++ if(i==0)return &l->patch;
++ if(i==1)return &l->patch_date;
++ if(i>=2&&i<=6)return &l->main[i-2];
++ return 0;
++}
++static int exact(const struct nmt_span *s,unsigned index){
++ static const uint32_t len[7]={5696,16,5744,5168,29408,675456,257520};
++ static const uint32_t target[7]={0x00100000,0xf027f0d0,0x00104000,
++  0x00201c00,0x00404000,0xf031e000,0xf03c3800};
++ static const uint32_t pa[7]={0,0x8fd7f0d0,0,0,0,0x8fe1e000,0x8fec3800};
++ enum nmt_space space=(index==1||index>=5)?NMT_CONN_EMI:NMT_AP2WF_WINDOW;
++ if(!s||index>=7||!s->data||s->length!=len[index]||
++    s->firmware_target!=target[index]||s->host_physical!=pa[index]||
++    s->space!=space||(s->length&3u)||(s->firmware_target&3u))return -1;
++ if(space==NMT_CONN_EMI){
++  if(s->host_physical<CONN_BASE||s->length>CONN_BYTES-(s->host_physical-CONN_BASE))return -1;
++ }else if(s->length>WINDOW_BYTES)return -1;
++ return 0;
++}
++static uint32_t le32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|
++ (uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++int nfp_span(const struct nfp_io *o,void *c,const struct nmt_layout *l,
++ struct nfp_state *s,unsigned index){
++ const struct nmt_span *t;if(!o||!o->owner||!o->remap||!o->write32||
++  !o->read32||!o->barrier||!l||!s||index>=7||s->halt||
++  (s->entered&&s->next!=index))return -1;
++ t=span(l,index);if(exact(t,index))return -1;
++ if(!s->entered){if(index)return -1;s->entered=1;}
++ s->stage=index+1;s->attempted|=1u<<index;
++ if(own(o,c,s))return s->error;
++ if(t->space==NMT_AP2WF_WINDOW){
++  s->dirty=1;s->last_target=t->firmware_target;
++  if(o->remap(c,t->firmware_target))return fail(s,-3);
++  s->remaps++;
++  if(own(o,c,s)||o->barrier(c))return fail(s,-4);
++  s->barriers++;
++ }
++ for(uint32_t off=0;off<t->length;off+=4){
++  uint32_t physical=(t->space==NMT_AP2WF_WINDOW?WINDOW_PA:t->host_physical)+off;
++  uint32_t value=le32(t->data+off);
++  if((off&(OWNER_CHUNK-1u))==0&&own(o,c,s))return s->error;
++  s->dirty=1;s->last_address=physical;s->last_expected=value;
++  if(o->write32(c,t->space,physical,value))return fail(s,-5);
++  s->words_written++;
++ }
++ if(own(o,c,s)||o->barrier(c))return fail(s,-6);
++ s->barriers++;
++ for(uint32_t off=0;off<t->length;off+=4){
++  uint32_t physical=(t->space==NMT_AP2WF_WINDOW?WINDOW_PA:t->host_physical)+off;
++  uint32_t value=0,expected=le32(t->data+off);
++  if(((off&(OWNER_CHUNK-1u))==0&&own(o,c,s))||
++     o->read32(c,t->space,physical,&value))return fail(s,-7);
++  s->words_read++;s->last_address=physical;s->last_expected=expected;s->last_observed=value;
++  if(value!=expected)return fail(s,-8);
++ }
++ if(own(o,c,s)||o->barrier(c))return fail(s,-6);
++ s->barriers++;
++ s->completed|=1u<<index;s->next=index+1;
++ if(index==6)s->stage=NFP_COPIED;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_fw_place.h
+@@ -0,0 +1,33 @@
++#ifndef PRIVATE_NORD2_MAIN_FW_PLACE_H
++#define PRIVATE_NORD2_MAIN_FW_PLACE_H
++#include <stdint.h>
++#include "wifi_main_layout.h"
++/* A primitive used only by a source-ordered native coordinator. The layout
++ * parser is structural; its inputs must be the same retained nwf_load blobs
++ * held by the accepted ROM native owner. This primitive grants no runtime
++ * firmware, calibration, or transport permission on its own. */
++enum nfp_stage {NFP_NEW, NFP_PATCH_PAYLOAD, NFP_PATCH_DATE,
++ NFP_N9_0, NFP_N9_1, NFP_N9_2, NFP_N9_3, NFP_N9_4, NFP_COPIED};
++struct nfp_state {
++ unsigned entered,next,stage,dirty,halt,attempted,completed;
++ unsigned remaps,words_written,words_read,barriers;
++ uint32_t last_target,last_address,last_expected,last_observed;
++ int error;
++};
++struct nfp_io {
++ int (*owner)(void *); /* actual retained same-object ROM+driver owner */
++ int (*remap)(void *,uint32_t); /* 0x18001120 exact literal target */
++ int (*write32)(void *,enum nmt_space,uint32_t,uint32_t);
++ int (*read32)(void *,enum nmt_space,uint32_t,uint32_t *);
++ int (*barrier)(void *);
++};
++/* index 0=patch RAM,1=patch date,2..6=N9 regions. Each call performs one
++ * complete source span, write barrier, and bounded readback. Fresh owner is
++ * rechecked at every 4-KiB boundary; raw callbacks must enforce the exact
++ * stage/address allowlist and no concurrent driver lifetime transition.
++ * Native caller
++ * must interleave actual patch result+FORCE_CAL/coexistence before index2 and
++ * actual N9 finish after index6. No retry after attempted write/remap. */
++int nfp_span(const struct nfp_io *,void *,const struct nmt_layout *,
++             struct nfp_state *,unsigned index);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_fw_xnu.c
+@@ -0,0 +1,189 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_fw_xnu.h"
++#include "wifi_main_phy_xnu.h"
++#include "wifi_main_wfdma_native.h"
++#include "wifi_main_halt.h"
++#include <wifi_rom_xnu.h>
++#include <wifi_rom_powered_adapter.h>
++#include <sys/errno.h>
++#include <sys/systm.h>
++#include <pexpert/pexpert.h>
++extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
++extern void delay(int);
++struct nfp_native nfp_native;
++static int halt(void){
++ nfp_native.halt=1;
++ return nwm_lifetime_halt(&nwfn_native);
++}
++static int flags(void){
++ unsigned m=0,r=0,d=0;
++ return !PE_parse_boot_argn("nord2wifimain",&m,sizeof(m))||m!=1||
++        !PE_parse_boot_argn("nord2wifirom",&r,sizeof(r))||r!=1||
++        !PE_parse_boot_argn("nord2wifidma",&d,sizeof(d))||d!=1;
++}
++static int overlaps(uint64_t a,uint32_t n,uint64_t b,uint32_t m){
++ return a<b+(uint64_t)m&&b<a+(uint64_t)n;
++}
++static int spans_disjoint(const struct nrb_native *r){
++ const struct nmt_span *e[3]={&nfp_native.layout.patch_date,
++  &nfp_native.layout.main[3],&nfp_native.layout.main[4]};
++ for(unsigned i=0;i<3;i++){
++  for(unsigned j=i+1;j<3;j++)
++   if(overlaps(e[i]->host_physical,e[i]->length,
++               e[j]->host_physical,e[j]->length))return -1;
++  for(unsigned j=0;j<NWF_ROM_SPANS;j++){
++   const struct nwf_rom_span *s=&r->state.plan.spans[j];
++   if(overlaps(e[i]->host_physical,e[i]->length,s->physical,s->bytes))
++    return -1;
++  }
++ }
++ return 0;
++}
++static int same(void){
++ const struct nrb_native *r=nwfn_native.rom;
++ const struct npp_state *p=nwfn_native.pool;
++ const struct nwi_state *i=&nwfn_native.init;
++ return !nfp_native.prepared||nfp_native.halt||!r||!p||!r->enabled||
++  !nrpc_receipt_ok(r)||!r->io||
++  p!=i->pool||p->stage!=NPP_DONE||!p->mapped||
++  !p->verified||!p->zero_complete||!p->balanced||!p->asleep||p->halt||
++  !i->initialized||i->phase!=5||i->halt||!i->driver_owned||
++  i->transport.phase!=2||i->transport.halt||
++  nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||
++  !nwfn_native.wf_owned||nwfn_native.asleep||nwfn_native.halt||
++  nwfn_native.claim.base!=UINT64_C(0x90000000)||
++  nwfn_native.claim.bytes!=UINT64_C(0xf20000);
++}
++static int owner(void *c){(void)c;return same()||nwfn_owner(&nwfn_native);}
++static const struct nmt_span *current(void){
++ unsigned st=nfp_native.state.stage;
++ if(st==NFP_PATCH_PAYLOAD)return &nfp_native.layout.patch;
++ if(st==NFP_PATCH_DATE)return &nfp_native.layout.patch_date;
++ if(st>=NFP_N9_0&&st<=NFP_N9_4)return &nfp_native.layout.main[st-NFP_N9_0];
++ return 0;
++}
++static int remap(void *c,uint32_t target){
++ (void)c;const struct nmt_span *s=current();
++ if(!s||s->space!=NMT_AP2WF_WINDOW||
++    s->firmware_target!=target||!nfp_native.cfg_io||owner(c))return -1;
++ *(volatile uint32_t *)(nfp_native.cfg_io+0x120)=target;
++ __asm__ volatile("dsb sy":: :"memory");return 0;
++}
++static int address(enum nmt_space space,uint32_t pa){
++ const struct nmt_span *s=current();uint32_t start;
++ if(!s||s->space!=space||(pa&3))return -1;
++ start=space==NMT_AP2WF_WINDOW?UINT32_C(0x18500000):s->host_physical;
++ return pa<start||pa-start>s->length-4u;
++}
++static int write32(void *c,enum nmt_space space,uint32_t pa,uint32_t value){
++ (void)c;if(address(space,pa)||!nfp_native.window_io||!nwfn_native.rom->io)return -1;
++ uintptr_t base=space==NMT_AP2WF_WINDOW?nfp_native.window_io:nwfn_native.rom->io;
++ uint32_t offset=space==NMT_AP2WF_WINDOW?pa-UINT32_C(0x18500000):
++  pa-UINT32_C(0x8fb00000);
++ *(volatile uint32_t *)(base+offset)=value;return 0;
++}
++static int read32(void *c,enum nmt_space space,uint32_t pa,uint32_t *value){
++ (void)c;if(!value||address(space,pa)||!nfp_native.window_io||!nwfn_native.rom->io)return -1;
++ uintptr_t base=space==NMT_AP2WF_WINDOW?nfp_native.window_io:nwfn_native.rom->io;
++ uint32_t offset=space==NMT_AP2WF_WINDOW?pa-UINT32_C(0x18500000):
++  pa-UINT32_C(0x8fb00000);
++ *value=*(volatile const uint32_t *)(base+offset);return 0;
++}
++static int barrier(void *c){(void)c;__asm__ volatile("dsb sy":: :"memory");return 0;}
++static const struct nfp_io io={owner,remap,write32,read32,barrier};
++int nfp_xnu_prepare(uintptr_t cfg_io,uintptr_t host_io){
++ const struct nrb_native *r=nwfn_native.rom;
++ if(flags())return EPERM;
++ if(nfp_native.attempted)return EALREADY;
++ nfp_native.attempted=1;
++ if(!cfg_io||!host_io||!nwfn_native.prepared||!r||!r->enabled||!r->output||
++    !nrpc_receipt_ok(r)||!nwfn_native.pool||
++    !nwfn_native.pool->verified||!nwfn_native.pool->asleep||
++    r->blobs[0].size!=973648u||r->blobs[1].size!=5726u||
++    (uintptr_t)r->blobs[0].data<(uintptr_t)r->output||
++    (uintptr_t)r->blobs[1].data<(uintptr_t)r->output||
++    (uintptr_t)r->blobs[0].data-(uintptr_t)r->output>
++      NWF_OUTPUT_BYTES-r->blobs[0].size||
++    (uintptr_t)r->blobs[1].data-(uintptr_t)r->output>
++      NWF_OUTPUT_BYTES-r->blobs[1].size||
++    nmt_parse_fixed_layout(r->blobs[0].data,r->blobs[0].size,
++                           r->blobs[1].data,r->blobs[1].size,&nfp_native.layout)||
++    spans_disjoint(r))
++  return EINVAL;
++ nfp_native.cfg_io=cfg_io;nfp_native.host_io=host_io;
++ nfp_native.window_io=(uintptr_t)ml_io_map(0x18500000,0x10000);
++ if(!nfp_native.window_io)return ENOMEM;
++ nfp_native.coex_io=(uintptr_t)ml_io_map(0x10003000,0x1000);
++ if(!nfp_native.coex_io)return ENOMEM;
++ nfp_native.prepared=1;return 0;
++}
++int nfp_xnu_span(unsigned index){
++ if(same())return halt();
++ if(index==0&&!nfp_native.pre_sync_valid){
++  if(nwfn_owner(&nwfn_native))return halt();
++  nfp_native.pre_sync=*(volatile const uint32_t *)(nfp_native.host_io+0xf0);
++  nfp_native.pre_sync_valid=1;
++  if(nfp_native.pre_sync&3u)return halt();/* inherited running FW */
++ }
++ if(index<=1){
++  if(nwfn_native.init.transport.completed||
++     nwfn_native.init.transport.finish_phase||nfp_native.coex_attempted)return halt();
++ }else if(index<=6){
++  if(nwfn_native.init.transport.completed!=2||
++     nwfn_native.init.transport.finish_phase!=1||
++     !nfa_native.exchange.event_valid||
++     !nfa_native.exchange.backup_valid||
++     !nfa_native.exchange.backup.valid||
++     !nfp_native.coex_done)return halt();
++ }
++ printf("NORD2 WIFI MAIN SPAN ARM: index=%u stage=%u finish=%u events=%u coex=%u\n",
++  index,nfp_native.state.stage,nwfn_native.init.transport.finish_phase,
++  nwfn_native.init.transport.completed,nfp_native.coex_done);
++ int e=nfp_span(&io,&nwfn_native,&nfp_native.layout,&nfp_native.state,index);
++ return e?halt():0;
++}
++int nfp_xnu_coex(void){
++ if(same()||nwfn_owner(&nwfn_native)||
++    nfp_native.coex_attempted||!nfp_native.coex_io||
++    nfp_native.state.completed!=3u||
++    nwfn_native.init.transport.finish_phase!=1||
++    nwfn_native.init.transport.completed!=2||
++    !nfa_native.prepared||nfa_native.board.coant||
++    !nfa_native.exchange.event_valid||
++    !nfa_native.exchange.backup_valid||
++    !nfa_native.exchange.backup.valid)return halt();
++ nfp_native.coex_attempted=1;
++ printf("NORD2 WIFI MAIN PCCIF ARM: addr=%#x first=0 second=1 cal_emi=%#x/%#x\n",
++  0x10003314u,nfa_native.exchange.event.emi_offset,
++  nfa_native.exchange.event.emi_bytes);
++ *(volatile uint32_t *)(nfp_native.coex_io+0x314)=0;
++ __asm__ volatile("dsb sy":: :"memory");
++ *(volatile uint32_t *)(nfp_native.coex_io+0x314)=1;
++ __asm__ volatile("dsb sy":: :"memory");
++ nfp_native.coex_done=1;return 0;
++}
++int nfp_xnu_finish(void){
++ if(same()||nwfn_owner(&nwfn_native)||nfp_native.finish_attempted||
++    nfp_native.state.stage!=NFP_COPIED||
++    nfp_native.state.completed!=0x7fu||!nfp_native.coex_done||
++    nwfn_native.init.transport.finish_phase!=1||
++    nwfn_native.init.transport.completed!=2||
++    !nfa_native.exchange.backup_valid)return halt();
++ nfp_native.finish_attempted=1;
++ printf("NORD2 WIFI MAIN FINISH ARM: spans=%#x cal=%u coex=%u cid=%#x\n",
++  nfp_native.state.completed,nfa_native.exchange.backup_valid,
++  nfp_native.coex_done,0x41u);
++ if(nwfn_finish_command(0x41))return halt();
++ nfp_native.finish_done=1;
++ for(unsigned i=0;i<500;i++){
++  if(i)delay(5000);
++  if(nwfn_owner(&nwfn_native))return halt();
++  nfp_native.ready_raw=*(volatile const uint32_t *)(nfp_native.host_io+0xf0);
++  nfp_native.ready_polls++;
++  if((nfp_native.ready_raw&3u)==3u){nfp_native.ready=1;return 0;}
++ }
++ return halt();
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_fw_xnu.h
+@@ -0,0 +1,27 @@
++#ifndef PRIVATE_NORD2_MAIN_FW_XNU_H
++#define PRIVATE_NORD2_MAIN_FW_XNU_H
++#include "wifi_main_fw_place.h"
++struct nfp_native {
++ struct nfp_state state;
++ struct nmt_layout layout;
++ uintptr_t cfg_io,host_io,window_io,coex_io;
++ unsigned attempted,prepared,halt,coex_attempted,coex_done;
++ unsigned pre_sync_valid,finish_attempted,finish_done,ready,ready_polls;
++ uint32_t pre_sync,ready_raw;
++};
++extern struct nfp_native nfp_native;
++/* Sleepable source selection after nwfn_prepare, before fresh WFDMA start.
++ * cfg_io is the already mapped npa_native.cfg Device page in the owning TU.
++ * No firmware write or remap occurs here. */
++int nfp_xnu_prepare(uintptr_t cfg_io,uintptr_t host_io);
++/* One exact source span while the same nwfn_native remains fresh/initialized.
++ * Native coordinator calls indices 0,1 then real CID40/FORCE_CAL/PCCIF,
++ * then indices 2..6; it must not call all seven back-to-back. */
++int nfp_xnu_span(unsigned);
++/* Selected coant0 board path: exact PCCIF4 status to modem, after actual
++ * FORCE_CAL backup and before first N9 span. One-way; no speculative undo. */
++int nfp_xnu_coex(void);
++/* Actual CID41 completion, then source-bounded SW_SYNC0 bit0/1 check.
++ * Retains fresh driver/DMA resources on any failure; no sleep/teardown. */
++int nfp_xnu_finish(void);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_backup.c
+@@ -0,0 +1,31 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_phy_backup.h"
++#define NFA_BACKUP_CHUNK 4096u
++#define NFA_CONN_BYTES 0x450000u
++static int fail(struct nfa_backup_state *s,int e){s->error=e;s->halt=1;return e;}
++int nfa_backup(const struct nfa_backup_io *io,void *ctx,
++ const struct nfa_result *result,void *dst,uint32_t capacity,
++ struct nfa_backup_state *s){
++ if(!io||!io->owner||!io->read_emi||!io->barrier||!result||!dst||!s||
++    s->attempted||s->halt||!result->valid||!result->force_success||
++    !result->backup_needed||!result->emi_bytes||
++    result->emi_offset>=NFA_CONN_BYTES||
++    result->emi_bytes>NFA_CONN_BYTES-result->emi_offset||
++    result->emi_bytes>capacity)return -1;
++ if(io->owner(ctx))return fail(s,-2);
++ s->attempted=1;s->emi_offset=result->emi_offset;
++ s->emi_bytes=result->emi_bytes;
++ for(uint32_t off=0;off<result->emi_bytes;){
++  uint32_t n=result->emi_bytes-off;
++  if(n>NFA_BACKUP_CHUNK)n=NFA_BACKUP_CHUNK;
++  if(io->owner(ctx))return fail(s,-2);
++  if(io->read_emi(ctx,result->emi_offset+off,(uint8_t *)dst+off,n))
++   return fail(s,-3);
++  off+=n;s->bytes_copied=off;s->reads++;
++ }
++ if(io->owner(ctx)||io->barrier(ctx))return fail(s,-4);
++ s->valid=1;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_backup.h
+@@ -0,0 +1,20 @@
++#ifndef PRIVATE_NORD2_PHY_BACKUP_H
++#define PRIVATE_NORD2_PHY_BACKUP_H
++#include "wifi_main_phy_force.h"
++/* Selected wlanAccessCalibrationEMI(TRUE): copy the returned CONN EMI
++ * interval to retained driver memory. The caller supplies an actual mapped
++ * CONN owner, already allocated destination, and a successfully validated
++ * FORCE_CAL result from an owned WFDMA RX capture. No restoration is done. */
++struct nfa_backup_io {
++ int (*owner)(void *);
++ int (*read_emi)(void *,uint32_t,void *,uint32_t);
++ int (*barrier)(void *);
++};
++struct nfa_backup_state {
++ unsigned attempted,valid,halt,reads,bytes_copied;
++ uint32_t emi_offset,emi_bytes;
++ int error;
++};
++int nfa_backup(const struct nfa_backup_io *,void *,const struct nfa_result *,
++ void *,uint32_t,struct nfa_backup_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_exchange.c
+@@ -0,0 +1,29 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_phy_exchange.h"
++static int halt(struct nwi_state *i,struct nfa_exchange_state *s){
++ s->halt=1;i->transport.halt=1;i->transport.dirty=1;return -1;
++}
++int nfa_run(const struct nwt_io *io,void *ctx,struct nwi_state *init,
++ const struct nfa_board *board,const struct nfa_backup_io *backup_io,
++ void *backup_ctx,void *backup_dst,uint32_t backup_capacity,
++ struct nfa_exchange_state *s){
++ if(!io||!init||!board||!backup_io||!backup_dst||!s||s->attempted||s->halt||
++    !init->initialized||init->phase!=5||!init->driver_owned||init->halt||
++    init->transport.halt||init->transport.phase!=2||
++    init->transport.completed!=1||init->transport.finish_phase!=1||
++    !init->transport.next_sequence)return -1;
++ s->attempted=1;
++ uint8_t seq=init->transport.next_sequence;
++ if(nfa_force_frame(board,seq,s->tx))return halt(init,s);
++ if(nwt_capture(io,ctx,&init->transport,s->tx,NFA_FRAME_BYTES,5,
++                s->rx,sizeof(s->rx),&s->actual_rx_bytes))return halt(init,s);
++ if(nfa_force_response(s->rx,s->actual_rx_bytes,seq,0x450000,&s->event))
++  return halt(init,s);
++ s->event_valid=1;
++ if(nfa_backup(backup_io,backup_ctx,&s->event,backup_dst,
++               backup_capacity,&s->backup))return halt(init,s);
++ s->backup_valid=1;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_exchange.h
+@@ -0,0 +1,20 @@
++#ifndef PRIVATE_NORD2_PHY_EXCHANGE_H
++#define PRIVATE_NORD2_PHY_EXCHANGE_H
++#include "wifi_main_phy_backup.h"
++#include "wifi_main_initializer.h"
++/* Static/retained object: never allocate this on the input thread stack. */
++struct nfa_exchange_state {
++ unsigned attempted,event_valid,backup_valid,halt;
++ size_t actual_rx_bytes;
++ struct nfa_result event;
++ struct nfa_backup_state backup;
++ uint8_t tx[NFA_FRAME_BYTES],rx[NFA_RX_BYTES];
++};
++/* One actual WFDMA CID8 exchange in the already initialized fresh driver
++ * lifetime, followed by source semantic validation and retained EMI backup.
++ * The caller must have completed real patch CID40; no fabricated response or
++ * permission flag is accepted. Any failure latches transport and this state. */
++int nfa_run(const struct nwt_io *,void *,struct nwi_state *,
++ const struct nfa_board *,const struct nfa_backup_io *,void *,
++ void *,uint32_t,struct nfa_exchange_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_force.c
+@@ -0,0 +1,129 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_phy_force.h"
++#ifdef NFA_HOST_TEST
++#include <openssl/sha.h>
++#include <string.h>
++#else
++#include <libkern/crypto/sha2.h>
++#include <libkern/libkern.h>
++#endif
++static uint16_t le16(const uint8_t *p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
++static uint32_t le32(const uint8_t *p){return (uint32_t)le16(p)|((uint32_t)le16(p+2)<<16);}
++static uint32_t be32(const uint8_t *p){return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];}
++static void put16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
++static void put32(uint8_t *p,uint32_t v){put16(p,(uint16_t)v);put16(p+2,(uint16_t)(v>>16));}
++static int range(size_t off,size_t n,size_t total){return off<=total&&n<=total-off;}
++static int name(const uint8_t *p,size_t n,const char *s){size_t i=0;while(s[i])i++;return i==n&&!memcmp(p,s,n);}
++static int has(const uint8_t *p,size_t n,const char *s){size_t k=0;while(s[k])k++;for(size_t i=0;i+k<=n;i++)if(!memcmp(p+i,s,k))return 1;return 0;}
++/* Focused current-FDT compatible scan. The accepted pool/CONN loader already
++ * validates reservations; here absence of a ConnFem provider is rechecked
++ * from actual original bytes, never inferred from saved DTS text hash. */
++static int no_conn_fem(const void *fdt,size_t bytes){
++ const uint8_t *f=fdt;if(!f||bytes<40||be32(f)!=0xd00dfeed)return -1;
++ size_t total=be32(f+4),so=be32(f+8),st=be32(f+12),
++  ss=be32(f+32),sz=be32(f+36),off,end;
++ if(total<40||total>bytes||!range(so,sz,total)||!range(st,ss,total)||
++    (so&3)||(st&3)||be32(f+20)!=17||be32(f+24)!=16)return -1;
++ off=so;end=so+sz;unsigned depth=0,root_compatible=0,ended=0;
++ while(range(off,4,end)){
++  uint32_t token=be32(f+off);off+=4;
++  if(token==1){
++   while(off<end&&f[off])off++;
++   if(off==end||depth>=32)return -1;
++   off=(off+4)&~(size_t)3;depth++;
++  }else if(token==2){if(!depth)return -1;depth--;}
++  else if(token==3){
++   if(!range(off,8,end))return -1;
++   size_t n=be32(f+off),no=be32(f+off+4);off+=8;
++   if(!range(off,n,end)||no>=ss)return -1;
++   const uint8_t *key=f+st+no;size_t kn=0;
++   while(kn<ss-no&&key[kn])kn++;
++   if(kn==ss-no)return -1;
++   if(name(key,kn,"compatible")){
++    const uint8_t *v=f+off;
++    if(depth==1&&has(v,n,"mediatek,MT6893"))root_compatible=1;
++    if(has(v,n,"connfem"))return -1;
++   }
++   off=(off+n+3u)&~(size_t)3;
++  }else if(token==4){}
++  else if(token==9){if(depth||off!=end)return -1;ended=1;break;}
++  else return -1;
++ }
++ return ended&&root_compatible?0:-1;
++}
++static int wifi_digest(const uint8_t *wifi,size_t size){
++ static const uint8_t expected[32]={0x61,0xac,0x33,0x00,0xaa,0xd6,0xf6,0x53,
++  0x64,0xf8,0x45,0x89,0x4b,0xb9,0x82,0xb7,0xc5,0xd0,0x77,0x34,0x6f,0x78,
++  0x8c,0x29,0xdf,0x01,0x9c,0x93,0xc4,0xf3,0xf8,0x9f};
++ uint8_t got[32];unsigned diff=0;
++#ifdef NFA_HOST_TEST
++ if(!SHA256(wifi,size,got))return -1;
++#else
++ SHA256_CTX h;
++ SHA256_Init(&h);SHA256_Update(&h,wifi,size);SHA256_Final(got,&h);
++#endif
++ for(unsigned i=0;i<32;i++)diff|=got[i]^expected[i];
++ volatile uint8_t *v=got;for(unsigned i=0;i<32;i++)v[i]=0;
++ return diff?-1:0;
++}
++int nfa_prepare(const uint8_t *wifi,size_t size,const void *fdt,size_t fdt_bytes,
++ struct nfa_board *out){
++ struct nfa_board b={0};
++ if(!wifi||!out||size!=NFA_WIFI_BYTES||wifi_digest(wifi,size)||
++    no_conn_fem(fdt,fdt_bytes)||wifi[256]!=0||wifi[257]!=3||
++    wifi[258]!=0||wifi[259]!=1||wifi[243]!=0)return -1;
++ size_t total=256u+le16(wifi+260),off=256,start=0,stop=0;
++ unsigned prior=0,seen=0,tag21=0;
++ if(total!=4298u||total>size)return -1;
++ while(off<total){
++  if(!wifi[off]){unsigned z=1;for(size_t i=off;i<total;i++)if(wifi[i])z=0;if(z)break;}
++  if(!range(off,3,total))return -1;
++  unsigned tag=wifi[off];size_t n=le16(wifi+off+1),end=off+3+n;
++  if(!n||end>total||tag>=32||(seen&(1u<<tag))||(tag&&tag<=prior))return -1;
++  seen|=1u<<tag;prior=tag;
++  if(tag==7)start=off;
++  if(tag==10)stop=off;
++  if(tag==21)tag21=1;
++  off=end;
++ }
++ if(start!=3972u||stop!=4197u||stop-start!=225u||tag21||
++    (seen&((1u<<7)|(1u<<8)|(1u<<9)|(1u<<10)))!=
++       ((1u<<7)|(1u<<8)|(1u<<9)|(1u<<10)))return -1;
++ memcpy(b.nvram,wifi+start,225u);/* gl_init zeroed OnlyPreCal; pad3 */
++ b.verified=b.connfem_absent=1;b.coant=0;*out=b;return 0;
++}
++static size_t tag(uint8_t *p,unsigned id,const uint8_t *data,size_t n){
++ put16(p,(uint16_t)id);put16(p+2,(uint16_t)n);
++ if(data)memcpy(p+4,data,n);else memset(p+4,0,n);
++ return n+4;
++}
++int nfa_force_frame(const struct nfa_board *b,uint8_t seq,uint8_t out[NFA_FRAME_BYTES]){
++ if(!b||!out||!b->verified||!b->connfem_absent||b->coant||!seq)return -1;
++ memset(out,0,NFA_FRAME_BYTES);
++ put32(out,NFA_FRAME_BYTES|(2u<<23));put32(out+4,1u<<16);
++ put16(out+32,NFA_FRAME_BYTES-32u);/* INIT_HIF_TX_HEADER u2TxByteCount */
++ out[36]=8;out[37]=0xa0;out[39]=seq;
++ uint8_t *p=out+64;put32(p,0x556789aau);p[4]=4;p[5]=1;put16(p+6,392);
++ p+=8;const uint8_t cal[4]={1,0,0,0};
++ p+=tag(p,1,cal,4);p+=tag(p,0,b->nvram,NFA_NVRAM_BYTES);
++ p+=tag(p,2,0,104);p+=tag(p,3,0,40);
++ return p==out+NFA_FRAME_BYTES?0:-1;
++}
++int nfa_force_response(const uint8_t *f,size_t n,uint8_t seq,
++ uint32_t conn_bytes,struct nfa_result *out){
++ struct nfa_result r={0};
++ if(!f||!out||n!=NFA_RX_BYTES||!seq||!conn_bytes)return -1;
++ const uint8_t *e=f+24,*p=e+8;
++ if(e[2]!=0||e[3]!=0xe0||e[4]!=5||e[5]!=seq||
++    le32(p)!=0x556789aau||p[4]!=1||p[5]!=1||le16(p+6)!=20||
++    le16(p+8)!=1||le16(p+10)!=16||p[12]!=0x81||p[13]!=0||
++    le16(p+14)!=0)return -1;
++ r.emi_offset=le32(p+16)&0xffffffu;r.emi_bytes=le32(p+20);
++ r.temperature_raw=le32(p+24);
++ if(!r.emi_bytes||r.emi_offset>=conn_bytes||
++    r.emi_bytes>conn_bytes-r.emi_offset)return -1;
++ r.valid=r.force_success=r.backup_needed=1;*out=r;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_force.h
+@@ -0,0 +1,26 @@
++#ifndef PRIVATE_NORD2_PHY_FORCE_H
++#define PRIVATE_NORD2_PHY_FORCE_H
++#include <stdint.h>
++#include <stddef.h>
++#define NFA_WIFI_BYTES 6146u
++#define NFA_NVRAM_BYTES 228u
++#define NFA_TLV_BYTES 400u
++#define NFA_FRAME_BYTES 464u
++#define NFA_RX_BYTES 60u
++struct nfa_board {uint8_t nvram[NFA_NVRAM_BYTES];unsigned verified,connfem_absent,coant;};
++struct nfa_result {unsigned valid,force_success,backup_needed;uint32_t emi_offset,emi_bytes,temperature_raw;};
++/* Saved board WIFI hash plus current ORIGINAL FDT no-ConnFem-compatible
++ * proof. The native caller must acquire the WIFI bytes from a real owned
++ * source and current FDT from loader's retained original PA. No fabricated
++ * permission/context boolean is accepted. */
++int nfa_prepare(const uint8_t *wifi,size_t wifi_bytes,const void *current_fdt,
++                size_t fdt_bytes,struct nfa_board *out);
++/* Source CONNAC2X MAC32 + INIT32 + FORCE_CAL TLV400. No DMA submission. */
++int nfa_force_frame(const struct nfa_board *,uint8_t seq,
++                    uint8_t out[NFA_FRAME_BYTES]);
++/* Call only on actual owned 60-byte RX capture returned by WFDMA transport.
++ * INIT byte count is intentionally not gated: selected source ignores it;
++ * full DMA frame length and packet type/EID/seq/TLV are still required. */
++int nfa_force_response(const uint8_t *frame,size_t bytes,uint8_t expected_seq,
++                       uint32_t conn_bytes,struct nfa_result *out);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_xnu.c
+@@ -0,0 +1,99 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_main_phy_xnu.h"
++#include "wifi_main_wfdma_native.h"
++#include "wifi_main_halt.h"
++#include <wifi_rom_xnu.h>
++#include <sys/errno.h>
++#include <libkern/libkern.h>
++#include <kern/kalloc.h>
++#include <kern/zalloc.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <pexpert/arm64/boot.h>
++extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
++struct nfa_native nfa_native;
++static int nfa_native_halt(void){
++ nfa_native.exchange.halt=1;
++ return nwm_lifetime_halt(&nwfn_native);
++}
++static uint32_t be32(const volatile uint8_t *p){
++ return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3];
++}
++static int overlaps(uint64_t a,uint64_t n,uint64_t b,uint64_t m){
++ return a<b+m&&b<a+n;
++}
++int nfa_xnu_prepare(struct nfa_native *n){
++ unsigned main_flag=0,rom_flag=0,dma_flag=0;
++ DTEntry chosen;const void *p=0,*wifi=0;
++ unsigned pn=0,wn=0;uint64_t pa=0;
++ if(!PE_parse_boot_argn("nord2wifimain",&main_flag,sizeof(main_flag))||main_flag!=1||
++    !PE_parse_boot_argn("nord2wifirom",&rom_flag,sizeof(rom_flag))||rom_flag!=1||
++    !PE_parse_boot_argn("nord2wifidma",&dma_flag,sizeof(dma_flag))||dma_flag!=1)return EPERM;
++ if(n!=&nfa_native||n->attempted)return EALREADY;
++ n->attempted=1;
++ if(SecureDTLookupEntry(NULL,"/chosen",&chosen)!=kSuccess||
++    SecureDTGetProperty(chosen,"nord2-stock-dtb",&p,&pn)!=kSuccess||
++    pn!=8||!p||
++    SecureDTGetProperty(chosen,"nord2-wifi-calibration",&wifi,&wn)!=kSuccess||
++    wn!=NFA_WIFI_BYTES||!wifi)return EINVAL;
++ memcpy(&pa,p,8);
++ if((pa&3)||pa<UINT64_C(0x40000000)||
++    pa>UINT64_C(0x100000000)-UINT64_C(0x100000)||
++    overlaps(pa,UINT64_C(0x100000),UINT64_C(0x8fb00000),UINT64_C(0x450000))||
++    overlaps(pa,UINT64_C(0x100000),UINT64_C(0x90000000),UINT64_C(0xf20000)))return EINVAL;
++ uintptr_t mapped=(uintptr_t)ml_io_map((vm_offset_t)pa,(vm_size_t)0x100000);
++ if(!mapped)return ENOMEM;
++ n->original_fdt_io=mapped;n->original_fdt_pa=pa;
++ volatile const uint8_t *f=(volatile const uint8_t *)mapped;
++ if(be32(f)!=UINT32_C(0xd00dfeed))return EINVAL;
++ uint32_t bytes=be32(f+4);
++ if(bytes<40||bytes>0x100000||
++    overlaps(pa,bytes,UINT64_C(0x8fb00000),UINT64_C(0x450000))||
++    overlaps(pa,bytes,UINT64_C(0x90000000),UINT64_C(0xf20000)))return EINVAL;
++ n->original_fdt_bytes=bytes;
++ if(nfa_prepare(wifi,wn,(const void *)mapped,bytes,&n->board))return EINVAL;
++ n->backup_memory=kalloc_data(UINT32_C(0x450000),Z_WAITOK|Z_NOPAGEWAIT);
++ if(!n->backup_memory)return ENOMEM;
++ n->backup_capacity=UINT32_C(0x450000);
++ n->prepared=1;return 0;
++}
++static int cal_owner(void *c){
++ struct nfa_native *n=c;
++ return n!=&nfa_native||!n->prepared||!n->backup_memory||
++    !nwfn_native.rom||!nwfn_native.rom->io||
++    nwfn_native.init.transport.finish_phase!=1||
++    nwfn_native.init.transport.completed>2||
++    nwfn_owner(&nwfn_native);
++}
++static int cal_read(void *c,uint32_t off,void *dst,uint32_t bytes){
++ if(cal_owner(c)||!dst||!bytes||off>=UINT32_C(0x450000)||
++    bytes>UINT32_C(0x450000)-off)return -1;
++ uint8_t *out=dst;
++ for(uint32_t i=0;i<bytes;){
++  uint32_t at=off+i,aligned=at&~3u;
++  uint32_t word=*(volatile const uint32_t *)
++   (nwfn_native.rom->io+(uintptr_t)aligned);
++  do {
++   out[i]=(uint8_t)(word>>((at&3u)*8u));
++   i++;at++;
++  }while(i<bytes&&(at&3u));
++ }
++ __asm__ volatile("dsb sy":: :"memory");
++ return 0;
++}
++static int cal_barrier(void *c){
++ if(cal_owner(c))return -1;
++ __asm__ volatile("dsb sy":: :"memory");return 0;
++}
++static const struct nfa_backup_io cal_io={cal_owner,cal_read,cal_barrier};
++int nfa_xnu_run(void){
++ if(!nfa_native.prepared||!nwfn_native.init.initialized||
++    nwfn_native.stage!=NWFN_RETAINED||nwfn_owner(&nwfn_native))return nfa_native_halt();
++ int result=nfa_run(&nwfn_io,&nwfn_native,&nwfn_native.init,&nfa_native.board,
++                &cal_io,&nfa_native,nfa_native.backup_memory,
++                nfa_native.backup_capacity,&nfa_native.exchange);
++ return result?nfa_native_halt():0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_main_phy_xnu.h
+@@ -0,0 +1,22 @@
++#ifndef PRIVATE_NORD2_PHY_XNU_H
++#define PRIVATE_NORD2_PHY_XNU_H
++#include "wifi_main_phy_exchange.h"
++struct nfa_native {
++ unsigned attempted,prepared;
++ uintptr_t original_fdt_io;
++ uint64_t original_fdt_pa;
++ uint32_t original_fdt_bytes;
++ struct nfa_board board;
++ struct nfa_exchange_state exchange;
++ void *backup_memory;
++ uint32_t backup_capacity;
++};
++extern struct nfa_native nfa_native;
++/* Sleepable, read-only prepare before fresh radio ownership. Requires the
++ * exact future opt-in and the private, SHA-pinned same-image ADT property.
++ * Rechecks the original FDT bytes from loader's current stock-dtb PA. */
++int nfa_xnu_prepare(struct nfa_native *);
++/* Consume actual nwi initialized transport after patch CID40. The returned
++ * FORCE_CAL event and EMI backup must succeed before any N9 placement. */
++int nfa_xnu_run(void);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_wfdma_native.h
+@@ -0,0 +1,39 @@
++#ifndef PRIVATE_NORD2_WFDMA_NATIVE_H
++#define PRIVATE_NORD2_WFDMA_NATIVE_H
++#include "wifi_main_initializer.h"
++struct nrb_native;
++enum nwfn_stage { NWFN_PREPARED, NWFN_AP_ACK, NWFN_AP_READY,
++ NWFN_WF_ACK, NWFN_LIVE, NWFN_INITIALIZING, NWFN_RETAINED,
++ NWFN_RELEASE, NWFN_ASLEEP };
++struct nwfn_native {
++ struct nwi_state init;
++ const struct nrb_native *rom;
++ const struct npp_state *pool;
++ struct ndp_claim claim;
++ struct nwi_ring expected_rings[9];
++ uintptr_t pool_va,scheduler_va,dummy_va,gic_va;
++ unsigned prepared,attempted,active,halt,error,stage;
++ unsigned ap_owned,wf_owned,asleep,balanced;
++ unsigned ap_polls,wf_polls,clock_polls,clock_spent;
++ uint32_t gic_enabled;
++ uint32_t wf_initial,clock_raw,irq_raw,cfg_id,local_id,rom_done;
++ uint32_t live[5],live_valid;
++ uint32_t last_address,last_value;unsigned last_valid;
++ uint8_t finish_tx[72],finish_rx[3840];size_t finish_received;
++};
++/* One native object in the owning sweet-touch TU. New flag nord2wifimain=1
++ * additionally requires the existing ROM and DMA flags. It cannot repurpose
++ * the read-only nord2wififw flag. */
++extern struct nwfn_native nwfn_native;
++extern const struct nwt_io nwfn_io;
++/* Fresh source lifetime; never old sleeping nppa/nrpa callback objects.
++ * Owner proves exact retained receipts and immutable prepared ring identities,
++ * AP/WF/readability/clock/IRQ policy and driver-own after acquisition. */
++int nwfn_owner(void *);
++/* Prepare is sleepable before fresh votes. Start either retains fully enabled
++ * DMA/driver ownership, balances a clean inherited refusal before mutation,
++ * or halts with owned resources retained. No teardown after DMA enable. */
++int nwfn_prepare(void);
++int nwfn_start(void);
++int nwfn_finish_command(uint8_t);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_halt.h
+@@ -0,0 +1,13 @@
++#ifndef PRIVATE_NORD2_MAIN_HALT_H
++#define PRIVATE_NORD2_MAIN_HALT_H
++#include "wifi_main_wfdma_native.h"
++/* A firmware or calibration fault terminates the shared fresh radio owner.
++ * WFDMA callbacks and future commands must see the same sticky failure. */
++static inline int nwm_lifetime_halt(struct nwfn_native *n){
++ n->halt=1;
++ n->init.halt=1;
++ n->init.transport.halt=1;
++ n->init.transport.dirty=1;
++ return -1;
++}
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_main_wfdma_bind.inc
+@@ -0,0 +1,403 @@
++/* PRIVATE. Include after pool_bind.inc. No production hook is added here.
++ * All source helpers below use fresh state, not sleeping adapter callbacks. */
++#include "wifi_main_wfdma_native.h"
++struct nwfn_native nwfn_native;
++static int nwfn_stop(struct nwfn_native *n,unsigned error)
++{
++ n->error=error;n->halt=1;n->init.halt=1;n->init.transport.halt=1;return -1;
++}
++static uintptr_t nwfn_base(uint32_t p)
++{
++ switch(p){
++ case 0x10006304:case 0x1000616c:case 0x10006170:return nw.spm;
++ case 0x10001228:case 0x10001724:return nw.infra;
++ case 0x1020e504:return nw.gals;
++ case 0x180601a0:case 0x180601a4:case 0x18060184:
++ case 0x18060000:case 0x18060010:case 0x180602d4:case 0x180602cc:return npa_native.host;
++ case 0x18001000:case 0x18001620:case 0x18001624:return npa_native.cfg;
++ case 0x18000000:case 0x18000010:return npa_native.rgu;
++ case 0x184b0010:return nrpa_native.local;
++ case 0x184c1604:return nrpa_native.rom_done;
++ case 0x18402120:return nwfn_native.dummy_va;
++ default:break;
++ }
++ if(p>=0x18024000u&&p<0x18026000u)return nppa_native.wfdma;
++ if(p>=0x18026000u&&p<0x18028000u)return nwfn_native.scheduler_va;
++ return 0;
++}
++static uint32_t nwfn_load(uint32_t p)
++{
++ uintptr_t base=nwfn_base(p);
++ unsigned off=p>=0x18024000u&&p<0x18028000u?(p&0x1fffu):(p&0xfffu);
++ return ni_rd(base,off);
++}
++static void nwfn_store(uint32_t p,uint32_t v)
++{
++ uintptr_t base=nwfn_base(p);
++ unsigned off=p>=0x18024000u&&p<0x18028000u?(p&0x1fffu):(p&0xfffu);
++ ni_wr(base,off,v);
++}
++static int nwfn_source(struct nwfn_native *n)
++{
++ const struct npp_state *p=&nppa_native.probe.state;
++ const struct nrpc_state *r=&nrpa_native.diag.state;
++ struct ndp_subpool sub;
++ if(ndp_subpool_layout(&n->claim,&sub)||n->init.command!=sub.tx_cmd)return -1;
++ if(n!=&nwfn_native||!n->prepared||!n->active||n->halt||n->init.halt||n->asleep||
++    n->rom!=&nrpa_native.rom||n->pool!=p||n->init.pool!=p||
++    n->claim.base!=NDP_POOL_BASE||n->claim.bytes!=NDP_POOL_BYTES||
++    n->claim.source!=3||n->claim.valid!=1||
++    nppa_native.claim.base!=n->claim.base||nppa_native.claim.bytes!=n->claim.bytes||
++    nppa_native.claim.source!=n->claim.source||nppa_native.claim.valid!=n->claim.valid||
++    n->pool_va!=(uintptr_t)nppa_native.pool||!n->pool_va||
++    !nppa_native.prepared||!nppa_native.attempted||nppa_native.active||
++    p->stage!=NPP_DONE||p->error||p->halt||p->uncertain||p->inherited_dma||
++    !p->verified||!p->mapped||!p->zero_complete||!p->balanced||!p->asleep||
++    p->ap_owned||p->wf_owned||p->set_accepted!=2||p->set_attempted!=3||
++    p->raw_valid!=3||p->raw[0][0]||p->raw[1][0]||
++    p->words_written!=32768||p->words_read!=32768||
++    !nrpc_receipt_ok(&nrpa_native.rom)||nrpa_native.active||
++    !r->entered||r->stage!=NRPC_RUNNING||!r->rom_ready||
++    !r->cpu_release_attempted||!r->cpu_released||
++    !r->power||!r->protection||!r->balanced||r->halt||r->dirty||
++    r->unverified||r->ap_vote||r->wf_vote||r->sem20||r->clock_vote||
++    r->rom_done!=0x1d1eu||!nrpa_native.diag.asleep||
++    !npa_persistent_lifetime||!npa_native.outer_retained||
++    !npa_native.state.retained||npa_native.state.fatal||
++    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
++    !npa_native.state.result.retained||npa_native.state.result.halt||
++    npa_native.state.sema11||npa_native.state.sema19||npa_native.state.spi_inflight||
++    !ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty||
++    nawa_native.active||nawa_native.diag.result.entered||
++    nwsa_native.active||nwsa_native.diag.state.entered||
++    !nw.spm||!nw.infra||!nw.gals||!npa_native.host||!npa_native.cfg||
++    !npa_native.rgu||!nrpa_native.local||!nrpa_native.rom_done||
++    !nppa_native.wfdma||!n->scheduler_va||!n->dummy_va||!n->gic_va)return -1;
++ if(n->init.claim.base!=n->claim.base||n->init.claim.bytes!=n->claim.bytes||
++    n->init.claim.source!=n->claim.source||n->init.claim.valid!=n->claim.valid)return -1;
++ for(unsigned i=0;i<9;i++){
++  const struct nwi_ring *a=&n->init.rings[i],*b=&n->expected_rings[i];
++  if(a->descriptors!=b->descriptors||a->buffers!=b->buffers||
++     a->base!=b->base||a->count!=b->count||a->ext!=b->ext||a->rx!=b->rx)return -1;
++ }
++ if(n->init.initialized){
++  const struct nwt_state *t=&n->init.transport;
++  if(n->init.phase!=5||t->phase!=2||t->halt||t->missing_init||
++     t->tx_ring!=n->expected_rings[2].descriptors||
++     t->rx_ring!=n->expected_rings[5].descriptors||
++     t->rx_buffers!=n->expected_rings[5].buffers||t->command!=n->init.command||
++     t->tx_index>=1024||t->rx_index>=16)return -1;
++ }
++ return 0;
++}
++static int nwfn_guard(struct nwfn_native *n,unsigned full)
++{
++ static const uint32_t addr[6]={0x10006304,0x1000616c,0x10006170,0x1020e504,0x10001228,0x10001724};
++ static const uint32_t mask[6]={0x1f,2,2,1,0x2000,4},want[6]={0xd,2,2,1,0,0};
++ if(nwfn_source(n))return nwfn_stop(n,1);
++ for(unsigned i=0;i<6;i++)if((nwfn_load(addr[i])&mask[i])!=want[i])return nwfn_stop(n,2);
++ /* Saved selected DT: Wi-Fi SPIs375/378 => INTIDs407/410. Read only.
++  * No enable/disable or GIC ownership takeover occurs in this candidate. */
++ n->gic_enabled=ni_rd(n->gic_va,0x130);
++ if(n->gic_enabled&((1u<<23)|(1u<<26)))return nwfn_stop(n,3);
++ if(!full)return 0;
++ if(!n->ap_owned||!n->wf_owned||nwfn_load(0x180601a0)!=1||
++    nwfn_load(0x180601a4)!=(n->wf_initial|1u)||
++    (nwfn_load(0x18060184)&0x20)||
++    (nwfn_load(0x18060000)&6)!=6||!(nwfn_load(0x180602d4)&1)||
++    nwfn_load(0x18001000)!=0x20010101)return nwfn_stop(n,4);
++ if((nwfn_load(0x18024204)&0x33f800ffu)||
++    (nwfn_load(0x18025204)&0x7d37ffffu))return nwfn_stop(n,5);
++ if(n->init.driver_owned&&(nwfn_load(0x18060010)&4))return nwfn_stop(n,6);
++ if(n->init.dirty||n->init.initialized){
++  struct nwt_state *t=&n->init.transport;t->irq_status_valid=0;
++  for(unsigned dma=0;dma<2;dma++){
++   t->irq_status[dma]=nwfn_load(0x18024200+0x1000*dma);
++   t->irq_status_valid|=1u<<dma;
++   if(t->irq_status[dma]&0x00300000u)return nwfn_stop(n,22);
++  }
++ }
++ return 0;
++}
++int nwfn_owner(void *c)
++{
++ struct nwfn_native *n=c;
++ if(!n||n!=&nwfn_native)return -1;
++ return nwfn_guard(n,n->stage>=NWFN_LIVE&&n->stage<NWFN_RELEASE);
++}
++static int nwfn_read_allowed(uint32_t p)
++{
++ if(p==0x18060010||p==0x18402120)return 1;
++ for(unsigned d=0;d<2;d++){
++  uint32_t b=0x18024000+0x1000*d;
++  if(p==b+0x200||p==b+0x204||p==b+0x208||p==b+0x298)return 1;
++ }
++ struct nwt_plan_op plan[99];size_t count=0;
++ if(nwdm_plan(plan,99,&count))return 0;
++ for(size_t i=0;i<count;i++)if(p==plan[i].physical)return 1;
++ for(unsigned d=0;d<2;d++)for(unsigned r=0;r<28;r++){
++  if((!d&&r<20)||(d&&r>=23)||(d&&r<20&&((r>=6&&r<8)||(r>=14&&r<16))))continue;
++  uint32_t a=0x18024000+0x1000*d+(r<20?0x300+16*r:0x500+16*(r-20));
++  if(p>=a&&p<=a+12&&!(p&3))return 1;
++ }
++ return p==0x18027500;
++}
++static int nwfn_read(void *c,uint32_t p,uint32_t *v)
++{
++ struct nwfn_native *n=c;
++ if(!v||nwfn_owner(c)||!nwfn_read_allowed(p))return -1;
++ *v=nwfn_load(p);
++ /* Internal driver-own reads must not replace a pending RMW snapshot. */
++ if(p!=0x18060010){n->last_address=p;n->last_value=*v;n->last_valid=1;}
++ return 0;
++}
++static int nwfn_write(void *c,uint32_t p,uint32_t value)
++{
++ struct nwfn_native *n=c;unsigned allowed=0;
++ if(nwfn_owner(c))return -1;
++ if(n->stage==NWFN_RETAINED){
++  struct nwt_state *t=&n->init.transport;
++  allowed=(p==0x18025418&&t->submit_attempted&&value==(t->tx_index+1)%1024)||
++          (p==0x18025508&&value==t->rx_index);
++ }else if(n->stage==NWFN_INITIALIZING){
++  if(n->init.phase==1)allowed=p==0x18060010&&value==2&&n->init.driver_requested;
++  if(n->init.phase==2){
++   struct nwt_plan_op plan[99];size_t count=0;
++   if(nwdm_plan(plan,99,&count))return -1;
++   unsigned k=n->init.scheduler.operations;
++   if(k<count&&p==plan[k].physical&&n->last_valid&&n->last_address==p)
++    allowed=value==((n->last_value&~plan[k].clear)|plan[k].set);
++  }
++  if(n->init.phase==3){
++   for(unsigned d=0;d<2;d++){
++    uint32_t b=0x18024000+0x1000*d;
++    if((p==b+0x20c||p==b+0x280)&&value==0xffffffffu)allowed=1;
++    if(p==b+0x22c&&value==(d?0x2c200151u:0xfu))allowed=1;
++    if(p==b+0x208&&!(value&5))allowed=1;
++   }
++   for(unsigned i=0;i<9;i++){
++    const struct nwi_ring *r=&n->expected_rings[i];
++    if(p==r->base&&value==r->descriptors)allowed=1;
++    if(p==r->base+4&&value==r->count)allowed=1;
++    if(p==r->base+8&&value==(r->rx?r->count-1:0))allowed=1;
++    if(p==r->ext&&value==4)allowed=1;
++   }
++   struct nwt_plan_op plan[42];size_t count=0;
++   if(nwt_prefetch_plan(plan,42,&count))return -1;
++   for(size_t i=0;i<count;i++)if(p==plan[i].physical){
++    if(!plan[i].rmw&&value==plan[i].set)allowed=1;
++    if(plan[i].rmw&&n->last_valid&&n->last_address==p&&
++       value==((n->last_value&~plan[i].clear)|plan[i].set))allowed=1;
++   }
++  }
++  if(n->init.phase==4){
++   if((p==0x18024208||p==0x18025208)&&n->last_valid&&n->last_address==p){
++    struct nwt_rmw cfg;
++    if(nwt_cfg_plan(p==0x18025208,1,&cfg))return -1;
++    allowed=value==((n->last_value&~(cfg.clear&~(1u<<26)))|(cfg.set&~5u))||
++            value==((n->last_value&~(1u<<26))|5u);
++   }
++   if(p==0x18402120&&n->last_valid&&n->last_address==p)
++    allowed=value==(n->last_value|2u);
++  }
++ }
++ if(!allowed||!nwfn_base(p))return nwfn_stop(n,7);
++ nwfn_store(p,value);n->last_valid=0;return 0;
++}
++static int nwfn_memory_range(struct nwfn_native *n,uint64_t a,uint32_t bytes,unsigned write)
++{
++ if(!bytes||a<n->claim.base||a-n->claim.base>=n->claim.bytes||bytes>n->claim.bytes-(a-n->claim.base))return 0;
++ if(n->stage==NWFN_RETAINED){
++  const struct nwt_state *t=&n->init.transport;
++  if(a==t->command&&write&&bytes<=4096)return 1;
++  if(a==t->tx_ring+16u*t->tx_index&&bytes==16)return 1;
++  if(a==t->rx_ring+16u*t->rx_index&&bytes==16)return 1;
++  if(!write&&a==t->rx_buffers+4096u*t->rx_index&&bytes<=3840)return 1;
++  return 0;
++ }
++ if(n->stage!=NWFN_INITIALIZING||n->init.phase!=2||!n->init.scheduler.complete||!write)return 0;
++ for(unsigned i=0;i<9;i++){
++  const struct nwi_ring *r=&n->expected_rings[i];
++  if(a>=r->descriptors&&a-r->descriptors<16u*r->count&&
++     bytes<=16u*r->count-(a-r->descriptors))return 1;
++  if(r->rx&&a>=r->buffers&&a-r->buffers<4096u*r->count&&
++     !((a-r->buffers)&4095u)&&bytes==3840)return 1;
++ }
++ return 0;
++}
++static int nwfn_memory_read(void *c,uint64_t a,void *output,uint32_t bytes)
++{
++ struct nwfn_native *n=c;uint8_t *p=output;
++ if(!p||nwfn_owner(c)||!nwfn_memory_range(n,a,bytes,0))return -1;
++ const volatile uint8_t *source=(const volatile uint8_t *)(n->pool_va+(uintptr_t)(a-n->claim.base));
++ for(uint32_t i=0;i<bytes;i++)p[i]=source[i];
++ return 0;
++}
++static int nwfn_memory_write(void *c,uint64_t a,const void *input,uint32_t bytes)
++{
++ struct nwfn_native *n=c;const uint8_t *p=input;
++ if(!p||nwfn_owner(c)||!nwfn_memory_range(n,a,bytes,1))return -1;
++ volatile uint8_t *dest=(volatile uint8_t *)(n->pool_va+(uintptr_t)(a-n->claim.base));
++ for(uint32_t i=0;i<bytes;i++)dest[i]=p[i];
++ return 0;
++}
++static int nwfn_sync(void *c,uint64_t a,uint32_t bytes,unsigned way)
++{
++ struct nwfn_native *n=c;
++ if((way!=1&&way!=2)||nwfn_owner(c)||
++    (!nwfn_memory_range(n,a,bytes,way==1)&&!nwfn_memory_range(n,a,bytes,way!=1)))return -1;
++ /* Retained low pool uses ml_io_map outside managed DRAM, matching the
++  * accepted pool mapping. Device mapping: no cached CPU alias is introduced. */
++#ifndef NWFN_NATIVE_HOST_TEST
++ __asm__ volatile("dsb sy" ::: "memory");
++#else
++ nwfn_test_barrier();
++#endif
++ return 0;
++}
++static int nwfn_delay(void *c,unsigned us)
++{
++ if(us!=1000||nwfn_owner(c))return -1;
++ delay(us);return 0;
++}
++const struct nwt_io nwfn_io={nwfn_owner,nwfn_read,nwfn_write,
++ nwfn_memory_read,nwfn_memory_write,nwfn_sync,nwfn_delay};
++static int nwfn_fread(struct nwfn_native *n,uint32_t p,uint32_t *value)
++{
++ if(!value||!nwfn_base(p)||nwfn_guard(n,0))return -1;
++ *value=nwfn_load(p);return 0;
++}
++static int nwfn_fwrite(struct nwfn_native *n,uint32_t p,uint32_t value)
++{
++ if(nwfn_guard(n,0))return -1;
++ if(!((p==0x180601a0&&((n->stage==NWFN_PREPARED&&value==1)||
++      (n->stage==NWFN_RELEASE&&value==0&&!n->wf_owned)))||
++      (p==0x180601a4&&((n->stage==NWFN_AP_READY&&value==(n->wf_initial|1u))||
++      (n->stage==NWFN_RELEASE&&value==n->wf_initial)))||
++      (p==0x18060000&&(n->stage==NWFN_AP_ACK||n->stage==NWFN_WF_ACK))))return nwfn_stop(n,8);
++ nwfn_store(p,value);return 0;
++}
++static int nwfn_pause(struct nwfn_native *n,unsigned us)
++{
++ if(nwfn_guard(n,0))return -1;
++ delay(us);return 0;
++}
++static int nwfn_ack(struct nwfn_native *n,unsigned *count)
++{
++ uint32_t value;
++ for(unsigned i=0;i<12;i++){
++  if(i&&nwfn_pause(n,1000))return -1;
++  if(nwfn_fread(n,0x18060184,&value))return -1;
++  ++*count;if(!(value&0x20))return 0;
++ }
++ return nwfn_stop(n,9);
++}
++static int nwfn_readable(struct nwfn_native *n)
++{
++ unsigned spent=0,us=1;uint32_t value=0;
++ for(unsigned i=0;i<1600&&spent<16000;i++){
++  if(nwfn_fread(n,0x18060000,&value)||nwfn_fwrite(n,0x18060000,value|1)||
++     nwfn_pause(n,us))return -1;
++  spent+=us;if(nwfn_fread(n,0x18060000,&value))return -1;
++  n->clock_raw=value;n->clock_polls++;
++  if((value&6)==6)break;
++  us=10;
++ }
++ n->clock_spent+=spent;
++ if((value&6)!=6||spent>=16000)return nwfn_stop(n,10);
++ if(nwfn_fread(n,0x180602d4,&n->irq_raw)||!(n->irq_raw&1)||
++    nwfn_fread(n,0x18060184,&value)||(value&0x20))return nwfn_stop(n,11);
++ return 0;
++}
++static int nwfn_version(struct nwfn_native *n,uint32_t p,uint32_t want,
++ unsigned bound,unsigned us,uint32_t *last)
++{
++ for(unsigned i=0;i<bound;i++){
++  if(i&&us&&nwfn_pause(n,us))return -1;
++  if(nwfn_fread(n,p,last))return -1;
++  if(*last==want)return 0;
++ }
++ return nwfn_stop(n,12);
++}
++int nwfn_prepare(void)
++{
++ struct nwfn_native *n=&nwfn_native;unsigned main=0,rom=0,dma=0;
++ PE_parse_boot_argn("nord2wifimain",&main,sizeof(main));
++ if(main!=1)return 1;
++ PE_parse_boot_argn("nord2wifirom",&rom,sizeof(rom));
++ PE_parse_boot_argn("nord2wifidma",&dma,sizeof(dma));
++ if(rom!=1||dma!=1||n->attempted||n->prepared||
++    !nppa_native.prepared||!nppa_native.pool||!nppa_native.wfdma||
++    nwi_prepare(&n->init,&nppa_native.claim,&nppa_native.probe.state))return -1;
++ n->rom=&nrpa_native.rom;n->pool=&nppa_native.probe.state;
++ n->claim=nppa_native.claim;n->pool_va=nppa_native.pool;
++ memcpy(n->expected_rings,n->init.rings,sizeof(n->expected_rings));
++ /* Sleepable mapping only. No register or pool memory is accessed here. */
++ n->scheduler_va=ml_io_map(0x18026000,0x2000);
++ n->dummy_va=ml_io_map(0x18402000,0x1000);
++ n->gic_va=ml_io_map(0x0c000000,0x1000);
++ if(!n->scheduler_va||!n->dummy_va||!n->gic_va)return -1;
++ n->prepared=1;n->stage=NWFN_PREPARED;return 0;
++}
++static int nwfn_sleep_refusal(struct nwfn_native *n)
++{
++ uint32_t value;
++ if(n->init.dirty||n->init.initialized||n->init.halt)return nwfn_stop(n,13);
++ n->stage=NWFN_RELEASE;
++ if(nwfn_fread(n,0x180601a4,&value)||value!=(n->wf_initial|1u)||
++    nwfn_fwrite(n,0x180601a4,n->wf_initial))return nwfn_stop(n,14);
++ n->wf_owned=0;
++ /* AP literal zero is final hardware access. */
++ if(nwfn_fwrite(n,0x180601a0,0))return nwfn_stop(n,14);
++ n->ap_owned=0;n->asleep=1;n->balanced=1;n->active=0;n->stage=NWFN_ASLEEP;return 1;
++}
++int nwfn_start(void)
++{
++ struct nwfn_native *n=&nwfn_native;uint32_t value;
++ if(!n->prepared||n->attempted||n->halt)return -1;
++ n->attempted=1;n->active=1;n->stage=NWFN_PREPARED;
++ if(nwfn_fread(n,0x180601a0,&value)||value)return nwfn_stop(n,15);
++ n->ap_owned=1;
++ if(nwfn_fwrite(n,0x180601a0,1))return -1;
++ n->stage=NWFN_AP_ACK;
++ if(nwfn_ack(n,&n->ap_polls)||nwfn_readable(n))return -1;
++ n->stage=NWFN_AP_READY;
++ if(nwfn_version(n,0x18001000,0x20010101,10,0,&n->cfg_id)||
++    nwfn_fread(n,0x180601a4,&value)||(value&1))return nwfn_stop(n,16);
++ n->wf_initial=value;n->wf_owned=1;
++ if(nwfn_fwrite(n,0x180601a4,value|1))return -1;
++ n->stage=NWFN_WF_ACK;
++ if(nwfn_ack(n,&n->wf_polls)||nwfn_readable(n)||
++    nwfn_version(n,0x18001000,0x20010101,12,1000,&n->cfg_id))return -1;
++ const uint32_t addr[5]={0x18000010,0x18000000,0x180602cc,0x18001620,0x18001624};
++ for(unsigned i=0;i<5;i++){
++  if(nwfn_fread(n,addr[i],&n->live[i]))return -1;
++  n->live_valid|=1u<<i;
++ }
++ if(!(n->live[0]&1)||!(n->live[1]&0x80)||!(n->live[2]&4)||
++    (n->live[3]&9)||(n->live[4]&9)||
++    nwfn_version(n,0x184b0010,0x20010000,12,500,&n->local_id)||
++    nwfn_version(n,0x184c1604,0x1d1e,12,1000,&n->rom_done))return nwfn_stop(n,17);
++ n->stage=NWFN_LIVE;
++ if(nwfn_owner(n))return -1;
++ n->stage=NWFN_INITIALIZING;
++ int result=nwi_initialize(&nwfn_io,n,&n->init,1);
++ if(result==1)return nwfn_sleep_refusal(n);
++ if(result||!n->init.initialized||n->init.phase!=5||!n->init.driver_owned)
++  return nwfn_stop(n,18);
++ n->stage=NWFN_RETAINED;return nwfn_owner(n);
++}
++
++/* Native wrapper parity with nwt_exchange, using retained event storage. */
++int nwfn_finish_command(uint8_t cid)
++{
++ struct nwfn_native *n=&nwfn_native;struct nwt_state *t=&n->init.transport;
++ size_t used=0;
++ if(n->stage!=NWFN_RETAINED||nwfn_owner(n)||
++    t->finish_phase>1||cid!=(t->finish_phase?0x41:0x40)||
++    nwt_finish(n->finish_tx,sizeof(n->finish_tx),cid,t->next_sequence,&used))return nwfn_stop(n,19);
++ if(nwt_capture(&nwfn_io,n,t,n->finish_tx,used,1,n->finish_rx,
++    sizeof(n->finish_rx),&n->finish_received)||n->finish_received<34||
++    n->finish_rx[32]!=0||n->finish_rx[33]!=cid)return nwfn_stop(n,20);
++ t->finish_phase++;return 0;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_main_bind.inc
+@@ -0,0 +1,110 @@
++/* PRIVATE coordinator. Include after wfdma_bind.inc; external firmware/PHY
++ * implementations are separate TUs. Hook immediately after nppa_after_rom. */
++#include "wifi_main_fw_xnu.h"
++#include "wifi_main_phy_xnu.h"
++static struct {unsigned attempted,stage,ready,halt;int error;}nwfn_main;
++static void nwfn_main_failure(int error)
++{
++ nwfn_main.error=error;nwfn_main.halt=1;
++ nwfn_stop(&nwfn_native,21);
++ nfp_native.halt=1;nfp_native.state.halt=1;
++ nfa_native.exchange.halt=1;
++}
++static void nwfn_main_arm(unsigned stage,const char *action)
++{
++ nwfn_main.stage=stage;
++ printf("NORD2 WIFI MAIN ARM: stage=%u action=%s events=%u finish=%u ap=%u wf=%u driver=%u\n",
++  stage,action,nwfn_native.init.transport.completed,
++  nwfn_native.init.transport.finish_phase,nwfn_native.ap_owned,
++  nwfn_native.wf_owned,nwfn_native.init.driver_owned);
++}
++static void nwfn_main_diagnostics(void)
++{
++ const struct nwi_state *i=&nwfn_native.init;
++ const struct nwt_state *t=&i->transport;
++ const struct nfp_state *f=&nfp_native.state;
++ const struct nfa_exchange_state *p=&nfa_native.exchange;
++ printf("NORD2 WIFI MAIN NATIVE: stage=%u error=%u halt=%u live=%#x clock=%#x irq=%#x gic=%#x ap=%u wf=%u driver=%u\n",
++  nwfn_native.stage,nwfn_native.error,nwfn_native.halt,nwfn_native.live_valid,
++  nwfn_native.clock_raw,nwfn_native.irq_raw,nwfn_native.gic_enabled,
++  nwfn_native.ap_owned,nwfn_native.wf_owned,i->driver_owned);
++ printf("NORD2 WIFI MAIN INIT: phase=%u error=%u halt=%u dirty=%u sched=%u/%u/%u reg=%u memory=%u idle=%u\n",
++  i->phase,i->error,i->halt,i->dirty,i->scheduler.complete,
++  i->scheduler.operations,i->scheduler.error,i->reg_writes,i->memory_writes,i->idle_polls);
++ printf("NORD2 WIFI MAIN IRQ: ena0=%#x/%#x ena1=%#x/%#x stat0=%#x/%#x stat1=%#x/%#x valid=%#x/%#x\n",
++  i->irq_initial[0],i->irq_final[0],i->irq_initial[1],i->irq_final[1],
++  i->irq_status_initial[0],i->irq_status_final[0],i->irq_status_initial[1],
++  i->irq_status_final[1],i->irq_status_initial_valid,i->irq_status_final_valid);
++ printf("NORD2 WIFI MAIN TRANSPORT: error=%u halt=%u submit=%u events=%u finish=%u polls=%u indices=%u/%u bytes=%u/%u/%u\n",
++  t->error,t->halt,t->submit_attempted,t->completed,t->finish_phase,t->polls,
++  t->tx_index,t->rx_index,t->rx_descriptor_bytes,t->rx_mac_bytes,t->rx_init_bytes);
++ printf("NORD2 WIFI MAIN DMASTATUS: raw=%#x/%#x valid=%#x\n",
++  t->irq_status[0],t->irq_status[1],t->irq_status_valid);
++ printf("NORD2 WIFI MAIN SPANS: stage=%u completed=%u next=%u dirty=%u halt=%u words=%u/%u remaps=%u barriers=%u error=%d\n",
++  f->stage,f->completed,f->next,f->dirty,f->halt,f->words_written,
++  f->words_read,f->remaps,f->barriers,f->error);
++ printf("NORD2 WIFI MAIN SPANOBS: target=%#x address=%#x expected=%#x observed=%#x ready=%u raw=%#x polls=%u\n",
++  f->last_target,f->last_address,f->last_expected,f->last_observed,
++  nfp_native.ready,nfp_native.ready_raw,nfp_native.ready_polls);
++ printf("NORD2 WIFI MAIN PHY: attempted=%u event=%u backup=%u halt=%u rx=%u fields=%u eid=%#x response=%#x status=%#x\n",
++  p->attempted,p->event_valid,p->backup_valid,p->halt,(unsigned)p->actual_rx_bytes,
++  p->actual_rx_bytes>=46,p->rx[28],p->rx[44],p->rx[45]);
++ printf("NORD2 WIFI MAIN PHYBACKUP: valid=%u offset=%#x bytes=%u copied=%u reads=%u halt=%u error=%d\n",
++  p->backup.valid,p->backup.emi_offset,p->backup.emi_bytes,p->backup.bytes_copied,
++  p->backup.reads,p->backup.halt,p->backup.error);
++}
++static void nwfn_after_pool(void)
++{
++ unsigned opt=0;int result=0;
++ PE_parse_boot_argn("nord2wifimain",&opt,sizeof(opt));
++ if(opt!=1||nwfn_main.attempted)return;
++ nwfn_main.attempted=1;
++ /* Refuse any prior uncertain lifetime, rather than making a new vote. */
++ if(nppa_native.active||nppa_native.probe.state.stage!=NPP_DONE||
++    !nppa_native.probe.state.verified||nppa_native.probe.state.halt||
++    nppa_native.probe.state.uncertain||nppa_native.probe.state.error||
++    nwfn_native.halt||nfp_native.halt||nfp_native.state.halt||
++    nfa_native.exchange.halt){result=-1;goto failure;}
++ nwfn_main_arm(1,"prepare");
++ if((result=nwfn_prepare())||
++    (result=nfa_xnu_prepare(&nfa_native))||
++    (result=nfp_xnu_prepare(npa_native.cfg,npa_native.host)))goto failure;
++ nwfn_main_arm(2,"fresh-wake-and-wfdma");
++ result=nwfn_start();
++ if(result==1)goto report; /* complete inherited refusal, already asleep */
++ if(result)goto failure;
++ nwfn_main_arm(3,"patch-copy");
++ if((result=nfp_xnu_span(0))||(result=nfp_xnu_span(1)))goto failure;
++ nwfn_main_arm(4,"patch-finish");
++ if((result=nwfn_finish_command(0x40)))goto failure;
++ nwfn_main_arm(5,"force-calibration");
++ if((result=nfa_xnu_run()))goto failure;
++ nwfn_main_arm(6,"pccif");
++ if((result=nfp_xnu_coex()))goto failure;
++ nwfn_main_arm(7,"n9-copy");
++ for(unsigned span=2;span<7;span++)if((result=nfp_xnu_span(span)))goto failure;
++ nwfn_main_arm(8,"n9-finish-and-ready");
++ if((result=nfp_xnu_finish())||!nfp_native.ready||
++    nwfn_native.init.transport.completed!=3||
++    nwfn_native.init.transport.finish_phase!=2){if(!result)result=-2;goto failure;}
++ nwfn_main.stage=9;nwfn_main.ready=1;goto report;
++failure:
++ nwfn_main_failure(result?result:-3);
++report:
++ /* Captured software only. Never read off-domain state after refusal sleep. */
++ printf("NORD2 WIFI MAIN: status=%d stage=%u ready=%u halt=%u error=%d events=%u finish=%u\n",
++  result,nwfn_main.stage,nwfn_main.ready,nwfn_main.halt,nwfn_main.error,
++  nwfn_native.init.transport.completed,nwfn_native.init.transport.finish_phase);
++ printf("NORD2 WIFI MAIN OWNER: ap=%u wf=%u driver=%u dma=%u asleep=%u balanced=%u native_halt=%u transport_halt=%u\n",
++  nwfn_native.ap_owned,nwfn_native.wf_owned,nwfn_native.init.driver_owned,
++  nwfn_native.init.initialized,nwfn_native.asleep,nwfn_native.balanced,
++  nwfn_native.halt,nwfn_native.init.transport.halt);
++ nwfn_main_diagnostics();
++ if(nwfn_main.halt&&(nwfn_native.ap_owned||nwfn_native.wf_owned||
++    nwfn_native.init.dirty||nwfn_native.init.initialized||nfp_native.state.dirty||
++    nfp_native.coex_attempted||(nppa_native.probe.state.halt&&
++    (nppa_native.probe.state.ap_owned||nppa_native.probe.state.wf_owned||
++     nppa_native.probe.state.set_attempted||nppa_native.probe.state.mapped||
++     nppa_native.probe.state.zero_attempted))))
++  panic("NORD2 WIFI MAIN: uncertain retained radio state; manual reset required");
++}

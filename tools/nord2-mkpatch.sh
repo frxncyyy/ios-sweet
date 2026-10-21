@@ -29,6 +29,16 @@ NEW_FILES="$NEW_FILES bsd/dev/wifi_wfsys.c bsd/dev/wifi_wfsys.h bsd/dev/wifi_wfs
 NEW_FILES="$NEW_FILES bsd/dev/wifi_rom_contract.c bsd/dev/wifi_rom_contract.h bsd/dev/wifi_rom_plan.c bsd/dev/wifi_rom_plan.h bsd/dev/wifi_rom_place.c bsd/dev/wifi_rom_place.h bsd/dev/wifi_rom_xnu.c bsd/dev/wifi_rom_xnu.h bsd/dev/wifi_rom_powered.c bsd/dev/wifi_rom_powered.h bsd/dev/wifi_rom_powered_adapter.c bsd/dev/wifi_rom_powered_adapter.h bsd/dev/wifi_rom_bind.inc"
 NEW_FILES="$NEW_FILES iokit/Kernel/arm/nord2_battery.c iokit/Kernel/arm/nord2_battery.h iokit/Kernel/arm/mtk_i2c_read.c iokit/Kernel/arm/mtk_i2c_read.h iokit/Kernel/arm/nord2_battery_platform.cpp iokit/Kernel/arm/nbg_telemetry.h"
 NEW_FILES="$NEW_FILES bsd/dev/dma_pool_contract.c bsd/dev/dma_pool_contract.h bsd/dev/pool_probe.c bsd/dev/pool_probe.h bsd/dev/pool_adapter.c bsd/dev/pool_adapter.h bsd/dev/pool_bind.inc bsd/dev/wifi_dma_preflight.c bsd/dev/wifi_dma_preflight.h"
+MAIN_FILES="wifi_main_command wifi_main_dmashdl wifi_main_init_plan wifi_main_initializer wifi_main_transport wifi_main_layout wifi_main_fw_place wifi_main_fw_xnu wifi_main_phy_backup wifi_main_phy_exchange wifi_main_phy_force wifi_main_phy_xnu"
+for name in $MAIN_FILES; do
+    NEW_FILES="$NEW_FILES bsd/dev/$name.c bsd/dev/$name.h"
+    cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
+    {
+        printf '#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'
+        cat "shim/nord2-xnu/$name.c"
+        printf '\n#endif /* NORD2 */\n'
+    } > "$BT/bsd/dev/$name.c"
+done
 for name in wifi_firmware wifi_firmware_probe wifi_emi_snapshot wifi_emi_probe ufs_two_lane zoom_reset wifi_common wifi_cold_snapshot wifi_common_scope wifi_adie_id wifi_adie_strap wifi_emi_legacy wifi_persistent wifi_persistent_adapter wifi_wake wifi_wake_adapter wifi_wfsys wifi_wfsys_adapter wifi_rom_contract wifi_rom_plan wifi_rom_place wifi_rom_xnu wifi_rom_powered wifi_rom_powered_adapter dma_pool_contract pool_probe pool_adapter wifi_dma_preflight; do
     cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
     {
@@ -47,6 +57,10 @@ cp shim/nord2-xnu/wifi_wake_bind.inc "$BT/bsd/dev/wifi_wake_bind.inc"
 cp shim/nord2-xnu/wifi_wfsys_bind.inc "$BT/bsd/dev/wifi_wfsys_bind.inc"
 cp shim/nord2-xnu/wifi_rom_bind.inc "$BT/bsd/dev/wifi_rom_bind.inc"
 cp shim/nord2-xnu/pool_bind.inc "$BT/bsd/dev/pool_bind.inc"
+for name in wifi_main_wfdma_native.h wifi_main_halt.h wifi_main_wfdma_bind.inc wifi_main_bind.inc; do
+    cp "shim/nord2-xnu/$name" "$BT/bsd/dev/$name"
+    NEW_FILES="$NEW_FILES bsd/dev/$name"
+done
 # Fuel helper TUs carry their own NORD2/host-test guards in canonical source.
 for name in SweetBattery.cpp nord2_battery.c nord2_battery.h mtk_i2c_read.c mtk_i2c_read.h nord2_battery_platform.cpp nbg_telemetry.h; do
     cp "shim/nord2-xnu/$name" "$BT/iokit/Kernel/arm/$name"
