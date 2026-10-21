@@ -11,6 +11,48 @@
 
 
 
+
+
+
+- **RX HEADER IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-rxheader-battery-stop23.img`,
+  33347584B SHA256 0a4b7ade57f35b2cd1932696f3e3bf7ccd10ab0685d7e69b757db0f19996b13b.
+  Payload dbc23092a701beafab6603068e816fa4478353442c17768d666ed705d5c1617d.
+  CI39613306032/sourceba6400414b980a4dcc9f537b6890b8cc7883a557;
+  kernel17463416B SHA60ea1e4ea5447992bc0d5a63aa59463f092a28023de6759347af4a2164445148.
+  Targetlinked capturedbounds/validity/writerreader/newownerlayout+72review
+  PASS. Bounded1GiB packingexit0; independent freshloader/segments/ADT/private
+  calibration/Linux/dualDT/rawrescue/AndroidheaderPASS,206848spare. Existing
+  manifest+payload rechecked, e0d3/RAMrescue actualhashes rechecked. Newstage
+  identity/schema/prepared true; exacthuman/RF/conditionalrecoveryFALSE,
+  runner NEVERexecuted. Diagnostics-only repeatofsamefirmwareattempt; raw
+  type/EID/sequnknown; currentearlierheaderguardunchanged, failuremayrepeat.
+  Ask NEW exactboot-onlyapproval withconditional e0d3/RAMrescue and30sdrain.
+  Phonee0d3 humanhealthy/allcollectorsfinished. UFS/boot speed unchanged.
+
+
+- **RX HEADER CI39613306032 SUCCESS; IMAGE PACKING.**
+  Sourceba6400414b980a4dcc9f537b6890b8cc7883a557, kernel17463416B
+  SHA25660ea1e4ea5447992bc0d5a63aa59463f092a28023de6759347af4a2164445148.
+  Completeartifactdownload/SHA256SUMS/sourceidentity PASS;1134genericARMv8.2
+  invocations across1132lines(twointerleavedpairs). Newstageidentity/schema
+  gatestrue; bounded1GiB packing andindependentlinkedRX/ABIreviewunderway.
+  Prepared/humanapprovalfalse; phonee0d3 humanhealthy/allcollectorsfinished.
+  Private dynamic-patch-sequence-audit/report.json d71e0df8 confirmsnoomitted
+  selectedpre-CID40 semaphore/drain/FWDLpacket: selectedAXI/SOC3 NO_SEM=1,
+  directremapcopy andNULLFWDLcallback. Actualrawheader remainsunknown.
+  UFS/boot speed unchanged.
+
+
+- **RX HEADER CI39613306032 RUNNING.**
+  Sourceba6400414b980a4dcc9f537b6890b8cc7883a557; onlynewruntimechange capturedRXdiagnostics,
+  noacceptance/IO/poll/rearmchanges. Tests/actualnormalcontextcompilesPASS;
+  allTU rebuild requiredfor enlargeddiagnosticstate. Newstageidentity/
+  prepared/approvalfalse untilfullCI/artifact/linked/packingchecks.
+  Currentphonee0d3 humanhealthy/allcollectorsfinished; UFS/boot speedunchanged.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39613306032
+
+
 - **RX HEADER DIAGNOSTICS PROMOTED; READY FOR FULL CI.**
   Reviewedcandidate6d8d00f8 adds captured-only RXdescriptor/expectedbuffer/
   DIDX/validity/reason and bounded type/EID/seq/status/CID fields; noadditional
