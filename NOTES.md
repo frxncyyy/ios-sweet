@@ -3,6 +3,23 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Async source361b8eac CI39672757944 submitted, waiting for macOS runner.**
+  Root watcher session63069 will save run.json/build.log/artifacts under
+  research/ci-39672757944 on successful completion. No new image or approval.
+  Fresh wifi-async-scan/ios pins source/async parser; identity/schema closed.
+  Current phone remains human-healthy c3, no active USB collector.
+  Runtime independentb63ce626, old CAP fixture addendum019e87db; parser
+  independent1f03e14f. All required canonical host/focused compile checks pass.
+  Receive prerequisite audit89577f3a found no proven additional mandatory RX
+  correction; CID70 defaults and CID0a netdev filter remain source differences
+  without first-scan causality. No speculative recipe additions.
+  Parallel bridge CARD v2 f11c4f8c/reviewfcc1a99c proves raw13/6 security gates;
+  truthful empty native feature set supported (1261 checks), no fake readiness.
+  v1 nonempty restriction was rejected by root/reviewer and preserved as
+  historical package. Native lifecycle shell private implementation underway.
+  Next: verify exact CI artifact/source/linked code, pack bounded1GiB, verify
+  image, obtain exact new boot-only approval. Do not reuse executed runners.
+
 - **Async EID7 correction integrated; one CI build next.**
   Current phone remains c3ce7dcf, human confirms healthy after f53 recovery.
   Shared source-exact sleepy decoder covers CAP/BASIC/normal; raw uint8 hint
