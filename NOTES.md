@@ -3,6 +3,37 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **DRAIN TEST CAPTURED ERROR16; e0d3 RESTORED/HUMAN-CONFIRMED.**
+  Authorized ebfa71f6 boot-only flash/reboot OKAY. New30s failure drain
+  enabled complete captured failure diagnostics before terminalpanic.
+  Immutable boot-failure-first-snapshot.log151581B SHA256
+  f09a845890a455fbedb40c76d91e3a424edb86e3be4a9d970f8ed24c2ff188aa.
+  DMA initphase5 succeeded; spans0/1 copied+verified1428words; rawsync1,
+  PRESPANreason0 passes. Mainstage4 patchfinish submittedonce, DIDX0->1,
+  transporterror16 on descriptor echo before DDONE check. DMA1status08000000
+  is NORMAL TX17completion bit27, NOT coherentfault (bits20/21 clear).
+  nativeoriginal20 wrappererror; generic21 follows. No RX event/PHYattempt/
+  mainready. Raw descriptor words absent, mismatching field unknown.
+  Existing code validates pointer/SDL0/DW2/DW3 BEFORE DDONE, unlike selected
+  Linux completion ordering. Narrow private correction+rawdiagnostics underway;
+  keep strict post-DDONE checks, no replay/reset/guard weakening. Not yet a
+  proven hardware rootcause. Detailed source review under runtime-tx-error16.
+  User enteredfastboot; conditional e0d3restore/reboot OKAY, USB90s captured
+  226068B SHA256 6a5d8e2365ff4911076e857cbfb353c5eb5665a2fd923b53969383fb5311ebf8.
+  User confirms lockscreen/touch/buttons healthy. Currentrestore had no
+  preservedprefix; captured failure already safe. All collectors stopped;
+  NEVER rerun executed boot or restoration. Evidence under wifi-main-drain/ios.
+  UFS/boot speed unchanged. No new image or hardware approval yet.
+
+
+- **DRAIN IMAGE ebfa71f6 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User explicitly authorized exact image, same firmware/RF attempt and
+  conditional e0d3/RAMrescue recovery; fastboot identity confirmed privately.
+  New wifi-main-drain/ios runner will execute once with nativeUSB180s
+  collection started before reboot. Do not rerun once flash.log exists.
+  Runtime failure/success unknown; UFS/boot speed unchanged.
+
+
 - **DRAIN IMAGE VERIFIED; NEW EXACT BOOT APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-drain-battery-stop23.img`,
   33345536 bytes, SHA256 ebfa71f63e4218a2613b6e9734c63bbcbf5c89fbc0afa418e22894cbb31a1cfd.
