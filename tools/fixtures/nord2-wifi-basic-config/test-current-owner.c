@@ -120,6 +120,8 @@ static int assert_wait_deadline(void*c,int mode,uint64_t d){assert(c&&mode==THRE
 #include "failure_drain.inc"
 #define NCD_NATIVE_HOST_TEST 1
 #include "wifi_capability_bind.inc"
+/* Partial BASIC fixture has no normal scan-service owner to continue. */
+static void nss_worker_continue(void) {}
 
 static void ready_fixture(void){fixture();memset(&ncd_native,0,sizeof(ncd_native));memset(&nbc_native,0,sizeof(nbc_native));basic_flag=basic_pending=resource_missing=basic_pubs=0;cap_flag=1;spawns=parks=0;worker_thread=1;scheduled=0;drain_waiting=0;
  assert(!nwfn_prepare()&&!nwfn_start());assert(!nwfn_finish_command(0x40));

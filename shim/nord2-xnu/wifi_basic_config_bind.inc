@@ -61,6 +61,7 @@ static int nbc_after_cap(void)
  nbc_report(result); /* captured-only after failure, no backend reads */
  if(result<0)return -1;
  if(!result&&NCT_AFTER_BASIC()<0)return -1;
- printf("NORD2 WIFI BASIC WORKER: parking=1 retained=1 callbacks_complete=1\n");
+ unsigned ios=0;PE_parse_boot_argn("nord2wifiios",&ios,sizeof(ios));
+ printf("NORD2 WIFI BASIC WORKER: parking=%u retained=1 callbacks_complete=1\n",ios==1?0u:1u);
  return 0;
 }

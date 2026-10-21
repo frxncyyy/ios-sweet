@@ -102,6 +102,8 @@ static int assert_wait_deadline(void*c,int mode,uint64_t d){(void)c;(void)mode;(
 #include "failure_drain.inc"
 #define NCD_NATIVE_HOST_TEST 1
 #include "wifi_capability_bind.inc"
+/* Partial CAP/BASIC fixture does not install the normal scan service. */
+static void nss_worker_continue(void) {}
 int main(void){fixture();assert(!nwfn_prepare()&&!nwfn_start());assert(!nwfn_finish_command(0x40));
  uint8_t phy[464]={0},event[3840];size_t got=0;phy[36]=8;phy[37]=0xa0;phy[39]=nwfn_native.init.transport.next_sequence;
  assert(!nwt_capture(&nwfn_io,&nwfn_native,&nwfn_native.init.transport,phy,sizeof(phy),5,event,sizeof(event),&got));

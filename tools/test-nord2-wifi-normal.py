@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='nord2-normal-') as td:
  (d/'wifi_normal_rx.c').write_text(rx)
  files=[d/'wifi_normal_rx.c' if x.name=='wifi_normal_rx.c' else x for x in files]
  for name in (('full','faults','sleepy','sleepy-faults','sleepy-decoder') if args.only=='all' else (args.only,)):
-  exe=d/name;cmd=[args.cc,'-std=c11','-DNCFG_HOST_TEST','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-I'+str(d),'-I'+str(S),str(P/('test-'+name+'.c'))]+list(map(str,[] if name=='sleepy-decoder' else files))+['-lcrypto','-o',str(exe)]
+  exe=d/name;cmd=[args.cc,'-std=c11','-DNCFG_HOST_TEST','-DNSS_HOST_TEST','-pthread','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-I'+str(d),'-I'+str(S),'-I'+str(P),str(P/('test-'+name+'.c'))]+list(map(str,[] if name=='sleepy-decoder' else files))+['-lcrypto','-o',str(exe)]
   subprocess.run(cmd,check=True);run=subprocess.run([str(exe),str(board)],capture_output=True,text=True)
   if run.returncode:
    print(run.stdout[-6000:]);print(run.stderr);run.check_returncode()

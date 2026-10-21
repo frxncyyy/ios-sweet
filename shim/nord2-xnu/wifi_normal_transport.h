@@ -16,7 +16,7 @@ struct nct_recipe {
  int (*build)(void *,unsigned,uint8_t *,size_t,size_t *);void *context;
  uint64_t batch_us,service_us;
 };
-enum nct_phase {NCT_NEW,NCT_PREPARED,NCT_COMMAND,NCT_WRITING,NCT_SUBMITTED,NCT_BETWEEN,NCT_SERVICE,NCT_DONE,NCT_HALTED};
+enum nct_phase {NCT_NEW,NCT_PREPARED,NCT_COMMAND,NCT_WRITING,NCT_SUBMITTED,NCT_BETWEEN,NCT_SERVICE,NCT_DONE,NCT_HALTED,NCT_DRAIN};
 struct nct_session;
 struct nct_access {struct nct_session *session;const struct ncd_io *hardware;void *context;};
 struct nct_record {uint8_t cid,sequence;uint16_t bytes;unsigned from,to,didx,polls,observed;
@@ -31,11 +31,15 @@ struct nct_session {
  struct nct_entry entry[NCT_COMMAND_LIMIT];uint64_t fingerprint[NCT_COMMAND_LIMIT];
  struct nct_record record[NCT_COMMAND_LIMIT];
  int (*build)(void *,unsigned,uint8_t *,size_t,size_t *);void *build_context;
+ unsigned drain_quiescent,drain_refused;
+ unsigned continuation;const struct nct_session *previous;
  struct nct_access access;uint8_t wire[NCT_WIRE_LIMIT],descriptor[16];
 };
 /* Pure one-use admission/seal. Return1 clean prerequisite refusal, -1 malformed
  * recipe/reuse,0 prepared. Plain copies cannot grant native authority. */
 int nct_prepare(const struct nbc_state *,const struct nct_recipe *,struct nct_session *);
+int nct_done_receipt(const struct nct_session *);
+int nct_continue_prepare(const struct nbc_state *,const struct nct_session *,const struct nct_recipe *,struct nct_session *);
 int nct_lease_window(const struct nct_session *,const struct nbc_state *,const struct ncd_state *,const struct nwi_state *,const struct nfp_native *);
 /* Checked IO is usable only via exact session.access while actual lease active.
  * Root's RX parser can consume it with the unchanged ncd_io interface. */

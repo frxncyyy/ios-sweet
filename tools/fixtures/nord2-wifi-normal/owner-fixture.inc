@@ -27,7 +27,7 @@ static struct {uint32_t address,value;}reg[2048];
 static unsigned registers,mmio_reads,mmio_writes,delays,barriers,manual_halts,main_flag=1,gic_active,clock_fail,ack_fail,inherited;
 static int nrpc_receipt_ok(struct nrb_native*n){return n==&nrpa_native.rom&&n->receipt;}
 static unsigned cap_flag=1,basic_flag=0,resource_missing,basic_pending,basic_pubs;
-static void PE_parse_boot_argn(const char*s,unsigned*v,unsigned bytes){assert(bytes==4);*v=!strcmp(s,"nord2wificap")?cap_flag:!strcmp(s,"nord2wifimain")?main_flag:!strcmp(s,"nord2wifibasic")?basic_flag:!strcmp(s,"nord2wifiscan")?scan_flag:1;}
+static void PE_parse_boot_argn(const char*s,unsigned*v,unsigned bytes){assert(bytes==4);*v=!strcmp(s,"nord2wifiios")?0:!strcmp(s,"nord2wificap")?cap_flag:!strcmp(s,"nord2wifimain")?main_flag:!strcmp(s,"nord2wifibasic")?basic_flag:!strcmp(s,"nord2wifiscan")?scan_flag:1;}
 static uintptr_t ml_io_map(uintptr_t p,unsigned n){assert(n==0x1000||n==0x2000);return p;}
 static uint32_t ni_rd(uintptr_t b,unsigned o){uint32_t a=(uint32_t)b+o;assert(a!=0x180251f0);mmio_reads++;
  for(unsigned i=0;i<registers;i++)if(reg[i].address==a)return reg[i].value;

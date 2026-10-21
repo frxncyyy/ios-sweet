@@ -3,6 +3,32 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: cohesive iOS passive-scan service integrated; CI next, hardware untested.**
+  Explicit nord2wifiios=1 activates the retained radio worker queue and software
+  ADT wlan provider. No firmware replay or repeated startup26 sequence. New
+  scans preserve actual DMA/credit/sequence state; stale RX must drain before
+  publication, bounded clean refusal preserves advanced cursors. Default-off
+  old path remains unchanged. Real IO80211Controller/Interface/SkywalkInterface
+  IOService classes, carrier-down enN ifnet, Infrastructure property and exact
+  SIOCGIFMEDIA type reply implement the recovered iOS discovery requirements.
+  Entitled owned IOUserClient binds fresh passive scans to immutable result
+  cache and mapped event10; close/cancel/OOL/send-reference races are covered.
+  Populated results use actual received BSS and a documented compatible rate
+  map. Association, security, packet TX/RX and IP networking NOT implemented;
+  actual Settings compatibility requires hardware testing, not assumed.
+  Private repeated-scan manifest cb4376e2/review fd710542; service ad4554a8/
+  review 1db59a70; strict new owner-terminal parser review 291669a8.
+  Generated 0082 applies cleanly; all18 actual generated TUs compile with
+  generic ARMv8.2 flags and native headers, including2Cpp without private -I.
+  Canonical normal/capability/VCN33 and new scan-service sanitizer suites PASS:
+  250+continuations, pending/budget drain refusal, wraps, cancellation, fatal
+  drain/defaultoff; private actual IOUC/registry lifetime suites also PASS.
+  New source in shim/nord2-xnu/wifi_ios_* and wifi_scan_service*, canonical
+  runner tools/test-nord2-wifi-scan-service.py. Fresh stage wifi-ios-scan/ios;
+  no image or new approval yet, runner UNUSED. Phone remains healthy6a6a,
+  no USB collector/device action. Next full CI/link/image checks then exact
+  boot-only approval with healthy6a6a/RAM rescue, never stock Android.
+
 - **2026-10-22: VCN33 image 6a6a2ef7 is the current healthy baseline; real RF reception works.**
   User confirms lockscreen, touch and buttons: call_dcedce3836584301a4a60eb424d84b2a.
   Boot-only flash/reboot succeeded under approval call_657c74a78b6943c9bc996e2594f1d4d0.

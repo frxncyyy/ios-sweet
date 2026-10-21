@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,38 @@
+@@ -648,3 +666,53 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2729,6 +2729,21 @@
 +bsd/dev/wifi_normal_backend.c			standard
 +bsd/dev/wifi_vcn33.c			standard
 +bsd/dev/wifi_default_feature.c			standard
++
++# Nord2 compatible Wi-Fi scan service helpers (empty elsewhere)
++bsd/dev/wifi_ios_age.c			standard
++bsd/dev/wifi_ios_binding.c			standard
++bsd/dev/wifi_ios_bss.c			standard
++bsd/dev/wifi_ios_card.c			standard
++bsd/dev/wifi_ios_control.c			standard
++bsd/dev/wifi_ios_cursor.c			standard
++bsd/dev/wifi_ios_event.c			standard
++bsd/dev/wifi_ios_lifecycle.c			standard
++bsd/dev/wifi_ios_mapping.c			standard
++bsd/dev/wifi_ios_policy.c			standard
++bsd/dev/wifi_ios_rates.c			standard
++bsd/dev/wifi_ios_scan_contract.c			standard
++bsd/dev/wifi_ios_snapshot.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -5791,7 +5806,7 @@
  	 *	Start the user bootstrap.
 --- a/iokit/conf/files.arm64
 +++ b/iokit/conf/files.arm64
-@@ -20,3 +20,8 @@
+@@ -20,3 +20,12 @@
  iokit/Kernel/arm/hid/IOHIDEvent.cpp                              optional iokitcpp
  iokit/Kernel/arm/hid/IOHIDEventServiceQueue.cpp                  optional iokitcpp
  iokit/Kernel/arm/hid/IOHIDEventServiceUserClient.cpp             optional iokitcpp
@@ -5800,6 +5815,10 @@
 +iokit/Kernel/arm/nord2_battery.c standard
 +iokit/Kernel/arm/mtk_i2c_read.c standard
 +iokit/Kernel/arm/nord2_battery_platform.cpp optional iokitcpp
++
++# Nord2 compatible Wi-Fi controller/user client (empty elsewhere)
++iokit/Kernel/arm/wifi_ios_client.cpp optional iokitcpp
++iokit/Kernel/arm/wifi_ios_registry.cpp optional iokitcpp
 --- a/iokit/Kernel/arm/SweetBattery.cpp
 +++ b/iokit/Kernel/arm/SweetBattery.cpp
 @@ -11,7 +11,16 @@
@@ -11789,6 +11808,763 @@
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_ios_age.c
+@@ -0,0 +1,26 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_age.h"
++int niwaa_age_plan(const struct nsb_scan*s,uint64_t captured,uint64_t reference,struct niwaa_ages*out){
++ struct niwaa_ages a={0};
++ if(!s||!out||!s->entered||!s->done||s->active||s->timed_out||s->partial||s->dropped||
++    s->count>NSB_RESULTS||s->count>s->frames||s->completion.state!=7||s->completion.sequence!=s->sequence||
++    s->last<s->started||s->deadline<=s->last||captured<s->last||reference<captured)return -1;
++ a.captured_us=captured;a.reference_us=reference;a.count=s->count;
++ for(unsigned i=0;i<s->count;i++){
++  uint64_t observed=s->records[i].observed_us;
++  if(observed<s->started||observed>s->last)return -1;
++  uint64_t milliseconds=(reference-observed)/1000u;
++  if(milliseconds>INT32_MAX)return -1;
++  a.milliseconds[i]=(uint32_t)milliseconds;
++ }
++ *out=a;return 0;
++}
++int niwaa_snapshot_prepare(const struct nsb_scan*s,uint64_t generation,uint64_t captured,uint64_t reference,
++ const struct niwp_rate_map*m,size_t n,struct niwa_snapshot*out){
++ struct niwaa_ages a;
++ if(niwaa_age_plan(s,captured,reference,&a))return -1;
++ return niwa_snapshot_prepare(s,generation,a.milliseconds,a.count,m,n,out);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_age.h
+@@ -0,0 +1,15 @@
++#ifndef PRIVATE_NIWAA_AGE_H
++#define PRIVATE_NIWAA_AGE_H
++#include "wifi_ios_snapshot.h"
++struct niwaa_ages {uint64_t captured_us,reference_us;unsigned count;uint32_t milliseconds[NSB_RESULTS];};
++/* Actual immutable completed scan; timestamps must be from the same monotonic
++ * microsecond clock as nsb_record.observed_us. Caller supplies actual capture
++ * and reference instants. Pure validation cannot authenticate that provenance.
++ * Floor to completed milliseconds; refuse negative/future or signed32 overflow.
++ * No saturation, epoch/TSF substitution, clock reads, or native authority. */
++int niwaa_age_plan(const struct nsb_scan *,uint64_t,uint64_t,struct niwaa_ages *);
++/* Own output exactly as original snapshot API; rate map remains separately
++ * proven input. No production map or backend/service hook supplied here. */
++int niwaa_snapshot_prepare(const struct nsb_scan *,uint64_t,uint64_t,uint64_t,
++ const struct niwp_rate_map *,size_t,struct niwa_snapshot *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_binding.c
+@@ -0,0 +1,28 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_binding.h"
++#include "wifi_ios_control.h"
++int niwb_selector(const struct niwb_dispatch_view*v,unsigned selector,
++ size_t in,size_t cap,unsigned si,unsigned so,unsigned ar,uint8_t*out,size_t*used){
++ if(!v||!out||!used||v->phase!=NIWB_OPEN||in||cap!=1||si||so||ar||
++    (v->control_handlers&~NIWB_CONTROL_ALL)||(v->pipe_handlers&~NIWB_PIPE_ALL)||
++    (selector!=1&&selector!=5))return -1;
++ unsigned control=v->control_handlers==NIWB_CONTROL_ALL;
++ uint8_t result=(uint8_t)(selector==1?control:
++    (control&&v->pipe_handlers==NIWB_PIPE_ALL));
++ *out=result;*used=1;return 0;
++}
++int niwb_driver_version(const void*carrier,size_t bytes,const char*identity,
++ size_t length,void*out,size_t cap,size_t*used){
++ struct niw_request q;
++ if(!identity||!out||!used||length<2||length>256||cap<length||
++    niw_decode(0,carrier,bytes,&q)||q.request!=43||q.value||q.payload_bytes||
++    identity[length-1])return -1;
++ for(size_t i=0;i+1<length;i++)
++  if((unsigned char)identity[i]<32||(unsigned char)identity[i]>126)return -1;
++ /* Native supplies disjoint retained identity/output storage. */
++ for(size_t i=0;i<length;i++)((unsigned char*)out)[i]=(unsigned char)identity[i];
++ *used=length;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_binding.h
+@@ -0,0 +1,32 @@
++#ifndef NIWB_BINDING_CONTRACT_H
++#define NIWB_BINDING_CONTRACT_H
++#include <stddef.h>
++#include <stdint.h>
++/* A private codec/view, not an IOUserClient, owner token, or readiness claim. */
++enum niwb_phase { NIWB_OPEN=1, NIWB_DRAINING=2, NIWB_CLOSED=3 };
++enum niwb_control { NIWB_CONTROL_0=1, NIWB_CONTROL_6=2, NIWB_CONTROL_ALL=3 };
++enum niwb_pipe {
++ NIWB_ALLOCATE_3=1, NIWB_MAP_DATA_1=2, NIWB_MAP_STATE_2=4,
++ NIWB_REGISTER_ASYNC_2=8, NIWB_HALT_4=16, NIWB_QUIESCE=32,
++ NIWB_PIPE_ALL=63
++};
++/* Construct only inside the serialized owning native object from installed,
++ * reviewed handler tables and actual close/drain state. Never copy this view
++ * from externalMethod input. Bit presence cannot prove a handler is correct.
++ * Pipe capability precedes allocation: the framework queries 5 before 3/2. */
++struct niwb_dispatch_view { unsigned phase,control_handlers,pipe_handlers; };
++/* Exact selectors1/5 struct call: no scalar/async arguments, input0, output1.
++ * Returns one capability byte, never backend/radio/association readiness.
++ * Closed/draining or malformed input refuses atomically. */
++int niwb_selector(const struct niwb_dispatch_view *,unsigned selector,
++ size_t input_bytes,size_t output_capacity,unsigned scalar_inputs,
++ unsigned scalar_outputs,unsigned async_refs,uint8_t *output,size_t *used);
++/* Dedicated bind GET43 carrier only (not all general DRIVER_VERSION queries).
++ * Driver-owned identity includes its final NUL, 2..256 bytes. No version word,
++ * firmware-ready bit, feature list or hardware/firmware version is invented.
++ * Atomic output on malformed request, identity, or insufficient capacity.
++ * Native caller still binds the decoded interface to its real owning service. */
++int niwb_driver_version(const void *carrier,size_t carrier_bytes,
++ const char *driver_identity,size_t identity_bytes,void *output,
++ size_t output_capacity,size_t *used);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_bss.c
+@@ -0,0 +1,23 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_bss.h"
++int niwb_bss_metadata(const struct nsb_record*s,struct niwb_bss*out){
++ struct niwb_bss r={0};unsigned rate_ies=0;
++ if(!s||!out||!s->hw_channel||!s->channel||s->channel_mismatch||s->ssid_len>32||s->ie_bytes>NSB_IE_BYTES||s->ies_truncated||s->ie_bytes!=s->ie_total||(s->subtype!=8&&s->subtype!=5))return -1;
++ r.band=s->hw_channel<=14?1:2;r.channel=s->channel;r.interval=s->interval;r.capabilities=s->capability;r.observed_us=s->observed_us;
++ r.ssid_bytes=s->ssid_len;r.ssid_present=s->ssid_present;r.hidden=s->hidden;r.subtype=s->subtype;
++ for(unsigned i=0;i<6;i++)r.bssid[i]=s->bssid[i];for(unsigned i=0;i<s->ssid_len;i++)r.ssid[i]=s->ssid[i];
++ if(s->rxv_valid&&(s->group_valid&4)){
++  uint8_t a=s->rxv[4],b=s->rxv[5];r.rssi_valid=a!=255||b!=255;
++  if(a==255)a=0;if(b==255)b=0;r.rcpi=a>b?a:b;
++  r.rssi_dbm=(int16_t)((int32_t)((r.rcpi>220?220:r.rcpi)/2)-110);
++ }
++ for(size_t i=0;i<s->ie_bytes;){if(s->ie_bytes-i<2)return -1;unsigned id=s->ies[i++],z=s->ies[i++];if(z>s->ie_bytes-i)return -1;
++  if(id==1||id==50){unsigned flag=id==1?1:2;if(rate_ies&flag)return -1;rate_ies|=flag;
++   for(unsigned j=0;j<z;j++){uint8_t x=s->ies[i+j]&127;if(!x)return -1;unsigned k;for(k=0;k<r.rate_count;k++)if(r.ie_rates[k]==x)break;if(k==r.rate_count){if(k==16)return -1;r.ie_rates[r.rate_count++]=x;}}
++  }i+=z;
++ }
++ r.ie_bytes=s->ie_bytes;for(unsigned i=0;i<s->ie_bytes;i++)r.ies[i]=s->ies[i];*out=r;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_bss.h
+@@ -0,0 +1,17 @@
++#ifndef PRIVATE_NIWB_BACKEND_BSS_H
++#define PRIVATE_NIWB_BACKEND_BSS_H
++#include <stdint.h>
++#include <stddef.h>
++#include "wifi_scan_bss.h"
++struct niwb_bss {
++ uint8_t bssid[6],ssid[32],ssid_bytes,ssid_present,hidden,subtype;
++ uint8_t band,channel,rssi_valid,rcpi,rate_count,ie_rates[16];
++ int16_t rssi_dbm;uint16_t interval,capabilities,ie_bytes;
++ uint64_t observed_us;uint8_t ies[NSB_IE_BYTES];
++};
++/* Pure metadata from an actually decoded immutable nsb record, no authority
++ * receipt. Source-selected non6GHz band1/2 and MAX(WF0,WF1) group3V2 RCPI.
++ * Retains IE rates in500kbps units, basic bit stripped; no iOS rate guessing.
++ * Noise/SNR/iOS flags/age conversions are intentionally absent. Atomic out. */
++int niwb_bss_metadata(const struct nsb_record*,struct niwb_bss*);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_card.c
+@@ -0,0 +1,21 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_card.h"
++#include "wifi_ios_control.h"
++int niwc_card_reply(const void*input,size_t bytes,const struct niwc_manifest*m,
++ void*out,size_t capacity,size_t*used){
++ static const uint8_t bits[NIWC_FEATURES]={0,1,3,13,14,76};
++ struct niw_request q;uint8_t raw[NIWC_CARD_BYTES]={0};unsigned seen=0;
++ if(!m||!out||!used||capacity<sizeof(raw)||m->count>NIWC_FEATURES||
++    niw_decode(0,input,bytes,&q)||q.request!=12||q.value||q.payload_bytes!=sizeof(raw))return -1;
++ for(unsigned n=0;n<m->count;n++){
++  unsigned f=m->entry[n].feature;
++  if(f>=NIWC_FEATURES||m->entry[n].installed_operations!=NIWC_END_TO_END||
++     (seen&(1u<<f)))return -1;
++  seen|=1u<<f;raw[bits[f]/8]|=(uint8_t)(1u<<(bits[f]%8));
++ }
++ for(unsigned n=0;n<sizeof(raw);n++)((uint8_t*)out)[n]=raw[n];
++ *used=sizeof(raw);return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_card.h
+@@ -0,0 +1,26 @@
++#ifndef PRIVATE_NIWC_CARD_H
++#define PRIVATE_NIWC_CARD_H
++#include <stddef.h>
++#include <stdint.h>
++#define NIWC_CARD_BYTES 13u
++/* Same-IPSW association-builder gates, NOT a complete Apple enum.
++ * WEP_FAMILY covers40/104-bit suites; GCMP_FAMILY covers128/256-bit
++ * suites because each one raw gate admits both. WPA/RSN names denote the
++ * actual dictionary-key paths, not a complete protocol/security-mode enum. */
++enum niwc_feature { NIWC_WEP_FAMILY,NIWC_TKIP,NIWC_CCMP,NIWC_WPA_IE,NIWC_RSN_IE,NIWC_GCMP_FAMILY,NIWC_FEATURES };
++enum niwc_operation { NIWC_ASSOCIATE=1,NIWC_AUTHENTICATE=2,NIWC_INSTALL_KEY=4,
++ NIWC_CIPHER_TX=8,NIWC_CIPHER_RX=16,NIWC_DISCONNECT=32,NIWC_END_TO_END=63 };
++struct niwc_entry {unsigned feature,installed_operations;};
++/* Native-owned reviewed inventory only; never deserialize from IOUC input.
++ * Each entry must derive from actual installed association/auth/key/data/
++ * disconnect handlers for that feature. Bits do not authenticate their source
++ * or establish correct implementations. No current backend supplies entries. */
++struct niwc_manifest {unsigned count;struct niwc_entry entry[NIWC_FEATURES];};
++/* Exact bind request12 GET, small carrier, payload13, value0. Writes raw13,
++ * no version prefix. A nonnull native-owned empty inventory emits exactly13 zero bytes.
++ * Source-proven nonempty entries require complete implementations;
++ * unknown/duplicate/partial features refuse atomically.
++ * Caller owns task/generation/serialization and exact interface binding. */
++int niwc_card_reply(const void *,size_t,const struct niwc_manifest *,
++ void *,size_t,size_t *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_control.c
+@@ -0,0 +1,30 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_control.h"
++static uint32_t le32(const uint8_t *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++int niw_decode(unsigned selector,const void *input,size_t bytes,struct niw_request *out){
++ const uint8_t *p=input;struct niw_request q={0};size_t cap;
++ if(!p||!out)return -1;
++ if(selector==0&&bytes==NIW_SMALL_BYTES)cap=NIW_SMALL_PAYLOAD;
++ else if(selector==6&&bytes==NIW_LARGE_BYTES)cap=NIW_LARGE_PAYLOAD;
++ else return -1;
++ q.operation=le32(p);q.payload_bytes=le32(p+4);q.payload_offset=8;q.payload_capacity=cap;
++ if(q.operation!=NIW_GET||q.payload_bytes>cap)return -1;
++ size_t tail=8+cap;unsigned terminated=0;
++ for(unsigned i=0;i<16;i++){q.interface_name[i]=(char)p[tail+i];if(!p[tail+i])terminated=1;}
++ if(!terminated||!q.interface_name[0])return -1;
++ q.request=le32(p+tail+16);q.value=le32(p+tail+20);
++ /* Tail+24/+32 are not trusted as kernel lengths/pointers. No dereference. */
++ *out=q;return 0;
++}
++int niw_call_shape(unsigned selector,size_t input,size_t output,unsigned async_refs){
++ if(selector==0)return input==NIW_SMALL_BYTES&&!async_refs;
++ if(selector==6)return input==NIW_LARGE_BYTES&&!async_refs;
++ if(selector==1||selector==5)return !input&&output==1&&!async_refs;
++ if(selector==3||selector==4)return !input&&!output&&!async_refs;
++ if(selector==2)return !input&&!output&&async_refs==8;
++ return 0;
++}
++int niw_unbound_request(const struct niw_request *request){(void)request;return -1;}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_control.h
+@@ -0,0 +1,18 @@
++#ifndef PRIVATE_IOS_WIFI_CONTROL_CONTRACT_H
++#define PRIVATE_IOS_WIFI_CONTROL_CONTRACT_H
++#include <stddef.h>
++#include <stdint.h>
++#define NIW_SMALL_BYTES 15408u
++#define NIW_SMALL_PAYLOAD 15360u
++#define NIW_LARGE_BYTES 245808u
++#define NIW_LARGE_PAYLOAD 245760u
++#define NIW_GET UINT32_C(0xc02869c9)
++/* Exact observed carrier fields only; no private payload ABI invented. */
++struct niw_request {uint32_t operation,payload_bytes,request,value;size_t payload_offset,payload_capacity;char interface_name[16];};
++/* Pure parser; selector0/small and selector6/large. No user pointer dereference. */
++int niw_decode(unsigned,const void *,size_t,struct niw_request *);
++/* Returns only call SHAPE support, never a successful driver operation. */
++int niw_call_shape(unsigned,size_t,size_t,unsigned);
++/* Unbound scaffolding: all requests fail unavailable; no success/carrier/data. */
++int niw_unbound_request(const struct niw_request *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_cursor.c
+@@ -0,0 +1,30 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_cursor.h"
++#include "wifi_ios_scan_contract.h"
++int niwc_begin(struct niwc_cursor*c,uint64_t generation){
++ if(!c||c->phase!=NIWC_NEW||!generation)return -1;
++ c->phase=NIWC_WAITING;c->generation=generation;c->records=0;c->count=0;c->next=0;return 0;
++}
++int niwc_complete(struct niwc_cursor*c,uint64_t generation,const uint8_t*p,size_t n,unsigned count){
++ struct niws_result decoded;
++ if(!c||c->phase!=NIWC_WAITING||generation!=c->generation||count>NIWC_MAX_RECORDS||n!=(size_t)count*NIWC_RECORD_BYTES||(n&&!p))return -1;
++ for(unsigned i=0;i<count;i++)if(niws_decode_result(p+(size_t)i*NIWC_RECORD_BYTES,NIWC_RECORD_BYTES,&decoded))return -1;
++ c->records=p;c->count=count;c->phase=NIWC_READY;return 0;
++}
++int niwc_take(struct niwc_cursor*c,uint64_t generation,uint8_t*out,size_t n){
++ if(!c||c->phase!=NIWC_READY||generation!=c->generation||!out||n!=NIWC_RECORD_BYTES||c->next>c->count||c->count>NIWC_MAX_RECORDS||(c->count&&!c->records))return -1;
++ if(c->next==c->count)return 0;
++ const uint8_t*p=c->records+(size_t)c->next*NIWC_RECORD_BYTES;
++ /* A real caller retains snapshot immutability/owner serialization; parsing
++  * again bounds consumer fields but is not authentication of changed data. */
++ struct niws_result decoded;if(niws_decode_result(p,NIWC_RECORD_BYTES,&decoded))return -1;
++ for(size_t i=0;i<n;i++)out[i]=p[i];
++ c->next++;return 1;
++}
++int niwc_cancel(struct niwc_cursor*c,uint64_t generation){
++ if(!c||!generation||generation!=c->generation||c->phase==NIWC_NEW||c->phase==NIWC_CANCELLED)return -1;
++ c->phase=NIWC_CANCELLED;c->records=0;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_cursor.h
+@@ -0,0 +1,16 @@
++#ifndef PRIVATE_IOS_WIFI_CACHE_CURSOR_H
++#define PRIVATE_IOS_WIFI_CACHE_CURSOR_H
++#include <stddef.h>
++#include <stdint.h>
++#define NIWC_MAX_RECORDS 64u
++#define NIWC_RECORD_BYTES 1164u
++enum niwc_phase {NIWC_NEW,NIWC_WAITING,NIWC_READY,NIWC_CANCELLED};
++struct niwc_cursor {enum niwc_phase phase;uint64_t generation;const uint8_t *records;unsigned count,next;};
++/* Pure local state only. The real backend owner must authenticate generation,
++ * actual SCAN_DONE, immutable records and lifetime, under its gate. */
++int niwc_begin(struct niwc_cursor *,uint64_t);
++int niwc_complete(struct niwc_cursor *,uint64_t,const uint8_t *,size_t,unsigned);
++/* Returns1 copied row,0 real completed snapshot exhausted,-1 refusal. */
++int niwc_take(struct niwc_cursor *,uint64_t,uint8_t *,size_t);
++int niwc_cancel(struct niwc_cursor *,uint64_t);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_event.c
+@@ -0,0 +1,46 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_event.h"
++static uint16_t g16(const uint8_t*p){return p[0]|(uint16_t)p[1]<<8;}
++static uint32_t g32(const uint8_t*p){return g16(p)|(uint32_t)g16(p+2)<<16;}
++static int valid(const struct niwe_view*v){return v&&v->capacity>=52&&v->capacity<=1048576&&!(v->capacity&3)&&v->consumer<v->capacity&&v->producer<v->capacity&&!((v->consumer|v->producer)&3);}
++int niwe_peek(const uint8_t*p,size_t n,const struct niwe_view*v,struct niwe_record*out){
++ struct niwe_record r={0};uint32_t available,tail;
++ if(!p||!out||!valid(v)||n!=v->capacity)return -1;
++ available=(v->producer+v->capacity-v->consumer)%v->capacity;if(!available)return 0;
++ tail=v->capacity-v->consumer;r.kind=g32(p+v->consumer);
++ if(r.kind==80||tail<48){r.total=4;r.next=(v->consumer+4)%v->capacity;*out=r;return 1;}
++ if(available<48||r.kind!=87)return -1;
++ const uint8_t*h=p+v->consumer;r.primary=g16(h+24);r.secondary=g16(h+26);r.event=g32(h+28);
++ r.total=48u+r.primary+r.secondary;
++ if(r.primary>4080||r.total>=v->capacity||r.total>available||(r.total&3))return -1;
++ r.next=(v->consumer+r.total)%v->capacity;r.primary_offset=(v->consumer+48)%v->capacity;
++ r.first_bytes=v->capacity-r.primary_offset;if(r.first_bytes>r.primary)r.first_bytes=r.primary;
++ r.second_bytes=r.primary-r.first_bytes;
++ for(unsigned i=0;i<16;i++)r.interface_name[i]=h[32+i];*out=r;return 2;
++}
++int niwe_copy_primary(const uint8_t*p,size_t n,const struct niwe_view*v,const struct niwe_record*r,uint8_t*out,size_t cap){
++ struct niwe_record check;if(!r||!out||niwe_peek(p,n,v,&check)!=2||cap<check.primary)return -1;
++ /* No caller-controlled offsets: rederive and compare all semantic fields. */
++ if(r->kind!=check.kind||r->event!=check.event||r->next!=check.next||r->primary!=check.primary||r->secondary!=check.secondary||r->total!=check.total||r->primary_offset!=check.primary_offset||r->first_bytes!=check.first_bytes||r->second_bytes!=check.second_bytes)return -1;
++ for(unsigned i=0;i<16;i++)if(r->interface_name[i]!=check.interface_name[i])return -1;
++ for(unsigned i=0;i<check.first_bytes;i++)out[i]=p[check.primary_offset+i];
++ for(unsigned i=0;i<check.second_bytes;i++)out[check.first_bytes+i]=p[i];return 0;
++}
++int niwe_plan(const struct niwe_view*v,uint16_t primary,uint16_t secondary,struct niwe_space*out){
++ struct niwe_space r={0};uint32_t used,tail;if(!out||!valid(v)||primary>4080)return -1;
++ r.total=48u+primary+secondary;if(r.total&3)return -1;
++ used=(v->producer+v->capacity-v->consumer)%v->capacity;r.free_bytes=v->capacity-used-4;
++ tail=v->capacity-v->producer;r.padding=tail<48?tail:0;
++ if(r.total>r.free_bytes||r.padding>r.free_bytes-r.total)return 0;
++ r.record_offset=(v->producer+r.padding)%v->capacity;r.next=(r.record_offset+r.total)%v->capacity;*out=r;return 1;
++}
++
++static void p32(uint8_t*p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(v>>(8*i));}
++int niwe_scan_done(uint8_t*p,size_t n,const uint8_t name[16],uint32_t status){
++ if(!p||!name||n!=52)return -1;
++ for(unsigned i=0;i<52;i++)p[i]=0;p32(p,87);p[24]=4;p32(p+28,10);
++ for(unsigned i=0;i<16;i++)p[32+i]=name[i];p32(p+48,status);return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_event.h
+@@ -0,0 +1,27 @@
++#ifndef PRIVATE_NIWE_PIPE_H
++#define PRIVATE_NIWE_PIPE_H
++#include <stdint.h>
++#include <stddef.h>
++#define NIWE_HEADER 48u
++#define NIWE_MAX_PRIMARY 4080u
++struct niwe_view {uint32_t consumer,producer,capacity;};
++struct niwe_record {
++ uint32_t kind,event,next,primary_offset,first_bytes,second_bytes,total;
++ uint16_t primary,secondary;uint8_t interface_name[16];
++};
++/* Immutable copied ring+index snapshot only. 0 empty,1 pad,2 event,-1 invalid.
++ * Stricter bounded subset than consumer: full published extent required;
++ * primary<=4080, no truncated-copy compatibility claim. Atomic output. */
++int niwe_peek(const uint8_t*,size_t,const struct niwe_view*,struct niwe_record*);
++/* Copies primary data from the same immutable snapshot. Does not advance/CAS. */
++int niwe_copy_primary(const uint8_t*,size_t,const struct niwe_view*,const struct niwe_record*,uint8_t*,size_t);
++struct niwe_space {uint32_t padding,record_offset,next,total,free_bytes;};
++/* Proposed private single-producer safety policy, NOT recovered Apple producer:
++ * reserve4-byte empty/full distinction; pad with kind80 words when header
++ * cannot fit contiguously. No actual shared writes/publication/notification. */
++int niwe_plan(const struct niwe_view*,uint16_t,uint16_t,struct niwe_space*);
++/* Offline52-byte consumer-compatible event10 formatter. Uninterpreted header
++ * bytes4..23 zeroed; no monotonic ID/Apple producer identity is claimed.
++ * Native must authenticate actual backend completion before any publication. */
++int niwe_scan_done(uint8_t*,size_t,const uint8_t[16],uint32_t);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_lifecycle.c
+@@ -0,0 +1,33 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_lifecycle.h"
++int nils_open(struct nils_state*s,uint64_t generation){
++ if(!s||s->open||s->inflight||!generation||generation<=s->generation)return -1;
++ s->generation=generation;s->open=1;s->cache=0;return 0;
++}
++int nils_begin(struct nils_state*s,struct nils_ticket*t,struct niwa_snapshot*out){
++ if(!s||!t||!out||out->entered||!s->open||s->inflight||s->serial==UINT64_MAX)return -1;
++ s->cache=0;s->pending=out;++s->serial;s->inflight=1;t->generation=s->generation;t->serial=s->serial;t->output=out;return 0;
++}
++int nils_prepare(const struct nils_ticket*t,const struct nsb_scan*scan,uint64_t captured,uint64_t reference,
++ const struct niwp_rate_map*m,size_t n,struct niwa_snapshot*out){
++ if(!t||!t->generation||!t->serial||!scan||!out||out!=t->output||out->entered)return -1;
++ if(scan->done&&!scan->partial&&!scan->timed_out&&!scan->dropped)
++  return niwaa_snapshot_prepare(scan,t->generation,captured,reference,m,n,out);
++ return niwa_snapshot_prepare(scan,t->generation,0,0,m,n,out);
++}
++int nils_finish(struct nils_state*s,const struct nils_ticket*t,struct niwa_snapshot*out){
++ if(!s||!t||!s->inflight||t->serial!=s->serial||t->generation!=s->generation||t->output!=s->pending||(out&&out!=s->pending))return -1;
++ s->inflight=0;s->pending=0;
++ if(!s->open)return 2;
++ if(!out||!out->entered||out->generation!=t->generation)return -1;
++ if(out->status!=NIWA_COMPLETE)return 1;
++ s->cache=out;return 0;
++}
++int nils_take(struct nils_state*s,uint64_t generation,uint8_t*out,size_t bytes){
++ if(!s||!s->open||s->inflight||!s->cache||s->generation!=generation)return -1;
++ return niwc_take(&s->cache->cursor,generation,out,bytes);
++}
++void nils_close(struct nils_state*s){if(s){s->open=0;s->cache=0;}}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_lifecycle.h
+@@ -0,0 +1,21 @@
++#ifndef PRIVATE_LIFECYCLE_SCAN_H
++#define PRIVATE_LIFECYCLE_SCAN_H
++#include "wifi_ios_age.h"
++/* All state operations require the owning lifecycle gate. Preparation alone
++ * runs outside that gate on an immutable retained scan and unique output. */
++struct nils_state {uint64_t generation,serial;unsigned open,inflight;struct niwa_snapshot *cache,*pending;};
++struct nils_ticket {uint64_t generation,serial;struct niwa_snapshot *output;};
++int nils_open(struct nils_state *,uint64_t);
++int nils_begin(struct nils_state *,struct nils_ticket *,struct niwa_snapshot *);
++int nils_prepare(const struct nils_ticket *,const struct nsb_scan *,uint64_t,uint64_t,
++ const struct niwp_rate_map *,size_t,struct niwa_snapshot *);
++/* Returns0 installed complete (including empty);1 truthful noncomplete;
++ * 2 canceled generation, -1 invalid call. A matched ticket is consumed once.
++ * Caller retains/frees output only after finish; cache never copied/relocated. */
++int nils_finish(struct nils_state *,const struct nils_ticket *,struct niwa_snapshot *);
++/* Close prevents admission and detaches cache. A pending preparation still owns
++ * its buffers until matching finish returns2; close must not destroy state. */
++/* Gate-held GET:1 row,0 proven complete EOF,-1 unavailable/stale. */
++int nils_take(struct nils_state *,uint64_t,uint8_t *,size_t);
++void nils_close(struct nils_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_mapping.c
+@@ -0,0 +1,26 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_mapping.h"
++int niwp_channel_to_mtk(const struct niwp_channel_map*m,size_t n,uint32_t c,uint32_t f,uint8_t*b,uint8_t*k){
++ size_t found=n;if(!m||!b||!k||!n||n>400)return -1;
++ for(size_t i=0;i<n;i++)if(m[i].ios_channel==c&&m[i].ios_flags==f){if(found!=n)return -1;found=i;}
++ if(found==n||!m[found].mtk_band||!m[found].mtk_channel)return -1;
++ *b=m[found].mtk_band;*k=m[found].mtk_channel;return 0;
++}
++int niwp_channel_from_mtk(const struct niwp_channel_map*m,size_t n,uint8_t b,uint8_t k,uint32_t*c,uint32_t*f){
++ size_t found=n;if(!m||!c||!f||!n||n>400)return -1;
++ for(size_t i=0;i<n;i++)if(m[i].mtk_band==b&&m[i].mtk_channel==k){if(found!=n)return -1;found=i;}
++ if(found==n)return -1;*c=m[found].ios_channel;*f=m[found].ios_flags;return 0;
++}
++int niwp_rates(const struct niwp_rate_map*m,size_t n,const uint8_t*p,size_t z,uint32_t*out,size_t capacity,size_t*count){
++ uint32_t v[15];size_t used=0;if(!m||!n||n>128||(!p&&z)||!out||!count||z>255)return -1;
++ for(size_t i=0;i<z;i++){size_t hit=n;uint8_t r=p[i]&127;if(!r)return -1;
++  for(size_t j=0;j<n;j++)if(m[j].ie_rate==r){if(hit!=n)return -1;hit=j;}
++  if(hit==n)return -1;size_t j;for(j=0;j<used;j++)if(v[j]==m[hit].ios_rate)break;
++  if(j==used){if(used==15)return -1;v[used++]=m[hit].ios_rate;}
++ }
++ if(used>capacity)return -1;
++ for(size_t i=0;i<used;i++)out[i]=v[i];*count=used;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_mapping.h
+@@ -0,0 +1,15 @@
++#ifndef PRIVATE_NIW_SCAN_MAPPING_H
++#define PRIVATE_NIW_SCAN_MAPPING_H
++#include <stdint.h>
++#include <stddef.h>
++struct niwp_channel_map {uint32_t ios_channel,ios_flags;uint8_t mtk_band,mtk_channel;};
++struct niwp_rate_map {uint8_t ie_rate;uint32_t ios_rate;};
++/* No default table: native must provide separately source-proven mappings.
++ * Exact flag equality prevents dropping unsupported width/band attributes.
++ * Pure mapping never establishes regulatory/worker ownership. */
++int niwp_channel_to_mtk(const struct niwp_channel_map *,size_t,uint32_t,uint32_t,uint8_t*,uint8_t*);
++int niwp_channel_from_mtk(const struct niwp_channel_map *,size_t,uint8_t,uint8_t,uint32_t*,uint32_t*);
++/* Input IE rate has its basic-rate bit removed only after matching. Duplicate
++ * values collapse; unknown rates refuse atomically rather than rounding5.5. */
++int niwp_rates(const struct niwp_rate_map *,size_t,const uint8_t*,size_t,uint32_t*,size_t,size_t*);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_policy.c
+@@ -0,0 +1,32 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_policy.h"
++#include "wifi_ios_rates.h"
++static uint32_t u32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++int niwi_scan_envelope(unsigned selector,const void*v,size_t n,const char name[16]){
++ const uint8_t*p=v;size_t cap;if(!p||!name)return -1;
++ if(selector==0&&n==15408)cap=15360;else if(selector==6&&n==245808)cap=245760;else return -1;
++ if(u32(p)!=0x802869c8||u32(p+4)!=5456||u32(p+8+cap+16)!=10||u32(p+8+cap+20))return -1;
++ for(unsigned i=0;i<16;i++)if(p[8+cap+i]!=(uint8_t)name[i])return -1;return 0;
++}
++int niwi_set_shape(unsigned selector,const void*v,size_t n,const char name[16],uint32_t*out){
++ const uint8_t*p=v;size_t cap;if(!p||!name||!out)return -1;
++ if(selector==0&&n==15408)cap=15360;else if(selector==6&&n==245808)cap=245760;else return -1;
++ if(u32(p)!=0x802869c8||u32(p+4)>cap)return -1;
++ for(unsigned i=0;i<16;i++)if(p[8+cap+i]!=(uint8_t)name[i])return -1;
++ *out=u32(p+8+cap+16);return 0;
++}
++int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct nss_request*out){
++ if(!p||n!=5456||!info||!info->count||info->count>39||!out)return -1;
++ /* Precisely source-built null-dictionary discovery request. This driver
++  * deliberately serves that unrestricted request with passive receive only;
++  * raw mode1 is named default, never claimed recovered passive enum. */
++ for(unsigned i=0;i<5456;i++){
++  uint8_t expected=i==0||i==52||i==56?1:(i==4?3:0);
++  if(p[i]!=expected)return -1;
++ }
++ *out=(struct nss_request){0};return 0;
++}
++const struct niwp_rate_map*niwi_rate_map(size_t*n){return niwr_production_map(n);}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_policy.h
+@@ -0,0 +1,9 @@
++#ifndef WIFI_IOS_POLICY_H
++#define WIFI_IOS_POLICY_H
++#include "wifi_scan_service.h"
++#include "wifi_ios_mapping.h"
++int niwi_set_shape(unsigned,const void*,size_t,const char[16],uint32_t*);
++int niwi_scan_envelope(unsigned,const void*,size_t,const char[16]);
++int niwi_scan_admit(const uint8_t*,size_t,const struct nss_info*,struct nss_request*);
++const struct niwp_rate_map*niwi_rate_map(size_t*);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_rates.c
+@@ -0,0 +1,19 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_rates.h"
++/* IEEE supported-rate selectors (500kbps, basic bit excluded) mapped to
++ * codes the selected Apple consumer recognizes. IE11->code5 is this
++ * port's explicit compatibility policy; not a recovered vendor writer. */
++static const struct niwp_rate_map legacy[12]={
++ {2,1},{4,2},{11,5},{22,11},
++ {12,6},{18,9},{24,12},{36,18},{48,24},{72,36},{96,48},{108,54}
++};
++const struct niwp_rate_map *niwr_production_map(size_t *count){
++ if(!count)return (const struct niwp_rate_map*)0;
++ *count=12;return legacy;
++}
++int niwr_rates(const uint8_t*p,size_t bytes,uint32_t*out,size_t capacity,size_t*count){
++ return niwp_rates(legacy,12,p,bytes,out,capacity,count);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_rates.h
+@@ -0,0 +1,10 @@
++#ifndef NIW_RATE_COMPAT_H
++#define NIW_RATE_COMPAT_H
++#include "wifi_ios_mapping.h"
++/* Driver-selected compatibility codes from the actual same-IPSW consumer.
++ * These are categorical ABI codes, not measured physical Mbps or MCS rates.
++ * Original management IEs remain unchanged in the scan result. */
++const struct niwp_rate_map *niwr_production_map(size_t *count);
++int niwr_rates(const uint8_t *ie_rates,size_t bytes,uint32_t *output,
++    size_t capacity,size_t *count);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_scan_contract.c
+@@ -0,0 +1,61 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_scan_contract.h"
++static uint16_t g16(const uint8_t*p){return p[0]|(uint16_t)p[1]<<8;}
++static uint32_t g32(const uint8_t*p){return g16(p)|(uint32_t)g16(p+2)<<16;}
++static void p16(uint8_t*p,uint16_t x){p[0]=(uint8_t)x;p[1]=(uint8_t)(x>>8);}
++static void p32(uint8_t*p,uint32_t x){p16(p,(uint16_t)x);p16(p+2,(uint16_t)(x>>16));}
++static void copy(void*d,const void*s,size_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
++static int ies(const uint8_t*p,size_t n){size_t i=0;while(i<n){if(n-i<2||p[i+1]>n-i-2)return -1;i+=2+p[i+1];}return 0;}
++static int valid(const struct niws_result*r){return r&&r->rate_count<=NIWS_MAX_RATES&&r->ssid_bytes<=32&&r->ie_bytes<=NIWS_MAX_IE&&!ies(r->ie,r->ie_bytes);}
++int niws_decode_result(const uint8_t*p,size_t n,struct niws_result*out){
++ struct niws_result r={0};if(!p||!out||n!=NIWS_SCAN_RESULT_BYTES||g32(p)!=1)return -1;
++ r.channel=g32(p+8);r.channel_flags=g32(p+12);r.noise_valid=g16(p+16);
++ r.noise=(int16_t)g16(p+18);r.snr=(int16_t)g16(p+20);r.rssi=(int16_t)g16(p+22);
++ r.beacon_interval=g16(p+24);r.capabilities=g16(p+26);copy(r.bssid,p+28,6);r.rate_count=p[34];r.ssid_bytes=p[96];
++ if(r.rate_count>NIWS_MAX_RATES||r.ssid_bytes>32)return -1;
++ for(unsigned i=0;i<r.rate_count;i++)r.rates[i]=g32(p+36+4*i);
++ copy(r.ssid,p+97,r.ssid_bytes);r.age=g32(p+132);r.flags=p[136];r.ie_bytes=g16(p+138);
++ if(r.ie_bytes>NIWS_MAX_IE)return -1;
++ copy(r.ie,p+140,r.ie_bytes);
++ if(!valid(&r))return -1;
++ *out=r;return 0;
++}
++int niws_encode_result(const struct niws_result*r,uint8_t*p,size_t n){
++ if(!p||n!=NIWS_SCAN_RESULT_BYTES||!valid(r))return -1;
++ /* Caller must provide disjoint output; pure helper receives no backend. */
++ for(size_t i=0;i<n;i++)p[i]=0;
++ p32(p,1);p32(p+8,r->channel);p32(p+12,r->channel_flags);p16(p+16,r->noise_valid);p16(p+18,(uint16_t)r->noise);p16(p+20,(uint16_t)r->snr);p16(p+22,(uint16_t)r->rssi);p16(p+24,r->beacon_interval);p16(p+26,r->capabilities);copy(p+28,r->bssid,6);p[34]=r->rate_count;
++ for(unsigned i=0;i<r->rate_count;i++)p32(p+36+4*i,r->rates[i]);
++ p[96]=r->ssid_bytes;copy(p+97,r->ssid,r->ssid_bytes);p32(p+132,r->age);p[136]=r->flags;p16(p+138,r->ie_bytes);copy(p+140,r->ie,r->ie_bytes);return 0;
++}
++int niws_scan_request_header(const uint8_t*p,size_t n,uint32_t*out){if(!p||!out||n!=NIWS_SCAN_REQUEST_BYTES||g32(p)!=1)return -1;
++ *out=g32(p+4);return 0;}
++int niws_decode_scan_done(const uint8_t*p,size_t n,const char name[16],struct niws_scan_done*out){
++ struct niws_scan_done r;if(!p||!name||!out||n!=44||g32(p)!=44||g32(p+20)!=10)return -1;
++ /* Exact interface comparison, no unbounded string read. Header vendor/class/
++  * subclass are captured below only after caller stream validation elsewhere. */
++ for(unsigned i=0;i<16;i++)if(p[24+i]!=(uint8_t)name[i])return -1;
++ r.id=g32(p+16);r.status=g32(p+40);*out=r;return 0;
++}
++
++int niws_decode_pipe_scan_done(const uint8_t*p,size_t n,const char name[16],struct niws_scan_done*out){
++ struct niws_scan_done r={0};
++ if(!p||!name||!out||n!=52||g32(p)!=87||g16(p+24)!=4||g16(p+26)||g32(p+28)!=10)return -1;
++ for(unsigned i=0;i<16;i++)if(p[32+i]!=(uint8_t)name[i])return -1;
++ /* Pipe header does not provide the kernel-event monotonic ID interpreted
++  * by our other decoder; zero here is metadata absence, not a real event ID. */
++ r.status=g32(p+48);*out=r;return 0;
++}
++
++int niws_scan_envelope(unsigned selector,const uint8_t*p,size_t n,const char name[16],uint32_t*out){
++ size_t cap;if(!p||!name||!out)return -1;
++ if(selector==0&&n==15408)cap=15360;
++ else if(selector==6&&n==245808)cap=245760;
++ else return -1;
++ if(g32(p)!=UINT32_C(0x802869c8)||g32(p+4)!=NIWS_SCAN_REQUEST_BYTES||g32(p+8+cap+16)!=10)return -1;
++ for(unsigned i=0;i<16;i++)if(p[8+cap+i]!=(uint8_t)name[i])return -1;
++ return niws_scan_request_header(p+8,NIWS_SCAN_REQUEST_BYTES,out);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_scan_contract.h
+@@ -0,0 +1,33 @@
++#ifndef PRIVATE_IOS_WIFI_SCAN_CONTRACT_H
++#define PRIVATE_IOS_WIFI_SCAN_CONTRACT_H
++#include <stddef.h>
++#include <stdint.h>
++#define NIWS_SCAN_REQUEST_BYTES 5456u
++#define NIWS_SCAN_RESULT_BYTES 1164u
++#define NIWS_MAX_IE 1024u
++#define NIWS_MAX_RATES 15u
++struct niws_result {
++ uint32_t channel,channel_flags,age;
++ uint16_t noise_valid;int16_t noise,snr,rssi;
++ uint16_t beacon_interval,capabilities;
++ uint8_t bssid[6],rate_count,ssid_bytes,ssid[32],flags;
++ uint32_t rates[NIWS_MAX_RATES];
++ uint16_t ie_bytes;uint8_t ie[NIWS_MAX_IE];
++};
++/* Exact selected framework version1 carrier, pure bytes only. Caller supplies
++ * actual provenance and explicit iOS channel flags; no RF/readiness authority. */
++int niws_decode_result(const uint8_t *,size_t,struct niws_result *);
++int niws_encode_result(const struct niws_result *,uint8_t *,size_t);
++/* Request10 subset: proves extent/version and captures scan_type only. Other
++ * fields remain opaque; this MUST NOT authorize a backend scan. */
++int niws_scan_request_header(const uint8_t *,size_t,uint32_t *);
++struct niws_scan_done {uint32_t id,status;};
++/* Owned copied kernel-event form only: header24 + ifname16 + status4.
++ * Caller still must establish event stream ownership/session and cancellation. */
++int niws_decode_scan_done(const uint8_t *,size_t,const char[16],struct niws_scan_done *);
++/* Exact copied pipe record87: fixed header48, primary status4, secondary0.
++ * This does not read or publish a shared ring or synthesize a notification. */
++int niws_decode_pipe_scan_done(const uint8_t *,size_t,const char[16],struct niws_scan_done *);
++/* Exact SET0x802869c8/request10 envelope; metadata classification only. */
++int niws_scan_envelope(unsigned,const uint8_t *,size_t,const char[16],uint32_t *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_snapshot.c
+@@ -0,0 +1,45 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_snapshot.h"
++#include "wifi_ios_bss.h"
++static int row(const struct nsb_record*s,uint32_t age,const struct niwp_rate_map*m,size_t n,struct niws_result*out){
++ struct niwb_bss b;struct niws_result r={0};size_t rates=0;
++ if(niwb_bss_metadata(s,&b)||!b.rssi_valid||b.rate_count>NIWS_MAX_RATES)return -1;
++ if(b.rate_count&&niwp_rates(m,n,b.ie_rates,b.rate_count,r.rates,NIWS_MAX_RATES,&rates))return -1;
++ r.channel=b.channel;r.channel_flags=b.band==1?8u:16u;r.age=age;r.rssi=b.rssi_dbm;
++ r.beacon_interval=b.interval;r.capabilities=b.capabilities;r.rate_count=(uint8_t)rates;
++ r.ssid_bytes=b.ssid_bytes;r.ie_bytes=b.ie_bytes;
++ for(unsigned i=0;i<6;i++)r.bssid[i]=b.bssid[i];
++ for(unsigned i=0;i<b.ssid_bytes;i++)r.ssid[i]=b.ssid[i];
++ for(unsigned i=0;i<b.ie_bytes;i++)r.ie[i]=b.ies[i];
++ *out=r;return 0;
++}
++int niwa_snapshot_prepare(const struct nsb_scan*s,uint64_t generation,const uint32_t*age,size_t ages,
++ const struct niwp_rate_map*m,size_t n,struct niwa_snapshot*out){
++ if(!s||!out||out->entered||!generation||!s->entered||s->count>NSB_RESULTS||s->count>s->frames||
++    s->last<s->started||s->deadline<=s->started||(s->active&&s->done)||(s->timed_out&&!s->partial))return -1;
++ enum niwa_status state=NIWA_PENDING;
++ if(s->timed_out)state=NIWA_TIMEOUT;
++ else if(s->partial||s->dropped)state=NIWA_PARTIAL;
++ else if(s->done){if(s->completion.sequence!=s->sequence||s->completion.state!=7)return -1;state=NIWA_COMPLETE;}
++ if(state==NIWA_COMPLETE){
++  if(ages!=s->count||(ages&&!age))return -1;
++  for(unsigned i=0;i<s->count;i++){
++   struct niws_result r;uint8_t encoded[NIWS_SCAN_RESULT_BYTES];
++   if(row(&s->records[i],age[i],m,n,&r)||niws_encode_result(&r,encoded,sizeof encoded))return -1;
++  }
++ }
++ out->entered=1;out->status=state;out->generation=generation;out->backend_count=s->count;out->dropped=s->dropped;
++ out->completion_state=s->completion.state;out->completed_channels=s->completion.completed_channels;
++ if(state!=NIWA_COMPLETE)return 1; /* never mark partial/timeout/pending cache READY */
++ out->count=s->count;
++ for(unsigned i=0;i<s->count;i++){
++  struct niws_result r;/* Immutable input validated above; no backend callbacks. */
++  if(row(&s->records[i],age[i],m,n,&r)||niws_encode_result(&r,out->rows[i],NIWS_SCAN_RESULT_BYTES))return -1;
++ }
++ if(niwc_begin(&out->cursor,generation)||niwc_complete(&out->cursor,generation,&out->rows[0][0],
++    (size_t)out->count*NIWS_SCAN_RESULT_BYTES,out->count))return -1;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_snapshot.h
+@@ -0,0 +1,20 @@
++#ifndef PRIVATE_NIWA_SNAPSHOT_H
++#define PRIVATE_NIWA_SNAPSHOT_H
++#include "wifi_scan_bss.h"
++#include "wifi_ios_scan_contract.h"
++#include "wifi_ios_cursor.h"
++#include "wifi_ios_mapping.h"
++enum niwa_status {NIWA_PENDING=1,NIWA_PARTIAL,NIWA_TIMEOUT,NIWA_COMPLETE};
++struct niwa_snapshot {enum niwa_status status;unsigned entered,count,backend_count,dropped;
++ uint8_t completion_state,completed_channels;uint64_t generation;
++ struct niwc_cursor cursor;uint8_t rows[NSB_RESULTS][NIWS_SCAN_RESULT_BYTES];};
++/* Copied immutable scan input + caller-owned zeroed output retained through
++ * cursor lifetime. Caller serializes actual backend owner/generation and must
++ * not relocate/copy this object once prepared. No runtime authority granted.
++ * age_raw has one separately verified Apple age-unit value per actual record;
++ * no unit conversion guessed. rate map must be separately proven, not supplied
++ * as a permission boolean. Unknown RSSI/rates/truncated IEs refuse encoding.
++ * Channel flags contain only proven band; width/DFS stay unspecified. */
++int niwa_snapshot_prepare(const struct nsb_scan *,uint64_t,
++ const uint32_t *,size_t,const struct niwp_rate_map *,size_t,struct niwa_snapshot *);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_vcn33.c
 @@ -0,0 +1,45 @@
 +#include <arm64/sweet_early.h>
@@ -11983,7 +12759,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_transport.c
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,236 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_normal_transport.h"
@@ -12016,6 +12792,20 @@
 +    u16(s->wire+32)!=used-32||s->wire[36]!=e->cid||s->wire[37]!=0xa0||s->wire[38]!=e->set_query)return -1;
 + s->wire[39]=(uint8_t)(s->first_sequence+k);return 0;
 +}
++static int seal(struct nct_session*s,const struct nct_recipe*r,uint32_t pse){
++ struct nwt_state*t=&s->init->transport;
++ s->count=r->count;s->build=r->build;s->build_context=r->context;s->batch_us=r->batch_us;s->service_us=r->service_us;
++ s->first_tx=t->tx_index;s->first_sequence=t->next_sequence;s->base_completed=t->completed;
++ s->pse_total=pse;s->basic_spent=1;s->capacity=s->pse_total-1;s->available=s->capacity;
++ for(unsigned k=0;k<s->count;k++){
++  s->entry[k]=r->entry[k];
++  if(!s->entry[k].cid||s->entry[k].set_query!=1||build(s,k))return refuse(s,105);
++  s->fingerprint[k]=fingerprint(s->wire,s->entry[k].bytes);
++  s->record[k]=(struct nct_record){.cid=s->entry[k].cid,.sequence=(uint8_t)(s->first_sequence+k),.bytes=s->entry[k].bytes,
++   .from=(s->first_tx+k)%1024,.to=(s->first_tx+k+1)%1024,.didx=(s->first_tx+k)%1024};
++ }
++ s->prepared=1;s->phase=NCT_PREPARED;return 0;
++}
 +int nct_prepare(const struct nbc_state*b,const struct nct_recipe*r,struct nct_session*s){
 + struct ncp_result actual={0};
 + if(!s||s->attempted)return -1;
@@ -12030,22 +12820,35 @@
 +    actual.resources[1]<=1)return refuse(s,103);
 + if(!r||!r->entry||!r->build||!r->count||r->count>NCT_COMMAND_LIMIT||
 +    !r->batch_us||r->batch_us>NCT_BATCH_MAX_US||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us)return refuse(s,104);
-+ s->count=r->count;s->build=r->build;s->build_context=r->context;s->batch_us=r->batch_us;s->service_us=r->service_us;
-+ s->first_tx=t->tx_index;s->first_sequence=t->next_sequence;s->base_completed=t->completed;
-+ s->pse_total=actual.resources[1];s->basic_spent=1;s->capacity=s->pse_total-1;s->available=s->capacity;
-+ for(unsigned k=0;k<s->count;k++){
-+  s->entry[k]=r->entry[k];
-+  if(!s->entry[k].cid||s->entry[k].set_query!=1||build(s,k))return refuse(s,105);
-+  s->fingerprint[k]=fingerprint(s->wire,s->entry[k].bytes);
-+  s->record[k]=(struct nct_record){.cid=s->entry[k].cid,.sequence=(uint8_t)(s->first_sequence+k),.bytes=s->entry[k].bytes,
-+   .from=(s->first_tx+k)%1024,.to=(s->first_tx+k+1)%1024,.didx=(s->first_tx+k)%1024};
-+ }
-+ s->prepared=1;s->phase=NCT_PREPARED;return 0;
++ return seal(s,r,actual.resources[1]);
++}
++
++static int terminal(const struct nct_session*p){
++ if(!p||!p->attempted||!p->prepared||!p->entered||p->phase!=NCT_DONE||p->halt||p->error||p->refusal||!p->count||p->count>NCT_COMMAND_LIMIT||p->cursor!=p->count||p->completed!=p->count||p->base_completed<5||p->base_completed>UINT32_MAX-p->count||p->reserved||p->available!=p->capacity||p->acquired!=p->count||p->released!=p->count)return 0;
++ for(unsigned k=0;k<p->count;k++)if(!p->record[k].published||!p->record[k].credit_released||!p->record[k].tx_done||p->record[k].cid!=p->entry[k].cid||p->record[k].bytes!=p->entry[k].bytes||p->record[k].sequence!=(uint8_t)(p->first_sequence+k)||p->record[k].from!=(p->first_tx+k)%1024||p->record[k].to!=(p->first_tx+k+1)%1024)return 0;
++ return 1;
++}
++int nct_done_receipt(const struct nct_session*p){return terminal(p);}
++static int anchor(const struct nct_session*s){
++ if(!s->continuation)return !s->previous&&s->base_completed==5;
++ const struct nct_session*p=s->previous;
++ return s->continuation==1&&p!=s&&terminal(p)&&s->count==1&&s->entry[0].cid==3&&s->entry[0].bytes==1252&&s->entry[0].set_query==1&&
++ p->basic==s->basic&&p->cap==s->cap&&p->init==s->init&&p->firmware==s->firmware&&
++ s->base_completed==p->base_completed+p->count&&s->first_tx==(p->first_tx+p->count)%1024&&s->first_sequence==(uint8_t)(p->first_sequence+p->count)&&s->pse_total==p->pse_total;
++}
++int nct_continue_prepare(const struct nbc_state*b,const struct nct_session*p,const struct nct_recipe*r,struct nct_session*s){
++ if(!s||s->attempted)return -1;s->attempted=1;s->basic=b;
++ if(basic_receipt(b)||p==s||!terminal(p)||p->basic!=b||p->cap!=b->cap||p->init!=b->init||p->firmware!=b->firmware)return refuse(s,110);
++ s->cap=b->cap;s->init=b->init;s->firmware=b->firmware;
++ struct nwt_state*t=&s->init->transport;
++ if(p->base_completed+p->count==UINT32_MAX||t->completed!=p->base_completed+p->count||t->tx_index!=(p->first_tx+p->count)%1024||t->next_sequence!=(uint8_t)(p->first_sequence+p->count)||t->submit_attempted||t->tx_done||t->rx_done||t->rx_index>=16)return refuse(s,111);
++ if(!r||!r->entry||!r->build||r->count!=1||r->entry[0].cid!=3||r->entry[0].bytes!=1252||r->entry[0].set_query!=1||!r->batch_us||r->batch_us>NCT_BATCH_MAX_US||!r->service_us||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us||p->pse_total!=b->plan.pse_cmd||p->capacity!=p->pse_total-1)return refuse(s,112);
++ s->continuation=1;s->previous=p;return seal(s,r,p->pse_total);
 +}
 +int nct_lease_window(const struct nct_session*s,const struct nbc_state*b,const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
 + if(!s||!s->attempted||!s->prepared||!s->entered||s->halt||s->error||s->refusal||
 +    s->basic!=b||s->cap!=c||s->init!=i||s->firmware!=f||basic_receipt(b)||
-+    !s->count||s->count>NCT_COMMAND_LIMIT||s->cursor>s->count||s->completed!=s->cursor||s->base_completed!=5||
++    !s->count||s->count>NCT_COMMAND_LIMIT||s->cursor>s->count||s->completed!=s->cursor||!anchor(s)||
 +    s->pse_total!=b->plan.pse_cmd||s->basic_spent!=1||s->capacity!=s->pse_total-1||
 +    s->available+s->reserved!=s->capacity||s->reserved>1||s->released>s->acquired||
 +    s->acquired-s->released!=s->reserved||i->transport.completed!=s->base_completed+s->cursor||
@@ -12055,6 +12858,7 @@
 + unsigned in_flight=s->phase==NCT_SUBMITTED;
 + if(in_flight&&s->cursor>=s->count)return 0;
 + if(s->acquired!=s->cursor+in_flight||s->released!=s->cursor+(in_flight&&s->record[s->cursor].published))return 0;
++ if(s->phase==NCT_DRAIN)return s->continuation==1&&!s->cursor&&!s->reserved&&!i->transport.submit_attempted;
 + if(s->phase==NCT_SERVICE)return s->cursor==s->count&&!s->reserved&&!i->transport.submit_attempted;
 + if((s->phase!=NCT_COMMAND&&s->phase!=NCT_WRITING&&s->phase!=NCT_SUBMITTED)||s->cursor>=s->count)return 0;
 + const struct nct_record*q=&s->record[s->cursor];const struct nct_entry*e=&s->entry[s->cursor];
@@ -12104,8 +12908,8 @@
 + s->pump_calls++;int r=h->pump(h->pump_context,&nct_checked_io,a,budget,&used);
 + if(s->halt)return -1;
 + if(before(a))return -1;
-+ if(r<0||used>budget)return fail(s,31);
-+ s->events+=used;if(s->events==NCT_EVENT_LIMIT)s->event_limit_reached=1;if(r==1)s->scan_complete=1;return 0;
++ if(r<0||r>2||(r==2&&s->phase!=NCT_DRAIN)||used>budget)return fail(s,31);
++ s->events+=used;if(s->events==NCT_EVENT_LIMIT)s->event_limit_reached=1;if(r==1)s->scan_complete=1;if(r==2)s->drain_quiescent=1;return 0;
 +}
 +static int wait(const struct nct_hooks*h,struct nct_access*a){if(before(a))return -1;
 + if(h&&h->sleep){if(h->sleep(h->sleep_context,1000))return fail(a->session,9);return before(a);}
@@ -12123,6 +12927,15 @@
 + s->callbacks++;if(o->now_us(context,&s->started))return fail(s,2);
 + if(s->started>UINT64_MAX-s->batch_us)return fail(s,3);
 + s->last=s->started;s->deadline=s->started+s->batch_us;
++ if(s->continuation){
++  s->phase=NCT_DRAIN;s->command_deadline=s->deadline;
++  /* Polling derivative: drain preexisting RX before the new scan publication,
++   * using preserved cursors. Bounded256passes/4096frames, not a radio reset. */
++  for(unsigned pass=0;pass<256;pass++){if(coherent(a)||pump(h,a))return -1;if(s->drain_quiescent||s->event_limit_reached)break;if(pass!=255&&wait(h,a))return -1;}
++  if(!s->drain_quiescent||s->event_limit_reached){s->drain_refused=1;return 1;}
++  s->phase=NCT_COMMAND;
++ }
++
 + struct nwt_state*t=&s->init->transport;
 + while(s->cursor<s->count){
 +  struct nct_record*q=&s->record[s->cursor];
@@ -12185,7 +12998,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_transport.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,55 @@
 +#ifndef NORD2_NORMAL_TRANSPORT_H
 +#define NORD2_NORMAL_TRANSPORT_H
 +#include "wifi_basic_config.h"
@@ -12204,7 +13017,7 @@
 + int (*build)(void *,unsigned,uint8_t *,size_t,size_t *);void *context;
 + uint64_t batch_us,service_us;
 +};
-+enum nct_phase {NCT_NEW,NCT_PREPARED,NCT_COMMAND,NCT_WRITING,NCT_SUBMITTED,NCT_BETWEEN,NCT_SERVICE,NCT_DONE,NCT_HALTED};
++enum nct_phase {NCT_NEW,NCT_PREPARED,NCT_COMMAND,NCT_WRITING,NCT_SUBMITTED,NCT_BETWEEN,NCT_SERVICE,NCT_DONE,NCT_HALTED,NCT_DRAIN};
 +struct nct_session;
 +struct nct_access {struct nct_session *session;const struct ncd_io *hardware;void *context;};
 +struct nct_record {uint8_t cid,sequence;uint16_t bytes;unsigned from,to,didx,polls,observed;
@@ -12219,11 +13032,15 @@
 + struct nct_entry entry[NCT_COMMAND_LIMIT];uint64_t fingerprint[NCT_COMMAND_LIMIT];
 + struct nct_record record[NCT_COMMAND_LIMIT];
 + int (*build)(void *,unsigned,uint8_t *,size_t,size_t *);void *build_context;
++ unsigned drain_quiescent,drain_refused;
++ unsigned continuation;const struct nct_session *previous;
 + struct nct_access access;uint8_t wire[NCT_WIRE_LIMIT],descriptor[16];
 +};
 +/* Pure one-use admission/seal. Return1 clean prerequisite refusal, -1 malformed
 + * recipe/reuse,0 prepared. Plain copies cannot grant native authority. */
 +int nct_prepare(const struct nbc_state *,const struct nct_recipe *,struct nct_session *);
++int nct_done_receipt(const struct nct_session *);
++int nct_continue_prepare(const struct nbc_state *,const struct nct_session *,const struct nct_recipe *,struct nct_session *);
 +int nct_lease_window(const struct nct_session *,const struct nbc_state *,const struct ncd_state *,const struct nwi_state *,const struct nfp_native *);
 +/* Checked IO is usable only via exact session.access while actual lease active.
 + * Root's RX parser can consume it with the unchanged ncd_io interface. */
@@ -12239,7 +13056,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_rx.c
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,167 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_normal_rx.h"
@@ -12252,13 +13069,13 @@
 +static int source(const struct ncr_state*s){
 + if(!s||!s->prepared||!s->init||!s->session||s->halt||s->init->halt||s->init->transport.halt||
 +    s->session->init!=s->init||s->session->halt||s->scan_command>=s->session->count)return 0;
-+ for(unsigned k=0;k<NCR_QUEUES;k++)if(!same_ring(&s->queue[k].ring,&s->init->rings[k+4])||s->queue[k].next>=s->queue[k].ring.count)return 0;
++ for(unsigned k=0;k<NCR_QUEUES;k++)if(!same_ring(&s->queue[k].ring,&s->init->rings[k+4])||s->queue[k].segmented>1||s->queue[k].next>=s->queue[k].ring.count)return 0;
 + return s->queue[1].next==s->init->transport.rx_index;
 +}
-+int ncr_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout){
++static int prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout,unsigned completed){
 + static const uint32_t base[5]={0x18024500,0x18025500,0x18024510,0x18024520,0x18024530};
 + static const unsigned count[5]={1024,16,1024,16,16};
-+ if(!s||s->prepared||s->entered||!i||!t||!i->initialized||i->halt||i->transport.halt||i->transport.completed!=5||
++ if(!s||s->prepared||s->entered||!i||!t||!i->initialized||i->halt||i->transport.halt||i->transport.completed!=completed||
 +    i->transport.rx_index>=16||command>=NCT_COMMAND_LIMIT||!timeout||timeout>NCT_SERVICE_MAX_US)return -1;
 + for(unsigned k=0;k<5;k++){
 +  const struct nwi_ring*r=&i->rings[k+4];
@@ -12270,6 +13087,13 @@
 + s->init=i;s->session=t;s->scan_command=command;s->scan_sequence=sequence;s->scan_timeout=timeout;
 + for(unsigned k=0;k<5;k++){s->queue[k].ring=i->rings[k+4];s->queue[k].next=k==1?i->transport.rx_index:0;}
 + s->prepared=1;return 0;
++}
++int ncr_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout){return prepare(s,i,t,command,sequence,timeout,5);}
++int ncr_continue_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,const struct ncr_state*p,uint8_t sequence,uint64_t timeout){
++ if(!p||p==s||!source(p)||!p->entered||p->active||p->halt||p->error||p->scan.active||!t||t->continuation!=1||t->previous!=p->session||p->init!=i)return -1;
++ if(prepare(s,i,t,0,sequence,timeout,t->base_completed))return -1;
++ for(unsigned k=0;k<NCR_QUEUES;k++){s->queue[k].next=p->queue[k].next;s->queue[k].didx=p->queue[k].didx;s->queue[k].segmented=p->queue[k].segmented;}
++ return source(s)?0:-1;
 +}
 +int ncr_memory_range(const struct ncr_state*s,uint64_t p,uint32_t n,unsigned write){
 + if(!source(s)||!s->active||s->current>=5||!n)return 0;
@@ -12383,6 +13207,7 @@
 +  s->passes++;
 +  if(!progress&&examined==5){
 +   if(pending)break;
++   if(s->session->phase==NCT_DRAIN){s->phase=NCR_IDLE;s->active=0;return 2;}
 +   /* Scan-done can precede queued management data. Complete only after a
 +    * subsequent whole-queue drain; keep owned BSS snapshots until then. */
 +   if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}
@@ -12401,7 +13226,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_rx.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +#ifndef NORD2_NORMAL_RX_H
 +#define NORD2_NORMAL_RX_H
 +#include "wifi_normal_transport.h"
@@ -12432,6 +13257,7 @@
 +/* Actual retained initializer, not a replacement DMA allocation. Caller keeps
 + * this object and its owning command session alive through the bounded batch. */
 +int ncr_prepare(struct ncr_state *,struct nwi_state *,struct nct_session *,unsigned,uint8_t,uint64_t);
++int ncr_continue_prepare(struct ncr_state *,struct nwi_state *,struct nct_session *,const struct ncr_state *,uint8_t,uint64_t);
 +int ncr_pump(void *,const struct ncd_io *,void *,unsigned,unsigned *);
 +/* Native admission adds these exact per-operation slots to the existing
 + * command-only allowlist; it also checks the current native worker/session. */
@@ -15176,6 +16002,141 @@
 +int nfa_xnu_run(void);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_scan_service.h
+@@ -0,0 +1,33 @@
++#ifndef PRIVATE_WIFI_SCAN_SERVICE_H
++#define PRIVATE_WIFI_SCAN_SERVICE_H
++#include "wifi_scan_plan.h"
++#include "wifi_scan_bss.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++#define NSS_SLOTS 4u
++#define NSS_CHANNELS 39u
++struct nss_request {unsigned count;struct ncs_channel channels[NSS_CHANNELS];}; /*0=actual full allowed list; passive only/default timing; no SSID/random*/
++struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];};
++enum nss_status {NSS_COMPLETE=0,NSS_PARTIAL=1,NSS_CANCELED=2,NSS_REFUSED=3,NSS_FATAL=4};
++typedef void (*nss_completion)(void *cookie,uint64_t client_generation,uint64_t ticket,enum nss_status);
++struct nss_view {const struct nsb_scan *scan;uint64_t captured_us,client_generation;enum nss_status status;};
++/* Kernel-only; native IOUC validates task/ABI and retains cookie until callback
++ * returns. Callback runs actual radio worker, outside queue lock; must be
++ * bounded/no radio calls, and recheck client generation before event publish.
++ * 0 accepted,1 backend unavailable,2 queue full,-1 invalid. Refusal atomic. */
++int nord2_wifi_scan_info(struct nss_info *);
++int nord2_wifi_scan_enqueue(const struct nss_request *,void *,uint64_t,nss_completion,uint64_t *);
++/* Cancel closes delivery; queued gets canceled callback, inflight radio finishes
++ * bounded without abort/reset. Client's gate still rejects late event delivery. */
++int nord2_wifi_scan_cancel(uint64_t);
++/* View only DONE and not canceled. Pointer stays immutable until release;
++ * caller must retain ticket through outside-gate conversion. */
++int nord2_wifi_scan_view(uint64_t,struct nss_view *);
++/* After readers/converters finish. Allowed DURING callback: marks deferred
++ * release, actual slot reuse only after callback returns. */
++int nord2_wifi_scan_release(uint64_t);
++#ifdef __cplusplus
++}
++#endif
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_scan_service_bind.inc
+@@ -0,0 +1,96 @@
++/* Include at end of normal backend binder, before actual CAP worker. */
++#ifdef NSS_HOST_TEST
++#include "nss_host.h"
++#else
++#include <IOKit/IOLocks.h>
++extern void nord2_wifi_ios_backend_ready(void);
++#endif
++#include "wifi_scan_service.h"
++enum {NSS_FREE,NSS_QUEUED,NSS_RUNNING,NSS_DONE};
++struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
++static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
++static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC_ACQUIRE)==1;}
++static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
++int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r)*out=nss_native.info;IOLockUnlock(nss_native.lock);return r;}
++int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
++ if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS)return -1;
++ if(!nss_available())return 1;IOLockLock(nss_native.lock);
++ if(nss_native.failed||nss_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
++ for(unsigned i=0;i<q->count;i++){unsigned found=0;for(unsigned j=0;j<nss_native.info.count;j++)if(q->channels[i].band==nss_native.info.channels[j].band&&q->channels[i].channel==nss_native.info.channels[j].channel)found=1;
++  for(unsigned j=0;j<i;j++)if(q->channels[i].band==q->channels[j].band&&q->channels[i].channel==q->channels[j].channel)found=0;
++  if(!found){IOLockUnlock(nss_native.lock);return -1;}}
++ struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(!nss_native.slot[k].state){s=&nss_native.slot[k];break;}
++ if(!s){IOLockUnlock(nss_native.lock);return 2;}
++ *s=(struct nss_slot){0};s->request=*q;s->cookie=cookie;s->generation=generation;s->completion=completion;s->ticket=++nss_native.serial;s->state=NSS_QUEUED;*ticket=s->ticket;
++ IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
++}
++int nord2_wifi_scan_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);struct nss_slot*s=nss_find(ticket);int r=s?0:1;if(s)s->canceled=1;IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
++int nord2_wifi_scan_view(uint64_t ticket,struct nss_view*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);struct nss_slot*s=nss_find(ticket);int r=1;if(s&&s->state==NSS_DONE&&!s->canceled&&(s->status==NSS_COMPLETE||s->status==NSS_PARTIAL)){*out=(struct nss_view){&s->scan,s->captured,s->generation,s->status};r=0;}IOLockUnlock(nss_native.lock);return r;}
++int nord2_wifi_scan_release(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);struct nss_slot*s=nss_find(ticket);int r=1;if(s&&s->state==NSS_DONE){if(s->callback_busy)s->retire=1;else memset(s,0,sizeof(*s));r=0;}IOLockUnlock(nss_native.lock);return r;}
++static int nss_build(void*c,unsigned index,uint8_t*out,size_t capacity,size_t*used){if(c!=&nss_native.frames||index||!out||!used||capacity<NCS_SCAN_BYTES)return -1;memcpy(out,nss_native.frames.scan,NCS_SCAN_BYTES);*used=NCS_SCAN_BYTES;return 0;}
++static int nss_start(void){
++ unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof(opt));if(opt!=1)return 1;
++ const struct nct_session*s=&nct_native.session;struct nni_address address;struct ncfg_channel channels[39];size_t count=0;
++ if(nss_native.lock||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||
++ !ncb_native.prepared||ncb_native.refusal||!ncb_native.plan.prepared||nct_native.active||!nct_native.attempted||
++ !nct_done_receipt(s)||s->phase!=NCT_DONE||s->halt||s->error||s->refusal||s->count!=NCB_COMMANDS||s->completed!=s->count||s->cursor!=s->count||
++ s->basic!=&nbc_native.state||s->cap!=&ncd_native.diag||s->init!=&nwfn_native.init||s->firmware!=&nfp_native||
++ nbc_native.state.halt||nbc_native.state.error||ncd_native.diag.halt||ncd_native.diag.error||nfp_native.state.halt||nfp_native.state.error||
++ nwfn_native.halt||nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||!nwfn_native.wf_owned||nwfn_native.asleep||!nwfn_native.init.initialized||nwfn_native.init.halt||nwfn_native.init.transport.halt||nfp_native.halt||!nfp_native.ready||!nfp_native.finish_done||
++ ncb_native.rx.halt||ncb_native.rx.error||ncb_native.rx.active||!ncb_native.rx.scan.done||ncb_native.rx.scan.partial||ncb_native.rx.scan.timed_out||ncb_native.rx.scan.completion.state!=7||
++ nwfn_native.init.transport.completed!=5u+NCB_COMMANDS||
++ ncfg_address(&ncb_native.plan.input,&ncb_native.plan.config,&address)||address.source!=NNI_ADDRESS_BOARD||
++ ncfg_channels(&ncb_native.plan.input,&ncb_native.plan.config,channels,39,&count))return 1;
++ for(unsigned k=0;k<6;k++)nss_native.info.mac[k]=address.mac[k];
++ const struct nrp_caps*c=&ncb_native.plan.input.caps;nss_native.info.band5=c->band5;nss_native.info.nss=c->nss;nss_native.info.max_bw=c->max_bw;nss_native.info.path=c->path;
++ for(unsigned k=0;k<count;k++)if(channels[k].allowed&&!channels[k].dfs)nss_native.info.channels[nss_native.info.count++]=(struct ncs_channel){channels[k].band,channels[k].channel};
++ if(!nss_native.info.count||nss_native.info.count!=ncb_native.plan.channel_count)return 1;
++ nss_native.scan_sequence=ncb_native.rx.scan.sequence;
++ nss_native.lock=IOLockAlloc();if(!nss_native.lock)return 1;
++ __atomic_store_n(&nss_native.ready,1,__ATOMIC_RELEASE);
++ printf("NORD2 WIFI IOS OWNER: active=1 retained=1 boot_complete=1 ready=1\n");
++ nord2_wifi_ios_backend_ready();return 0;
++}
++static int nss_execute(struct nss_slot*slot){
++ struct nct_session*s=&nct_native.session;struct ncr_state*r=&ncb_native.rx;
++ if(ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.halt||nct_native.active||s->phase!=NCT_DONE||s->halt||r->active||r->halt)return 1;
++ const struct ncs_channel*channels=slot->request.count?slot->request.channels:nss_native.info.channels;
++ size_t count=slot->request.count?slot->request.count:nss_native.info.count;
++ uint8_t sequence=(uint8_t)(nss_native.scan_sequence+1u);
++ if(ncs_build(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,nss_native.info.mac,channels,count,1,2,sequence,1,0,0,&nss_native.frames))return 1;
++ nss_native.previous=*s;nss_native.previous_rx=*r;nss_native.previous_rx.session=&nss_native.previous;
++ memset(s,0,sizeof(*s));memset(r,0,sizeof(*r));
++ const struct nct_entry entry={NCS_SCAN_BYTES,3,1};const struct nct_recipe recipe={&entry,1,nss_build,&nss_native.frames,UINT64_C(30000000),UINT64_C(15000000)};
++ if(nct_continue_prepare(&nbc_native.state,&nss_native.previous,&recipe,s)||ncr_continue_prepare(r,&nwfn_native.init,s,&nss_native.previous_rx,sequence,UINT64_C(14000000))){*s=nss_native.previous;*r=nss_native.previous_rx;r->session=s;return 1;}
++ nct_native.active=1;NVC_PHASE(5);
++ const struct nct_hooks hooks={ncr_pump,r,ncb_sleep,&ncb_native};
++ int result=nct_run(&ncd_io,&ncd_native,&hooks,s);nct_native.active=0;
++ if(result==1&&s->drain_refused){/* RX may already have rearmed stale frames: preserve its current cursors. */
++  *s=nss_native.previous;r->session=s;r->phase=NCR_IDLE;r->active=0;return 1;
++ }
++ nss_native.scan_sequence=sequence;
++ if(result<0){slot->scan=r->scan;slot->captured=r->scan.last;ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;return -1;}
++ if(!r->scan.done&&r->scan_requested){r->scan.active=0;r->scan.partial=1;if(s->service_timed_out)r->scan.timed_out=1;}
++ uint64_t now;if(ncd_native_now(&ncd_native,&now)||now<r->scan.last)return -1;
++ slot->scan=r->scan;slot->captured=now;return 0;
++}
++static void nss_deliver(struct nss_slot*s,enum nss_status status){
++ IOLockLock(nss_native.lock);s->status=s->canceled?NSS_CANCELED:status;s->state=NSS_DONE;s->callback_busy=1;
++ printf("NORD2 WIFI IOS SCAN: ticket=%llu generation=%llu status=%u sequence=%u frames=%u bss=%u done=%u partial=%u canceled=%u error=%u rx_error=%u\n",(unsigned long long)s->ticket,(unsigned long long)s->generation,(unsigned)s->status,s->scan.sequence,s->scan.frames,s->scan.count,s->scan.done,s->scan.partial,s->canceled,nct_native.session.error,ncb_native.rx.error);
++ if(s->status==NSS_FATAL)printf("NORD2 WIFI IOS GUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);
++ nss_completion fn=s->completion;void*cookie=s->cookie;uint64_t gen=s->generation,ticket=s->ticket;status=s->status;IOLockUnlock(nss_native.lock);
++ fn(cookie,gen,ticket,status); /* no lock held; cookie not accessed afterward */
++ IOLockLock(nss_native.lock);s->callback_busy=0;if(s->retire)memset(s,0,sizeof(*s));IOLockUnlock(nss_native.lock);
++}
++static void nss_owner_loop(void){
++ for(;;){IOLockLock(nss_native.lock);struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED&&(!s||nss_native.slot[k].ticket<s->ticket))s=&nss_native.slot[k];
++  if(!s){NVC_PHASE(6);assert_wait((event_t)&nss_native,THREAD_UNINT);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);continue;}
++  s->state=NSS_RUNNING;unsigned canceled=s->canceled;IOLockUnlock(nss_native.lock);
++  int result=canceled?1:nss_execute(s);enum nss_status status=canceled?NSS_CANCELED:result<0?NSS_FATAL:result?NSS_REFUSED:(s->scan.done&&!s->scan.partial&&!s->scan.timed_out&&!s->scan.dropped)?NSS_COMPLETE:NSS_PARTIAL;
++  if(result<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);}
++  nss_deliver(s,status);
++  if(result<0){IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);
++   for(unsigned k=0;k<NSS_SLOTS;k++){IOLockLock(nss_native.lock);unsigned pending=nss_native.slot[k].state==NSS_QUEUED;IOLockUnlock(nss_native.lock);if(pending)nss_deliver(&nss_native.slot[k],NSS_FATAL);}
++   nwm_failure_drain();panic("NORD2 WIFI SERVICE: uncertain retained DMA; manual reset required");}
++ }
++}
+--- /dev/null
 +++ b/bsd/dev/wifi_vcn33_bind.inc
 @@ -0,0 +1,62 @@
 +/* Include after persistent binder and failure_drain, before main binder.
@@ -15297,7 +16258,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_backend_bind.inc
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,106 @@
 +/* Include after wifi_capability_bind.inc. All live operations run in the
 + * actual retained CAP/BASIC worker; no service or interface is published. */
 +#include "wifi_normal_backend.h"
@@ -15400,6 +16361,10 @@
 + }
 + ncb_report(result);return result<0?-1:0;
 +}
++
++#include "wifi_scan_service_bind.inc"
++
++static void nss_worker_continue(void) {if(!nss_start())nss_owner_loop();}
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_backend_forward.inc
 @@ -0,0 +1,8 @@
@@ -17470,7 +18435,7 @@
 +};
 --- /dev/null
 +++ b/bsd/dev/wifi_basic_config_bind.inc
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +/* One same-worker lease; the opt-in flag itself never grants MMIO authority. */
 +#include "wifi_basic_config.h"
 +static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
@@ -17534,12 +18499,13 @@
 + nbc_report(result); /* captured-only after failure, no backend reads */
 + if(result<0)return -1;
 + if(!result&&NCT_AFTER_BASIC()<0)return -1;
-+ printf("NORD2 WIFI BASIC WORKER: parking=1 retained=1 callbacks_complete=1\n");
++ unsigned ios=0;PE_parse_boot_argn("nord2wifiios",&ios,sizeof(ios));
++ printf("NORD2 WIFI BASIC WORKER: parking=%u retained=1 callbacks_complete=1\n",ios==1?0u:1u);
 + return 0;
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_bind.inc
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,154 @@
 +#ifndef NVC_PHASE
 +#define NVC_PHASE(k) ((void)0)
 +#endif
@@ -17640,6 +18606,11 @@
 + }
 +}
 +#include "wifi_basic_config_bind.inc"
++#ifdef NCT_AFTER_BASIC
++static void nss_worker_continue(void);
++#else
++static void nss_worker_continue(void) {}
++#endif
 +static void ncd_worker(void*argument,wait_result_t wait_result)
 +{
 + (void)argument;(void)wait_result;
@@ -17665,6 +18636,7 @@
 +  * bounded milestone does not claim continuous normal RX service. Future
 +  * requests need a reviewed queue/consumer; this worker cannot be reused by
 +  * fabricating another start/readiness flag. */
++ nss_worker_continue(); /* explicit nord2wifiios, actual boot receipt */
 + ncd_native.parked=1;NVC_PHASE(6);
 + printf("NORD2 WIFI CAP WORKER: parking=1 retained=1 callbacks_complete=1\n");
 + for(;;){assert_wait((event_t)&ncd_native,THREAD_UNINT);thread_block(THREAD_CONTINUE_NULL);}
@@ -18490,3 +19462,375 @@
 + }
 + printf("NORD2 WIFI MAIN DRAIN: waits=%u; panic now\n",waits);
 +}
+--- /dev/null
++++ b/iokit/Kernel/arm/wifi_ios_client.cpp
+@@ -0,0 +1,250 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Native owned IOUserClient: repeated passive scan, immutable cache and mapped
++ * event producer. No association, security, data TX or carrier assertion. */
++#ifdef NIWL_HOST_TEST
++#include "test-xnu.h"
++#else
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOBufferMemoryDescriptor.h>
++#include <IOKit/IOLib.h>
++#include <libkern/c++/OSBoolean.h>
++#include <kern/task.h>
++#include <kern/clock.h>
++#include <libkern/c++/OSString.h>
++#endif
++extern "C" {
++#include "../../../bsd/dev/wifi_ios_binding.h"
++#include "../../../bsd/dev/wifi_ios_control.h"
++#include "../../../bsd/dev/wifi_ios_event.h"
++#include "../../../bsd/dev/wifi_ios_lifecycle.h"
++#include "../../../bsd/dev/wifi_scan_service.h"
++#include "../../../bsd/dev/wifi_ios_card.h"
++#include "../../../bsd/dev/wifi_ios_policy.h"
++}
++class NiwlLifecycleClient : public IOUserClient {
++ OSDeclareDefaultStructors(NiwlLifecycleClient)
++ task_t owner;IOLock *gate;
++ enum Phase {Closed,Open,Allocated,Armed};Phase phase;
++ IOBufferMemoryDescriptor *data,*state;
++ OSAsyncReference64 reference;bool ownsReference;
++ uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned unsupportedLogs,diagnosticLogs;
++ char interfaceName[16];struct nils_state cacheLife;struct nils_ticket cacheTicket;
++ struct niwa_snapshot *snapshot;uint32_t producer;IOReturn lastScanError;
++ static void completed(void*,uint64_t,uint64_t,enum nss_status);
++ IOReturn scanLocked(const uint8_t*,size_t);
++ IOReturn getLocked(const niw_request*,const void*,size_t,IOExternalMethodArguments*);
++ bool eventLocked(uint32_t);
++
++ void discardLocked(void);
++ void closeOwned(void);
++ IOReturn dispatchLocked(uint32_t,IOExternalMethodArguments *,bool *);
++public:
++ void bindInterface(const char*);
++ bool initWithTask(task_t,void *,UInt32,OSDictionary *) override;
++ IOReturn externalMethod(uint32_t,IOExternalMethodArguments *,IOExternalMethodDispatch *,OSObject *,void *) override;
++ IOReturn clientMemoryForType(UInt32,IOOptionBits *,IOMemoryDescriptor **) override;
++ IOReturn clientClose(void) override;
++ IOReturn clientDied(void) override;
++ void stop(IOService *) override;
++ void free(void) override;
++};
++OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
++bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
++ diagnosticLogs=0;unsupportedLogs=0;snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
++ owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
++ if(!task||current_task()!=task||type)return false;
++ OSObject *entitlement=IOUserClient::copyClientEntitlement(task,"com.apple.wifi.manager-access");
++ OSBoolean *allowed=OSDynamicCast(OSBoolean,entitlement);bool authorized=allowed&&allowed->isTrue();
++ if(entitlement)entitlement->release();
++ if(!authorized||!IOUserClient::initWithTask(task,security,type,props))return false;
++ gate=IOLockAlloc();if(!gate)return false;
++ snapshot=(niwa_snapshot*)IOMalloc(sizeof(*snapshot));if(!snapshot)return false;bzero(snapshot,sizeof(*snapshot));
++ task_reference(task);owner=task;generation=1;phase=Open;return true;
++}
++void NiwlLifecycleClient::discardLocked(void){
++ /* All cache/event publication and reference sending is under gate. Close
++  * invalidates scan generation first; pending callback retains this client and
++  * stable snapshot until retirement. Mappings own descriptor refs independently. */
++ nils_close(&cacheLife);
++ if(ownsReference){IOUserClient::releaseAsyncReference64(reference);ownsReference=false;bzero(reference,sizeof reference);}
++ if(data){data->release();data=nullptr;}if(state){state->release();state=nullptr;}
++}
++void NiwlLifecycleClient::closeOwned(void){
++ if(!gate)return;IOLockLock(gate);phase=Closed;if(generation!=UINT64_MAX)generation++;uint64_t ticket=pendingTicket;discardLocked();IOLockUnlock(gate);if(ticket)nord2_wifi_scan_cancel(ticket);
++}
++IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodArguments*a,bool*adopted){
++ if(phase==Closed)return kIOReturnNotOpen;
++ if(current_task()!=owner)return kIOReturnNotPrivileged;
++ if(a&&a->structureOutputSize&&!a->structureOutput)return kIOReturnBadArgument;
++ if(!a||a->version!=kIOExternalMethodArgumentsCurrentVersion||a->selector!=selector||a->scalarInputCount||a->scalarOutputCount||a->structureOutputDescriptor)return kIOReturnBadArgument;
++ if(selector==0||selector==6){
++  if(a->asyncReferenceCount||a->asyncWakePort)return kIOReturnBadArgument;
++  size_t bytes=selector==0?NIW_SMALL_BYTES:NIW_LARGE_BYTES;
++  const void*carrier=a->structureInput;void*copy=nullptr;
++  if(a->structureInputDescriptor){
++   if(a->structureInputSize||a->structureInputDescriptor->getLength()!=bytes)return kIOReturnBadArgument;
++   copy=IOMalloc(bytes);if(!copy)return kIOReturnNoMemory;
++   IOReturn prepared=a->structureInputDescriptor->prepare(kIODirectionOut);
++   if(prepared!=kIOReturnSuccess){IOFree(copy,bytes);return prepared;}
++   IOByteCount copied=a->structureInputDescriptor->readBytes(0,copy,bytes);
++   IOReturn completed=a->structureInputDescriptor->complete(kIODirectionOut);
++   if(copied!=bytes||completed!=kIOReturnSuccess){IOFree(copy,bytes);return completed!=kIOReturnSuccess?completed:kIOReturnBadArgument;}
++   carrier=copy;
++  }else if(a->structureInputSize!=bytes)return kIOReturnBadArgument;
++  struct niw_request q={};IOReturn result=kIOReturnBadArgument;
++  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)IOFree(copy,bytes);return result;}
++
++  uint32_t unsupportedSet=0;
++  if(!niwi_set_shape(selector,carrier,bytes,interfaceName,&unsupportedSet)){
++   if(diagnosticLogs++<128)printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
++   if(copy)IOFree(copy,bytes);return kIOReturnUnsupported;
++  }
++  if(!niw_decode(selector,carrier,bytes,&q)){
++   if(selector==0&&q.request==43&&q.value==0&&q.payload_bytes==0&&!memcmp(q.interface_name,interfaceName,16)){
++    static const char identity[]="Nord2 MT6893 passive scan controller";size_t used=0;
++    if(!niwb_driver_version(carrier,bytes,identity,sizeof identity,a->structureOutput,a->structureOutputSize,&used)){
++     a->structureOutputSize=(uint32_t)used;result=kIOReturnSuccess;
++    }else result=kIOReturnBadArgument;
++   }else result=getLocked(&q,carrier,bytes,a);
++  }
++  if(diagnosticLogs++<128)printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=%#x bytes=%u status=%#x\n",selector,q.request,q.operation,q.payload_bytes,(unsigned)result);
++  if(copy)IOFree(copy,bytes);
++  /* Unimplemented request IDs are explicitly unsupported; no security or link
++   * state is inferred from successful scan operations. */
++  return result;
++ }
++ if(a->structureInputDescriptor||a->structureInputSize||a->scalarInputCount||a->scalarOutputCount)return kIOReturnBadArgument;
++ if(selector==1||selector==5){
++  if(a->asyncReferenceCount||a->asyncWakePort)return kIOReturnBadArgument;
++  struct niwb_dispatch_view view={NIWB_OPEN,NIWB_CONTROL_ALL,NIWB_PIPE_ALL};size_t used=0;
++  if(niwb_selector(&view,selector,0,a->structureOutputSize,0,0,0,(uint8_t*)a->structureOutput,&used))return kIOReturnBadArgument;
++  a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess; /* implemented control/event transport shape */
++ }
++ if(a->structureOutputSize)return kIOReturnBadArgument;
++ if(selector==2){
++  if(phase!=Allocated)return kIOReturnNotReady;
++  if(a->asyncReferenceCount!=8||!a->asyncReference||!a->asyncWakePort)return kIOReturnBadArgument;
++  for(unsigned i=0;i<8;i++)reference[i]=a->asyncReference[i];ownsReference=true;*adopted=true;phase=Armed;return kIOReturnSuccess;
++ }
++ if(a->asyncReferenceCount||a->asyncWakePort)return kIOReturnBadArgument;
++ if(selector==3){
++  if(phase!=Open||generation==UINT64_MAX)return kIOReturnBusy;
++  struct niwe_view empty={0,0,4096};struct niwe_space space;
++  if(niwe_plan(&empty,4,0,&space)!=1)return kIOReturnBadArgument; /* bounds only, no event publication */
++  IOBufferMemoryDescriptor*d=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,kIOMemoryKernelUserShared,4096,4096);
++  if(!d)return kIOReturnNoMemory;
++  IOBufferMemoryDescriptor*s=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,kIOMemoryKernelUserShared,4096,4096);
++  if(!s){d->release();return kIOReturnNoMemory;}
++  bzero(d->getBytesNoCopy(),4096);bzero(s->getBytesNoCopy(),4096);producer=0;data=d;state=s;phase=Allocated;generation++;return kIOReturnSuccess;
++ }
++ if(selector==4){if(scanGeneration!=UINT64_MAX)scanGeneration++;discardLocked();phase=Open;return kIOReturnSuccess;}
++ return kIOReturnUnsupported;
++}
++IOReturn NiwlLifecycleClient::externalMethod(uint32_t selector,IOExternalMethodArguments*a,IOExternalMethodDispatch*d,OSObject*t,void*r){
++ /* XNU passes an owned wake-port send reference on async calls. Balance every
++  * rejected/replayed call too, not only the accepted stored registration. */
++ OSAsyncReference64 incoming={0};bool incomingRight=a&&a->asyncReference&&a->asyncReferenceCount;
++ if(incomingRight)incoming[0]=a->asyncReference[0];bool adopted=false;uint64_t cancel=0;IOReturn result=kIOReturnNotReady;
++ if(gate){IOLockLock(gate);if(selector==4)cancel=pendingTicket;result=(d||t||r)?kIOReturnBadArgument:dispatchLocked(selector,a,&adopted);IOLockUnlock(gate);}
++ if(cancel&&result==kIOReturnSuccess)nord2_wifi_scan_cancel(cancel);
++ if(incomingRight&&!adopted)IOUserClient::releaseAsyncReference64(incoming);return result;
++}
++IOReturn NiwlLifecycleClient::clientMemoryForType(UInt32 type,IOOptionBits*options,IOMemoryDescriptor**memory){
++ if(!gate||!options||!memory)return kIOReturnBadArgument;IOLockLock(gate);
++ IOReturn result=kIOReturnNotReady;
++ if(phase==Closed)result=kIOReturnNotOpen;
++ else if(current_task()!=owner)result=kIOReturnNotPrivileged;
++ else if(type!=1&&type!=2)result=kIOReturnBadArgument;
++ else if(phase==Allocated||phase==Armed){IOMemoryDescriptor*m=type==1?data:state;m->retain();*memory=m;*options=type==1?kIOMapReadOnly:0;result=kIOReturnSuccess;}
++ IOLockUnlock(gate);return result;
++}
++IOReturn NiwlLifecycleClient::clientClose(void){closeOwned();terminate();return kIOReturnSuccess;}
++IOReturn NiwlLifecycleClient::clientDied(void){closeOwned();terminate();return kIOReturnSuccess;}
++void NiwlLifecycleClient::stop(IOService*p){closeOwned();IOUserClient::stop(p);}
++void NiwlLifecycleClient::free(void){closeOwned();if(owner){task_deallocate(owner);owner=TASK_NULL;}if(gate){IOLockFree(gate);gate=nullptr;}if(snapshot){IOFree(snapshot,sizeof(*snapshot));snapshot=nullptr;}IOUserClient::free();}
++#ifdef NIWL_HOST_TEST
++class NiwlLifecycleService : public IOService {
++ OSDeclareDefaultStructors(NiwlLifecycleService)
++public:
++ IOReturn newUserClient(task_t,void*,UInt32,OSDictionary*,IOUserClient**) override;
++};
++OSDefineMetaClassAndStructors(NiwlLifecycleService,IOService)
++IOReturn NiwlLifecycleService::newUserClient(task_t task,void*security,UInt32 type,OSDictionary*props,IOUserClient**handler){
++ if(!handler||isInactive())return kIOReturnNotReady;
++ NiwlLifecycleClient*c=new NiwlLifecycleClient;
++ if(!c)return kIOReturnNoMemory;
++ if(!c->initWithTask(task,security,type,props)){c->release();return kIOReturnNotPrivileged;}
++ c->bindInterface("en0");
++ if(!c->attach(this)){c->release();return kIOReturnNotReady;}
++ if(!c->start(this)){c->detach(this);c->release();return kIOReturnNotReady;}
++ *handler=c;return kIOReturnSuccess;
++}
++
++#endif
++
++void NiwlLifecycleClient::bindInterface(const char*n){strlcpy(interfaceName,n,sizeof interfaceName);}
++extern "C" IOReturn niwl_create_client(IOService*provider,task_t task,void*security,UInt32 type,OSDictionary*props,IOUserClient**handler){
++ if(!provider||!handler||provider->isInactive())return kIOReturnNotReady;
++ OSString*name=OSDynamicCast(OSString,provider->getProperty("IOInterfaceName"));if(!name||name->getLength()>=16)return kIOReturnNotReady;
++ NiwlLifecycleClient*c=new NiwlLifecycleClient;if(!c)return kIOReturnNoMemory;
++ if(!c->initWithTask(task,security,type,props)){c->release();return kIOReturnNotPrivileged;}
++ c->bindInterface(name->getCStringNoCopy());
++ if(!c->attach(provider)){c->release();return kIOReturnNotReady;}
++ if(!c->start(provider)){c->detach(provider);c->release();return kIOReturnNotReady;}
++ *handler=c;printf("NORD2 WIFI IOS CLIENT: opened=1 type=0\n");return kIOReturnSuccess;
++}
++IOReturn NiwlLifecycleClient::scanLocked(const uint8_t*p,size_t n){
++ if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
++ if(pendingTicket||scanGeneration==UINT64_MAX)return kIOReturnBusy;
++ nss_info info={};nss_request request={};if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
++ if(niwi_scan_admit(p,n,&info,&request))return kIOReturnUnsupported;
++ nils_close(&cacheLife);bzero(snapshot,sizeof(*snapshot));scanGeneration++;
++ if(nils_open(&cacheLife,scanGeneration)||nils_begin(&cacheLife,&cacheTicket,snapshot))return kIOReturnNotReady;
++ retain();uint64_t ticket=0;int result=nord2_wifi_scan_enqueue(&request,this,scanGeneration,completed,&ticket);
++ if(result){nils_finish(&cacheLife,&cacheTicket,nullptr);release();return result==2?kIOReturnBusy:kIOReturnNotReady;}
++ if(diagnosticLogs++<128)printf("NORD2 WIFI IOS ENQUEUE: status=%d generation=%llu ticket=%llu\n",result,(unsigned long long)scanGeneration,(unsigned long long)ticket);
++ pendingTicket=ticket;pendingEpoch=generation;lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
++}
++void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enum nss_status status){
++ NiwlLifecycleClient*c=(NiwlLifecycleClient*)cookie;
++ IOLockLock(c->gate);nss_view view={};bool current=c->phase==Armed&&c->scanGeneration==gen&&c->pendingTicket==ticket&&c->pendingEpoch==c->generation;
++ if(current){
++  int result=-1;
++  if(status==NSS_COMPLETE&&!nord2_wifi_scan_view(ticket,&view)&&view.client_generation==gen){
++   size_t count=0;const niwp_rate_map*map=niwi_rate_map(&count);
++   result=nils_prepare(&c->cacheTicket,view.scan,view.captured_us,view.captured_us,map,count,c->snapshot);
++  }
++  if(result==0&&nils_finish(&c->cacheLife,&c->cacheTicket,c->snapshot)==0)c->lastScanError=kIOReturnSuccess;
++  else{nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);c->lastScanError=kIOReturnNotReady;}
++  if(!c->eventLocked(c->lastScanError==kIOReturnSuccess?0:5)){nils_close(&c->cacheLife);c->lastScanError=kIOReturnNoResources;}
++ }else if(c->cacheLife.inflight)nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);
++ if(c->diagnosticLogs++<128)printf("NORD2 WIFI IOS COMPLETE: generation=%llu ticket=%llu backend=%u current=%u cache_status=%#x rows=%u\n",(unsigned long long)gen,(unsigned long long)ticket,(unsigned)status,(unsigned)current,(unsigned)c->lastScanError,current?c->snapshot->count:0);
++ if(c->pendingTicket==ticket)c->pendingTicket=0;
++ IOLockUnlock(c->gate);
++ nord2_wifi_scan_release(ticket); /* backend defers reuse until this callback returns */
++ c->release();
++}
++bool NiwlLifecycleClient::eventLocked(uint32_t status){
++ if(phase!=Armed||!ownsReference||!data||!state)return false;
++ uint32_t*indices=(uint32_t*)state->getBytesNoCopy();uint32_t consumer=__atomic_load_n(indices,__ATOMIC_ACQUIRE);
++ niwe_view view={consumer,producer,4096};niwe_space space={};if(niwe_plan(&view,4,0,&space)!=1)return false;
++ uint8_t record[52];if(niwe_scan_done(record,sizeof record,(const uint8_t*)interfaceName,status))return false;
++ uint8_t*ring=(uint8_t*)data->getBytesNoCopy();
++ for(uint32_t i=0;i<space.padding;i+=4){uint32_t pad=80;memcpy(ring+producer+i,&pad,4);}
++ for(unsigned i=0;i<52;i++)ring[(space.record_offset+i)%4096]=record[i];
++ producer=space.next;__atomic_store_n(indices+1,producer,__ATOMIC_RELEASE);
++ IOReturn result=sendAsyncResult64(reference,kIOReturnSuccess,nullptr,0);
++ if(diagnosticLogs++<128)printf("NORD2 WIFI IOS EVENT: event=10 published=1 notified=%u status=%#x producer=%u consumer=%u\n",(unsigned)(result==kIOReturnSuccess),(unsigned)result,producer,consumer);
++ return true; /* immutable event is published; notify failure never retracts its real cache */
++}
++IOReturn NiwlLifecycleClient::getLocked(const niw_request*q,const void*carrier,size_t bytes,IOExternalMethodArguments*a){
++ if(memcmp(q->interface_name,interfaceName,16)||q->value)return kIOReturnBadArgument;
++ if(q->request==12){niwc_manifest empty={};size_t used=0;if(niwc_card_reply(carrier,bytes,&empty,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
++ if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(diagnosticLogs++<128)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
++ if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
++ if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);
++ return kIOReturnUnsupported;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/iokit/Kernel/arm/wifi_ios_registry.cpp
+@@ -0,0 +1,116 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Compatible replacement registry classes: IOService ABI only. No proprietary
++ * IO80211 vtable or data/link implementation. Explicit software ADT provider. */
++#ifdef NIWI_REGISTRY_HOST_TEST
++#include "test-registry-xnu.h"
++#else
++#include <IOKit/IOService.h>
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOCatalogue.h>
++#include <IOKit/IOLib.h>
++#include <libkern/c++/OSArray.h>
++#include <libkern/c++/OSDictionary.h>
++#include <libkern/c++/OSString.h>
++#include <libkern/c++/OSData.h>
++#include <net/kpi_interface.h>
++#include <sys/kpi_mbuf.h>
++#include <sys/errno.h>
++#include <net/if.h>
++#include <net/if_dl.h>
++#include <net/if_types.h>
++#include <net/if_media.h>
++#include <sys/sockio.h>
++#include <sys/systm.h>
++#endif
++extern "C" {
++#include "../../../bsd/dev/wifi_scan_service.h"
++#ifndef NIWI_REGISTRY_HOST_TEST
++#include <pexpert/pexpert.h>
++#endif
++IOReturn niwl_create_client(IOService*,task_t,void*,UInt32,OSDictionary*,IOUserClient**);
++}
++static_assert(sizeof(ifmediareq)==44&&SIOCGIFMEDIA==0xc02c6938,"selected 64-bit ifmedia ABI");
++class IO80211Interface : public IOService {
++ OSDeclareDefaultStructors(IO80211Interface)
++public:
++ IOReturn newUserClient(task_t t,void*s,UInt32 n,OSDictionary*p,IOUserClient**o) override {return niwl_create_client(this,t,s,n,p,o);}
++};
++OSDefineMetaClassAndStructors(IO80211Interface,IOService)
++class IO80211SkywalkInterface : public IO80211Interface {
++ OSDeclareDefaultStructors(IO80211SkywalkInterface)
++};
++OSDefineMetaClassAndStructors(IO80211SkywalkInterface,IO80211Interface)
++class IO80211Controller : public IOService {
++ OSDeclareDefaultStructors(IO80211Controller)
++ ifnet_t net=nullptr;IO80211SkywalkInterface*interface=nullptr;
++ static errno_t output(ifnet_t,mbuf_t p){mbuf_freem(p);return ENETDOWN;}
++ static errno_t demux(ifnet_t,mbuf_t,char*,protocol_family_t*){return EOPNOTSUPP;}
++ static errno_t add(ifnet_t,protocol_family_t,const ifnet_demux_desc*,u_int32_t){return EOPNOTSUPP;}
++ static errno_t del(ifnet_t,protocol_family_t){return 0;}
++ static errno_t multi(ifnet_t,const sockaddr*){return EOPNOTSUPP;}
++ static void detached(ifnet_t n){ifnet_release(n);}
++ static errno_t ioctl(ifnet_t,u_long cmd,void*data){
++  if(cmd==SIOCSIFFLAGS)return 0; /* administrative flags only; never link/carrier */
++  if(cmd!=SIOCGIFMEDIA)return EOPNOTSUPP;
++  if(!data)return EINVAL;struct ifmediareq*r=(struct ifmediareq*)data;
++  int requested=r->ifm_count;int media=IFM_IEEE80211|IFM_AUTO;
++  r->ifm_current=media;r->ifm_active=media;r->ifm_status=IFM_AVALID;r->ifm_mask=0;r->ifm_count=1;
++  if(requested<0)return EINVAL;
++  if(requested>0&&r->ifm_ulist)return copyout(&media,(user_addr_t)r->ifm_ulist,sizeof(media));
++  return 0;
++ }
++public:
++ bool start(IOService*) override;
++ void stop(IOService*) override;
++ IOReturn newUserClient(task_t t,void*s,UInt32 n,OSDictionary*p,IOUserClient**o) override {return niwl_create_client(this,t,s,n,p,o);}
++};
++OSDefineMetaClassAndStructors(IO80211Controller,IOService)
++bool IO80211Controller::start(IOService*p){
++ net=nullptr;interface=nullptr;unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof opt);
++ OSData*compatible=OSDynamicCast(OSData,p->getProperty("compatible"));
++ static const char expected[]="nord2,mt6893-wifi";
++ if(opt!=1||!compatible||compatible->getLength()!=sizeof expected||memcmp(compatible->getBytesNoCopy(),expected,sizeof expected))return false;
++ nss_info info={};if(nord2_wifi_scan_info(&info)||!info.count||!IOService::start(p))return false;
++ static const uint8_t broadcast[6]={255,255,255,255,255,255};
++ ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=output;params.ioctl=ioctl;params.demux=demux;params.add_proto=add;params.del_proto=del;params.check_multi=multi;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
++ /* Let ifnet_attach arbitrate real unit collisions; never rename an existing interface. */
++ for(unsigned unit=0;unit<32;unit++){
++  params.unit=unit;if(ifnet_allocate_extended(&params,&net))continue;
++  ifnet_set_addrlen(net,6);ifnet_set_hdrlen(net,14);
++  sockaddr_dl address={};address.sdl_len=sizeof address;address.sdl_family=AF_LINK;address.sdl_alen=6;memcpy(address.sdl_data,info.mac,6);
++  errno_t error=ifnet_attach(net,&address);if(!error)break;ifnet_release(net);net=nullptr;
++ }
++ if(!net){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=1\n");IOService::stop(p);return false;}
++ if(ifnet_set_lladdr(net,info.mac,6)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=2\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
++ char name[16];snprintf(name,sizeof name,"%s%u",ifnet_name(net),ifnet_unit(net));
++ if(ifnet_set_mtu(net,1500)||ifnet_set_flags(net,IFF_BROADCAST|IFF_MULTICAST|IFF_SIMPLEX,IFF_BROADCAST|IFF_MULTICAST|IFF_SIMPLEX|IFF_RUNNING|IFF_UP)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=6\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
++ /* Never signal link up, carrier, association, supported encryption or IP readiness. */
++ /* IOInterfaceName is only on actual interface: one bind target. */
++ interface=new IO80211SkywalkInterface;
++ if(!interface||!interface->init()){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=3\n");if(interface)interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
++ if(!interface->attach(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=4\n");interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
++ if(!interface->start(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=5\n");interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
++ if(!interface->setProperty("IOInterfaceName",name)||!interface->setProperty("BSD Name",name)||!interface->setProperty("IOInterfaceUnit",(uint64_t)ifnet_unit(net),32)||!interface->setProperty("IOInterfaceType",(uint64_t)IFT_ETHER,32)||!interface->setProperty("IO80211InterfaceRole","Infrastructure")){
++  printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=7\n");interface->stop(this);interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
++ }
++ interface->registerService();registerService();printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
++}
++void IO80211Controller::stop(IOService*p){
++ if(interface){interface->terminate();interface->detach(this);interface->release();interface=nullptr;}
++ if(net){ifnet_detach(net);net=nullptr;}IOService::stop(p);
++}
++/* Root must call after IOKit catalogue initialization. No service instance or
++ * physical address is fabricated here; personality matches the explicit ADT node. */
++extern "C" bool nord2_wifi_ios_register(void){
++ nss_info actual={};if(nord2_wifi_scan_info(&actual)||!actual.count)return false;
++ unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof opt);if(opt!=1||!gIOCatalogue)return false;
++ OSDictionary*d=OSDictionary::withCapacity(5);OSArray*a=OSArray::withCapacity(1);if(!d||!a){if(d)d->release();if(a)a->release();return false;}
++ const char*keys[]={"IOClass","IOProviderClass","IONameMatch","IOMatchCategory"};const char*values[]={"IO80211Controller","IOPlatformDevice","wlan","Nord2WiFiController"};
++ for(unsigned i=0;i<4;i++){OSString*s=OSString::withCString(values[i]);if(!s){d->release();a->release();return false;}d->setObject(keys[i],s);s->release();}
++ a->setObject(d);d->release();bool result=gIOCatalogue->addDrivers(a,true);a->release();return result;
++}
++
++extern "C" void nord2_wifi_ios_backend_ready(void){bool submitted=nord2_wifi_ios_register();printf("NORD2 WIFI IOS CATALOGUE: submitted=%u\n",(unsigned)submitted);}
++
++#endif /* NORD2 */

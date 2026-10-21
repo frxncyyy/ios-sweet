@@ -100,3 +100,7 @@ static int ncb_after_basic(void)
  }
  ncb_report(result);return result<0?-1:0;
 }
+
+#include "wifi_scan_service_bind.inc"
+
+static void nss_worker_continue(void) {if(!nss_start())nss_owner_loop();}

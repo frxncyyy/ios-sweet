@@ -98,6 +98,11 @@ static void ncd_report(int result)
  }
 }
 #include "wifi_basic_config_bind.inc"
+#ifdef NCT_AFTER_BASIC
+static void nss_worker_continue(void);
+#else
+static void nss_worker_continue(void) {}
+#endif
 static void ncd_worker(void*argument,wait_result_t wait_result)
 {
  (void)argument;(void)wait_result;
@@ -123,6 +128,7 @@ static void ncd_worker(void*argument,wait_result_t wait_result)
   * bounded milestone does not claim continuous normal RX service. Future
   * requests need a reviewed queue/consumer; this worker cannot be reused by
   * fabricating another start/readiness flag. */
+ nss_worker_continue(); /* explicit nord2wifiios, actual boot receipt */
  ncd_native.parked=1;NVC_PHASE(6);
  printf("NORD2 WIFI CAP WORKER: parking=1 retained=1 callbacks_complete=1\n");
  for(;;){assert_wait((event_t)&ncd_native,THREAD_UNINT);thread_block(THREAD_CONTINUE_NULL);}

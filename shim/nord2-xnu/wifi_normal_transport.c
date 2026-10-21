@@ -28,6 +28,20 @@ static int build(struct nct_session*s,unsigned k){size_t used=0;
     u16(s->wire+32)!=used-32||s->wire[36]!=e->cid||s->wire[37]!=0xa0||s->wire[38]!=e->set_query)return -1;
  s->wire[39]=(uint8_t)(s->first_sequence+k);return 0;
 }
+static int seal(struct nct_session*s,const struct nct_recipe*r,uint32_t pse){
+ struct nwt_state*t=&s->init->transport;
+ s->count=r->count;s->build=r->build;s->build_context=r->context;s->batch_us=r->batch_us;s->service_us=r->service_us;
+ s->first_tx=t->tx_index;s->first_sequence=t->next_sequence;s->base_completed=t->completed;
+ s->pse_total=pse;s->basic_spent=1;s->capacity=s->pse_total-1;s->available=s->capacity;
+ for(unsigned k=0;k<s->count;k++){
+  s->entry[k]=r->entry[k];
+  if(!s->entry[k].cid||s->entry[k].set_query!=1||build(s,k))return refuse(s,105);
+  s->fingerprint[k]=fingerprint(s->wire,s->entry[k].bytes);
+  s->record[k]=(struct nct_record){.cid=s->entry[k].cid,.sequence=(uint8_t)(s->first_sequence+k),.bytes=s->entry[k].bytes,
+   .from=(s->first_tx+k)%1024,.to=(s->first_tx+k+1)%1024,.didx=(s->first_tx+k)%1024};
+ }
+ s->prepared=1;s->phase=NCT_PREPARED;return 0;
+}
 int nct_prepare(const struct nbc_state*b,const struct nct_recipe*r,struct nct_session*s){
  struct ncp_result actual={0};
  if(!s||s->attempted)return -1;
@@ -42,22 +56,35 @@ int nct_prepare(const struct nbc_state*b,const struct nct_recipe*r,struct nct_se
     actual.resources[1]<=1)return refuse(s,103);
  if(!r||!r->entry||!r->build||!r->count||r->count>NCT_COMMAND_LIMIT||
     !r->batch_us||r->batch_us>NCT_BATCH_MAX_US||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us)return refuse(s,104);
- s->count=r->count;s->build=r->build;s->build_context=r->context;s->batch_us=r->batch_us;s->service_us=r->service_us;
- s->first_tx=t->tx_index;s->first_sequence=t->next_sequence;s->base_completed=t->completed;
- s->pse_total=actual.resources[1];s->basic_spent=1;s->capacity=s->pse_total-1;s->available=s->capacity;
- for(unsigned k=0;k<s->count;k++){
-  s->entry[k]=r->entry[k];
-  if(!s->entry[k].cid||s->entry[k].set_query!=1||build(s,k))return refuse(s,105);
-  s->fingerprint[k]=fingerprint(s->wire,s->entry[k].bytes);
-  s->record[k]=(struct nct_record){.cid=s->entry[k].cid,.sequence=(uint8_t)(s->first_sequence+k),.bytes=s->entry[k].bytes,
-   .from=(s->first_tx+k)%1024,.to=(s->first_tx+k+1)%1024,.didx=(s->first_tx+k)%1024};
- }
- s->prepared=1;s->phase=NCT_PREPARED;return 0;
+ return seal(s,r,actual.resources[1]);
+}
+
+static int terminal(const struct nct_session*p){
+ if(!p||!p->attempted||!p->prepared||!p->entered||p->phase!=NCT_DONE||p->halt||p->error||p->refusal||!p->count||p->count>NCT_COMMAND_LIMIT||p->cursor!=p->count||p->completed!=p->count||p->base_completed<5||p->base_completed>UINT32_MAX-p->count||p->reserved||p->available!=p->capacity||p->acquired!=p->count||p->released!=p->count)return 0;
+ for(unsigned k=0;k<p->count;k++)if(!p->record[k].published||!p->record[k].credit_released||!p->record[k].tx_done||p->record[k].cid!=p->entry[k].cid||p->record[k].bytes!=p->entry[k].bytes||p->record[k].sequence!=(uint8_t)(p->first_sequence+k)||p->record[k].from!=(p->first_tx+k)%1024||p->record[k].to!=(p->first_tx+k+1)%1024)return 0;
+ return 1;
+}
+int nct_done_receipt(const struct nct_session*p){return terminal(p);}
+static int anchor(const struct nct_session*s){
+ if(!s->continuation)return !s->previous&&s->base_completed==5;
+ const struct nct_session*p=s->previous;
+ return s->continuation==1&&p!=s&&terminal(p)&&s->count==1&&s->entry[0].cid==3&&s->entry[0].bytes==1252&&s->entry[0].set_query==1&&
+ p->basic==s->basic&&p->cap==s->cap&&p->init==s->init&&p->firmware==s->firmware&&
+ s->base_completed==p->base_completed+p->count&&s->first_tx==(p->first_tx+p->count)%1024&&s->first_sequence==(uint8_t)(p->first_sequence+p->count)&&s->pse_total==p->pse_total;
+}
+int nct_continue_prepare(const struct nbc_state*b,const struct nct_session*p,const struct nct_recipe*r,struct nct_session*s){
+ if(!s||s->attempted)return -1;s->attempted=1;s->basic=b;
+ if(basic_receipt(b)||p==s||!terminal(p)||p->basic!=b||p->cap!=b->cap||p->init!=b->init||p->firmware!=b->firmware)return refuse(s,110);
+ s->cap=b->cap;s->init=b->init;s->firmware=b->firmware;
+ struct nwt_state*t=&s->init->transport;
+ if(p->base_completed+p->count==UINT32_MAX||t->completed!=p->base_completed+p->count||t->tx_index!=(p->first_tx+p->count)%1024||t->next_sequence!=(uint8_t)(p->first_sequence+p->count)||t->submit_attempted||t->tx_done||t->rx_done||t->rx_index>=16)return refuse(s,111);
+ if(!r||!r->entry||!r->build||r->count!=1||r->entry[0].cid!=3||r->entry[0].bytes!=1252||r->entry[0].set_query!=1||!r->batch_us||r->batch_us>NCT_BATCH_MAX_US||!r->service_us||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us||p->pse_total!=b->plan.pse_cmd||p->capacity!=p->pse_total-1)return refuse(s,112);
+ s->continuation=1;s->previous=p;return seal(s,r,p->pse_total);
 }
 int nct_lease_window(const struct nct_session*s,const struct nbc_state*b,const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
  if(!s||!s->attempted||!s->prepared||!s->entered||s->halt||s->error||s->refusal||
     s->basic!=b||s->cap!=c||s->init!=i||s->firmware!=f||basic_receipt(b)||
-    !s->count||s->count>NCT_COMMAND_LIMIT||s->cursor>s->count||s->completed!=s->cursor||s->base_completed!=5||
+    !s->count||s->count>NCT_COMMAND_LIMIT||s->cursor>s->count||s->completed!=s->cursor||!anchor(s)||
     s->pse_total!=b->plan.pse_cmd||s->basic_spent!=1||s->capacity!=s->pse_total-1||
     s->available+s->reserved!=s->capacity||s->reserved>1||s->released>s->acquired||
     s->acquired-s->released!=s->reserved||i->transport.completed!=s->base_completed+s->cursor||
@@ -67,6 +94,7 @@ int nct_lease_window(const struct nct_session*s,const struct nbc_state*b,const s
  unsigned in_flight=s->phase==NCT_SUBMITTED;
  if(in_flight&&s->cursor>=s->count)return 0;
  if(s->acquired!=s->cursor+in_flight||s->released!=s->cursor+(in_flight&&s->record[s->cursor].published))return 0;
+ if(s->phase==NCT_DRAIN)return s->continuation==1&&!s->cursor&&!s->reserved&&!i->transport.submit_attempted;
  if(s->phase==NCT_SERVICE)return s->cursor==s->count&&!s->reserved&&!i->transport.submit_attempted;
  if((s->phase!=NCT_COMMAND&&s->phase!=NCT_WRITING&&s->phase!=NCT_SUBMITTED)||s->cursor>=s->count)return 0;
  const struct nct_record*q=&s->record[s->cursor];const struct nct_entry*e=&s->entry[s->cursor];
@@ -116,8 +144,8 @@ static int pump(const struct nct_hooks*h,struct nct_access*a){struct nct_session
  s->pump_calls++;int r=h->pump(h->pump_context,&nct_checked_io,a,budget,&used);
  if(s->halt)return -1;
  if(before(a))return -1;
- if(r<0||used>budget)return fail(s,31);
- s->events+=used;if(s->events==NCT_EVENT_LIMIT)s->event_limit_reached=1;if(r==1)s->scan_complete=1;return 0;
+ if(r<0||r>2||(r==2&&s->phase!=NCT_DRAIN)||used>budget)return fail(s,31);
+ s->events+=used;if(s->events==NCT_EVENT_LIMIT)s->event_limit_reached=1;if(r==1)s->scan_complete=1;if(r==2)s->drain_quiescent=1;return 0;
 }
 static int wait(const struct nct_hooks*h,struct nct_access*a){if(before(a))return -1;
  if(h&&h->sleep){if(h->sleep(h->sleep_context,1000))return fail(a->session,9);return before(a);}
@@ -135,6 +163,15 @@ int nct_run(const struct ncd_io*o,void*context,const struct nct_hooks*h,struct n
  s->callbacks++;if(o->now_us(context,&s->started))return fail(s,2);
  if(s->started>UINT64_MAX-s->batch_us)return fail(s,3);
  s->last=s->started;s->deadline=s->started+s->batch_us;
+ if(s->continuation){
+  s->phase=NCT_DRAIN;s->command_deadline=s->deadline;
+  /* Polling derivative: drain preexisting RX before the new scan publication,
+   * using preserved cursors. Bounded256passes/4096frames, not a radio reset. */
+  for(unsigned pass=0;pass<256;pass++){if(coherent(a)||pump(h,a))return -1;if(s->drain_quiescent||s->event_limit_reached)break;if(pass!=255&&wait(h,a))return -1;}
+  if(!s->drain_quiescent||s->event_limit_reached){s->drain_refused=1;return 1;}
+  s->phase=NCT_COMMAND;
+ }
+
  struct nwt_state*t=&s->init->transport;
  while(s->cursor<s->count){
   struct nct_record*q=&s->record[s->cursor];

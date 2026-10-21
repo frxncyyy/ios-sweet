@@ -8,13 +8,13 @@ static int same_ring(const struct nwi_ring*a,const struct nwi_ring*b){return a->
 static int source(const struct ncr_state*s){
  if(!s||!s->prepared||!s->init||!s->session||s->halt||s->init->halt||s->init->transport.halt||
     s->session->init!=s->init||s->session->halt||s->scan_command>=s->session->count)return 0;
- for(unsigned k=0;k<NCR_QUEUES;k++)if(!same_ring(&s->queue[k].ring,&s->init->rings[k+4])||s->queue[k].next>=s->queue[k].ring.count)return 0;
+ for(unsigned k=0;k<NCR_QUEUES;k++)if(!same_ring(&s->queue[k].ring,&s->init->rings[k+4])||s->queue[k].segmented>1||s->queue[k].next>=s->queue[k].ring.count)return 0;
  return s->queue[1].next==s->init->transport.rx_index;
 }
-int ncr_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout){
+static int prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout,unsigned completed){
  static const uint32_t base[5]={0x18024500,0x18025500,0x18024510,0x18024520,0x18024530};
  static const unsigned count[5]={1024,16,1024,16,16};
- if(!s||s->prepared||s->entered||!i||!t||!i->initialized||i->halt||i->transport.halt||i->transport.completed!=5||
+ if(!s||s->prepared||s->entered||!i||!t||!i->initialized||i->halt||i->transport.halt||i->transport.completed!=completed||
     i->transport.rx_index>=16||command>=NCT_COMMAND_LIMIT||!timeout||timeout>NCT_SERVICE_MAX_US)return -1;
  for(unsigned k=0;k<5;k++){
   const struct nwi_ring*r=&i->rings[k+4];
@@ -26,6 +26,13 @@ int ncr_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsig
  s->init=i;s->session=t;s->scan_command=command;s->scan_sequence=sequence;s->scan_timeout=timeout;
  for(unsigned k=0;k<5;k++){s->queue[k].ring=i->rings[k+4];s->queue[k].next=k==1?i->transport.rx_index:0;}
  s->prepared=1;return 0;
+}
+int ncr_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,unsigned command,uint8_t sequence,uint64_t timeout){return prepare(s,i,t,command,sequence,timeout,5);}
+int ncr_continue_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,const struct ncr_state*p,uint8_t sequence,uint64_t timeout){
+ if(!p||p==s||!source(p)||!p->entered||p->active||p->halt||p->error||p->scan.active||!t||t->continuation!=1||t->previous!=p->session||p->init!=i)return -1;
+ if(prepare(s,i,t,0,sequence,timeout,t->base_completed))return -1;
+ for(unsigned k=0;k<NCR_QUEUES;k++){s->queue[k].next=p->queue[k].next;s->queue[k].didx=p->queue[k].didx;s->queue[k].segmented=p->queue[k].segmented;}
+ return source(s)?0:-1;
 }
 int ncr_memory_range(const struct ncr_state*s,uint64_t p,uint32_t n,unsigned write){
  if(!source(s)||!s->active||s->current>=5||!n)return 0;
@@ -139,6 +146,7 @@ int ncr_pump(void*context,const struct ncd_io*o,void*c,unsigned budget,unsigned*
   s->passes++;
   if(!progress&&examined==5){
    if(pending)break;
+   if(s->session->phase==NCT_DRAIN){s->phase=NCR_IDLE;s->active=0;return 2;}
    /* Scan-done can precede queued management data. Complete only after a
     * subsequent whole-queue drain; keep owned BSS snapshots until then. */
    if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}

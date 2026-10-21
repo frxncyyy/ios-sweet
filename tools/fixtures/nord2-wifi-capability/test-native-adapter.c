@@ -48,6 +48,8 @@ static void thread_block(unsigned x){assert(!x);if(drain_waiting){assert(model.c
 #include "failure_drain.inc"
 static void panic(const char*s){assert(strstr(s,"manual reset"));panic_count++;longjmp(terminal,2);}
 #include "wifi_capability_bind.inc"
+/* Partial CAP/BASIC fixture has no normal owner/service continuation. */
+static void nss_worker_continue(void) {}
 static void native_fixture(void){nwm_drain_entered=drain_blocks=drain_waiting=0;sleepable=1;fixture();memset(&ncd_native,0,sizeof(ncd_native));memset(&nwfn_native,0,sizeof(nwfn_native));nwfn_native.init=init;nwfn_native.stage=NWFN_RETAINED;nfp_native=firmware;nfp_native.host_io=npa_native.host;nwfn_main.ready=1;nwfn_main.halt=0;flag=1;spawns=deallocations=spawn_error=panic_count=parked=0;running_thread=1;worker_entry=0;model=(struct mock){.txidx=3,.rxidx=3};}
 #ifndef NCD_NATIVE_FIXTURE_MAIN
 #define NCD_NATIVE_FIXTURE_MAIN main
