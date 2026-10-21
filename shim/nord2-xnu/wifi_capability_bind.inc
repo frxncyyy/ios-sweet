@@ -93,6 +93,7 @@ static void ncd_report(int result)
    ncd_header_word(h,6),ncd_header_word(h,7),ncd_header_word(h,8));
  }
 }
+#include "wifi_basic_config_bind.inc"
 static void ncd_worker(void*argument,wait_result_t wait_result)
 {
  (void)argument;(void)wait_result;
@@ -109,6 +110,10 @@ static void ncd_worker(void*argument,wait_result_t wait_result)
  if(result){
   nwm_failure_drain(); /* existing scheduler-only bounded terminal policy */
   panic("NORD2 WIFI CAP: uncertain retained DMA state; manual reset required");
+ }
+ if(nbc_after_cap()){
+  nwm_failure_drain();
+  panic("NORD2 WIFI BASIC: uncertain retained DMA state; manual reset required");
  }
  /* Retain the worker and buffers. No interface/carrier is published and this
   * bounded milestone does not claim continuous normal RX service. Future

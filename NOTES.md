@@ -4,6 +4,43 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **BASIC_CONFIG promoted; local validation passed, full CI next.**
+  Exact candidate7dcc9883, independent native reviewf037648f and root review
+  are saved under wifi-basic-config. Adds default-off nord2wifibasic=1 for one
+  same-worker CID2 set/no-response after the real capability receipt. TC4 debit
+  is1PSE/0PLE; no MAC prerequisite or invented ACK; completed5 closes the lease.
+  Missing pure prerequisites skip before I/O. Uncertain DMA uses shared halt,
+  the existing30s log drain and panic. UFS/display/input/rootfs are unchanged.
+  Seven host suites pass (including67 actual-owner callback faults). Four new
+  helper TUs and owning sweet_touch pass normal ARM64 compilation with only
+  source/output substitutions; no forced NORD2/includes. Generated patch14741
+  lines applies and reproduces the buildtree. Exact491-byte image stage stays
+  CLOSED pending CI/artifact/packed-image checks. No new flash authorization.
+  Current phone remains healthy0e949521; never rerun its executed stage.
+
+
+- **Wi-Fi parallel work — current phone remains healthy on 0e949521.**
+  User confirmed the lockscreen, touch and buttons after the completed capability
+  capture. No further device action or restore has occurred. UFS and boot speed
+  remain closed and unchanged at the user's request.
+  Sol `wifi_cap_stage` is completing the private same-worker, one-command
+  BASIC_CONFIG continuation; `wifi_format_stage` independently reviews it.
+  Root owns the fresh CLOSED `research/nord2/wifi-basic-config/ios` stage:
+  `nord2wifibasic=1`, exact491-byte command line, no image/CI/flash yet.
+  Synthetic parser checks pass10 positive/109 negative cases; they are not a
+  hardware BASIC_CONFIG receipt. A clean prerequisite skip is separate from TX
+  completion, and neither implies a firmware ACK, scan or network connectivity.
+  At the user's explicit request, Sol `wifi_after_id` now works on the iOS
+  service bridge in parallel. Its first private milestone manifest41989084
+  identifies the exact same-IPSW IO80211 user-client type0, selectors and control
+  carrier layouts using offline disassembly. REA engines are unavailable; these
+  are static shell observations, not runtime/decompiler evidence. Current Topaz
+  was independently checked again at89451b8 (184 files): useful radio backend
+  API, but no published consumer/user-client bridge in that exact checkout.
+  Further initial-query/scan-result/async-event ABI work is active in a separate
+  private revision. No IOService, interface, carrier or ADT node is published.
+
+
 - **FORMAT 0e949521 SUCCESS COMPLETE; CURRENTPHONE HEALTHY, NO RESTORE.**
   USB180s collector exit0/deadline/no transport error; full immutable
   237316bytes SHA2563b32249042c69db7d39bd4a1c122bb3219a9c8cb1cb65f1ddc47168e6ee2ab41.

@@ -2665,10 +2665,14 @@
  	if (disableConsoleOutput) {
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,20 @@
+@@ -108,6 +108,24 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
++bsd/dev/wifi_basic_config.c			standard
++bsd/dev/wifi_basic_resources.c			standard
++bsd/dev/wifi_basic_metadata.c			standard
++bsd/dev/wifi_basic_primitives.c			standard
 +bsd/dev/wifi_capability.c			standard
 +bsd/dev/wifi_capability_dispatcher.c		standard
 +bsd/dev/wifi_firmware.c			standard
@@ -2686,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +662,26 @@
+@@ -648,3 +666,26 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -4786,7 +4790,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,906 @@
+@@ -1,3 +1,910 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5403,7 +5407,11 @@
 +#include "wifi_wfsys_bind.inc"
 +#include "wifi_rom_bind.inc"
 +#include "pool_bind.inc"
++#include "wifi_main_wfdma_native.h"
++static int ncd_normal_owner_window(const struct nwfn_native *);
++#define NWFN_NORMAL_LEASE(n) ncd_normal_owner_window(n)
 +#include "wifi_main_wfdma_bind.inc"
++#undef NWFN_NORMAL_LEASE
 +#include "wifi_main_bind.inc"
 +#include "wifi_capability_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
@@ -5693,7 +5701,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1561,4 @@
+@@ -658,3 +1565,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -11763,6 +11771,278 @@
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_basic_config.c
+@@ -0,0 +1,123 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_basic_config.h"
++static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
++static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
++static int cap_receipt(const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
++ if(!c||!i||!f||c->init!=i||c->firmware!=f||!c->entered||c->phase!=5||c->halt||c->error||
++    c->completed!=1||c->matched!=1||c->submit_attempted!=1||c->tx_done!=1||!c->events||c->events>16||
++    c->rearmed!=c->events||c->history[c->events-1].kind!=1||c->history[c->events-1].eid!=0xec||
++    !c->capability.decoded||!i->initialized||i->halt||i->transport.halt||i->transport.phase!=2||
++    i->transport.finish_phase!=2||i->transport.completed!=4||i->transport.tx_index>=1024||
++    i->transport.rx_index>=16||!f->ready||f->halt||f->state.halt||f->state.error||
++    f->state.completed!=127||!f->finish_done||(f->ready_raw&3)!=3||!f->ready_polls)return -1;
++ return 0;
++}
++static int skip(struct nbc_state*s,unsigned reason){s->skipped=1;s->skip_reason=reason;s->phase=NBC_SKIPPED;return 1;}
++int nbc_prepare(struct ncd_state*c,struct nwi_state*i,const struct nfp_native*f,struct nbc_state*s){
++ if(!s||s->attempted)return -1;
++ s->attempted=1;s->cap=c;s->init=i;s->firmware=f;
++ if(cap_receipt(c,i,f)||i->transport.submit_attempted||i->transport.tx_done||i->transport.rx_done)return skip(s,1);
++ if(ncp_parse(c->frame,c->frame_bytes,c->history[c->events-1].sequence,&s->verified_cap))return skip(s,2);
++ s->metadata_valid=!nbc_caps_decode(c->frame,c->frame_bytes,&s->caps);
++ /* Metadata decode/known MAC is not a BASIC_CONFIG requirement. */
++ if(nnr_plan(&s->verified_cap,NNI_BASIC_BYTES,&s->plan)||nnr_begin(&s->plan,&s->budget))return skip(s,3);
++ s->sequence=i->transport.next_sequence;s->tx_index=i->transport.tx_index;s->rx_index=i->transport.rx_index;
++ if(nni_basic(s->command,sizeof(s->command),s->sequence,0,0))return skip(s,4);
++ s->prepared=1;return 0;
++}
++int nbc_lease_window(const struct nbc_state*s,const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
++ if(!s||!s->attempted||!s->prepared||!s->entered||s->skipped||s->halt||s->error||s->completed||
++    s->phase<NBC_LEASED||s->phase>NBC_DRAINING||s->cap!=c||s->init!=i||s->firmware!=f||cap_receipt(c,i,f)||
++    i->transport.tx_index!=s->tx_index||i->transport.rx_index!=(s->rx_index+s->rearmed)%16||
++    i->transport.next_sequence!=s->sequence||s->command[36]!=2||s->command[37]!=0xa0||s->command[38]!=1||
++    s->command[39]!=s->sequence||i->transport.submit_attempted!=s->submit_attempted||
++    (s->submit_attempted&&!s->budget.reserved))return 0;
++ return 1;
++}
++static int fail(struct nbc_state*s,unsigned error){if(!s->halt){s->error=error;s->halt=1;if(s->init){s->init->halt=1;s->init->transport.halt=1;if(s->mutated)s->init->transport.dirty=1;}}return -1;}
++static int before(const struct ncd_io*o,void*c,struct nbc_state*s){uint64_t now;
++ if(s->halt)return -1;
++ if(!nbc_lease_window(s,s->cap,s->init,s->firmware))return fail(s,1);
++ s->callbacks++;if(o->bus->owner(c))return fail(s,1);
++ s->callbacks++;if(o->now_us(c,&now))return fail(s,2);
++ if(now<s->last||now>=s->deadline)return fail(s,3);
++ s->last=now;return 0;
++}
++static int rr(const struct ncd_io*o,void*c,struct nbc_state*s,uint32_t a,uint32_t*v){if(before(o,c,s))return -1;s->callbacks++;return o->bus->reg_read(c,a,v)?fail(s,4):0;}
++static int rw(const struct ncd_io*o,void*c,struct nbc_state*s,uint32_t a,uint32_t v){if(before(o,c,s))return -1;s->mutated=1;if(a==0x18025418)s->publications++;s->callbacks++;return o->bus->reg_write(c,a,v)?fail(s,5):0;}
++static int mr(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,void*p,uint32_t n){if(before(o,c,s))return -1;s->callbacks++;return o->bus->mem_read(c,a,p,n)?fail(s,6):0;}
++static int mw(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,const void*p,uint32_t n){if(before(o,c,s))return -1;s->mutated=1;s->callbacks++;return o->bus->mem_write(c,a,p,n)?fail(s,7):0;}
++static int sy(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,uint32_t n,unsigned w){if(before(o,c,s))return -1;s->callbacks++;return o->bus->sync(c,a,n,w)?fail(s,8):0;}
++static int coherent(const struct ncd_io*o,void*c,struct nbc_state*s){s->irq_valid=0;for(unsigned d=0;d<2;d++){if(rr(o,c,s,0x18024200+0x1000*d,&s->irq[d]))return -1;s->irq_valid|=1u<<d;if(s->irq[d]&0x00300000)return fail(s,10);}return 0;}
++/* Observe pending events without waiting for an invented command-result ACK.
++ * Only bounded existing ASCII debug metadata may be consumed/rearmed. */
++static int drain(const struct ncd_io*o,void*c,struct nbc_state*s){struct nwt_state*t=&s->init->transport;uint32_t v;
++ for(;;){
++  if(coherent(o,c,s)||rr(o,c,s,0x1802550c,&v))return -1;
++  if(v>=16)return fail(s,20);
++  if(v==t->rx_index)return 0;
++  if(s->debug_events>=NBC_RX_BUDGET)return fail(s,21);
++  uint64_t d=t->rx_ring+16u*t->rx_index,b=t->rx_buffers+4096u*t->rx_index;
++  if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
++  if(nwt_rx_complete(s->descriptor,b,3840,&s->rx_bytes))return fail(s,22);
++  if(sy(o,c,s,b,(uint32_t)s->rx_bytes,2)||mr(o,c,s,b,s->rx,(uint32_t)s->rx_bytes))return -1;
++  const uint8_t*p=s->rx;size_t n=s->rx_bytes;
++  if(n<36||(u16(p+2)&0x380f)!=0x3800)return fail(s,23);
++  struct ncd_event*h=&s->last_debug;*h=(struct ncd_event){0};s->debug_index=t->rx_index;
++  h->bytes=(uint32_t)n;h->rxd_bytes=u16(p);h->event_bytes=u16(p+24);h->rx_class=u16(p+2);
++  h->eid=p[28];h->sequence=p[29];h->inner_type=u16(p+26);h->header_valid=1;h->kind=4;
++  for(unsigned k=0;k<36;k++)h->header[k]=p[k];
++  if(n>=48){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
++  if(n<48||p[26]||p[27]!=0xe0||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
++  h->kind=2;s->debug_events++;if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
++  s->rearmed++;t->rx_index=(t->rx_index+1)%16;
++ }
++}
++int nbc_run(const struct ncd_io*o,void*c,struct nbc_state*s){uint32_t v;
++ if(!o||!o->bus||!o->now_us||!o->bus->owner||!o->bus->reg_read||!o->bus->reg_write||!o->bus->mem_read||!o->bus->mem_write||!o->bus->sync||!o->bus->delay_us||!s||!s->init||!s->cap||!s->firmware||!s->prepared||s->entered)return -1;
++ s->entered=1;s->phase=NBC_LEASED;
++ if(!nbc_lease_window(s,s->cap,s->init,s->firmware))return fail(s,2);
++ s->callbacks++;if(o->now_us(c,&s->started))return fail(s,2);
++ if(s->started>UINT64_MAX-NBC_DEADLINE_US)return fail(s,3);
++ s->last=s->started;s->deadline=s->started+NBC_DEADLINE_US;
++ struct nwt_state*t=&s->init->transport;
++ if(rr(o,c,s,0x180600f0,&v)||(v&3)!=3)return fail(s,11);
++ if(coherent(o,c,s)||rr(o,c,s,0x18025418,&v)||v!=t->tx_index||rr(o,c,s,0x1802541c,&v)||v!=t->tx_index)return fail(s,12);
++ uint64_t d=t->tx_ring+16u*t->tx_index;
++ if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
++ if(!(u32(s->descriptor+4)&0x80000000)||u32(s->descriptor+8)||u32(s->descriptor+12)||(u32(s->descriptor)&&u32(s->descriptor)!=(uint32_t)t->command))return fail(s,13);
++ if(nwt_tx_desc(s->descriptor,t->command,sizeof(s->command)))return fail(s,14);
++ s->phase=NBC_WRITING;
++ if(mw(o,c,s,t->command,s->command,sizeof(s->command))||sy(o,c,s,t->command,sizeof(s->command),1)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1))return -1;
++ unsigned next=(t->tx_index+1)%1024;
++ if(nnr_reserve_once(&s->budget))return fail(s,15);
++ s->phase=NBC_SUBMITTED;s->submit_attempted=1;t->submit_attempted=1;
++ if(rw(o,c,s,0x18025418,next))return -1;
++ while(s->polls<NBC_POLL_BUDGET){
++  if(coherent(o,c,s)||rr(o,c,s,0x1802541c,&v))return -1;
++  s->polls++;s->tx_didx=v;
++  if(v>=1024||(v!=s->tx_index&&v!=next))return fail(s,16);
++  if(v==next){
++   if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
++   uint32_t control=u32(s->descriptor+4);
++   if(control&0x80000000){
++    if(u32(s->descriptor)!=(uint32_t)t->command||u32(s->descriptor+8)||u32(s->descriptor+12)||(control!=0x80000000&&control!=0xc04c0000))return fail(s,17);
++    s->tx_done=1;s->tx_control=control;s->tx_consumed=control==0x80000000;
++   }
++  }
++  if(drain(o,c,s))return -1;
++  if(s->tx_done)break;
++  if(before(o,c,s))return -1;
++  s->callbacks++;if(o->bus->delay_us(c,1000))return fail(s,9);
++ }
++ if(!s->tx_done)return fail(s,18);
++ s->phase=NBC_DRAINING;
++ if(coherent(o,c,s))return -1;
++ /* No backend callback after completion changes4->5. TX-only is not FW ACK. */
++ t->tx_index=next;t->next_sequence++;t->completed++;
++ t->submit_attempted=t->tx_done=t->rx_done=0;s->completed=1;s->phase=NBC_DONE;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_basic_config.h
+@@ -0,0 +1,28 @@
++#ifndef PRIVATE_BASIC_CONFIG_H
++#define PRIVATE_BASIC_CONFIG_H
++#include "wifi_capability_dispatcher.h"
++#include "wifi_basic_resources.h"
++#include "wifi_basic_metadata.h"
++#include "wifi_basic_primitives.h"
++#define NBC_DEADLINE_US UINT64_C(3000000)
++#define NBC_POLL_BUDGET 3000u
++#define NBC_RX_BUDGET 16u
++enum nbc_phase {NBC_NEW,NBC_LEASED,NBC_WRITING,NBC_SUBMITTED,NBC_DRAINING,NBC_DONE,NBC_SKIPPED};
++struct nbc_state {
++ struct ncd_state *cap;struct nwi_state *init;const struct nfp_native *firmware;
++ unsigned attempted,prepared,entered,phase,halt,error,mutated,submit_attempted,tx_done,completed;
++ unsigned skipped,skip_reason,polls,debug_events,rearmed,metadata_valid;
++ unsigned tx_index,rx_index,callbacks,publications,tx_didx,tx_consumed;uint32_t tx_control;uint8_t sequence;
++ struct ncd_event last_debug;unsigned debug_index;
++ uint64_t started,last,deadline;uint32_t irq[2];unsigned irq_valid;
++ struct ncp_result verified_cap;struct nbc_caps caps;struct nnr_plan plan;struct nnr_budget budget;
++ uint8_t command[76],descriptor[16],rx[3840];size_t rx_bytes;
++};
++/* Pure preparation only: optional refusal is a skip, with no backend callback.
++ * MAC/regulatory metadata cannot grant TX ownership and are not CID2 inputs. */
++int nbc_prepare(struct ncd_state *,struct nwi_state *,const struct nfp_native *,struct nbc_state *);
++/* Pure captured predicates used by the actual native one-command lease hook. */
++int nbc_lease_window(const struct nbc_state *,const struct ncd_state *,const struct nwi_state *,const struct nfp_native *);
++/* One source no-response CID2 TX, no invented ACK or resource refund. */
++int nbc_run(const struct ncd_io *,void *,struct nbc_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_basic_resources.c
+@@ -0,0 +1,23 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_basic_resources.h"
++int nnr_plan(const struct ncp_result *c,size_t bytes,struct nnr_plan *out){
++ struct nnr_plan p={0};
++ if(!c||!out||!c->decoded||!c->resources_supported||c->resource_version!=0x80000001u||bytes!=76||!c->resources[1]||c->resources[5]>255)return -1;
++ p.version=c->resource_version;p.pse_data=c->resources[0];p.pse_cmd=c->resources[1];
++ p.ple_data=c->resources[2];p.ple_cmd=c->resources[3];
++ p.pse_page_bytes=(uint16_t)c->resources[4];p.ple_page_bytes=(uint16_t)(c->resources[4]>>16);
++ p.extra=(uint8_t)c->resources[5];p.tc=4;p.pse_cost=1;p.ple_cost=0;p.wire_bytes=76;
++ *out=p;return 0;
++}
++int nnr_begin(const struct nnr_plan *p,struct nnr_budget *out){
++ struct nnr_budget b={0};
++ if(!p||!out||p->version!=0x80000001u||!p->pse_cmd||p->tc!=4||p->pse_cost!=1||p->ple_cost||p->wire_bytes!=76)return -1;
++ b.plan=*p;b.pse_remaining=p->pse_cmd;*out=b;return 0;
++}
++int nnr_reserve_once(struct nnr_budget *b){
++ if(!b||b->reserved||b->plan.version!=0x80000001u||b->plan.tc!=4||b->plan.pse_cost!=1||b->plan.ple_cost||b->plan.wire_bytes!=76||!b->plan.pse_cmd||b->pse_remaining!=b->plan.pse_cmd)return -1;
++ b->pse_remaining--;b->reserved=1;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_basic_resources.h
+@@ -0,0 +1,20 @@
++#ifndef PRIVATE_NORMAL_RESOURCES_H
++#define PRIVATE_NORMAL_RESOURCES_H
++#include <stdint.h>
++#include <stddef.h>
++#include "wifi_capability.h"
++struct nnr_plan {
++ uint32_t version,pse_data,pse_cmd,ple_data,ple_cmd;
++ uint16_t pse_page_bytes,ple_page_bytes;
++ uint8_t extra;
++ unsigned tc,pse_cost,ple_cost,wire_bytes;
++};
++struct nnr_budget { struct nnr_plan plan; unsigned reserved; uint32_t pse_remaining; };
++/* Pure derivation only. Native must bind cap to its actual same-session receipt.
++ * AXI source counts one credit per command; TC4 excludes PLE. */
++int nnr_plan(const struct ncp_result *,size_t,struct nnr_plan *);
++int nnr_begin(const struct nnr_plan *,struct nnr_budget *);
++/* One-way debit before publication, never automatically refunded on failure,
++ * DDONE, or absent response. No hardware authority is granted by this object. */
++int nnr_reserve_once(struct nnr_budget *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_basic_metadata.c
+@@ -0,0 +1,20 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_basic_metadata.h"
++static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
++static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
++int nbc_caps_decode(const uint8_t*p,size_t n,struct nbc_caps*out){
++ struct nbc_caps r={0};size_t off=40;
++ if(!p||!out||n<40||n>3840||(u16(p+2)&0x380f)!=0x3800||p[28]!=0xec)return -1;
++ unsigned count=u16(p+36);if(count>(n-40)/8)return -1;r.sequence=p[29];
++ for(unsigned i=0;i<count;i++){
++  if(n-off<8)return -1;
++  uint32_t tag=u32(p+off),bytes=u32(p+off+4);off+=8;if(bytes>n-off)return -1;
++  if(tag==3){if(r.sku_present||bytes<12)return -1;r.sku_present=1;r.efuse_country=u32(p+off);r.efuse_valid=p[off+4];}
++  if(tag==8){if(r.phy_present||bytes<12)return -1;r.phy_present=1;r.band5=p[off+2];r.max_bw=p[off+3];r.nss=p[off+4];r.path=p[off+10];}
++  off+=bytes;
++ }
++ *out=r;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_basic_metadata.h
+@@ -0,0 +1,7 @@
++#ifndef PRIVATE_BASIC_METADATA_H
++#define PRIVATE_BASIC_METADATA_H
++#include <stdint.h>
++#include <stddef.h>
++struct nbc_caps {unsigned sku_present,phy_present;uint32_t efuse_country;uint8_t efuse_valid,band5,nss,max_bw,path,sequence;};
++int nbc_caps_decode(const uint8_t *,size_t,struct nbc_caps *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_basic_primitives.c
+@@ -0,0 +1,19 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_basic_primitives.h"
++static void put16(uint8_t *p,uint16_t x){p[0]=(uint8_t)x;p[1]=(uint8_t)(x>>8);}
++static void put32(uint8_t *p,uint32_t x){put16(p,(uint16_t)x);put16(p+2,(uint16_t)(x>>16));}
++static void header(uint8_t *p,unsigned bytes,uint8_t cid,uint8_t seq){
++ for(unsigned i=0;i<bytes;i++)p[i]=0;
++ put32(p,bytes|(2u<<23));put32(p+4,1u<<16);
++ put16(p+32,(uint16_t)(bytes-32));p[36]=cid;p[37]=0xa0;p[38]=1;p[39]=seq;
++}
++int nni_basic(uint8_t *p,size_t capacity,uint8_t seq,unsigned path,unsigned level){
++ if(!p||capacity<NNI_BASIC_BYTES||path>1||level>2)return -1;
++ header(p,NNI_BASIC_BYTES,2,seq);p[65]=(uint8_t)path;p[66]=(uint8_t)level;
++ /* Native80211=0, RX/TX checksum=0 and segment/reserved bytes=0, as
++  * source zero-initialization before optional checksum enable. */
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_basic_primitives.h
+@@ -0,0 +1,8 @@
++#ifndef NORD2_BASIC_PRIMITIVES_H
++#define NORD2_BASIC_PRIMITIVES_H
++#include <stdint.h>
++#include <stddef.h>
++#define NNI_BASIC_BYTES 76u
++/* Selected CID2 set/no-response. No address, NVRAM or domain builder. */
++int nni_basic(uint8_t *,size_t,uint8_t,unsigned,unsigned);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_capability.c
 @@ -0,0 +1,50 @@
 +#include <arm64/sweet_early.h>
@@ -13494,8 +13774,63 @@
 +int nfa_xnu_run(void);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_basic_config_bind.inc
+@@ -0,0 +1,52 @@
++/* One same-worker lease; the opt-in flag itself never grants MMIO authority. */
++#include "wifi_basic_config.h"
++static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
++static int ncd_normal_owner_window(const struct nwfn_native*n)
++{
++ return n==&nwfn_native&&nbc_native.enabled==1&&nbc_native.attempted==1&&
++  ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&
++  ncd_native.worker==current_thread()&&
++  nbc_lease_window(&nbc_native.state,&ncd_native.diag,&nwfn_native.init,&nfp_native);
++}
++static void nbc_report(int result)
++{
++ const struct nbc_state*s=&nbc_native.state;const struct ncp_result*c=&s->verified_cap;
++ printf("NORD2 WIFI BASIC: status=%d phase=%u complete=%u skipped=%u reason=%u halt=%u error=%u submit=%u txdone=%u polls=%u debug=%u rearmed=%u callbacks=%u publications=%u\n",
++  result,s->phase,s->completed,s->skipped,s->skip_reason,s->halt,s->error,s->submit_attempted,s->tx_done,s->polls,s->debug_events,s->rearmed,s->callbacks,s->publications);
++ if(s->prepared)printf("NORD2 WIFI BASIC TX: cid=%#x seq=%u bytes=%u from=%u to=%u completed=%u didx=%u control=%#x consumed=%u ack_expected=0 firmware_ack=0\n",
++  2,s->sequence,NNI_BASIC_BYTES,s->tx_index,(s->tx_index+1)%1024,nwfn_native.init.transport.completed,s->tx_didx,s->tx_control,s->tx_consumed);
++ printf("NORD2 WIFI BASIC RESOURCE: valid=%u version=%#x pse=%u/%u ple=%u/%u pages=%u/%u extra=%u debit=%u/%u reserved=%u remaining=%u\n",
++  c->decoded&&c->resources_supported,c->resource_version,c->resources[0],c->resources[1],c->resources[2],c->resources[3],
++  (unsigned)(uint16_t)c->resources[4],(unsigned)(uint16_t)(c->resources[4]>>16),c->resources[5],
++  s->budget.reserved?s->plan.pse_cost:0,s->budget.reserved?s->plan.ple_cost:0,s->budget.reserved,s->budget.pse_remaining);
++ printf("NORD2 WIFI BASIC CAPS: valid=%u sku=%u efuse=%u country=%#x phy=%u band5=%u bw=%u nss=%u path=%#x known=%u unknown=%u\n",
++  s->metadata_valid,s->caps.sku_present,s->caps.efuse_valid,s->caps.efuse_country,s->caps.phy_present,s->caps.band5,s->caps.max_bw,s->caps.nss,s->caps.path,c->known,c->unknown);
++ const struct ncd_event*h=&s->last_debug;
++ printf("NORD2 WIFI BASIC DEBUG: valid=%u index=%u kind=%u type=%#x eid=%#x seq=%u bytes=%u declared=%u/%u inner=%#x id=%u format=%u length=%u\n",
++  h->header_valid,s->debug_index,h->kind,h->rx_class,h->eid,h->sequence,h->bytes,h->rxd_bytes,h->event_bytes,h->inner_type,h->debug_id,h->debug_type,h->debug_bytes);
++ printf("NORD2 WIFI BASIC DEBUGHEADER: valid=%u raw=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
++  h->header_valid,ncd_header_word(h,0),ncd_header_word(h,1),ncd_header_word(h,2),ncd_header_word(h,3),ncd_header_word(h,4),ncd_header_word(h,5),ncd_header_word(h,6),ncd_header_word(h,7),ncd_header_word(h,8));
++ printf("NORD2 WIFI BASIC OWNER: worker=%u native_error=%u native_halt=%u init_halt=%u transport_halt=%u firmware_halt=%u completed=%u lease=%u\n",
++  ncd_native.worker==current_thread(),nwfn_native.error,nwfn_native.halt,nwfn_native.init.halt,nwfn_native.init.transport.halt,nfp_native.halt,nwfn_native.init.transport.completed,ncd_normal_owner_window(&nwfn_native));
++}
++static int nbc_after_cap(void)
++{
++ unsigned enabled=0;PE_parse_boot_argn("nord2wifibasic",&enabled,sizeof(enabled));
++ if(enabled!=1)return 0;
++ if(!__sync_bool_compare_and_swap(&nbc_native.attempted,0,1))return 0;
++ nbc_native.enabled=1;
++ int result=nbc_prepare(&ncd_native.diag,&nwfn_native.init,&nfp_native,&nbc_native.state);
++ if(!result){
++  printf("NORD2 WIFI BASIC ARM: cid=%#x seq=%u bytes=%u deadline_us=%u rx_budget=%u\n",
++   2,nbc_native.state.sequence,NNI_BASIC_BYTES,3000000u,NBC_RX_BUDGET);
++  result=nbc_run(&ncd_io,&ncd_native,&nbc_native.state);
++ }
++ if(result<0){
++  nbc_native.state.halt=1;ncd_native.halt=1;nwfn_native.halt=1;
++  nwfn_native.init.halt=1;nwfn_native.init.transport.halt=1;nfp_native.halt=1;
++ }
++ nbc_report(result); /* captured-only after failure, no backend reads */
++ if(result<0)return -1;
++ printf("NORD2 WIFI BASIC WORKER: parking=1 retained=1 callbacks_complete=1\n");
++ return 0;
++}
+--- /dev/null
 +++ b/bsd/dev/wifi_capability_bind.inc
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,144 @@
 +/* PRIVATE normal capability adapter. Include after main_bind.inc. Proposed
 + * hook is ncd_schedule() after nwfn_after_pool(), never inside its stages. */
 +#ifndef NCD_NATIVE_HOST_TEST
@@ -13591,6 +13926,7 @@
 +   ncd_header_word(h,6),ncd_header_word(h,7),ncd_header_word(h,8));
 + }
 +}
++#include "wifi_basic_config_bind.inc"
 +static void ncd_worker(void*argument,wait_result_t wait_result)
 +{
 + (void)argument;(void)wait_result;
@@ -13607,6 +13943,10 @@
 + if(result){
 +  nwm_failure_drain(); /* existing scheduler-only bounded terminal policy */
 +  panic("NORD2 WIFI CAP: uncertain retained DMA state; manual reset required");
++ }
++ if(nbc_after_cap()){
++  nwm_failure_drain();
++  panic("NORD2 WIFI BASIC: uncertain retained DMA state; manual reset required");
 + }
 + /* Retain the worker and buffers. No interface/carrier is published and this
 +  * bounded milestone does not claim continuous normal RX service. Future
@@ -13697,10 +14037,13 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_main_wfdma_bind.inc
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,524 @@
 +/* PRIVATE. Include after pool_bind.inc. No production hook is added here.
 + * All source helpers below use fresh state, not sleeping adapter callbacks. */
 +#include "wifi_main_wfdma_native.h"
++#ifndef NWFN_NORMAL_LEASE
++#define NWFN_NORMAL_LEASE(n) 0
++#endif
 +struct nwfn_native nwfn_native;
 +static int nwfn_stop(struct nwfn_native *n,unsigned error)
 +{
@@ -13910,7 +14253,9 @@
 +     n->finish_tx[37]==0xa0&&
 +     ((n->init.transport.finish_phase==1&&n->init.transport.completed==2&&
 +       n->init.transport.submit_attempted)||
-+      (n->init.transport.finish_phase==2&&n->init.transport.completed==3)))
++      (n->init.transport.finish_phase==2&&
++       (n->init.transport.completed==3||
++        (n->init.transport.completed==4&&NWFN_NORMAL_LEASE(n))))))
 +   mask&=~0x20000000u;
 +  raw=nwfn_load(address);
 +  if(raw&mask){

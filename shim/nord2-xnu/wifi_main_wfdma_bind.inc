@@ -1,6 +1,9 @@
 /* PRIVATE. Include after pool_bind.inc. No production hook is added here.
  * All source helpers below use fresh state, not sleeping adapter callbacks. */
 #include "wifi_main_wfdma_native.h"
+#ifndef NWFN_NORMAL_LEASE
+#define NWFN_NORMAL_LEASE(n) 0
+#endif
 struct nwfn_native nwfn_native;
 static int nwfn_stop(struct nwfn_native *n,unsigned error)
 {
@@ -210,7 +213,9 @@ static int nwfn_guard(struct nwfn_native *n,unsigned full)
      n->finish_tx[37]==0xa0&&
      ((n->init.transport.finish_phase==1&&n->init.transport.completed==2&&
        n->init.transport.submit_attempted)||
-      (n->init.transport.finish_phase==2&&n->init.transport.completed==3)))
+      (n->init.transport.finish_phase==2&&
+       (n->init.transport.completed==3||
+        (n->init.transport.completed==4&&NWFN_NORMAL_LEASE(n))))))
    mask&=~0x20000000u;
   raw=nwfn_load(address);
   if(raw&mask){

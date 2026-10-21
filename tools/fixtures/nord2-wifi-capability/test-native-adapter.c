@@ -34,7 +34,7 @@ const struct nwt_io nwfn_io={nwfn_owner,model_read,model_write,model_mread,model
 static uint32_t ni_rd(uintptr_t p,unsigned off){assert(p==npa_native.host&&off==0xf0&&running_thread==2);uint32_t v;assert(!rr(&model,0x180600f0,&v));return v;}
 static void clock_get_uptime(uint64_t*t){*t=model.now*1000;}
 static void absolutetime_to_nanoseconds(uint64_t t,uint64_t*out){*out=t;}
-static void PE_parse_boot_argn(const char*n,unsigned*out,unsigned size){assert(size==4);*out=!strcmp(n,"nord2wificap")?flag:1;}
+static void PE_parse_boot_argn(const char*n,unsigned*out,unsigned size){assert(size==4);*out=!strcmp(n,"nord2wificap")?flag:!strcmp(n,"nord2wifibasic")?0:1;}
 static kern_return_t kernel_thread_start(void(*entry)(void*,wait_result_t),void*c,thread_t*out){assert(!c);spawns++;if(spawn_error)return 5;worker_entry=entry;*out=2;return 0;}
 static void thread_deallocate(thread_t t){assert(t==2);deallocations++;}
 static void assert_wait(event_t e,unsigned mode){assert(e&&mode==THREAD_UNINT);parked++;}
