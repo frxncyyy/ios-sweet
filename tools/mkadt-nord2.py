@@ -8,7 +8,7 @@ has been verified on hardware;
 the root-device node below is used only when rd=ufsroot0 is requested.
 There are no Qualcomm display, touch or USB nodes.
 
-Usage:  mkadt-nord2.py OUT.adt [--dump] [--product-adt D22AP.adt]
+Usage:  mkadt-nord2.py OUT.adt [--dump] [--product-adt D22AP.adt] [--wifi-service]
 
 Kernel-managed RAM is a 992 MiB window in the upper DDR bank:
 0x1_42000000..0x1_80000000. It is 32 MiB aligned (the 16K-page bootstrap map
@@ -56,7 +56,7 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(product_adt=None):
+def build(product_adt=None, wifi_service=False):
     ph = iter(range(1, 1000))
     phandle = lambda: ('AAPL,phandle', u32(next(ph)))
 
@@ -164,7 +164,7 @@ def build(product_adt=None):
             raise SystemExit('A readable D22AP /product node is required')
         product = [node('product', [phandle()] + props)]
 
-    return node('device-tree', [
+    root = node('device-tree', [
         phandle(),
         ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('mediatek,mt6893') + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
@@ -178,6 +178,14 @@ def build(product_adt=None):
             ('compatible', cstr('mediatek,mt6893-ufshci')),
             ('reg', u64(0x11270000, 0x2300)),
             ('lun', u32(2))])] + product)
+    if wifi_service:
+        # The installed iOS launchd plist requires a node named "wlan".
+        # This is a launch/driver identity, not an Apple hardware register map.
+        # Append only after the ordinary tree is complete, preserving every
+        # existing node and phandle in images without this explicit option.
+        arm_io.children.append(node('wlan', [
+            phandle(), ('compatible', cstr('nord2,mt6893-wifi'))]))
+    return root
 
 
 if __name__ == '__main__':
@@ -185,8 +193,10 @@ if __name__ == '__main__':
     ap.add_argument('output')
     ap.add_argument('--dump', action='store_true')
     ap.add_argument('--product-adt')
+    ap.add_argument('--wifi-service', action='store_true',
+                    help='enable the wlan launch gate for the native Wi-Fi service')
     args = ap.parse_args()
-    root = build(args.product_adt)
+    root = build(args.product_adt, args.wifi_service)
     blob = adt.serialize(root)
     with open(args.output, 'wb') as f:
         f.write(blob)

@@ -29,6 +29,16 @@
   never rerun. No recovery, new device action or approval question pending.
   Keep this boot on the phone. UFS and boot speed are completed by user request.
 
+- **iOS service launch gate prepared, not activated on the phone.**
+  tools/mkadt-nord2.py accepts --wifi-service, adding only /arm-io/wlan
+  with compatible nord2,mt6893-wifi. Default ADT remains byte-identical;
+  enabled serialization removes back to the exact baseline. Image builder
+  selects it only for nord2wifiios=1. mkpayload now rejects NUL/overlong
+  command lines instead of silently truncating the 608-byte field.
+  Fresh research/nord2/wifi-ios-scan/ios contains offline preparation scripts,
+  all source/CI/prepared/approval gates false, no execution records or image.
+  6a6a remains the healthy recovery baseline and current device boot.
+
 - **Next cohesive task: actual iOS Wi-Fi scan service and association path.**
   Root owns canonical source, CI and device actions. Existing private bridge
   boot-cache-native manifest84b8020a/review6ebd5cad has a real immutable nsb

@@ -68,11 +68,14 @@ case " $cmdline " in
             exit 1
         fi ;;
 esac
+set -- "$tmp/nord2.adt"
 if [ -n "$product_adt" ]; then
-    python3 tools/mkadt-nord2.py "$tmp/nord2.adt" --product-adt "$product_adt"
-else
-    python3 tools/mkadt-nord2.py "$tmp/nord2.adt"
+    set -- "$@" --product-adt "$product_adt"
 fi
+case " $cmdline " in
+    *" nord2wifiios=1 "*) set -- "$@" --wifi-service ;;
+esac
+python3 tools/mkadt-nord2.py "$@"
 if [ -n "$ramdisk" ]; then
     python3 tools/mkpayload.py "$tmp/kernel.strip" "$tmp/nord2.adt" "$tmp/payload.bin" \
         --cmdline "$cmdline" --ramdisk "$ramdisk"
