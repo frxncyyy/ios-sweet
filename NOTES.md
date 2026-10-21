@@ -3,6 +3,23 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Receive lifecycle26 CI39678188048 SUCCESS; verified kernel, packing.**
+  Source8d6960fb52a07aa381a93a36418b6e128a4f3518, kernel17534736B
+  SHA3c86a847219334ea02e3e531aa36c77ac48c06a228211233d4bb71444d096e4d.
+  All160generated files equal CI,13actualgenericARMv8.2TUs;2,241,609decoded
+  instructions noLDAPUR/STLUR. Linked review35349186/manifest20371553 PASS:
+  actual26recipe/defaults/filter0xc and priorowner/async/RX/30sdrain preserved.
+  Fresh wifi-rx-lifecycle/ios identity/schema gatestrue; bounded1GiB pack
+  root session43799 running. Image/prepared/humanapproval stillpending;
+  runnerUNUSED. Phone remains healthy1c5, no collector/device action.
+  Private lifecycle-scan-adapter/v2 manifest61be3330/reviewa9a59691 passed
+  sanitizer+ARM64 checks; exactticket/generation/output plusclose/inflight,
+  genuineemptyEOF distinctfrompartial. UNCALLEDhelper only, noIOUCregistration
+  or realretainedbackend/eventproducer; populatedApple ratemap stillunproven.
+  Next finishpack/independentverify, then exactnewimage boot-only approval
+  with healthy1c5/RAMrescue fallback. Do not rerun any earlier usedrunner.
+
+
 - **Receive lifecycle26 source8d6960fb CI39678188048 running.**
   Root watcher14045 saves run/log/artifacts under research/ci-39678188048.
   Canonical all5 suites PASS; three affected normalARM64 TUs PASS.
