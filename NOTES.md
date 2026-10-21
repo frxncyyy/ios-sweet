@@ -3,6 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **c31 receive lifecycle26 HARDWARE-HEALTHY, still ZERO RF; delegated to Claude.**
+  Human lockscreen/touch/buttons confirmed call_858994b387c746c392746d6863609a2e.
+  Actual26commands DDONE/credits complete, scan22channels state7 completes;
+  zeroBSS/frames/beacon-probe/MDRDY. Strict26 parserPASS, RXDMAvalid,
+  all8RXDMAQUEUErows and CFG sameas1c5; no justifiedDMAwrite/newfieldfix.
+  NewCID70+filter omissions executed but didNOTsolve reception.
+  Finalimmutable wifi-rx-lifecycle/ios/backend-full.log246534B SHA
+  ddc21d009fe45e195c6efdad6c0f35af7f758c09eeda9a24ec53ef4aec7d9540.
+  USB180s collector exit0/deadline/noerror; session98240 CLOSED, runnerUSED.
+  Currentphone healthyc31; keepit, no recovery/fastboot action pending.
+  User explicitly delegated analysis to Claude. Readonly Claude Opus launched
+  in research/nord2/wifi/claude-opus-rf-c31 (CLI modelclaude-opus-5-5),
+  session864d9b77-5357-4b28-98c7-f3bc4d37c443/PID381329/rootexec83032.
+  Read/Grep/Glob only, no shell/write/device/CI authority. Prompt and live
+  stream.jsonl saved; final REPORT.md/result.json generated oncompletion.
+  Other3agents closed their audits to handoff: rf-calibration-recheck/REPORT.md
+  (e1d1881b manifest), hardware-audit/rx-lifecycle-c31-scan/report.json
+  (1b9ef7de), hardware-audit/lifecycle-c31/HANDOFF.md (716bc99c manifest).
+  Lastlead: selected CMD82 statistics query/EID03 may expose aggregateRF
+  counters; exact callerusesPARAM_802_11_STATISTICS_STRUCT not guessed72B
+  CMD_GET_STATISTICS. Query/response lifecycle needs design; don't append to
+  SET-only recipe blindly. BroadMACdump writesdebugmux, NOTread-only.
+  No next candidate/build yet; reviewClaude diagnosis before furtherchanges.
+
+
+- **Receive lifecycle26 imagec31ff5e4 AUTHORIZED and BOOT-ONLY flashed OKAY.**
+  Exactapproval call_e6c0741c39ad46c1a760c3bbd9695089 includes conditional
+  healthy1c5/RAMrescue recovery. KnownsingleNord2/productoplus6893/boot32MiB/
+  nonuserspaceverified. Flash/rebootOKAY; fresh wifi-rx-lifecycle/ios runnerUSED,
+  NEVERrerun. Root session98240 collectingUSB180s; outcome/healthpending.
+  Currentphonec31, not1c5. No stockAndroidboot permitted overiOSuserdata.
+
+
 - **Receive lifecycle26 imagec31ff5e4 VERIFIED; exact boot-only approval pending.**
   shim/out/nord2-xnu/nord2-ios-wifi-rx-lifecycle-battery-stop23.img33386496B
   SHAc31ff5e47611fac18d6eb242cab86f39fa049d751ba0a9e0fa65ed3658ad8b1f
