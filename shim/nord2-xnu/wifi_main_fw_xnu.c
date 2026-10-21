@@ -2,8 +2,8 @@
 #include "wifi_main_phy_xnu.h"
 #include "wifi_main_wfdma_native.h"
 #include "wifi_main_halt.h"
-#include <wifi_rom_xnu.h>
-#include <wifi_rom_powered_adapter.h>
+#include "wifi_rom_xnu.h"
+#include "wifi_rom_powered_adapter.h"
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <pexpert/pexpert.h>

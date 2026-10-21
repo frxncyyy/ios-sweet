@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MAIN-FW CI39589483352 FAILED; LOCAL INCLUDE FIX VERIFIED.**
+  Only three compile errors: angle-bracket includes of sibling ROM headers in
+  wifi_main_fw_xnu/phy_xnu. Changed to quotes; no runtime logic change.
+  Both actual ARM64 TUs now pass with CI-derived include paths (no extra
+  bsd/dev include), source-generated NORD2, system clang23. Patch reproduces.
+  Earlier focused check had extra local include coverage, so missed this.
+  Full replacement CI required; no candidate flash or new authorization.
+  Current e0d3 remains human-confirmed healthy, no collector/device writes.
+
+
+- **MAIN-FW CI39589483352 RUNNING.**
+  Source df4503b3e4a0ed75388ff75e874274565e9aaeaf pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39589483352
+  Canonical native and private-calibration host tests and13actualARM64objects
+  PASS. Wait fullCIartifact, verify source/compiler flags/linkedpath, then
+  boundedimagepacking and exacthardwareapproval. No flashapproval for this
+  candidate. Currente0d3 remains healthy andcollector stopped.
+
+
 - **MAIN-FW + BATTERY SOURCE READY FOR FULL CI.**
   Native/coordinator e1bfc6cf and firmware/PHYv2 0856bff4 independently PASS;
   promoted with include-name-only normalization to wifi_main_* canonical files.
