@@ -89,6 +89,7 @@ static int ncb_after_basic(void)
   ncb_native.refusal=3;ncb_report(1);return 0;
  }
  ncb_native.prepared=1;
+ NVC_PHASE(5);
  struct nct_recipe recipe={ncb_native.plan.entry,NCB_COMMANDS,ncb_build,&ncb_native.plan,UINT64_C(60000000),UINT64_C(15000000)};
  struct nct_hooks hooks={ncr_pump,&ncb_native.rx,ncb_sleep,&ncb_native};
  printf("NORD2 WIFI BACKEND ARM: commands=%u channels=%u passive=1 nvram=%u\n",NCB_COMMANDS,ncb_native.plan.channel_count,ncb_native.plan.config.nvram.fragments);

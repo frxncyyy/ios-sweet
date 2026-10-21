@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,37 @@
+@@ -648,3 +666,38 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2727,6 +2727,7 @@
 +bsd/dev/wifi_normal_init.c			standard
 +bsd/dev/wifi_regulatory_policy.c			standard
 +bsd/dev/wifi_normal_backend.c			standard
++bsd/dev/wifi_vcn33.c			standard
 +bsd/dev/wifi_default_feature.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
@@ -4801,7 +4802,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,912 @@
+@@ -1,3 +1,916 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5170,6 +5171,7 @@
 +	 * arbitrary PMIC address, or clear-on-read interrupt status is admitted. */
 +	switch (addr) {
 +	case 0x002a: /* TOPSTATUS: power bit1, HOMEKEY/volume-up bit3, active-low */
++	case 0x18b4: /* shared VS2 voltage metadata, read only */
 +	case 0x0788: case 0x079e: /* DCXO_CW00, CW09 */
 +	case 0x1be2: case 0x1be6: case 0x1be8: case 0x1bee: case 0x1bf4:
 +	case 0x1c08: case 0x1c0c: case 0x1c0e: case 0x1c14: case 0x1c1a:
@@ -5424,6 +5426,7 @@
 +#define NWFN_NORMAL_LEASE(n) ncd_normal_owner_window(n)
 +#include "wifi_main_wfdma_bind.inc"
 +#undef NWFN_NORMAL_LEASE
++#include "wifi_vcn33_bind.inc"
 +#include "wifi_main_bind.inc"
 +#include "wifi_capability_bind.inc"
 +#include "wifi_normal_backend_bind.inc"
@@ -5535,6 +5538,7 @@
 +		int retained = npa_persistent_window(host, conn, id,
 +		    npa_source_owner_proof, 0, 0x8fb00000, 0x8a000000, 3);
 +		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
++		nvc_after_persistent();
 +		nawa_after_persistent(); /* explicit separate wake diagnostic only */
 +		nwsa_after_persistent(); /* separate CPU-held WFSYS diagnostic */
 +		nrpa_after_persistent();
@@ -5662,6 +5666,7 @@
 +	unsigned errors = 0, ticks = 0, key_errors = 0;
 +	int state[3] = {0}, previous[3] = {-1, -1, -1};
 +	for (;;) {
++        nvc_poll(); /* owner-only periodic phase sampling; no exact scan-boundary claim */
 +		key_ok = ni_keys_read(&top);
 +		int now[3] = {!(top & 2), !(top & 8), !ni_level(NI_VOLDN)};
 +		if (!key_ok && (key_errors++ % 500) == 0) {
@@ -5714,7 +5719,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1567,4 @@
+@@ -658,3 +1571,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -11784,6 +11789,68 @@
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_vcn33.c
+@@ -0,0 +1,45 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* SPDX-License-Identifier: GPL-2.0
++ * Derived from selected MediaTek MT6893/MT6359P RC rail control.
++ * Voltage-first is a deliberate safety reorder under verified cold guards. */
++#include "wifi_vcn33.h"
++const uint16_t nvc_addresses[NVC_REGS]={0x1be2,0x1be6,0x1be8,0x1bee,0x1bf4,0x1f98,0x1c08,0x1c0c,0x1c0e,0x1c14,0x1c1a,0x1f9c,0x18b4};
++static int read(const struct nvc_io*o,void*c,uint16_t a,uint16_t*v){return o->owner(c)||o->read(c,a,v);}
++int nvc_capture(const struct nvc_io*o,void*c,struct nvc_snapshot*s){
++ if(!o||!o->owner||!o->read||!o->rc||!s)return -1;
++ *s=(struct nvc_snapshot){0};
++ if(o->owner(c)||o->rc(c,&s->rc))return -1;
++ for(unsigned i=0;i<NVC_REGS;i++){if(read(o,c,nvc_addresses[i],&s->value[i]))return -1;s->valid|=1u<<i;}
++ return 0;
++}
++int nvc_run(const struct nvc_io*o,void*c,struct nvc_state*s){
++ if(!s||s->attempted||!o||!o->write)return -1;
++ s->attempted=1;s->error=1;
++ if(nvc_capture(o,c,&s->before))return -1;
++ const uint16_t*v=s->before.value;
++ if(!(s->before.rc&1)||(v[0]&3)||(v[1]&3)||v[2]!=0x8000||(v[3]&0x60)||(v[4]&0x8000)||(v[5]&0xf00)!=0xf00||
++    (v[6]&3)||(v[7]&3)||v[8]!=0x8000||(v[9]&0x40)||(v[10]&0x8000)||(v[11]&0xf00)!=0xf00){s->error=2;return -1;}
++ /* Only two masked selectors then three source masked OP_EN updates. No SW_EN/CFG/VS2 writes. */
++ const uint16_t address[5]={0x1f98,0x1f9c,0x1be8,0x1be8,0x1c0e};
++ const uint16_t base[5]={0x1f98,0x1f9c,0x1be8,0x1be8,0x1c0e};
++ const uint16_t previous[5]={v[5],v[11],0x8000,0x8040,0x8000};
++ const uint16_t desired[5]={(uint16_t)((v[5]&~0xf00u)|0xd00),(uint16_t)((v[11]&~0xf00u)|0xd00),0x8040,0x8060,0x8040};
++ for(unsigned i=0;i<5;i++){
++  uint16_t actual=0;s->error=3+i;
++  if(read(o,c,base[i],&actual)||actual!=previous[i]||o->owner(c))return -1;
++  s->mutated=1; /* Set BEFORE callback: write may commit despite failure. */
++  if(o->write(c,address[i],desired[i]))return -1;
++  s->writes++;
++  if(read(o,c,base[i],&actual)||actual!=desired[i])return -1;
++ }
++ s->error=8;if(nvc_capture(o,c,&s->after))return -1;
++ for(unsigned i=0;i<NVC_REGS;i++){
++  uint16_t want=v[i];if(i==2)want=0x8060;if(i==8)want=0x8040;if(i==5||i==11)want=(want&~0xf00u)|0xd00;
++  /* MON is dynamic RC status, not a completion requirement. VS2 read-only. */
++  if(i!=1&&i!=7&&i!=12&&s->after.value[i]!=want)return -1;
++ }
++ s->complete=1;s->error=0;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_vcn33.h
+@@ -0,0 +1,11 @@
++#ifndef WIFI_VCN33_H
++#define WIFI_VCN33_H
++#include <stdint.h>
++#define NVC_REGS 13u
++struct nvc_io {int(*owner)(void*);int(*read)(void*,uint16_t,uint16_t*);int(*write)(void*,uint16_t,uint16_t);int(*rc)(void*,uint32_t*);};
++struct nvc_snapshot {uint16_t value[NVC_REGS];uint32_t valid,rc;};
++struct nvc_state {unsigned attempted,mutated,complete,error,writes;struct nvc_snapshot before,after;};
++extern const uint16_t nvc_addresses[NVC_REGS];
++int nvc_capture(const struct nvc_io*,void*,struct nvc_snapshot*);
++int nvc_run(const struct nvc_io*,void*,struct nvc_state*);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_default_feature.c
 @@ -0,0 +1,38 @@
 +#include <arm64/sweet_early.h>
@@ -15109,6 +15176,71 @@
 +int nfa_xnu_run(void);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_vcn33_bind.inc
+@@ -0,0 +1,62 @@
++/* Include after persistent binder and failure_drain, before main binder.
++ * This is the sole input-thread PMIF owner. Workers only publish one atomic. */
++#ifndef NVC_HOST_TEST
++#include <kern/clock.h>
++#include <kern/thread.h>
++#endif
++#include "wifi_vcn33.h"
++static struct {struct nvc_state state;thread_t owner;unsigned enabled,halt,samples;uint64_t start,next;}nvc_native;
++static unsigned nvc_phase;
++static void nwm_failure_drain(void);
++static void nvc_mark(unsigned phase){__atomic_store_n(&nvc_phase,phase,__ATOMIC_RELEASE);}
++static uint64_t nvc_now(void){uint64_t t,ns;clock_get_uptime(&t);absolutetime_to_nanoseconds(t,&ns);return ns/1000;}
++static int nvc_owner(void*c){
++ if(c!=&nvc_native||!nvc_native.enabled||nvc_native.halt||current_thread()!=nvc_native.owner||
++ !npa_persistent_lifetime||!npa_native.outer_retained||!npa_native.state.entered||npa_native.state.fatal||npa_native.state.result.phase!=10||
++ !npa_native.proof||npa_native.proof(npa_native.proof_cookie)||
++ !nw.saved||!nw.domain_touched||!ni_saved||!ncc_fresh_owned||ncc_latched_dirty)return -1;
++ return 0;
++}
++static int nvc_read(void*c,uint16_t a,uint16_t*v){if(nvc_owner(c))return -1;return ni_pmic_read(a,v)?0:-1;}
++static int nvc_rc(void*c,uint32_t*v){if(!v||nvc_owner(c))return -1;*v=ni_rd(nw.spm,0x504);return 0;}
++static int nvc_write(void*c,uint16_t a,uint16_t v){
++ if(nvc_owner(c))return -1;
++ /* Five slots only; reject callback replay, arbitrary values or additional base EN writes. */
++ unsigned k=nvc_native.state.writes;
++ const uint16_t addr[5]={0x1f98,0x1f9c,0x1be8,0x1be8,0x1c0e};
++ uint16_t expected=k<2?(uint16_t)((nvc_native.state.before.value[k?11:5]&~0xf00u)|0xd00):(k==2?0x8040:(k==3?0x8060:0x8040));
++ if(k>=5||a!=addr[k]||v!=expected||!nvc_native.state.mutated)return -1;
++ if(!nw_wait(ni_pwrap,0xca8,0x800e,0x8000))return -1;
++ ni_pwrap_owned=true;ni_wr(ni_pwrap,0xc84,v);ni_wr(ni_pwrap,0xc80,(1u<<29)|a);
++ return nw_wait(ni_pwrap,0xca8,0x800e,0x8000)?0:-1;
++}
++static const struct nvc_io nvc_ops={nvc_owner,nvc_read,nvc_write,nvc_rc};
++static void nvc_log(unsigned kind,const struct nvc_snapshot*s){
++ const uint16_t*v=s->value;
++ printf("NORD2 WIFI VCN33 SNAP: kind=%u phase=%u valid=%#x rc=%#x time_us=%llu values=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
++ kind,__atomic_load_n(&nvc_phase,__ATOMIC_ACQUIRE),s->valid,s->rc,(unsigned long long)nvc_now(),v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11],v[12]);
++}
++static void nvc_stop(void){nvc_native.halt=1;nwm_failure_drain();panic("NORD2 WIFI VCN33: retain lifetime; manual reset required");}
++static void nvc_after_persistent(void){
++ unsigned opt=0,main=0,persist=0;PE_parse_boot_argn("nord2wifivcn33",&opt,sizeof(opt));if(opt!=1)return;
++ PE_parse_boot_argn("nord2wifimain",&main,sizeof(main));PE_parse_boot_argn("nord2wifipersist",&persist,sizeof(persist));
++ if(main!=1||persist!=1||nvc_native.enabled){nvc_stop();return;}
++ nvc_native.owner=current_thread();nvc_native.enabled=1;nvc_mark(1);
++ int result=nvc_run(&nvc_ops,&nvc_native,&nvc_native.state);
++ nvc_log(0,&nvc_native.state.before);nvc_log(1,&nvc_native.state.after);
++ printf("NORD2 WIFI VCN33: status=%d attempted=%u complete=%u mutated=%u writes=%u error=%u\n",result,nvc_native.state.attempted,nvc_native.state.complete,nvc_native.state.mutated,nvc_native.state.writes,nvc_native.state.error);
++ if(result){nvc_stop();return;}
++ nvc_native.start=nvc_now();nvc_native.next=nvc_native.start;
++}
++static void nvc_observe(unsigned kind){
++ if(!nvc_native.enabled||nvc_native.halt)return;
++ struct nvc_snapshot s;int result=nvc_capture(&nvc_ops,&nvc_native,&s);nvc_log(kind,&s);
++ if(result){if(kind==4){nvc_native.next=UINT64_MAX;return;}nvc_stop();}
++}
++static void nvc_poll(void){
++ if(!nvc_native.enabled||nvc_native.halt)return;
++ uint64_t now=nvc_now();if(now<nvc_native.start||now-nvc_native.start>=30000000||nvc_native.samples>=300)return;
++ if(now<nvc_native.next)return;nvc_native.next=now+100000;nvc_native.samples++;nvc_observe(4);
++}
++#define NVC_MAIN_OBSERVE(k) nvc_observe(k)
++#define NVC_PHASE(k) nvc_mark(k)
+--- /dev/null
 +++ b/bsd/dev/wifi_normal_transport_bind.inc
 @@ -0,0 +1,52 @@
 +/* Include after actual nbc_native definition in the owning CAP worker TU.
@@ -15165,7 +15297,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_backend_bind.inc
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,102 @@
 +/* Include after wifi_capability_bind.inc. All live operations run in the
 + * actual retained CAP/BASIC worker; no service or interface is published. */
 +#include "wifi_normal_backend.h"
@@ -15257,6 +15389,7 @@
 +  ncb_native.refusal=3;ncb_report(1);return 0;
 + }
 + ncb_native.prepared=1;
++ NVC_PHASE(5);
 + struct nct_recipe recipe={ncb_native.plan.entry,NCB_COMMANDS,ncb_build,&ncb_native.plan,UINT64_C(60000000),UINT64_C(15000000)};
 + struct nct_hooks hooks={ncr_pump,&ncb_native.rx,ncb_sleep,&ncb_native};
 + printf("NORD2 WIFI BACKEND ARM: commands=%u channels=%u passive=1 nvram=%u\n",NCB_COMMANDS,ncb_native.plan.channel_count,ncb_native.plan.config.nvram.fragments);
@@ -17406,7 +17539,10 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_bind.inc
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,148 @@
++#ifndef NVC_PHASE
++#define NVC_PHASE(k) ((void)0)
++#endif
 +/* PRIVATE normal capability adapter. Include after main_bind.inc. Proposed
 + * hook is ncd_schedule() after nwfn_after_pool(), never inside its stages. */
 +#ifndef NCD_NATIVE_HOST_TEST
@@ -17507,7 +17643,7 @@
 +static void ncd_worker(void*argument,wait_result_t wait_result)
 +{
 + (void)argument;(void)wait_result;
-+ ncd_native.worker=current_thread();ncd_native.active=1;
++ ncd_native.worker=current_thread();ncd_native.active=1;NVC_PHASE(4);
 + printf("NORD2 WIFI CAP ARM: cid=%#x eid=%#x seq=%u deadline_us=%u event_budget=%u\n",
 +  0x8a,0xec,(unsigned)nwfn_native.init.transport.next_sequence,3000000u,NCD_EVENT_BUDGET);
 + int result=ncd_run(&ncd_io,&ncd_native,&nwfn_native.init,
@@ -17529,7 +17665,7 @@
 +  * bounded milestone does not claim continuous normal RX service. Future
 +  * requests need a reviewed queue/consumer; this worker cannot be reused by
 +  * fabricating another start/readiness flag. */
-+ ncd_native.parked=1;
++ ncd_native.parked=1;NVC_PHASE(6);
 + printf("NORD2 WIFI CAP WORKER: parking=1 retained=1 callbacks_complete=1\n");
 + for(;;){assert_wait((event_t)&ncd_native,THREAD_UNINT);thread_block(THREAD_CONTINUE_NULL);}
 +}
@@ -18171,7 +18307,13 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_main_bind.inc
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,154 @@
++#ifndef NVC_MAIN_OBSERVE
++#define NVC_MAIN_OBSERVE(k) ((void)0)
++#endif
++#ifndef NVC_PHASE
++#define NVC_PHASE(k) ((void)0)
++#endif
 +#include "failure_drain.inc"
 +/* PRIVATE coordinator. Include after wfdma_bind.inc; external firmware/PHY
 + * implementations are separate TUs. Hook immediately after nppa_after_rom. */
@@ -18285,6 +18427,7 @@
 + nwfn_main_arm(4,"patch-finish");
 + if((result=nwfn_finish_command(0x40)))goto failure;
 + nwfn_main_arm(5,"force-calibration");
++ NVC_PHASE(2);NVC_MAIN_OBSERVE(2);
 + if((result=nfa_xnu_run()))goto failure;
 + nwfn_main_arm(6,"pccif");
 + if((result=nfp_xnu_coex()))goto failure;
@@ -18294,6 +18437,7 @@
 + if((result=nfp_xnu_finish())||!nfp_native.ready||
 +    nwfn_native.init.transport.completed!=3||
 +    nwfn_native.init.transport.finish_phase!=2){if(!result)result=-2;goto failure;}
++ NVC_PHASE(3);NVC_MAIN_OBSERVE(3);
 + nwfn_main.stage=9;nwfn_main.ready=1;goto report;
 +failure:
 + nwfn_main_failure(result?result:-3);

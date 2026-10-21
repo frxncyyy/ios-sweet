@@ -1,3 +1,6 @@
+#ifndef NVC_PHASE
+#define NVC_PHASE(k) ((void)0)
+#endif
 /* PRIVATE normal capability adapter. Include after main_bind.inc. Proposed
  * hook is ncd_schedule() after nwfn_after_pool(), never inside its stages. */
 #ifndef NCD_NATIVE_HOST_TEST
@@ -98,7 +101,7 @@ static void ncd_report(int result)
 static void ncd_worker(void*argument,wait_result_t wait_result)
 {
  (void)argument;(void)wait_result;
- ncd_native.worker=current_thread();ncd_native.active=1;
+ ncd_native.worker=current_thread();ncd_native.active=1;NVC_PHASE(4);
  printf("NORD2 WIFI CAP ARM: cid=%#x eid=%#x seq=%u deadline_us=%u event_budget=%u\n",
   0x8a,0xec,(unsigned)nwfn_native.init.transport.next_sequence,3000000u,NCD_EVENT_BUDGET);
  int result=ncd_run(&ncd_io,&ncd_native,&nwfn_native.init,
@@ -120,7 +123,7 @@ static void ncd_worker(void*argument,wait_result_t wait_result)
   * bounded milestone does not claim continuous normal RX service. Future
   * requests need a reviewed queue/consumer; this worker cannot be reused by
   * fabricating another start/readiness flag. */
- ncd_native.parked=1;
+ ncd_native.parked=1;NVC_PHASE(6);
  printf("NORD2 WIFI CAP WORKER: parking=1 retained=1 callbacks_complete=1\n");
  for(;;){assert_wait((event_t)&ncd_native,THREAD_UNINT);thread_block(THREAD_CONTINUE_NULL);}
 }

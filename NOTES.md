@@ -3,6 +3,32 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **VCN33 source integrated; independent safety review and focused ARM64 PASS.**
+  Private candidate5db2e819, independent implementation review7cbe6cca;
+  selected source/safety reports6552260e/234ea377. Added explicit
+  nord2wifivcn33=1, five guarded writes, owner-thread PMIF telemetry and
+  retained failure handling. No SW_EN or shared VS2 write; MON observational.
+  Generated0082 applies and matches; normal ARM64 wifi_vcn33/sweet_touch PASS.
+  Canonical VCN33/main/persistent/full normal/capability suites PASS.
+  Fresh wifi-vcn33/ios gates remain false, fallback healthyc31; no device action.
+  Next finish tests, commit/push source to fork, full CI and linked/image checks.
+
+- **2026-10-22: Claude RF analysis complete; VCN33 omission independently confirmed.**
+  research/nord2/wifi/claude-opus-rf-c31/REPORT.md identifies the separate
+  conninfra Wi-Fi power callback configuring VCN33_1/2; current port omits it.
+  Independent selected-source review is combined-backend/vcn33-source-review/
+  REPORT.md, manifest6552260e. Initial c31 snapshots show both MON=0,
+  OP_EN=8000, VOSEL=f00. Later rail state and causality remain unmeasured.
+  Selected Linux4.19 uses masked OP_CFG clearing, not the alternate SET0
+  branch. RC channels6/5 and6, nominal3.3V selectorD, no SW_EN. Candidate
+  under private implementation: off-state guards, voltage-first deliberate
+  refinement, bounded full readbacks, retained failure policy, owner-thread
+  PMIF observations. Shared VS2 is read-only metadata, never blind adjustment.
+  Root owns integration/CI/device; format_stage implements privately,
+  cap_stage reviews, after_id prepares fresh wifi-vcn33/ios stage/parser.
+  No new source integrated/build/image/flash approval yet. Phone remains
+  human-healthy c31; collector closed. Existing executed runners stay unused.
+
 - **c31 receive lifecycle26 HARDWARE-HEALTHY, still ZERO RF; delegated to Claude.**
   Human lockscreen/touch/buttons confirmed call_858994b387c746c392746d6863609a2e.
   Actual26commands DDONE/credits complete, scan22channels state7 completes;

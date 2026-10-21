@@ -1,3 +1,9 @@
+#ifndef NVC_MAIN_OBSERVE
+#define NVC_MAIN_OBSERVE(k) ((void)0)
+#endif
+#ifndef NVC_PHASE
+#define NVC_PHASE(k) ((void)0)
+#endif
 #include "failure_drain.inc"
 /* PRIVATE coordinator. Include after wfdma_bind.inc; external firmware/PHY
  * implementations are separate TUs. Hook immediately after nppa_after_rom. */
@@ -111,6 +117,7 @@ static void nwfn_after_pool(void)
  nwfn_main_arm(4,"patch-finish");
  if((result=nwfn_finish_command(0x40)))goto failure;
  nwfn_main_arm(5,"force-calibration");
+ NVC_PHASE(2);NVC_MAIN_OBSERVE(2);
  if((result=nfa_xnu_run()))goto failure;
  nwfn_main_arm(6,"pccif");
  if((result=nfp_xnu_coex()))goto failure;
@@ -120,6 +127,7 @@ static void nwfn_after_pool(void)
  if((result=nfp_xnu_finish())||!nfp_native.ready||
     nwfn_native.init.transport.completed!=3||
     nwfn_native.init.transport.finish_phase!=2){if(!result)result=-2;goto failure;}
+ NVC_PHASE(3);NVC_MAIN_OBSERVE(3);
  nwfn_main.stage=9;nwfn_main.ready=1;goto report;
 failure:
  nwfn_main_failure(result?result:-3);
