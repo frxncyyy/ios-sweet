@@ -5,6 +5,62 @@
 
 
 
+
+
+
+
+- **TX WRITEBACK IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-txwriteback-battery-stop23.img`,
+  33347584B SHA256 a8cc8050f041ef423343576a22c965d8592618061ae030d6ce3111892fb04ad6.
+  Payload 73a3138deae3ce1530eb290131812ddb4c3c0ae601f2ce87a2461ebe085ef066.
+  CI39610057577/source6bee7acfab972cc9243be77f913a34993e937619;
+  kernel17479800B SHA660198f99813bbf462341d57f15f117242809ff044437e9449e3ad7d20af3eca.
+  Targetlinked exactzero/controlguards/capturedwriterreader/unchangedRX/drain
+  PASS. Bounded1GiB packingexit0; independent freshloader/segments/ADT/private
+  calibration/Linux/dualDT/rawrescue/Androidheader verificationPASS,206848spare.
+  Existingmanifest+payload rechecked; e0d3/RAMrescue actualhashes rechecked.
+  Newstageidentity/schema/prepared true; exacthuman/RF/conditionalrecovery
+  gatesFALSE, runner NEVER executed. ActualhardwareRX/PHY/mainready remains
+  unknown. Ask NEW exactboot-only approval withconditional e0d3/RAMrescue,
+  same mainfirmware/calibration attempt and30sfailuredrain. Currentphonee0d3
+  humanhealthy/allcollectorsfinished. RXdiagnosticcontingency remainsprivate;
+  UFS/boot speed unchanged.
+
+
+- **TX WRITEBACK CI39610057577 SUCCESS; IMAGE PACKING.**
+  Source6bee7acfab972cc9243be77f913a34993e937619, kernel17479800B
+  SHA256660198f99813bbf462341d57f15f117242809ff044437e9449e3ad7d20af3eca.
+  Completeartifactdownload/SHA256SUMS/sourceidentity PASS,1134 complete
+  compilerinvocations genericarmv8.2+crypto. RCPC2scanPASS2227670instructions.
+  Newstageidentity/schema gatestrue; bounded1GiB packing and independent
+  targetlinked review underway. Prepared/exacthumanapproval gatesfalse.
+  Currentphonee0d3 humanhealthy/no collectors. RXcontingency remainsprivate;
+  UFS/boot speed unchanged.
+
+
+- **PRIVATE RX AUDIT AND DIAGNOSTICS CONTINGENCY REVIEWED.**
+  Under wifi/next-stage/main-fw-transport, rx-response-audit/report.json
+  SHA848f9ae93004192932f8cb32aae1ada29577429cb3234db65d73463ea5bec327
+  finds no proven ring/event-offset defect. Extra native CID/pointer assertions
+  and shorter1000x1ms RX budget differ from selectedsource3000ms response /
+  5000ms PHY budgets; no actual RXfailure or need to weakenchecks observed.
+  rx-diagnostics manifest6d8d00f8 independently reviewedPASS: captured-only
+  rawdescriptor/expectedbuffer/DIDX and bounded INIT metadata, validitygated,
+  no payload/calibrationdata or additionalIO/accept/rearm/pollchanges.
+  Host sanitizersPASS; privateARM64 context qualified, allTUrebuild needed if
+  integrated later. NOT active, not in CI39610057577. CurrentCI contains only
+  reviewed measuredTXexception; currentphonee0d3 humanhealthy.
+
+
+- **TX WRITEBACK CI39610057577 RUNNING.**
+  Source6bee7acfab972cc9243be77f913a34993e937619; exactmeasured80000000 completionexception,
+  capturedTXWB classification andsame30sfailuredrain. Localtests/actual
+  generatedsource compilePASS. Newstageidentity/prepared/approvalfalse until
+  fullCI/artifactchecks/linkedreview/packing. Currentphonee0d3 humanhealthy,
+  no devicecollector; UFS/boot speed unchanged. No hardwareapproval for new
+  image. https://github.com/frxncyyy/ios-sweet/actions/runs/39610057577
+
+
 - **MEASURED TX WRITEBACK EXCEPTION PROMOTED; READY FOR FULL CI.**
   Privatecandidatefc14aeb9 independently reviewedPASS. Exactword1=80000000
   acceptedonlyafter expectedDIDX/DDONE/exactpointer/DW2DW3zero, retaining
