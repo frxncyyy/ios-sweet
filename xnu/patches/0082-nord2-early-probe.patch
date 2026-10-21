@@ -2665,7 +2665,7 @@
  	if (disableConsoleOutput) {
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,14 @@
+@@ -108,6 +108,16 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
@@ -2676,6 +2676,8 @@
 +bsd/dev/wifi_emi_legacy.c			standard
 +bsd/dev/wifi_persistent.c			standard
 +bsd/dev/wifi_persistent_adapter.c		standard
++bsd/dev/wifi_wake.c			standard
++bsd/dev/wifi_wake_adapter.c		standard
 +bsd/dev/zoom_reset.c			standard
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
@@ -4753,7 +4755,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,890 @@
+@@ -1,3 +1,893 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5364,6 +5366,8 @@
 +#include "wifi_common_adapter.inc"
 +#include "wifi_persistent_adapter.h"
 +#include "wifi_persistent_bind.inc"
++#include "wifi_wake_adapter.h"
++#include "wifi_wake_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
 + * Fresh powered reset/master predicates are checked in adapter.c; these
 + * software baselines were captured before original outer PMIC/power changes.
@@ -5472,6 +5476,7 @@
 +		int retained = npa_persistent_window(host, conn, id,
 +		    npa_source_owner_proof, 0, 0x8fb00000, 0x8a000000, 3);
 +		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
++		nawa_after_persistent(); /* explicit separate wake diagnostic only */
 +	} else {
 +		ncc_power_window(host, conn, id);
 +	}
@@ -5644,7 +5649,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1545,4 @@
+@@ -658,3 +1548,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -8505,4 +8510,249 @@
 + printf("NORD2 WIFI PERSIST: retained=1 phase=%u id=%#x handoff=%u\n",
 +  npa_native.state.result.phase,npa_native.state.result.chip,npa_native.state.hw_handoff);
 + return 1;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_wake.c
+@@ -0,0 +1,71 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Private bounded derivative of selected MT6893 GPL-2.0 wake path,
++ * source04d00c25 mt6893_pos.c468 / consys_reg_util.h90. */
++#include "wifi_wake.h"
++struct ctx {const struct naw_ops *o;void *c;struct naw_state *s;};
++static int proof(struct ctx *x){return x->o->proof(x->c);}
++static int read(struct ctx *x,uint32_t a,uint32_t *v){return proof(x)||x->o->read(x->c,a,v);}
++static int write(struct ctx *x,uint32_t a,uint32_t v){return proof(x)||x->o->write(x->c,a,v);}
++static int wait(struct ctx *x,unsigned us){return proof(x)||x->o->delay_us(x->c,us);}
++#define TRY(call) do{if(call){s->error=-(int)s->phase;goto fail;}}while(0)
++int naw_run(const struct naw_ops *o,void *c,unsigned opt,struct naw_state *s){
++ if(opt!=1||!s||s->entered)return -1;
++ if(!o||!o->proof||!o->read||!o->write||!o->delay_us)return -1;
++ struct ctx x={o,c,s};uint32_t v;unsigned count=0;
++ s->entered=1;s->phase=1;
++ TRY(read(&x,0x180601a0,&v));
++ /* Unknown/another AP vote is not ours. Clean refusal, no write. */
++ if(v){s->error=-100;return -1;}
++ s->phase=2;
++ TRY(proof(&x));
++ s->reference=s->retained=1; /* BEFORE write could commit */
++ if(o->write(c,0x180601a0,1)){s->error=-2;goto fail;}
++ /* ACKpoll source macro: initialread + max11 reread/delay1000 steps.
++  * Diagnostic stops on first timeout instead of source retry/debug dumps. */
++ TRY(read(&x,0x18060184,&v));
++ while(v&0x20){
++  if(count>10){s->error=-101;goto fail;}
++  TRY(read(&x,0x18060184,&v));TRY(wait(&x,1000));
++  count++;s->ack_polls++;
++ }
++ s->phase=3;
++ /* Exact source readability clock measurement: reset on EACH retry, source
++  * spent<16000us/retry1600. Deterministic10us retry replaces randomjitter. */
++ unsigned spent=0,delay_us=1;
++ while(s->clock_polls<1600&&spent<16000){
++  TRY(read(&x,0x18060000,&v));TRY(write(&x,0x18060000,v|1));
++  TRY(wait(&x,delay_us));spent+=delay_us;
++  TRY(read(&x,0x18060000,&s->clock));s->clock_polls++;
++  if((s->clock&6)==6)break;
++  delay_us=10;
++ }
++ if((s->clock&6)!=6){s->error=-102;goto fail;}
++ TRY(read(&x,0x180602d4,&s->irq));
++ if(!(s->irq&1)){s->error=-103;goto fail;}
++ TRY(read(&x,0x18060184,&v));if(v&0x20){s->error=-104;goto fail;}
++ s->awake=1;s->phase=4;
++ for(unsigned i=0;i<10;i++){
++  TRY(read(&x,0x18001000,&s->chip));s->id_polls++;
++  if(s->chip==0x20010101)break;
++ }
++ if(s->chip!=0x20010101){s->error=-105;goto fail;}
++ s->phase=5;
++ const uint32_t address[5]={0x18000010,0x18000000,0x180602cc,0x18000014,0x18000008};
++ const uint32_t mask[5]={1,0x80,4,1,0x80};
++ for(unsigned i=0;i<5;i++){
++  TRY(read(&x,address[i],&s->cold[i]));s->cold_valid|=1u<<i;
++  if(s->cold[i]&mask[i]){s->error=-106;goto fail;}
++ }
++ s->phase=6;
++ TRY(proof(&x));
++ /* Last source command. No callbacks/readback/proof after sleep write.
++  * Keep reference until ordered callback confirms command completed. */
++ if(o->write(c,0x180601a0,0)){s->error=-6;goto fail;}
++ s->reference=s->retained=s->awake=0;s->balanced=1;s->phase=7;
++ return 0;
++fail:
++ s->halt=s->retained||s->reference;return -1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wake.h
+@@ -0,0 +1,25 @@
++#ifndef NORD2_WIFI_WAKE_H
++#define NORD2_WIFI_WAKE_H
++#include <stdint.h>
++/* Fresh proof callback: phase10 successful, old persistent owner retained,
++ * terminal2 unchanged; this separate AP-wake transition exclusively owned.
++ * Beforewake it must inspect SOFTWARE and always-on AP/host ONLY.
++ * No ncc_ap_check or old npa/npc callback: those require awake off-domain. */
++struct naw_ops {
++ int (*proof)(void *);
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t); /* synchronous ordered32-bit */
++ int (*delay_us)(void *,unsigned);
++};
++struct naw_state {
++ unsigned entered,phase,reference,awake,retained,halt,balanced;
++ unsigned ack_polls,clock_polls,id_polls,cold_valid;
++ uint32_t chip,clock,irq,cold[5];int error;
++};
++/* One-shot exact optin1; disabled/reentry does zero callbacks/state changes.
++ * No allocation, firmware, DRAM, SMC, WFSYS write or oldowner-state mutation.
++ * Owns HOST1a0 only from initial0; successful balanced sleep ends ALL MMIO.
++ * After any issued wakewrite, uncertainty/timeout retains reference + halt.
++ * balanced means our wake vote released, not common power restoration. */
++int naw_run(const struct naw_ops *,void *,unsigned,struct naw_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wake_adapter.c
+@@ -0,0 +1,49 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wake_adapter.h"
++static int proof(void *c){struct nawa *a=c;uint32_t v;
++ if(a->asleep||a->hw->owner(a->c))return -1;
++ /* Always-on AP only. NEVER HOST184/ncc_ap_check before source wake. */
++ const uint32_t address[]={0x10006304,0x1000616c,0x10006170,0x1020e504,0x10001228,0x10001724};
++ const uint32_t mask[]={0x1f,2,2,1,0x2000,4},want[]={0xd,2,2,1,0,0};
++ for(unsigned i=0;i<6;i++){
++  if(a->hw->read32(a->c,address[i],&v)||(v&mask[i])!=want[i])return -1;
++ }
++ return 0;
++}
++static int read(void *c,uint32_t p,uint32_t *v){struct nawa *a=c;unsigned phase=a->result.phase;
++ if(a->asleep||!v||proof(a))return -1;
++ if(p==0x180601a0){if(phase!=1)return -1;}
++ else if(p==0x18060184){if(phase<2||phase>3)return -1;}
++ else if(p==0x18060000||p==0x180602d4){if(phase!=3)return -1;}
++ else if(p==0x18001000){if(phase!=4||!a->result.awake)return -1;}
++ else if(p==0x18000010||p==0x18000000||p==0x180602cc||p==0x18000014||p==0x18000008){if(phase!=5||!a->result.awake||a->result.chip!=0x20010101)return -1;}
++ else return -1;
++ int e=a->hw->read32(a->c,p,v);
++ if(!e&&p==0x18060000){a->last_clock=*v;a->clock_seen=1;}
++ return e;
++}
++static int write(void *c,uint32_t p,uint32_t v){struct nawa *a=c;
++ if(a->asleep||proof(a))return -1;
++ if(p==0x180601a0){
++  if((a->result.phase==2&&v==1)||(a->result.phase==6&&v==0)){
++   int e=a->hw->write32(a->c,p,v);
++   if(!e&&v==0)a->asleep=1;
++   return e;
++  }
++ }else if(p==0x18060000&&a->result.phase==3&&a->clock_seen&&v==(a->last_clock|1u)){
++  return a->hw->write32(a->c,p,v);
++ }
++ return -1;
++}
++static int delay(void *c,unsigned us){struct nawa *a=c;
++ if(us!=1&&us!=10&&us!=1000)return -1;
++ return proof(a)||a->hw->delay_us(a->c,us);
++}
++static const struct naw_ops ops={proof,read,write,delay};
++int nawa_start(struct nawa *a,const struct nawa_hw *hw,void *c,unsigned opt){
++ if(opt!=1||!a||a->result.entered||!hw||!hw->owner||!hw->read32||!hw->write32||!hw->delay_us)return -1;
++ a->hw=hw;a->c=c;return naw_run(&ops,a,1,&a->result);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wake_adapter.h
+@@ -0,0 +1,12 @@
++#ifndef NORD2_WIFI_WAKE_ADAPTER_H
++#define NORD2_WIFI_WAKE_ADAPTER_H
++#include "wifi_wake.h"
++struct nawa_hw {
++ int (*owner)(void *); /*SOFTWAREonly: oldphase10terminal2retained + solewakeowner*/
++ int (*read32)(void *,uint32_t,uint32_t *);
++ int (*write32)(void *,uint32_t,uint32_t); /*ordered with dsb*/
++ int (*delay_us)(void *,unsigned);
++};
++struct nawa {const struct nawa_hw *hw;void *c;struct naw_state result;unsigned asleep,clock_seen;uint32_t last_clock;};
++int nawa_start(struct nawa *,const struct nawa_hw *,void *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wake_bind.inc
+@@ -0,0 +1,73 @@
++/* PRIVATE native binding: same input thread, separate AP-wake lifetime.
++ * Include after wifi_persistent_bind.inc. No frozen persistent state mutation,
++ * ncc_ap_check/npa callbacks, new mappings, or off-domain reads before wake.
++ */
++#include "wifi_wake_adapter.h"
++static struct {struct nawa diag;bool active;} nawa_native;
++static int nawa_xnu_owner(void *cookie)
++{
++ (void)cookie;
++ /* Software-only proof, including all required retained owner handles. */
++ if(!nawa_native.active||!npa_persistent_lifetime||!npa_native.outer_retained||
++    !npa_native.state.entered||!npa_native.state.retained||npa_native.state.fatal||
++    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
++    !npa_native.state.result.retained||npa_native.state.result.halt||
++    npa_native.state.sema11||npa_native.state.sema19||npa_native.state.spi_inflight||
++    !ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty)
++  return -1;
++ if(!nw.spm||!nw.infra||!nw.gals||!npa_native.host||!npa_native.cfg||!npa_native.rgu)return -1;
++ return 0;
++}
++static vm_offset_t nawa_xnu_base(uint32_t p)
++{
++ switch(p){
++ case 0x10006304:case 0x1000616c:case 0x10006170:return nw.spm;
++ case 0x10001228:case 0x10001724:return nw.infra;
++ case 0x1020e504:return nw.gals;
++ case 0x180601a0:case 0x18060184:case 0x18060000:case 0x180602d4:case 0x180602cc:return npa_native.host;
++ case 0x18001000:return npa_native.cfg;
++ case 0x18000010:case 0x18000000:case 0x18000014:case 0x18000008:return npa_native.rgu;
++ default:return 0;
++ }
++}
++static int nawa_xnu_read(void *cookie,uint32_t p,uint32_t *v)
++{
++ (void)cookie;if(!v||nawa_native.diag.asleep)return -1;
++ vm_offset_t b=nawa_xnu_base(p);if(!b)return -1;
++ *v=ni_rd(b,p&0xfff);return 0;
++}
++static int nawa_xnu_write(void *cookie,uint32_t p,uint32_t v)
++{
++ (void)cookie;
++ if(nawa_native.diag.asleep||(p!=0x180601a0&&p!=0x18060000))return -1;
++ if(p==0x180601a0&&v>1)return -1;
++ vm_offset_t b=nawa_xnu_base(p);if(!b)return -1;
++ ni_wr(b,p&0xfff,v);NCC_DEVICE_BARRIER();return 0;
++}
++static int nawa_xnu_delay(void *cookie,unsigned us)
++{(void)cookie;if(nawa_native.diag.asleep)return -1;delay(us);return 0;}
++static const struct nawa_hw nawa_xnu_hw={nawa_xnu_owner,nawa_xnu_read,nawa_xnu_write,nawa_xnu_delay};
++static void nawa_after_persistent(void)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifiwake",&opt,sizeof(opt));
++ if(opt!=1)return; /*zero maps/MMIO/results by default*/
++ if(nawa_native.active||nawa_native.diag.result.entered)
++  panic("NORD2 WIFI WAKE: refuse reentry; keep persistent owner");
++ nawa_native.active=true;
++ if(nawa_xnu_owner(0)){
++  nawa_native.active=false;
++  printf("NORD2 WIFI WAKE: skipped=1 reason=persistent-owner\n");return;
++ }
++ int status=nawa_start(&nawa_native.diag,&nawa_xnu_hw,0,1);
++ struct naw_state *r=&nawa_native.diag.result;
++ /* ONLY software result reads, including after balanced source sleep. */
++ printf("NORD2 WIFI WAKE: status=%d phase=%u balanced=%u ref=%u halt=%u\n",
++  status,r->phase,r->balanced,r->reference,r->halt);
++ printf("NORD2 WIFI WAKE ID: id=%#x clock=%#x irq=%#x ack_polls=%u clock_polls=%u id_polls=%u\n",
++  r->chip,r->clock,r->irq,r->ack_polls,r->clock_polls,r->id_polls);
++ printf("NORD2 WIFI WAKE COLD: valid=%#x cpu=%#x top=%#x power=%#x bgfcpu=%#x bgftop=%#x\n",
++  r->cold_valid,r->cold[0],r->cold[1],r->cold[2],r->cold[3],r->cold[4]);
++ if(r->halt||r->reference||r->retained)
++  panic("NORD2 WIFI WAKE: uncertain phase%u; retain wake/common; manual reset",r->phase);
++ nawa_native.active=false;
 +}

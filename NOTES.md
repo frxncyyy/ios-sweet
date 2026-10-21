@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **AP-WAKE SOURCE PROMOTED; FOCUSED VALIDATION PASSED.**
+  Exact independently reviewed native-binding files promoted to canonical
+  wifi_wake core/adapter/bind, two separate guarded BSD translation units.
+  Explicit nord2wifiwake=1 adds one source AP wake/ID/cold-check/balanced sleep
+  only after retained phase10; old owner state unchanged, no post-sleep I/O.
+  Actual canonical ASan/UBSan core+adapter240 callback fault cases and native
+  binding ownership/default-off/reentry tests PASS. Three focused ARM64
+  compiles PASS; patch8758lines applies/reproduces tree; frozen UFS hash exact.
+  Parent awaiting short production parity review, then commit/push/full CI.
+  No new device operation/approval. Current c6cb126f is hardware/human verified;
+  collector stopped, 8ca8 and tested rescue remain available. New private
+  wifi-ap-wake/ios templates are being prepared with identity/approval blank.
+
+
 - **PERSISTENT RADIO c6cb126f HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
   Boot-only authorized runner EXECUTED once; flash/reboot OKAY. Native USB180s
   exit0,228082-byte log SHA256
