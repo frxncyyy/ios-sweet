@@ -11782,8 +11782,8 @@
 +int ncp_parse(const uint8_t *p,size_t bytes,uint8_t seq,struct ncp_result *out)
 +{
 + struct ncp_result r={0};size_t off=40;uint32_t seen=0;
-+ if(!p||!out||bytes<40||bytes>NCP_MAX_RX_BYTES||p[26]||p[27]!=0xe0||
-+    p[28]!=0xec||p[29]!=seq)return -1;
++ if(!p||!out||bytes<40||bytes>NCP_MAX_RX_BYTES||
++    (le16(p+2)&0x380fu)!=0x3800u||p[28]!=0xec||p[29]!=seq)return -1;
 + r.rxd_bytes=le16(p);r.event_bytes=le16(p+24);r.elements=le16(p+36);
 + if(r.elements>(bytes-off)/8)return -1;
 + for(unsigned i=0;i<r.elements;i++){
@@ -11843,7 +11843,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_dispatcher.c
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,173 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_capability_dispatcher.h"
@@ -11912,7 +11912,14 @@
 + h->eid=p[28];h->sequence=p[29];h->rx_class=u16(p+2);h->kind=4;
 + /* Actual selected RXD software packet discriminator, not the inner event
 +  * comment: NIC_RX_GET_U2_SW_PKT_TYPE & 0x380f must equal0x3800. */
-+ if((h->rx_class&0x380fu)!=0x3800u||p[26]||p[27]!=0xe0)return fail(s,20);
++ if((h->rx_class&0x380fu)!=0x3800u)return fail(s,20);
++ /* Capture only the already-owned, copied RXD24 + event12 header. Never
++  * include byte36 onward (capability/debug body and possible MAC TLV).
++  * The inner type remains opaque for exact EIDec capability; debug and
++  * unsupported EIDs retain the existing strict inner-type fail-stop. */
++ h->inner_type=u16(p+26);
++ for(unsigned k=0;k<sizeof(h->header);k++)h->header[k]=p[k];
++ h->header_valid=1;
 + if(h->eid==0xec){
 +  /* Selected first capability wait matches EID only. Sequence is captured,
 +   * not invented as an additional readiness/correlation requirement. */
@@ -11921,6 +11928,9 @@
 +  if(ncp_parse(p,n,h->sequence,&s->capability))return fail(s,21);
 +  return 0;
 + }
++ /* Selected capability waiter treats inner u2PacketType as opaque.
++  * Preserve the existing strict inner policy for debug/unsupported EIDs. */
++ if(p[26]||p[27]!=0xe0)return fail(s,20);
 + if(h->eid==0x27){
 +  /* Selected EVENT_DEBUG_MSG header12; bounded ASCII log only. No payload
 +   * logging, memory dereference, QA command or resource-state transition. */
@@ -12009,7 +12019,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_dispatcher.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +#ifndef NORD2_WIFI_CAPABILITY_DISPATCHER_H
 +#define NORD2_WIFI_CAPABILITY_DISPATCHER_H
 +#include "wifi_capability.h"
@@ -12025,6 +12035,7 @@
 +struct ncd_event {
 + uint32_t bytes;uint16_t rxd_bytes,event_bytes,rx_class,debug_id,debug_bytes;
 + uint8_t eid,sequence,kind,debug_type; /*1capability,2debug,4unsupported*/
++ uint16_t inner_type;unsigned header_valid;uint8_t header[36]; /* captured RXD24 + WIFI_EVENT12 only; body starts36 */
 +};
 +struct ncd_state {
 + struct nwi_state *init;const struct nfp_native *firmware;
@@ -13484,7 +13495,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_bind.inc
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,139 @@
 +/* PRIVATE normal capability adapter. Include after main_bind.inc. Proposed
 + * hook is ncd_schedule() after nwfn_after_pool(), never inside its stages. */
 +#ifndef NCD_NATIVE_HOST_TEST
@@ -13535,6 +13546,11 @@
 +static const struct nwt_io ncd_bus={ncd_native_owner,ncd_native_read,
 + ncd_native_write,ncd_native_mread,ncd_native_mwrite,ncd_native_sync,ncd_native_delay};
 +static const struct ncd_io ncd_io={&ncd_bus,ncd_native_now};
++static uint32_t ncd_header_word(const struct ncd_event*h,unsigned k)
++{
++ const uint8_t*p=h->header+4*k;
++ return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
++}
 +static void ncd_report(int result)
 +{
 + const struct ncd_state*s=&ncd_native.diag;
@@ -13568,6 +13584,11 @@
 +  printf("NORD2 WIFI CAP EVENT: n=%u kind=%u type=%#x eid=%#x seq=%u bytes=%u declared=%u/%u debug_type=%u debug_bytes=%u\n",
 +   k,h->kind,h->rx_class,h->eid,h->sequence,h->bytes,h->rxd_bytes,h->event_bytes,
 +   h->debug_type,h->debug_bytes);
++  printf("NORD2 WIFI CAP EVENTHEADER: n=%u valid=%u bytes=%u inner=%#x raw=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
++   k,h->header_valid,h->header_valid?(unsigned)sizeof(h->header):0,h->inner_type,
++   ncd_header_word(h,0),ncd_header_word(h,1),ncd_header_word(h,2),
++   ncd_header_word(h,3),ncd_header_word(h,4),ncd_header_word(h,5),
++   ncd_header_word(h,6),ncd_header_word(h,7),ncd_header_word(h,8));
 + }
 +}
 +static void ncd_worker(void*argument,wait_result_t wait_result)

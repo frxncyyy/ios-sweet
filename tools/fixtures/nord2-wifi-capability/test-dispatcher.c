@@ -19,8 +19,9 @@ static int rr(void*c,uint32_t a,uint32_t*v){struct mock*m=c;if(step(m))return -1
  case 0x18025418:*v=m->txidx;break;case 0x1802541c:*v=m->timeout?3:m->txidx;break;
  case 0x1802550c:*v=m->rxidx;break;case 0x18024200:case 0x18025200:*v=(m->coherent==1||(m->coherent==2&&m->frame_copied))?0x100000:0;break;default:assert(0);}
  return 0;}
+static unsigned diagnostic_fault;
 static void event(struct mock*m,unsigned ring,unsigned kind){
- struct nwt_state*t=&init.transport;uint8_t*d=ptr(t->rx_ring+16*ring,16),*p=ptr(t->rx_buffers+4096*ring,64);unsigned bytes=kind?56:48;
+ struct nwt_state*t=&init.transport;uint8_t*d=ptr(t->rx_ring+16*ring,16),*p=ptr(t->rx_buffers+4096*ring,64);unsigned bytes=kind?56:48;if(m->mode>=100)bytes=504;if(diagnostic_fault==3)bytes=39;
  memset(p,0,64);p[3]=0x38;p[27]=0xe0;p[28]=kind==0?0x27:0xec;p[29]=t->next_sequence-(kind==2);
  if(kind==0){p[38]=3;p[44]=0;}
  else {p[36]=1;put(p+40,7);put(p+44,8);p[48]=2;p[49]=4;}
@@ -29,7 +30,14 @@ static void event(struct mock*m,unsigned ring,unsigned kind){
  if(m->mode==4)p[28]=0xf0;
  if(m->mode==5){p[28]=0x27;p[38]=3;p[44]=0xff;p[45]=0xff;}
  if(m->mode==7){p[28]=0xec;p[29]=t->next_sequence;p[36]=1;put(p+44,0xffffffffu);}
- put(d+4,(bytes<<16)|0xc0000000u);if(m->mode==8)put(d+8,1);if(m->mode==9)put(d+4,(bytes<<16)|0x80000000u);
+ if(m->mode>=100){p[0]=504&255;p[1]=504>>8;p[24]=480&255;p[25]=480>>8;p[26]=(m->mode-100)&255;p[27]=(m->mode-100)>>8;}
+ if(diagnostic_fault==1)p[2]=1;
+ if(diagnostic_fault==2)p[28]=0xed;
+ if(diagnostic_fault==4)put(p+44,0xffffffffu);
+ if(diagnostic_fault==5){p[36]=2;put(p+56,7);put(p+60,8);}
+ if(diagnostic_fault==7){p[28]=0x27;p[38]=2;}
+ if(diagnostic_fault==8)p[29]=3;
+ put(d+4,(bytes<<16)|0xc0000000u);if(diagnostic_fault==6)put(d+8,1);if(m->mode==8)put(d+8,1);if(m->mode==9)put(d+4,(bytes<<16)|0x80000000u);
 }
 static int rw(void*c,uint32_t a,uint32_t v){struct mock*m=c;int error=step(m);m->writes++;
  if(a==0x18025418){assert(m->synctx&&m->syncdesc);unsigned previous=m->txidx;m->txidx=v;uint8_t*d=ptr(init.transport.tx_ring+16*previous,16);put(d+4,(get(d+4)|0x80000000u)&(m->mode==6?~0x40000000u:0xffffffffu));
@@ -39,8 +47,8 @@ static int rw(void*c,uint32_t a,uint32_t v){struct mock*m=c;int error=step(m);m-
   if(m->mode==15){put(d+4,0x80000000u);put(d,0);}
   if(m->mode==16){put(d+4,0x80000000u);put(d+8,1);}
   if(m->mode==17){put(d+4,0x80000000u);put(d+12,1);}
-  unsigned count=m->mode==1?1:m->mode==2?15:3;m->events=count;
-  for(unsigned k=0;k<count;k++)event(m,(3+k)%16,m->mode==1?1:m->mode==2?0:k==0?0:k==1?2:1);
+  unsigned count=m->mode>=100?1:m->mode==1?1:m->mode==2?15:3;m->events=count;
+  for(unsigned k=0;k<count;k++)event(m,(3+k)%16,m->mode>=100?1:m->mode==1?1:m->mode==2?0:k==0?0:k==1?2:1);
   m->rxidx=(3+count)%16;
  }else {assert(a==0x18025508);m->rxpub++;if(m->mode==2&&m->rxpub==1){event(m,2,0);m->rxidx=3;}assert(v==(3+m->rxpub-1)%16);}
  return error;}

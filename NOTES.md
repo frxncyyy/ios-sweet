@@ -4,6 +4,22 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **CAPABILITY FORMAT FIX PROMOTED; LOCAL CHECKS PASS, FULL CI NEXT.**
+  Exact private B manifestefb352b1, independentreviewe4ac37a7, root source
+  parity review: selected Android AXI waiter checks outer380f->3800/EIDec,
+  no innerE000 guard. Only exact capability reply treats inner as metadata;
+  debug/unknown policies unchanged. Captures36headerbytes after outer proof,
+  excludes TLV/MAC body; actual failedinner remains UNKNOWN.
+  Four runtime files changed; canonical header regression wired into runner.
+  Five canonical ASan/UBSan suites PASS (65536inner,32crossguards,224trunc,
+  8outerrefusals,128callbackfaults). Three normal focused ARM64 TUs PASS:
+  sweet_touch371280, capability13568, dispatcher36560 bytes. Generatedpatch
+  14396lines applies/reproduces; sharednativeABI unchanged. FullCI next.
+  Currentphone e0d3 restored/humanhealthy; executed6ddf stage untouched.
+  Fresh wifi-capability-format/ios stage remains closed pending root checks.
+  UFS/boot speed unchanged; no scan/network interface/connection claim.
+
+
 - **CAPABILITY 6ddf FAILURE CAPTURED; e0d3 RESTORED AND HUMAN-HEALTHY.**
   Conditional boot-only restore/reboot OKAY;90s USB collector exit0,
   deadline/no transport error. Immutable restore224264 bytes SHA256

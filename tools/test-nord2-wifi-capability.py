@@ -3,14 +3,14 @@
 from pathlib import Path
 import argparse,os,subprocess,tempfile
 ap=argparse.ArgumentParser()
-ap.add_argument('--only',choices=('dispatcher','native-adapter','current-owner','drain'))
+ap.add_argument('--only',choices=('dispatcher','native-adapter','current-owner','drain','header'))
 args=ap.parse_args()
 R=Path(__file__).resolve().parents[1]
 S=R/'shim/nord2-xnu';F=R/'tools/fixtures/nord2-wifi-capability'
 flags=[os.environ.get('CC','cc'),'-std=c11','-O1','-g','-Wall','-Wextra','-Werror',
        '-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-I'+str(S)]
 with tempfile.TemporaryDirectory(prefix='nord2-capability-host-') as temporary:
- for name in ('dispatcher','native-adapter','current-owner','drain'):
+ for name in ('dispatcher','native-adapter','current-owner','drain','header'):
   if args.only and args.only!=name:continue
   files=[] if name=='drain' else [S/'wifi_capability.c',S/'wifi_capability_dispatcher.c',
                                  S/'wifi_main_command.c',S/'dma_pool_contract.c']

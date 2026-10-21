@@ -13,8 +13,8 @@ int ncp_query(uint8_t *p,size_t bytes,uint8_t seq)
 int ncp_parse(const uint8_t *p,size_t bytes,uint8_t seq,struct ncp_result *out)
 {
  struct ncp_result r={0};size_t off=40;uint32_t seen=0;
- if(!p||!out||bytes<40||bytes>NCP_MAX_RX_BYTES||p[26]||p[27]!=0xe0||
-    p[28]!=0xec||p[29]!=seq)return -1;
+ if(!p||!out||bytes<40||bytes>NCP_MAX_RX_BYTES||
+    (le16(p+2)&0x380fu)!=0x3800u||p[28]!=0xec||p[29]!=seq)return -1;
  r.rxd_bytes=le16(p);r.event_bytes=le16(p+24);r.elements=le16(p+36);
  if(r.elements>(bytes-off)/8)return -1;
  for(unsigned i=0;i<r.elements;i++){

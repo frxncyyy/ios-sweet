@@ -13,6 +13,7 @@ struct ncd_io {
 struct ncd_event {
  uint32_t bytes;uint16_t rxd_bytes,event_bytes,rx_class,debug_id,debug_bytes;
  uint8_t eid,sequence,kind,debug_type; /*1capability,2debug,4unsupported*/
+ uint16_t inner_type;unsigned header_valid;uint8_t header[36]; /* captured RXD24 + WIFI_EVENT12 only; body starts36 */
 };
 struct ncd_state {
  struct nwi_state *init;const struct nfp_native *firmware;

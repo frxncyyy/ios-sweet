@@ -48,6 +48,11 @@ static int ncd_native_now(void*c,uint64_t*out)
 static const struct nwt_io ncd_bus={ncd_native_owner,ncd_native_read,
  ncd_native_write,ncd_native_mread,ncd_native_mwrite,ncd_native_sync,ncd_native_delay};
 static const struct ncd_io ncd_io={&ncd_bus,ncd_native_now};
+static uint32_t ncd_header_word(const struct ncd_event*h,unsigned k)
+{
+ const uint8_t*p=h->header+4*k;
+ return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
+}
 static void ncd_report(int result)
 {
  const struct ncd_state*s=&ncd_native.diag;
@@ -81,6 +86,11 @@ static void ncd_report(int result)
   printf("NORD2 WIFI CAP EVENT: n=%u kind=%u type=%#x eid=%#x seq=%u bytes=%u declared=%u/%u debug_type=%u debug_bytes=%u\n",
    k,h->kind,h->rx_class,h->eid,h->sequence,h->bytes,h->rxd_bytes,h->event_bytes,
    h->debug_type,h->debug_bytes);
+  printf("NORD2 WIFI CAP EVENTHEADER: n=%u valid=%u bytes=%u inner=%#x raw=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
+   k,h->header_valid,h->header_valid?(unsigned)sizeof(h->header):0,h->inner_type,
+   ncd_header_word(h,0),ncd_header_word(h,1),ncd_header_word(h,2),
+   ncd_header_word(h,3),ncd_header_word(h,4),ncd_header_word(h,5),
+   ncd_header_word(h,6),ncd_header_word(h,7),ncd_header_word(h,8));
  }
 }
 static void ncd_worker(void*argument,wait_result_t wait_result)

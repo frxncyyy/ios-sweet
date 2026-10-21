@@ -64,7 +64,14 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
  h->eid=p[28];h->sequence=p[29];h->rx_class=u16(p+2);h->kind=4;
  /* Actual selected RXD software packet discriminator, not the inner event
   * comment: NIC_RX_GET_U2_SW_PKT_TYPE & 0x380f must equal0x3800. */
- if((h->rx_class&0x380fu)!=0x3800u||p[26]||p[27]!=0xe0)return fail(s,20);
+ if((h->rx_class&0x380fu)!=0x3800u)return fail(s,20);
+ /* Capture only the already-owned, copied RXD24 + event12 header. Never
+  * include byte36 onward (capability/debug body and possible MAC TLV).
+  * The inner type remains opaque for exact EIDec capability; debug and
+  * unsupported EIDs retain the existing strict inner-type fail-stop. */
+ h->inner_type=u16(p+26);
+ for(unsigned k=0;k<sizeof(h->header);k++)h->header[k]=p[k];
+ h->header_valid=1;
  if(h->eid==0xec){
   /* Selected first capability wait matches EID only. Sequence is captured,
    * not invented as an additional readiness/correlation requirement. */
@@ -73,6 +80,9 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
   if(ncp_parse(p,n,h->sequence,&s->capability))return fail(s,21);
   return 0;
  }
+ /* Selected capability waiter treats inner u2PacketType as opaque.
+  * Preserve the existing strict inner policy for debug/unsupported EIDs. */
+ if(p[26]||p[27]!=0xe0)return fail(s,20);
  if(h->eid==0x27){
   /* Selected EVENT_DEBUG_MSG header12; bounded ASCII log only. No payload
    * logging, memory dereference, QA command or resource-state transition. */

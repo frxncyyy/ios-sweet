@@ -49,7 +49,10 @@ static void thread_block(unsigned x){assert(!x);if(drain_waiting){assert(model.c
 static void panic(const char*s){assert(strstr(s,"manual reset"));panic_count++;longjmp(terminal,2);}
 #include "wifi_capability_bind.inc"
 static void native_fixture(void){nwm_drain_entered=drain_blocks=drain_waiting=0;sleepable=1;fixture();memset(&ncd_native,0,sizeof(ncd_native));memset(&nwfn_native,0,sizeof(nwfn_native));nwfn_native.init=init;nwfn_native.stage=NWFN_RETAINED;nfp_native=firmware;nfp_native.host_io=npa_native.host;nwfn_main.ready=1;nwfn_main.halt=0;flag=1;spawns=deallocations=spawn_error=panic_count=parked=0;running_thread=1;worker_entry=0;model=(struct mock){.txidx=3,.rxidx=3};}
-int main(void){native_fixture();flag=0;ncd_schedule();assert(!spawns&&!model.calls);
+#ifndef NCD_NATIVE_FIXTURE_MAIN
+#define NCD_NATIVE_FIXTURE_MAIN main
+#endif
+int NCD_NATIVE_FIXTURE_MAIN(void){native_fixture();flag=0;ncd_schedule();assert(!spawns&&!model.calls);
  native_fixture();nfp_native.ready=0;ncd_schedule();assert(!spawns&&!model.calls);
  native_fixture();spawn_error=1;ncd_schedule();assert(spawns==1&&!model.calls&&ncd_native.schedule_error==5);ncd_schedule();assert(spawns==1);
  native_fixture();ncd_schedule();assert(spawns==1&&deallocations==1&&worker_entry&&!model.calls);assert(ncd_native_owner(&ncd_native)<0&&!model.calls);running_thread=2;
@@ -65,4 +68,5 @@ int main(void){native_fixture();flag=0;ncd_schedule();assert(!spawns&&!model.cal
  }
  puts("PASS capability uncertain-transaction failure: sharedhalt before actual fixed30s scheduler drain, unsafe-context skip thenpanic, no postfailure backend callback.");
  puts("PASS native capability adapter: default off, real receipt gating, deferred dedicated worker, exact worker/pointer ownership, actual clock conversion boundary, static buffers, one-use schedule, wrong-thread refusal, parked retained success and shared-halt/panic on uncertainty. Synthetic model only.");
+ return 0;
 }
