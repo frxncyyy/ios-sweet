@@ -4,6 +4,38 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **LEGACY EMI TEST FINISHED: REQUEST REFUSED; IOS REMAINS HEALTHY.**
+  Authorized97922165 runner EXECUTED, never rerun. Flash/reboot OKAY, native
+  USB180s exit0;238102-byte log SHA256
+  c8329b98c72c31785611018f9e0679c76989fe958f8c50bcdd9b4ed81cd79878.
+  Strict final report complete/no issues: legacy first offset100 returned
+  x0=ffffffffffffffff,x1=100,x2=x3=0 (error-1); collector1/issued1/valid0.
+  Remaining127 NOT_CALLED, no MPU metadata or effective permission proof.
+  Combined success intentionally FALSE. ADIE66358a11/common40/outer restore
+  still succeed; user confirms lockscreen/touch/buttons work. No kernel panic,
+  no USB transport error/capacity loss; collector ended at deadline. Current
+  phone97922165 is healthy, USB client stopped; preferred fallback8ca8 kept.
+  Offline monitor-abi/runtime-refusal report now includes top-level dispatch
+  gating omitted from prior legacy-helper review: same saved ATF can route
+  context to a dispatcher that supports50b but rejects261 with-1. Actual
+  runtime selector/origin remains unknown; do not change FID or assume alias.
+  Handlerx7 is context flags, not guestSMCx7. Leave legacy observer OFF in
+  next ordinary image. It does not block register-only persistent radio init;
+  DRAM access/firmware execution/CPU release remain separate unimplemented work.
+  Native private v2 corrects source Kbuild BUILD_MODE3 and persistent-only
+  PMIC SW_LP before enable. Saved conninfra.cfg absence of tcxo_gpio plus parser
+  zero-init selects26M_COTMS, no missing GPIO155 TCXO mux. WholecandidateARM64
+  and targeted tests PASS; independent review/production-named copies pending.
+
+
+- **LEGACY EMI 97922165 AUTHORIZED; RUNNER STARTING ONCE.**
+  Human: "Autorizzo, pronto in fastboot" for the exact97922165…b984a85 image.
+  Known Nord2 is the sole fastboot device. Private authorization records boot
+  only and conditional tested rescue/current8ca8 restoration after manual
+  reset. Parent owns USB; run prepared runner once and collect180s. Never
+  rerun after flash.log/hardware-live exists. No radio firmware execution.
+
+
 - **LEGACY EMI IMAGE READY; AWAITING NEW EXACT BOOT-ONLY APPROVAL.**
   Image: shim/out/nord2-xnu/nord2-ios-wifi-emi-legacy-stop23.img,
   33,282,048 bytes, SHA256
