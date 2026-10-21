@@ -4,6 +4,38 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **ONE combined backend image VERIFIED; exact-image user approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-normal-scan-battery-stop23.img33384448B
+  SHA256c3ce7dcfcce13085579e59998b6f29a9fb0e2b11a7a3420b9cc97db5a8ab3f1a
+  payload2c34bc090c9167214edcc76177a8e6c824005b87bf05c0966e43337e3bde0f15
+  CI39657170591/source15f70fb35ad835fb43233c5ed2fb5cd1838e7c12.
+  One substantive candidate: full20 normal config/calibration commands plus
+  AIS activation and passive scan; no iOS network interface/association yet.
+  Bounded1GiB packexit0; independent loaded segments/loader/ADT/private board/
+  originalLinux/dualDT/rescue/header verification and --check-existing PASS.
+  Boot spare169984B. Linked6fa3e031 and CI119file equality PASS; source/CI/
+  schema/prepared gates true. Human exact-image/RF/conditionalrecovery false.
+  Fresh one-use wifi-normal-scan/ios runner UNUSED; no device operation.
+  e0d3 fallback and RAMrescue hashes reverified. Phone remains e0d3 healthy.
+  Next: exact boot-only approval+physicalfastboot; newbackend log parser v3
+  is pinned e453135c/reviewe7129145 (25positive595negative). No actual scan
+  success claimed. Do not reuse old BASIC/TXD/restore runners.
+  Parallel iOS channel mapping resolved statically: Apple80211 scan-result
+  CHANNEL_FLAGS passes unchanged to CWFChannel.flags; evidence560ac766 under
+  ios-service-bridge/channel-mode-audit/selector-resolution. Request mapping
+  remains separate; no live service/interface published.
+
+- **Combined backend CI39657170591 SUCCESS, exact source15f70fb35ad835fb43233c5ed2fb5cd1838e7c12.**
+  Kernel SHA2565970c0ec156dade26067075bdecebdce5acdeea8959d4f7db08310ed3d7527ac
+  matches artifact SHA256SUMS. Actual8 newTUs+owningTU/basic/cap all compiled
+  generic ARMv8.2; binary2,240,632instructions contain no LDAPUR/STLUR.
+  Independent actual linked review in progress. Fresh normal-scan/ios identity
+  verified; schema/image/approval gates closed. No image/device operation yet.
+  Final parser v3 independently PASS (25positive595negative), manifest15baf85a,
+  parsere453135c/reviewe7129145. CAP sequence metadata, source software credit,
+  queue-drain and partial/truncated-history semantics checked. Source/normal
+  synthetic proofs remain valid; phone e0d3 healthy, no collector/device action.
+
 - **Combined Wi-Fi backend promoted; one substantive CI/image target.**
   Canonical shim sources and regenerated0082 patch now include full source-
   backed20 normal config commands (legacy domains/power,12 authenticated board
