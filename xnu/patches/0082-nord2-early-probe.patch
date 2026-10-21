@@ -2684,6 +2684,16 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
+@@ -648,3 +660,9 @@
+ bsd/skywalk/packet/pbufpool.c			optional skywalk
+ bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
+ bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
++bsd/dev/wifi_rom_contract.c			standard
++bsd/dev/wifi_rom_plan.c			standard
++bsd/dev/wifi_rom_place.c			standard
++bsd/dev/wifi_rom_xnu.c			standard
++bsd/dev/wifi_rom_powered.c			standard
++bsd/dev/wifi_rom_powered_adapter.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -4757,7 +4767,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,896 @@
+@@ -1,3 +1,899 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5372,6 +5382,7 @@
 +#include "wifi_wake_bind.inc"
 +#include "wifi_wfsys_adapter.h"
 +#include "wifi_wfsys_bind.inc"
++#include "wifi_rom_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
 + * Fresh powered reset/master predicates are checked in adapter.c; these
 + * software baselines were captured before original outer PMIC/power changes.
@@ -5482,6 +5493,7 @@
 +		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
 +		nawa_after_persistent(); /* explicit separate wake diagnostic only */
 +		nwsa_after_persistent(); /* separate CPU-held WFSYS diagnostic */
++		nrpa_after_persistent(); /* exact nord2wifirom=1, prepared before probe */
 +	} else {
 +		ncc_power_window(host, conn, id);
 +	}
@@ -5568,6 +5580,7 @@
 +	ni_ies_rt = ni_rd(ni_rt, 0x30);
 +	ni_saved = true; /* snapshots complete before first mutation */
 +	ni_wifi_snapshot(); /* PMIF cleanup is now armed, before any GPIO change. */
++	nrpa_prepare_before_power(); /* sleepable UFS before radio ownership */
 +	ni_wifi_power_probe();
 +	for (unsigned i = 0; i < sizeof(ni_pins) / sizeof(ni_pins[0]); i++) {
 +		unsigned pin = ni_pins[i].pin;
@@ -5654,7 +5667,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1551,4 @@
+@@ -658,3 +1554,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -5724,9 +5737,20 @@
  
  	/*
  	 *	Start the user bootstrap.
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -20,3 +20,8 @@
+ iokit/Kernel/arm/hid/IOHIDEvent.cpp                              optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEventServiceQueue.cpp                  optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEventServiceUserClient.cpp             optional iokitcpp
++
++# Nord2 read-only battery collector/PIO (empty translation units elsewhere)
++iokit/Kernel/arm/nord2_battery.c standard
++iokit/Kernel/arm/mtk_i2c_read.c standard
++iokit/Kernel/arm/nord2_battery_platform.cpp optional iokitcpp
 --- a/iokit/Kernel/arm/SweetBattery.cpp
 +++ b/iokit/Kernel/arm/SweetBattery.cpp
-@@ -11,6 +11,9 @@
+@@ -11,7 +11,16 @@
  #include <IOKit/IOTimerEventSource.h>
  #include <IOKit/pwr_mgt/IOPMPowerSource.h>
  #include <libkern/c++/OSCollectionIterator.h>
@@ -5734,9 +5758,94 @@
 +extern "C" void nord2_stop_at(unsigned int point, const char *label);
 +#endif
  #include <pexpert/pexpert.h>
++#if defined(NORD2)
++extern "C" {
++#include "nord2_battery.h"
++int nord2_battery_platform_sample(struct nbg_sample *);
++}
++#endif
  /* bsd/dev/sweet_spmi.c */
  extern "C" int sweet_spmi_init(void);
-@@ -280,7 +283,15 @@
+ extern "C" int sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out);
+@@ -33,6 +42,9 @@
+ 	void publish(unsigned percent, unsigned mv, int ma, bool external,
+ 	    bool capable, bool charging, bool full, bool measured, bool currentValid);
+ 	void poll(void);
++#if defined(NORD2)
++	void pollNord2(void);
++#endif
+ 	static void timerFired(OSObject *owner, IOTimerEventSource *sender);
+ 	static IOReturn stopPolling(OSObject *owner, void *, void *, void *, void *);
+ 	static bool readWord(unsigned address, uint16_t *value);
+@@ -203,9 +215,53 @@
+ 	return 100;
+ }
+ 
++#if defined(NORD2)
++void
++SweetBattery::pollNord2(void)
++{
++ struct nbg_sample s = {};
++ int rc = fReal ? nord2_battery_platform_sample(&s) : -1;
++ if(rc != 0){s = (struct nbg_sample){};}
++ bool valid = rc == 0 && s.soc_valid && s.percent <= 100;
++ /* Percentage units on BOTH capacity keys; never claim5020mAh for Nord2.
++  * No voltage-derived SOC or fabricated100% on disabled/transport failure.
++  * MaxCapacity0 + ErrorCondition explicitly invalidates unavailable SOC. */
++ setBatteryInstalled(true);
++ setCurrentCapacity(valid ? s.percent : 0);
++ setMaxCapacity(valid ? 100 : 0);
++ setTimeRemaining(-1);
++ setExternalConnected(s.charger_valid && s.external);
++ setExternalChargeCapable(s.charger_valid && s.external);
++ setIsCharging(s.charger_valid && s.charging);
++ setVoltage(s.voltage_valid ? s.pack_mv : 0);
++ setAmperage(s.current_valid ? s.current_ma : 0);
++ setAtWarnLevel(false); setAtCriticalLevel(false);
++ putBool("FullyCharged", s.charger_valid && s.full);
++ putBool("Nord2BatterySOCValid", valid);
++ putBool("Nord2BatteryGaugeComputedSOC", valid);
++ putBool("Nord2BatterySOCStale", !valid);
++ putBool("Nord2BatteryChargerValid", s.charger_valid);
++ putBool("Nord2BatteryCurrentValid", s.current_valid);
++ putBool("Nord2BatteryVoltageValid", s.voltage_valid);
++ putBool("Nord2BatteryTemperatureValid", s.temperature_valid);
++ putNumber("Temperature", s.temperature_valid ? (UInt32)s.temperature_centi_c : 0);
++ putBool("SweetBatterySOCEstimated", false);
++ putBool("SweetBatteryTemperatureEstimated", false);
++ putBool("SweetBatteryFallback", false);
++ const OSSymbol *error = OSSymbol::withCString(valid ? "" : "Battery sample unavailable");
++ if(error){setErrorCondition((OSSymbol *)error);error->release();}
++ updateStatus();
++ int mode = valid ? 2 : 3;
++ if(mode != fLastMode){IOLog("NORD2 BATTERY: soc_valid=%d percent=%u charger_valid=%u external=%u charging=%u\n",valid,valid?s.percent:0,s.charger_valid,s.external,s.charging);fLastMode=mode;}
++}
++#endif
++
+ void
+ SweetBattery::poll(void)
+ {
++#if defined(NORD2)
++ pollNord2();return;
++#endif
+ 	uint8_t type, present, usb, path, charger, error, temperature;
+ 	uint16_t rawVoltage;
+ 	bool valid = fReal &&
+@@ -264,7 +320,12 @@
+ 	}
+ 	int real = 0;
+ 	(void)PE_parse_boot_argn("sweetbattery", &real, sizeof(real));
+-	fReal = real == 1 && sweet_spmi_init() == 0;
++	#if defined(NORD2)
++ real=0;(void)PE_parse_boot_argn("nord2battery", &real, sizeof(real));
++ fReal = real == 1; /*Only read-only Nord2 provider; never Qualcomm SPMI.*/
++#else
++ fReal = real == 1 && sweet_spmi_init() == 0;
++#endif
+ 	/* Publish a complete source BEFORE registerService wakes powerd. */
+ 	poll();
+ 	if (fReal) {
+@@ -280,7 +341,15 @@
  			IOLog("SWEET BATTERY: timer unavailable; static fallback\n");
  		}
  	}
@@ -9314,3 +9423,1538 @@
 +  panic("NORD2 WIFI WFSYS: uncertain stage%u; retain resources; manual reset",s->stage);
 + nwsa_native.active=false;
 +}
+--- /dev/null
++++ b/bsd/dev/wifi_rom_contract.c
+@@ -0,0 +1,67 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_rom_contract.h"
++
++static uint32_t be32(const unsigned char *p)
++{ return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3]; }
++static uint64_t be64(const unsigned char *p)
++{ return ((uint64_t)be32(p)<<32)|be32(p+4); }
++
++int nrc_boot_claim(const void *reg, size_t reg_len,
++    int no_map_present, size_t no_map_len,
++    const void *emi_addr, size_t emi_addr_len,
++    const void *emi_size, size_t emi_size_len,
++    struct nrc_claim *out)
++{
++    if (!out) return -1;
++    *out=(struct nrc_claim){0};
++    int fixed=reg!=0 || reg_len!=0;
++    int tag=emi_addr!=0 || emi_addr_len!=0 || emi_size!=0 || emi_size_len!=0;
++    if (fixed && (!reg || reg_len!=16 || !no_map_present || no_map_len!=0)) return -1;
++    if (tag && (!emi_addr || emi_addr_len!=8 || !emi_size || emi_size_len!=4)) return -1;
++    if (!fixed && !tag) return -1;
++    if (fixed) {
++        const unsigned char *p=reg;
++        if (be64(p)!=NRC_CONN_BASE || be64(p+8)!=NRC_CONN_BYTES) return -1;
++    }
++    if (tag) {
++        if (be64(emi_addr)!=NRC_CONN_BASE || be32(emi_size)!=NRC_CONN_BYTES) return -1;
++    }
++    /* Both sources, if present, must name the same pinned range. A tag alone
++     * is a current-boot LK allocation claim; it still needs ownership review. */
++    *out=(struct nrc_claim){fixed?NRC_CLAIM_FIXED_REG:NRC_CLAIM_LK_TAG,
++        NRC_CONN_BASE,NRC_CONN_BYTES};
++    return 0;
++}
++
++int nrc_region27_set_intent(const struct nrc_claim *claim,
++    struct nrc_smc_request out[2])
++{
++    if (!claim || !out || claim->source==NRC_CLAIM_NONE ||
++        claim->base!=NRC_CONN_BASE || claim->bytes!=NRC_CONN_BYTES) return -1;
++    /* Inclusive end 8ff4ffff. 64KiB words are packed in bits23:0. */
++    uint64_t start_word=(claim->base>>16)|((uint64_t)NRC_REGION<<24);
++    uint64_t end_word=(claim->base+claim->bytes-1)>>16;
++    if (start_word!=UINT64_C(0x1b008fb0) || end_word!=UINT64_C(0x8ff4)) return -1;
++    struct nrc_smc_request group1={{UINT64_C(0xc200050b),0,start_word,
++        end_word|UINT64_C(0x01000000),UINT64_C(0x00b6db6d),0,0,0}};
++    struct nrc_smc_request group0={{UINT64_C(0xc200050b),0,start_word,
++        end_word,UINT64_C(0x00b6d028),0,0,0}};
++    out[0]=group1; out[1]=group0;
++    return 0;
++}
++
++void nrc_handoff_steps(struct nrc_step out[NRC_HANDOFF_STEPS])
++{
++    if (!out) return;
++    /* soc3_0.c:2317-2359: initial read, then up to101 delayed reads
++     * before polling_count>100 halts. No MMIO callback here. */
++    out[0]=(struct nrc_step){NRC_WRITE_LITERAL,UINT64_C(0x18001120),0x89040000,0,0};
++    out[1]=(struct nrc_step){NRC_WRITE_LITERAL,UINT64_C(0x185001dc),0,0,0};
++    out[2]=(struct nrc_step){NRC_WRITE_LITERAL,UINT64_C(0x185001e0),0,0,0};
++    out[3]=(struct nrc_step){NRC_CLEAR_BIT0,UINT64_C(0x18000018),0,0,0};
++    out[4]=(struct nrc_step){NRC_SET_BIT0,UINT64_C(0x18000010),1,0,0};
++    out[5]=(struct nrc_step){NRC_POLL_EQUAL,UINT64_C(0x184c1604),0x1d1e,102,1000};
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_contract.h
+@@ -0,0 +1,51 @@
++#ifndef NORD2_ROM_CONTRACT_H
++#define NORD2_ROM_CONTRACT_H
++#include <stdint.h>
++#include <stddef.h>
++
++/* Pure boot/MPU/CPU-release intent. No FDT walker, SMC, DRAM or MMIO call. */
++#define NRC_CONN_BASE UINT64_C(0x8fb00000)
++#define NRC_CONN_BYTES UINT64_C(0x450000)
++#define NRC_REGION 27u
++#define NRC_HANDOFF_STEPS 6u
++
++enum nrc_claim_source { NRC_CLAIM_NONE, NRC_CLAIM_FIXED_REG,
++    NRC_CLAIM_LK_TAG, NRC_CLAIM_IOS_FIXED };
++struct nrc_claim { enum nrc_claim_source source; uint64_t base, bytes; };
++/* Caller must obtain these exact properties from the ORIGINAL current-boot
++ * FDT: /reserved-memory/consys-reserve-memory reg/no-map, or fallback
++ * /consys@18000000 emi-addr/emi-size. This validates encoding/value only.
++ * It does not assert exclusivity, absence of aliases, or MPU permission.
++ * Pass both sources when present; disagreement is rejected. Missing fixed
++ * data is rejected, even if the dynamic reservation has size/no-map.
++ */
++int nrc_boot_claim(const void *reg, size_t reg_len,
++    int no_map_present, size_t no_map_len,
++    const void *emi_addr, size_t emi_addr_len,
++    const void *emi_size, size_t emi_size_len,
++    struct nrc_claim *out);
++/* Explicit iOS-owned fixed-selection candidate, against the current ORIGINAL
++ * LK FDT bytes. Validates DRAM containment, dynamic CONN node shape, and all
++ * fixed /reserved-memory reg + FDT memreserve non-overlap. Does not mutate
++ * FDT, allocate from LK, or establish hidden-master/MPU/cache authority.
++ * Integration must record this claim in the loader-to-XNU ADT, keep the low
++ * range out of all AP allocators/aliases, and review the current boot image.
++ */
++int nrc_ios_fixed_claim_from_fdt(const void *fdt, size_t bytes,
++    struct nrc_claim *out);
++
++struct nrc_smc_request { uint64_t x[8]; };
++/* Linux source request: group1 then group0, region27, AP0/CONN2/SCP3=0,
++ * other domains=5. These are intended SET arguments, not permission proof.
++ * Group0 can software-lock region27 on the backed-up monitor.
++ */
++int nrc_region27_set_intent(const struct nrc_claim *claim,
++    struct nrc_smc_request out[2]);
++
++enum nrc_op { NRC_WRITE_LITERAL, NRC_CLEAR_BIT0, NRC_SET_BIT0, NRC_POLL_EQUAL };
++struct nrc_step { enum nrc_op op; uint64_t physical; uint32_t value, max_reads, delay_us; };
++/* Source-order post-ROM script. Construct only; never executes. Caller must
++ * prove successful persistent placement, barriers, CPU-held ownership, and
++ * validated current-boot CONN claim before writing any step. */
++void nrc_handoff_steps(struct nrc_step out[NRC_HANDOFF_STEPS]);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_plan.c
+@@ -0,0 +1,68 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Original pure host/kernel planner for pinned ROM_EMI_HEADER files.
++ * Layout reference: gen4m/include/chips/soc3_0.h:218; selected soc3_0.c:3031
++ * only consumes date[16], address and48-byte header size. Header type and CRC
++ * words are not interpreted by that Linux download path. No tailer is used
++ * for these two files (main RAM firmware has a different tailer format). */
++#include "wifi_rom_plan.h"
++#ifdef NWF_ROM_HOST_TEST
++#include <openssl/sha.h>
++#include <string.h>
++#else
++#include <libkern/crypto/sha2.h>
++#include <libkern/libkern.h>
++#endif
++static uint32_t le32(const unsigned char *p)
++{ return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
++static int add64(uint64_t a,uint64_t b,uint64_t *result)
++{ if(b>UINT64_MAX-a) return -1; *result=a+b; return 0; }
++static int rom_hash(const unsigned char *p,size_t size,const unsigned char wanted[32])
++{
++ SHA256_CTX ctx; unsigned char hash[32]; unsigned diff=0;
++ SHA256_Init(&ctx); SHA256_Update(&ctx,p,size); SHA256_Final(hash,&ctx);
++ for(unsigned i=0;i<32;i++) diff|=hash[i]^wanted[i];
++ return diff==0;
++}
++struct rom_expected { uint32_t bytes,target,type_word,date_offset; unsigned char hash[32]; };
++static const struct rom_expected expected[2]={
++ {49868u,0xf0230000u,0x04000000u,0x27f0e0u,{0xf9,0x5d,0xd9,0x56,0xa0,0x50,0xf3,0xc8,0x2c,0x70,0x5d,0x3b,0x16,0xa2,0x67,0xc8,0xfe,0xa0,0xb3,0x7d,0x8c,0x6e,0xff,0x4a,0x02,0x00,0xb4,0x35,0xa5,0xe4,0x2e,0x12}},
++ {296916u,0xf02b0000u,0x03000000u,0x27f0f0u,{0x16,0xe8,0xc8,0xd5,0xfb,0xf4,0x74,0x95,0x71,0x10,0x19,0xb0,0xcd,0xae,0x6e,0x68,0x5d,0x53,0xcb,0xbe,0x53,0xbc,0x19,0x69,0xce,0x34,0xdb,0x33,0x16,0x39,0x55,0xac}}
++};
++int nwf_rom_make_plan(const unsigned char *mcu,size_t mcu_size,
++ const unsigned char *wifi,size_t wifi_size,struct nwf_rom_plan *plan)
++{
++ const unsigned char *input[2]={mcu,wifi}; size_t sizes[2]={mcu_size,wifi_size};
++ struct nwf_rom_plan candidate={0};
++ if(!plan) return -1;
++ memset(plan,0,sizeof(*plan));
++ for(unsigned i=0;i<2;i++) {
++  const struct rom_expected *e=&expected[i]; const unsigned char *p=input[i];
++  if(!p || sizes[i]!=e->bytes || sizes[i]<48) return -1;
++  /* Type is pinned as raw little-endian word, without claiming an unknown
++   * protocol interpretation: wire bytes are00 00 00 04 /00 00 00 03.
++   * Version/platform/build/CRC words are authenticated by full-file digest. */
++  if(le32(p+24)!=e->target || le32(p+28)!=e->type_word || !rom_hash(p,sizes[i],e->hash)) return -1;
++  uint32_t offset=e->target&0xffffffu;
++  candidate.spans[i*2]=(struct nwf_rom_span){i,48,e->bytes-48,offset,0};
++  candidate.spans[i*2+1]=(struct nwf_rom_span){i,0,16,e->date_offset,0};
++ }
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++) {
++  struct nwf_rom_span *s=&candidate.spans[i];
++  if(s->blob>=2 || s->source_offset>sizes[s->blob] ||
++     s->bytes>sizes[s->blob]-s->source_offset || !s->bytes ||
++     s->emi_offset>NWF_ROM_EMI_BYTES || s->bytes>NWF_ROM_EMI_BYTES-s->emi_offset) return -1;
++  uint64_t end;
++  if(add64(NWF_ROM_EMI_BASE,s->emi_offset,&s->physical) ||
++     add64(s->physical,s->bytes,&end)) return -1;
++  for(unsigned j=0;j<i;j++) {
++   const struct nwf_rom_span *previous=&candidate.spans[j];
++   if(s->physical<previous->physical+previous->bytes &&
++      previous->physical<end) return -1;
++  }
++ }
++ *plan=candidate;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_plan.h
+@@ -0,0 +1,24 @@
++/* Pure metadata planner: no destination memory is accessed. */
++#ifndef NORD2_WIFI_ROM_PLAN_H
++#define NORD2_WIFI_ROM_PLAN_H
++#include <stdint.h>
++#include <stddef.h>
++#define NWF_ROM_EMI_BASE UINT64_C(0x8fb00000)
++#define NWF_ROM_EMI_BYTES UINT64_C(0x450000)
++#define NWF_ROM_SPANS 4u
++struct nwf_rom_span {
++ uint32_t blob; /* 0=WMMCU ROM, 1=Wi-Fi ROM; input buffers stay caller-owned. */
++ uint32_t source_offset,bytes,emi_offset;
++ uint64_t physical;
++};
++struct nwf_rom_plan { struct nwf_rom_span spans[NWF_ROM_SPANS]; };
++/* Rechecks authoritative complete-file SHA256, then validates the exact pinned
++ * header sizes/types/addresses and all source/destination span bounds.
++ * Output is cleared on rejection. Inputs and plan must not overlap; buffers
++ * must remain unchanged during the call. Does not validate the undocumented
++ * ROM header CRC words, infer firmware behavior, map or copy destination EMI.
++ * Input order and exact sizes: WMMCU49868, Wi-Fi296916 bytes.
++ */
++int nwf_rom_make_plan(const unsigned char *,size_t,const unsigned char *,size_t,
++    struct nwf_rom_plan *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_place.c
+@@ -0,0 +1,90 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_rom_place.h"
++#ifdef NRB_HOST_TEST
++#include <string.h>
++#else
++#include <libkern/libkern.h>
++#endif
++static uint32_t le32(const unsigned char *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++static uint64_t le64(const unsigned char *p){return le32(p)|(uint64_t)le32(p+4)<<32;}
++int nrb_claim_decode(const void *wire,size_t n,struct nrc_claim *out){
++ if(!out)return -1;
++ *out=(struct nrc_claim){0};
++ if(!wire||n!=24)return -1;
++ const unsigned char *p=wire;uint32_t src=le32(p+16);
++ if(le64(p)!=NRC_CONN_BASE||le64(p+8)!=NRC_CONN_BYTES||src!=NRC_CLAIM_IOS_FIXED||le32(p+20)!=1)return -1;
++ *out=(struct nrc_claim){(enum nrc_claim_source)src,NRC_CONN_BASE,NRC_CONN_BYTES};return 0;
++}
++static int overlap(const void *a,size_t an,const void *b,size_t bn){
++ uintptr_t x=(uintptr_t)a,y=(uintptr_t)b;
++ if(an>UINTPTR_MAX-x||bn>UINTPTR_MAX-y)return 1;
++ return x<y+bn&&y<x+an;
++}
++int nrb_prepare(struct nrb_state *s,unsigned opt,const struct nrc_claim *claim,
++ const unsigned char *m,size_t mn,const unsigned char *w,size_t wn,
++ unsigned char *backup,size_t bn,unsigned char *scratch,size_t sn){
++ if(opt!=1||!s||s->prepared||s->policy_attempted||!claim||claim->source!=NRC_CLAIM_IOS_FIXED||claim->base!=NRC_CONN_BASE||claim->bytes!=NRC_CONN_BYTES||!backup||bn<NRB_BACKUP_BYTES||!scratch||sn<NRB_CHUNK)return -1;
++ const void *ptr[]={s,claim,m,w,backup,scratch};size_t len[]={sizeof(*s),sizeof(*claim),mn,wn,NRB_BACKUP_BYTES,NRB_CHUNK};
++ for(unsigned i=0;i<6;i++)for(unsigned j=0;j<i;j++)if(overlap(ptr[i],len[i],ptr[j],len[j]))return -1;
++ struct nwf_rom_plan p;
++ if(nwf_rom_make_plan(m,mn,w,wn,&p))return -1;
++ *s=(struct nrb_state){0};s->claim=*claim;s->plan=p;
++ s->mcu=m;s->mcu_bytes=mn;s->wifi=w;s->wifi_bytes=wn;s->backup=backup;s->scratch=scratch;s->prepared=1;s->phase=1;return 0;
++}
++int nrb_policy(const struct nrb_ops *o,void *c,struct nrb_state *s){
++ if(!s||!s->prepared||s->policy_attempted||s->halt||!o||!o->owner||!o->smc)return -1;
++ struct nrc_smc_request q[2];
++ if(nrc_region27_set_intent(&s->claim,q)||o->owner(c,NRB_COLD_BEFORE_POWER))return -1;
++ s->phase=2;s->policy_attempted=1;
++ for(unsigned i=0;i<2;i++){
++  if(o->owner(c,NRB_COLD_BEFORE_POWER)){s->error=-2;goto fail;}
++  s->issued++;for(unsigned j=0;j<4;j++)s->raw[i][j]=UINT64_MAX;
++  if(o->smc(c,q[i].x,s->raw[i])){s->error=-3;goto fail;}
++  s->raw_valid|=1u<<i;
++  if(s->raw[i][0]){s->error=-4;goto fail;}
++  s->accepted++;
++ }
++ s->phase=3;return 0;
++fail:s->halt=1;return -1;
++}
++static int owned(const struct nrb_ops *o,void *c){return o->owner(c,NRB_POWERED_CPU_HELD);}
++int nrb_place(const struct nrb_ops *o,void *c,struct nrb_state *s){
++ if(!s||!s->prepared||s->halt||s->phase!=3||s->accepted!=2||s->raw_valid!=3||s->mapped||!o||!o->owner||!o->map||!o->read||!o->write||!o->barrier)return -1;
++ struct nwf_rom_plan p;
++ if(nwf_rom_make_plan(s->mcu,s->mcu_bytes,s->wifi,s->wifi_bytes,&p)||memcmp(&p,&s->plan,sizeof(p))||owned(o,c)){s->error=-5;goto fail;}
++ s->phase=4;
++ if(o->map(c,s->claim.base,s->claim.bytes)){s->error=-6;goto fail;}
++ s->mapped=1;
++ /* No destination mutation until ALL original bytes exist in backup. */
++ size_t base=0;
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++){
++  const struct nwf_rom_span *t=&s->plan.spans[i];
++  for(uint32_t off=0;off<t->bytes;){uint32_t n=t->bytes-off;if(n>NRB_CHUNK)n=NRB_CHUNK;
++   if(owned(o,c)||o->read(c,t->physical+off,s->backup+base+off,n)){s->error=-7;goto fail;}
++   s->reads++;off+=n;
++  }base+=t->bytes;
++ }
++ if(base!=NRB_BACKUP_BYTES){s->error=-8;goto fail;}s->backup_complete=1;s->phase=5;
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++){
++  const struct nwf_rom_span *t=&s->plan.spans[i];const unsigned char *src=t->blob?s->wifi:s->mcu;
++  for(uint32_t off=0;off<t->bytes;){uint32_t n=t->bytes-off;if(n>NRB_CHUNK)n=NRB_CHUNK;
++   if(owned(o,c)){s->error=-9;goto fail;}
++   s->write_attempted=1;s->writes++;
++   if(o->write(c,t->physical+off,src+t->source_offset+off,n)){s->error=-10;goto fail;}off+=n;
++  }
++ }
++ if(owned(o,c)||o->barrier(c)){s->error=-11;goto fail;}s->barriers++;s->phase=6;
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++){
++  const struct nwf_rom_span *t=&s->plan.spans[i];const unsigned char *src=t->blob?s->wifi:s->mcu;
++  for(uint32_t off=0;off<t->bytes;){uint32_t n=t->bytes-off;if(n>NRB_CHUNK)n=NRB_CHUNK;
++   if(owned(o,c)||o->read(c,t->physical+off,s->scratch,n)){s->error=-12;goto fail;}
++   s->reads++;if(memcmp(s->scratch,src+t->source_offset+off,n)){s->error=-13;goto fail;}off+=n;
++  }
++ }
++ if(owned(o,c)||o->barrier(c)){s->error=-14;goto fail;}s->barriers++;
++ s->placed=1;s->phase=7;return 0;
++fail:s->halt=1;return -1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_place.h
+@@ -0,0 +1,46 @@
++#ifndef PRIVATE_ROM_PLACE_H
++#define PRIVATE_ROM_PLACE_H
++#include <stddef.h>
++#include <stdint.h>
++#include "wifi_rom_contract.h"
++#include "wifi_rom_plan.h"
++#define NRB_BACKUP_BYTES 346720u
++#define NRB_CHUNK 4096u
++enum nrb_owner_stage {NRB_COLD_BEFORE_POWER=1,NRB_POWERED_CPU_HELD=2};
++struct nrb_ops {
++ /* Fresh real radio ownership/reset/readability proof, NOT MPU permission.
++  * Cold stage before policy; poweredstage localID20010000/CPUreset0,
++  * AP+WFwake/PLLowned and exclusive CONNDRAMclaim consumer. */
++ int (*owner)(void *,enum nrb_owner_stage);
++ int (*smc)(void *,const uint64_t [8],uint64_t [4]);
++ int (*map)(void *,uint64_t,uint64_t);
++ int (*read)(void *,uint64_t,void *,uint32_t);
++ int (*write)(void *,uint64_t,const void *,uint32_t);
++ int (*barrier)(void *);
++};
++struct nrb_state {
++ unsigned prepared,policy_attempted,issued,accepted,raw_valid,mapped;
++ unsigned phase,halt,backup_complete,write_attempted,placed,reads,writes,barriers;
++ int error;uint64_t raw[2][4];
++ struct nrc_claim claim;struct nwf_rom_plan plan;
++ const unsigned char *mcu,*wifi;size_t mcu_bytes,wifi_bytes;
++ unsigned char *backup,*scratch;
++};
++/* Decode ONLY currentboot loader ADT little-endian24B record. No historical
++ * fallback/claim invented by this code. valid must1, source3(IOS_FIXED)only, exactrange. */
++int nrb_claim_decode(const void *,size_t,struct nrc_claim *);
++/* Pure setup/rehash. Buffer/source/state storage must be disjoint and sources
++ * immutable for entire retained lifetime. No callback/mapping/SET here. */
++int nrb_prepare(struct nrb_state *,unsigned,const struct nrc_claim *,
++ const unsigned char *,size_t,const unsigned char *,size_t,
++ unsigned char *,size_t,unsigned char *,size_t);
++/* One-way SET before fresh WFSYS power. No retry evenafter firstfailure.
++ * Raw0only accepted; stopbeforegroup0onnonzero/transporterror. SETcouldhang:
++ * boundedcallcount is NOT a softwareinterruptible executiondeadline. */
++int nrb_policy(const struct nrb_ops *,void *,struct nrb_state *);
++/* Only after parent supplies fresh poweredCPUheld owner; this is NOT old
++ * asleepnwsa_start. Snapshotsall4 first; bounded4096copy/readback/barriers.
++ * Successful bytes persist. ANY error keeps policy/backup/powerowned/halt;
++ * no implicit restore/unmap/free/CPUrelease. Caller handles manualreset. */
++int nrb_place(const struct nrb_ops *,void *,struct nrb_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_xnu.c
+@@ -0,0 +1,131 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* PRIVATE native candidate, no boot hook or invocation in active tree. */
++#include "wifi_rom_xnu.h"
++#ifdef NRB_NATIVE_HOST_TEST
++#include "nord2-wifi-rom-host-platform.h"
++#else
++#include <sys/errno.h>
++#include <sys/systm.h>
++#include <kern/kalloc.h>
++#include <kern/zalloc.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <pexpert/arm64/boot.h>
++#endif
++#ifndef NRB_DEVICE_BARRIER
++#define NRB_DEVICE_BARRIER() __asm__ volatile("dsb sy":::"memory")
++#endif
++extern int sweet_ufs_read_vendor(uint64_t,void *,uint32_t);
++extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
++static int layout(void){
++ const boot_args *b=(const boot_args *)PE_state.bootArgs;
++ /* Loader/XNU physical window pinned by selected build. No currentCONNPA
++  * alias may be introduced by other code; closed-build aliasaudit inREADME. */
++ DTEntry entry;const void *base=0,*size=0;unsigned nb=0,ns=0;
++ if(!b||b->physBase!=UINT64_C(0x142000000)||b->memSize!=UINT64_C(0x3e000000)||b->memSizeActual!=b->memSize)return -1;
++ if(SecureDTLookupEntry(NULL,"/chosen",&entry)!=kSuccess||
++    SecureDTGetProperty(entry,"dram-base",&base,&nb)!=kSuccess||
++    SecureDTGetProperty(entry,"dram-size",&size,&ns)!=kSuccess||nb!=8||ns!=8||!base||!size)return -1;
++ uint64_t db=0,ds=0;memcpy(&db,base,8);memcpy(&ds,size,8);
++ return db!=b->physBase||ds!=b->memSize;
++}
++static int claim_read(struct nrc_claim *claim){
++ DTEntry entry;const void *p=0;unsigned n=0;
++ if(SecureDTLookupEntry(NULL,"/chosen",&entry)!=kSuccess||SecureDTGetProperty(entry,"nord2-conn-claim",&p,&n)!=kSuccess)return -1;
++ return nrb_claim_decode(p,n,claim);
++}
++static int vendor(void *cookie,uint64_t offset,void *data,uint32_t bytes){
++ struct nrb_native *n=cookie;int e=sweet_ufs_read_vendor(offset,data,bytes);if(e)n->supply_error=e;return e;
++}
++static void erase(void *p,size_t size){volatile unsigned char *v=p;if(v)while(size--)*v++=0;}
++int nrb_xnu_prepare(struct nrb_native *n){
++ unsigned opt=0;
++ if(!PE_parse_boot_argn("nord2wifirom",&opt,sizeof(opt))||opt!=1)return EPERM;
++ if(!n||n->attempted)return EALREADY;
++ n->attempted=1;
++ if(layout()||claim_read(&n->claim))return EINVAL;
++ unsigned char *decoder=0;int e=ENOMEM;
++ n->output=kalloc_data(NWF_OUTPUT_BYTES,Z_WAITOK|Z_NOPAGEWAIT);
++ decoder=kalloc_data(NWF_SCRATCH_BYTES,Z_WAITOK|Z_NOPAGEWAIT);
++ n->backup=kalloc_data(NRB_BACKUP_BYTES,Z_WAITOK|Z_NOPAGEWAIT);
++ n->scratch=kalloc_data(NRB_CHUNK,Z_WAITOK|Z_NOPAGEWAIT);
++ if(!n->output||!decoder||!n->backup||!n->scratch)goto fail;
++ if(nwf_load(vendor,n,n->output,NWF_OUTPUT_BYTES,decoder,NWF_SCRATCH_BYTES,n->blobs)){e=n->supply_error?n->supply_error:EIO;goto fail;}
++ /* Actual authenticated loader output order: 3=WMMCU,2=WiFi. */
++ if(nrb_prepare(&n->state,1,&n->claim,n->blobs[3].data,n->blobs[3].size,
++    n->blobs[2].data,n->blobs[2].size,n->backup,NRB_BACKUP_BYTES,n->scratch,NRB_CHUNK)){e=EINVAL;goto fail;}
++ erase(decoder,NWF_SCRATCH_BYTES);kfree_data(decoder,NWF_SCRATCH_BYTES);
++ n->enabled=1;return 0;
++fail:
++ if(decoder){erase(decoder,NWF_SCRATCH_BYTES);kfree_data(decoder,NWF_SCRATCH_BYTES);}
++ if(n->scratch){erase(n->scratch,NRB_CHUNK);kfree_data(n->scratch,NRB_CHUNK);n->scratch=0;}
++ if(n->backup){erase(n->backup,NRB_BACKUP_BYTES);kfree_data(n->backup,NRB_BACKUP_BYTES);n->backup=0;}
++ if(n->output){erase(n->output,NWF_OUTPUT_BYTES);kfree_data(n->output,NWF_OUTPUT_BYTES);n->output=0;}
++ return e;
++}
++static int owner(void *cookie,enum nrb_owner_stage stage){
++ struct nrb_native *n=cookie;struct nrc_claim now;
++ if(!n||!n->enabled||!n->fresh_owner||layout()||claim_read(&now)||now.source!=n->claim.source||now.base!=n->claim.base||now.bytes!=n->claim.bytes)return -1;
++ return n->fresh_owner(n->owner_cookie,stage);
++}
++static int smc(void *cookie,const uint64_t a[8],uint64_t out[4]){
++ struct nrb_native *n=cookie;struct nrc_smc_request expected[2];
++ if(!n||!a||!out||n->state.phase!=2||n->state.issued<1||n->state.issued>2||nrc_region27_set_intent(&n->claim,expected))return -1;
++ for(unsigned i=0;i<8;i++)if(a[i]!=expected[n->state.issued-1].x[i])return -1;
++#ifdef NRB_NATIVE_HOST_TEST
++ return nrb_host_smc(a,out);
++#elif defined(__aarch64__)
++ /* Captured request only, logged immediately before this one-way monitor call. */
++ printf("NORD2 WIFI ROM SMC ARM: group=%u claim=%#llx/%#llx x0=%#llx x1=%#llx x2=%#llx x3=%#llx x4=%#llx\n",
++  n->state.issued==1?1u:0u,(unsigned long long)n->claim.base,
++  (unsigned long long)n->claim.bytes,(unsigned long long)a[0],
++  (unsigned long long)a[1],(unsigned long long)a[2],
++  (unsigned long long)a[3],(unsigned long long)a[4]);
++ register uint64_t x0 __asm__("x0")=a[0],x1 __asm__("x1")=a[1];
++ register uint64_t x2 __asm__("x2")=a[2],x3 __asm__("x3")=a[3];
++ register uint64_t x4 __asm__("x4")=a[4],x5 __asm__("x5")=0;
++ register uint64_t x6 __asm__("x6")=0,x7 __asm__("x7")=0;
++ __asm__ volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3),
++  "+r"(x4),"+r"(x5),"+r"(x6),"+r"(x7) : :
++  "x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","cc","memory");
++ out[0]=x0;out[1]=x1;out[2]=x2;out[3]=x3;return 0;
++#else
++ return -1;
++#endif
++}
++static int map(void *cookie,uint64_t base,uint64_t size){struct nrb_native *n=cookie;
++ if(!n||n->io||n->state.accepted!=2||n->state.raw_valid!=3||base!=NRC_CONN_BASE||size!=NRC_CONN_BYTES||owner(n,NRB_POWERED_CPU_HELD))return -1;
++ n->io=(uintptr_t)ml_io_map((vm_offset_t)base,(vm_size_t)size);
++ return n->io?0:-1;
++}
++static int span(struct nrb_native *n,uint64_t pa,uint32_t bytes){
++ if(!n||!n->io||!bytes||bytes>NRB_CHUNK||(pa&3)||(bytes&3)||n->state.accepted!=2||!n->state.mapped||n->state.halt)return -1;
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++){const struct nwf_rom_span *s=&n->state.plan.spans[i];
++  if(pa>=s->physical&&pa-s->physical<=s->bytes&&bytes<=s->bytes-(pa-s->physical))return 0;
++ }
++ return -1;
++}
++static int read(void *cookie,uint64_t pa,void *data,uint32_t bytes){struct nrb_native *n=cookie;
++ if(!data||span(n,pa,bytes)||owner(n,NRB_POWERED_CPU_HELD))return -1;
++ unsigned char *p=data;volatile const uint32_t *io=(volatile const uint32_t *)(n->io+(uintptr_t)(pa-NRC_CONN_BASE));
++ for(uint32_t i=0;i<bytes;i+=4){uint32_t v=*io++;p[i]=(unsigned char)v;p[i+1]=(unsigned char)(v>>8);p[i+2]=(unsigned char)(v>>16);p[i+3]=(unsigned char)(v>>24);}
++ NRB_DEVICE_BARRIER();return 0;
++}
++static int write(void *cookie,uint64_t pa,const void *data,uint32_t bytes){struct nrb_native *n=cookie;
++ if(!data||span(n,pa,bytes)||owner(n,NRB_POWERED_CPU_HELD))return -1;
++ const unsigned char *p=data;volatile uint32_t *io=(volatile uint32_t *)(n->io+(uintptr_t)(pa-NRC_CONN_BASE));
++ for(uint32_t i=0;i<bytes;i+=4)*io++=(uint32_t)p[i]|(uint32_t)p[i+1]<<8|(uint32_t)p[i+2]<<16|(uint32_t)p[i+3]<<24;
++ NRB_DEVICE_BARRIER();return 0;
++}
++static int barrier(void *cookie){struct nrb_native *n=cookie;if(owner(n,NRB_POWERED_CPU_HELD))return -1;
++ NRB_DEVICE_BARRIER();return 0;
++}
++static const struct nrb_ops ops={owner,smc,map,read,write,barrier};
++int nrb_xnu_policy(struct nrb_native *n,int (*check)(void *,enum nrb_owner_stage),void *c){
++ if(!n||!n->enabled||!check||n->fresh_owner)return -1;
++ n->fresh_owner=check;n->owner_cookie=c;return nrb_policy(&ops,n,&n->state);
++}
++int nrb_xnu_place(struct nrb_native *n){if(!n||!n->enabled)return -1;return nrb_place(&ops,n,&n->state);}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_xnu.h
+@@ -0,0 +1,22 @@
++#ifndef PRIVATE_ROM_XNU_H
++#define PRIVATE_ROM_XNU_H
++#include "wifi_rom_place.h"
++#include "wifi_firmware.h"
++struct nrb_native {
++ unsigned attempted,enabled;struct nrc_claim claim;struct nrb_state state;
++ unsigned char *output,*backup,*scratch;
++ struct nwf_blob blobs[NWF_FILE_COUNT];uintptr_t io;
++ int (*fresh_owner)(void *,enum nrb_owner_stage);void *owner_cookie;
++ int supply_error;
++};
++/* Run in sleepable context AFTER UFSready BEFORE newWFSYScriticalownership.
++ * Newexactoptin nord2wifirom1, currentchosenclaim24LEsource3, pinnedhighRAM;
++ * realvendorreader verifiesall4 files; keepsauthenticatedsource+backups.
++ * No native mapping/SMC/DRAM access is called by prepare. */
++int nrb_xnu_prepare(struct nrb_native *);
++/* Bind real fresh parent-owned WFSYS context, never old asleepnwsa object.
++ * Coldbeforepower predicate for SET; poweredCPUheld predicate for placement.
++ * Missing hook refuses; hook cannot grant MPUpermission (realSMCinternal). */
++int nrb_xnu_policy(struct nrb_native *,int (*)(void *,enum nrb_owner_stage),void *);
++int nrb_xnu_place(struct nrb_native *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_powered.c
+@@ -0,0 +1,239 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_rom_powered.h"
++
++#define AP_WAKE 0x180601a0u
++#define WF_WAKE 0x180601a4u
++#define ACK 0x18060184u
++#define CFG_ID 0x18001000u
++#define CPU_RST 0x18000010u
++#define BGF_CPU_RST 0x18000014u
++#define BGF_TOP_PWR 0x18000008u
++#define SEMA_RST 0x18000018u
++#define AFE 0x18003008u
++#define TOP_PWR 0x18000000u
++#define PWR_ACK 0x180602ccu
++#define WF_PROT 0x18001620u
++#define DMA_PROT 0x18001624u
++#define VDNR 0x1800e06cu
++#define WF_ID 0x184b0010u
++#define IDLE 0x1800f004u
++#define AP2WF 0x18001120u
++#define MCU_ENTRY 0x185001dcu
++#define WF_ENTRY 0x185001e0u
++#define ROM_DONE 0x184c1604u
++#define DEBUG_CTRL 0x1800f000u
++
++static int fail(struct nrpc_state *s,int e) {
++ s->error=e;s->halt=(s->dirty||s->ap_vote||s->wf_vote||s->sem20||s->power||s->policy_attempted);
++ s->unverified=s->halt;return e;
++}
++static int proof(const struct nrpc_ops *o,void *c,struct nrpc_state *s) {
++ return o->proof(c,s->stage) ? fail(s,-2):0;
++}
++static int rd(const struct nrpc_ops *o,void *c,struct nrpc_state *s,uint32_t a,uint32_t *v) {
++ if(proof(o,c,s))return s->error;
++ return o->read(c,a,v)?fail(s,-3):0;
++}
++static int wr(const struct nrpc_ops *o,void *c,struct nrpc_state *s,uint32_t a,uint32_t v) {
++ if(proof(o,c,s))return s->error;
++ s->dirty=1;return o->write(c,a,v)?fail(s,-4):0;
++}
++static int delay(const struct nrpc_ops *o,void *c,struct nrpc_state *s,unsigned us) {
++ if(proof(o,c,s))return s->error;
++ return o->delay_us(c,us)?fail(s,-5):0;
++}
++static int readable(const struct nrpc_ops *o,void *c,struct nrpc_state *s) {
++ if(proof(o,c,s))return s->error;
++ return o->readable(c)?fail(s,-6):0;
++}
++static int rmw(const struct nrpc_ops *o,void *c,struct nrpc_state *s,uint32_t a,uint32_t clr,uint32_t set) {
++ uint32_t v;if(rd(o,c,s,a,&v))return s->error;
++ return wr(o,c,s,a,(v&~clr)|set);
++}
++static int poll(const struct nrpc_ops *o,void *c,struct nrpc_state *s,
++ uint32_t a,uint32_t mask,uint32_t want,unsigned count,unsigned us,unsigned *seen) {
++ uint32_t v;unsigned i;
++ for(i=0;i<count;i++) {
++  if(i&&delay(o,c,s,us))return s->error;
++  if(rd(o,c,s,a,&v))return s->error;
++  ++*seen;
++  if(a==PWR_ACK)s->final_power=v;
++  if((v&mask)==want)return 0;
++ }
++ return fail(s,-7);
++}
++static int version(const struct nrpc_ops *o,void *c,struct nrpc_state *s,
++ uint32_t a,uint32_t want,unsigned count,unsigned us,unsigned *seen,uint32_t *last) {
++ unsigned i;for(i=0;i<count;i++) {
++  if(i&&us&&delay(o,c,s,us))return s->error;
++  if(rd(o,c,s,a,last))return s->error;
++  ++*seen;if(*last==want)return 0;
++ }
++ return fail(s,-8);
++}
++static int sem_acquire(const struct nrpc_ops *o,void *c,struct nrpc_state *s,unsigned *tries) {
++ unsigned i;int v;
++ for(i=0;i<1000;i++) {
++  if(proof(o,c,s))return s->error;
++  v=o->sema20_try(c);++*tries;
++  if(v==1){s->sem20=1;return 0;}
++  if(v<0)return fail(s,-9);
++  if(i<999&&delay(o,c,s,1))return s->error;
++ }
++ return fail(s,-10);
++}
++static int sem_release(const struct nrpc_ops *o,void *c,struct nrpc_state *s) {
++ if(proof(o,c,s))return s->error;
++ if(o->sema20_release(c))return fail(s,-11);
++ s->sem20=0;return 0;
++}
++static int clocks_on(const struct nrpc_ops *o,void *c,struct nrpc_state *s) {
++ uint32_t v;
++ if(sem_acquire(o,c,s,&s->sem_tries))return s->error;
++ if(rd(o,c,s,AFE,&v))return s->error;
++ s->initial_afe=v;
++ /* Static WIFI vote starts empty and this diagnostic owns no other radio. */
++ if(v&((1u<<20)|(1u<<21)))return fail(s,-12);
++ s->clock_vote=1;
++ if(rmw(o,c,s,AFE,0,1u<<21))return s->error;
++ if(delay(o,c,s,30))return s->error;
++ if(rmw(o,c,s,AFE,0,1u<<20))return s->error;
++ if(delay(o,c,s,50))return s->error;
++ return sem_release(o,c,s);
++}
++static int clocks_off(const struct nrpc_ops *o,void *c,struct nrpc_state *s) {
++ uint32_t v;
++ if(sem_acquire(o,c,s,&s->release_sem_tries))return s->error;
++ if(rd(o,c,s,AFE,&v))return s->error;
++ if((v&((1u<<20)|(1u<<21)))!=((1u<<20)|(1u<<21)))return fail(s,-13);
++ /* Selected source releases WPLL then BPLL under semaphore 20. */
++ if(rmw(o,c,s,AFE,1u<<20,0))return s->error;
++ if(rmw(o,c,s,AFE,1u<<21,0))return s->error;
++ if(sem_release(o,c,s))return s->error;
++ s->clock_vote=0;return 0;
++}
++
++static int policy_receipt(const struct nrb_native *n) {
++ const struct nrb_state *r=&n->state;
++ return r->prepared&&r->policy_attempted==1&&
++  r->issued==2&&r->accepted==2&&r->raw_valid==3&&
++  !r->raw[0][0]&&!r->raw[1][0]&&!r->halt&&!r->error;
++}
++static int policy_ok(const struct nrb_native *n) {
++ return policy_receipt(n)&&n->state.phase==3;
++}
++int nrpc_receipt_ok(const struct nrb_native *n) {
++ if(!n)return 0;
++ const struct nrb_state *r=&n->state;
++ unsigned chunks=0,bytes=0;
++ for(unsigned i=0;i<NWF_ROM_SPANS;i++){
++  unsigned sz=r->plan.spans[i].bytes;
++  if(!sz||sz>NRB_BACKUP_BYTES-bytes)return 0;
++  bytes+=sz;chunks+=(sz+NRB_CHUNK-1u)/NRB_CHUNK;
++ }
++ if(bytes!=NRB_BACKUP_BYTES)return 0;
++ return policy_receipt(n)&&r->phase==7&&r->placed==1&&r->mapped==1&&
++  r->backup_complete==1&&r->write_attempted==1&&r->barriers==2&&
++  r->writes==chunks&&r->reads==2u*chunks;
++}
++int nrpc_run(const struct nrpc_ops *o,void *c,unsigned optin,
++ struct nrb_native *rom,struct nrpc_state *s) {
++ uint32_t v;
++ if(!s||!rom||!optin||optin!=1||s->entered)return -1;
++ __builtin_memset(s,0,sizeof(*s));s->entered=1;s->stage=NRPC_PREWAKE;
++ if(!o||!o->proof||!o->read||!o->write||!o->delay_us||
++    !o->readable||!o->sema20_try||!o->sema20_release||
++    !o->rom_policy||!o->rom_place)return fail(s,-1);
++ if(rd(o,c,s,AP_WAKE,&v))return s->error;
++ if(v)return fail(s,-14); /* no inherited AP vote or unknown bits */
++ s->ap_vote=1;if(wr(o,c,s,AP_WAKE,1))return s->error;
++ s->stage=NRPC_AP_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->ap_ack_polls))return s->error;
++ if(readable(o,c,s))return s->error;
++ s->stage=NRPC_AP_READY;
++ if(version(o,c,s,CFG_ID,0x20010101u,10,0,&s->cfg_polls,&s->cfg_id))return s->error;
++
++ /* Fresh WLAN force-on lifetime; distinct from the AP 1a0 reference. */
++ if(rd(o,c,s,WF_WAKE,&v))return s->error;
++ if(v&1u)return fail(s,-15);
++ s->wf_vote=1;if(wr(o,c,s,WF_WAKE,v|1u))return s->error;
++ s->stage=NRPC_WF_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->wf_ack_polls))return s->error;
++ if(readable(o,c,s))return s->error;
++ s->stage=NRPC_COMMON_READY;
++ if(version(o,c,s,CFG_ID,0x20010101u,12,1000,&s->cfg_polls,&s->cfg_id))return s->error;
++ {
++  const uint32_t a[5]={CPU_RST,TOP_PWR,PWR_ACK,BGF_CPU_RST,BGF_TOP_PWR};
++  const uint32_t mask[5]={1u,0x80u,4u,1u,0x80u};unsigned i;
++  for(i=0;i<5;i++){
++   if(rd(o,c,s,a[i],&s->cold[i]))return s->error;
++   s->cold_valid|=1u<<i;
++   if(s->cold[i]&mask[i])return fail(s,-16);
++  }
++ }
++ /* Cold hardware is now proven under fresh AP/WF votes. SET can lock
++  * region27 before the first CPU reset/PLL/WFSYS power operation. */
++ s->policy_attempted=1;s->dirty=1;
++ if(proof(o,c,s)||o->rom_policy(c,rom)||!policy_ok(rom))return fail(s,-17);
++ s->policy_accepted=1;
++ /* Source asserts reset even though the cold proof already showed it held. */
++ if(rd(o,c,s,CPU_RST,&v))return s->error;
++ if(v&1u)return fail(s,-16);
++ if(wr(o,c,s,CPU_RST,v&~1u))return s->error;
++ s->cpu_held=1;
++ s->stage=NRPC_CPU_HELD;
++ if(readable(o,c,s))return s->error; /* source sem20 pre-acquire check */
++ if(clocks_on(o,c,s))return s->error;
++ s->stage=NRPC_CLOCKS;
++
++ if(rd(o,c,s,TOP_PWR,&v))return s->error;
++ s->power=1;
++ if(wr(o,c,s,TOP_PWR,(v&0x0000ff7fu)|0x57460080u))return s->error;
++ if(poll(o,c,s,PWR_ACK,1u<<2,1u<<2,12,500,&s->power_polls))return s->error;
++ s->stage=NRPC_POWERED;
++ if(readable(o,c,s))return s->error;
++ if(rmw(o,c,s,WF_PROT,1u,0))return s->error;
++ if(poll(o,c,s,WF_PROT,1u<<3,0,102,500,&s->prot_polls))return s->error;
++ if(rmw(o,c,s,DMA_PROT,1u,0))return s->error;
++ if(poll(o,c,s,DMA_PROT,1u<<3,0,102,500,&s->prot_polls))return s->error;
++ s->protection=1;s->stage=NRPC_PROTECTION;
++ if(rmw(o,c,s,VDNR,0,1u))return s->error;
++ if(version(o,c,s,WF_ID,0x20010000u,12,500,&s->id_polls,&s->wfsys_id))return s->error;
++ s->local_id=1;s->stage=NRPC_LOCAL_ID;
++
++ /* The native placement callback must act on this exact prepared native owner.
++  * Its complete receipt is checked before any AP2WF or CPU-release write. */
++ s->stage=NRPC_ROM_PLACE;
++ if(proof(o,c,s)||o->rom_place(c,rom)||!nrpc_receipt_ok(rom))return fail(s,-18);
++ s->rom_placed=1;s->stage=NRPC_ROM_CONFIG;
++ if(wr(o,c,s,AP2WF,0x89040000u))return s->error;
++ if(wr(o,c,s,MCU_ENTRY,0))return s->error;
++ if(wr(o,c,s,WF_ENTRY,0))return s->error;
++ if(rmw(o,c,s,SEMA_RST,1u,0))return s->error;
++ /* Receipt and reset-held state are checked again at the release boundary. */
++ if(!nrpc_receipt_ok(rom)||!s->cpu_held||!s->ap_vote||!s->wf_vote||
++    !s->clock_vote||!s->power||!s->protection||s->sem20)return fail(s,-19);
++ s->stage=NRPC_CPU_RELEASE;
++ if(rd(o,c,s,CPU_RST,&v))return s->error;
++ if(v&1u)return fail(s,-20); /* still held at the final boundary */
++ s->cpu_release_attempted=1;
++ if(wr(o,c,s,CPU_RST,v|1u))return s->error;
++ s->cpu_released=1;s->cpu_held=0;s->stage=NRPC_ROM_WAIT;
++ if(version(o,c,s,ROM_DONE,0x1d1eu,102,1000,&s->rom_polls,&s->rom_done))return s->error;
++ s->rom_ready=1;s->stage=NRPC_RUNNING_CONFIG;
++ /* Selected conninfra_config_setup_mt6893 writes this literal after ROM_DONE. */
++ if(wr(o,c,s,DEBUG_CTRL,0x32c8001cu))return s->error;
++ s->stage=NRPC_RELEASE;
++ if(readable(o,c,s))return s->error;
++ if(clocks_off(o,c,s))return s->error;
++ if(readable(o,c,s))return s->error;
++ if(rmw(o,c,s,WF_WAKE,1u,0))return s->error;
++ s->wf_vote=0;
++ /* Final MMIO. The fresh AP vote ends after the selected WF vote release. */
++ if(wr(o,c,s,AP_WAKE,0))return s->error;
++ s->ap_vote=0;s->balanced=1;s->dirty=0;s->unverified=0;s->stage=NRPC_RUNNING;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_powered.h
+@@ -0,0 +1,44 @@
++#ifndef NORD2_PRIVATE_ROM_POWERED_H
++#define NORD2_PRIVATE_ROM_POWERED_H
++#include <stdint.h>
++#include "wifi_rom_xnu.h"
++
++enum nrpc_stage {
++ NRPC_PREWAKE=0, NRPC_AP_ACK=1, NRPC_AP_READY=2,
++ NRPC_WF_ACK=3, NRPC_COMMON_READY=4, NRPC_CPU_HELD=5,
++ NRPC_CLOCKS=6, NRPC_POWERED=7, NRPC_PROTECTION=8,
++ NRPC_LOCAL_ID=9, NRPC_ROM_PLACE=10, NRPC_ROM_CONFIG=11,
++ NRPC_CPU_RELEASE=12, NRPC_ROM_WAIT=13,
++ NRPC_RUNNING_CONFIG=14, NRPC_RELEASE=15, NRPC_RUNNING=16
++};
++struct nrpc_ops {
++ int (*proof)(void *,unsigned);
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t);
++ int (*delay_us)(void *,unsigned);
++ int (*readable)(void *);
++ int (*sema20_try)(void *);
++ int (*sema20_release)(void *);
++ /* These must execute native policy/placement on the exact `rom` object.
++  * They are operations, not caller-supplied permission predicates. */
++ int (*rom_policy)(void *,struct nrb_native *);
++ int (*rom_place)(void *,struct nrb_native *);
++};
++struct nrpc_state {
++ unsigned entered,stage,halt,balanced,dirty,unverified;
++ unsigned ap_vote,wf_vote,sem20,clock_vote,power,protection,local_id,cpu_held;
++ unsigned policy_attempted,policy_accepted,rom_placed;
++ unsigned cpu_release_attempted,cpu_released,rom_ready;
++ unsigned ap_ack_polls,wf_ack_polls,cfg_polls,power_polls,prot_polls,id_polls,rom_polls;
++ unsigned sem_tries,release_sem_tries;
++ unsigned cold_valid;uint32_t cold[5];
++ uint32_t cfg_id,wfsys_id,initial_afe,final_power,rom_done;
++ int error;
++};
++/* Fresh one-shot owner; prepared ROM native object is retained by caller.
++ * Failure at/after policy leaves owned resources for manual reset. Success
++ * leaves WFSYS powered and CPU running, with AP/WF/PLL votes released. */
++int nrpc_run(const struct nrpc_ops *,void *,unsigned,struct nrb_native *,struct nrpc_state *);
++/* Native placement receipt: actual four-span chunk counts, same owner object. */
++int nrpc_receipt_ok(const struct nrb_native *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_powered_adapter.c
+@@ -0,0 +1,193 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_rom_powered_adapter.h"
++
++/* Only these six always-on AP/host predicates are read before AP wake. */
++static int guard(struct nrpa *a,unsigned st) {
++ static const uint32_t addr[6]={0x10006304u,0x1000616cu,0x10006170u,
++  0x1020e504u,0x10001228u,0x10001724u};
++ static const uint32_t mask[6]={0x1fu,2u,2u,1u,0x2000u,4u};
++ static const uint32_t want[6]={0xdu,2u,2u,1u,0,0};
++ uint32_t v;unsigned i;
++ if(!a||a->asleep||a->blocked||!a->hw||a->state.stage!=st||
++    a->hw->owner(a->ctx)){if(a)a->blocked=1;return -1;}
++ for(i=0;i<6;i++){
++  if(a->hw->read32(a->ctx,addr[i],&v)||(v&mask[i])!=want[i]){
++   a->blocked=1;return -1;
++  }
++ }
++ return 0;
++}
++static int allowed(unsigned st,uint32_t a,int write) {
++ switch(st) {
++ case NRPC_PREWAKE:return a==0x180601a0u;
++ case NRPC_AP_ACK:return !write&&a==0x18060184u;
++ case NRPC_AP_READY:return a==0x180601a4u||(!write&&a==0x18001000u);
++ case NRPC_WF_ACK:return !write&&a==0x18060184u;
++ case NRPC_COMMON_READY:return a==0x18000010u||(!write&&(
++  a==0x18001000u||a==0x18000000u||a==0x180602ccu||
++  a==0x18000014u||a==0x18000008u));
++ case NRPC_CPU_HELD:return a==0x18003008u;
++ case NRPC_CLOCKS:return a==0x18000000u||(!write&&a==0x180602ccu);
++ case NRPC_POWERED:return a==0x18001620u||a==0x18001624u;
++ case NRPC_PROTECTION:return a==0x1800e06cu||(!write&&a==0x184b0010u);
++ case NRPC_ROM_CONFIG:return (write&&(a==0x18001120u||
++  a==0x185001dcu||a==0x185001e0u))||a==0x18000018u;
++ case NRPC_CPU_RELEASE:return a==0x18000010u;
++ case NRPC_ROM_WAIT:return !write&&a==0x184c1604u;
++ case NRPC_RUNNING_CONFIG:return write&&a==0x1800f000u;
++ case NRPC_RELEASE:return a==0x18003008u||a==0x180601a4u||
++  (write&&a==0x180601a0u);
++ default:return 0;
++ }
++}
++static int receipt_ok(const struct nrpa *a) {
++ return a->state.rom_placed&&nrpc_receipt_ok(a->rom);
++}
++static int proof(void *p,unsigned st){return guard(p,st);}
++static int read32(void *p,uint32_t addr,uint32_t *v) {
++ struct nrpa *a=p;unsigned st=a->state.stage;
++ if(!v||!allowed(st,addr,0)||guard(a,st))return -1;
++ if(a->hw->read32(a->ctx,addr,v))return -1;
++ a->last_addr=addr;a->last_value=*v;a->last_valid=1;return 0;
++}
++static int write32(void *p,uint32_t addr,uint32_t v) {
++ struct nrpa *a=p;unsigned st=a->state.stage;
++ if(!allowed(st,addr,1)||guard(a,st))return -1;
++ if(addr==0x180601a0u){
++  if(!((st==NRPC_PREWAKE&&v==1)||
++       (st==NRPC_RELEASE&&v==0&&!a->state.wf_vote&&
++        !a->state.clock_vote&&!a->state.sem20&&a->state.rom_ready)))return -1;
++ }else if(addr==0x180601a4u){
++  if(!a->last_valid||a->last_addr!=addr)return -1;
++  if(!((st==NRPC_AP_READY&&v==(a->last_value|1u))||
++       (st==NRPC_RELEASE&&v==(a->last_value&~1u)&&
++        !a->state.clock_vote&&!a->state.sem20&&a->state.rom_ready)))return -1;
++ }else if(addr==0x18000010u){
++  if(!a->last_valid||a->last_addr!=addr||
++     v!=(st==NRPC_CPU_RELEASE?(a->last_value|1u):(a->last_value&~1u)))return -1;
++  if(st==NRPC_CPU_RELEASE&&(!receipt_ok(a)||!a->state.cpu_held))return -1;
++ }else if(addr==0x18000018u){
++  if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value&~1u))return -1;
++ }else if(addr==0x18003008u){
++  if(!a->sem20owned||!a->last_valid||a->last_addr!=addr)return -1;
++  if(st==NRPC_CPU_HELD){
++   if(a->clock_step==0&&v!=(a->last_value|(1u<<21)))return -1;
++   if(a->clock_step==1&&v!=(a->last_value|(1u<<20)))return -1;
++   if(a->clock_step>1)return -1;
++  }else if(st==NRPC_RELEASE){
++   if(a->clock_step==2&&v!=(a->last_value&~(1u<<20)))return -1;
++   if(a->clock_step==3&&v!=(a->last_value&~(1u<<21)))return -1;
++   if(a->clock_step<2||a->clock_step>3)return -1;
++  }else return -1;
++ }else if(addr==0x18001620u||addr==0x18001624u){
++  if(st!=NRPC_POWERED||!a->last_valid||a->last_addr!=addr||
++     v!=(a->last_value&~1u))return -1;
++ }else if(addr==0x1800e06cu){
++  if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value|1u))return -1;
++ }else if(addr==0x18000000u){
++  if(!a->last_valid||a->last_addr!=addr||
++    v!=((a->last_value&0x0000ff7fu)|
++      (0x57460080u)))return -1;
++ }
++ else if(addr==0x18001120u&&v!=0x89040000u)return -1;
++ else if((addr==0x185001dcu||addr==0x185001e0u)&&v)return -1;
++ else if(addr==0x1800f000u&&(v!=0x32c8001cu||!a->state.rom_ready))return -1;
++ if(a->hw->write32(a->ctx,addr,v))return -1;
++ if(addr==0x18003008u)a->clock_step++;
++ a->last_valid=0;
++ if(st==NRPC_RELEASE&&addr==0x180601a0u&&v==0)a->asleep=1;
++ return 0;
++}
++static int delay_us(void *p,unsigned us) {
++ struct nrpa *a=p;if(us!=1&&us!=30&&us!=50&&us!=500&&us!=1000)return -1;
++ if(guard(a,a->state.stage))return -1;
++ return a->hw->delay_us(a->ctx,us);
++}
++/* Direct selected readability: AP guards above, clock detector with bounded
++ * deterministic 1/10us waits, IRQ and HOST ack. No broad debug MMIO. */
++static int direct_read(struct nrpa *a,unsigned st,uint32_t addr,uint32_t *v) {
++ return guard(a,st)||a->hw->read32(a->ctx,addr,v);
++}
++static int direct_write(struct nrpa *a,unsigned st,uint32_t addr,uint32_t v) {
++ return guard(a,st)||a->hw->write32(a->ctx,addr,v);
++}
++static int direct_delay(struct nrpa *a,unsigned st,unsigned us) {
++ return guard(a,st)||a->hw->delay_us(a->ctx,us);
++}
++static int readable(void *p) {
++ struct nrpa *a=p;unsigned st=a->state.stage,spent=0,i,d=1;
++ uint32_t v=0;
++ if(st!=NRPC_AP_ACK&&st!=NRPC_WF_ACK&&st!=NRPC_POWERED&&
++    st!=NRPC_CPU_HELD&&st!=NRPC_RELEASE)return -1;
++ for(i=0;i<1600&&spent<16000;i++){
++  if(direct_read(a,st,0x18060000u,&v))return -1;
++  if(direct_write(a,st,0x18060000u,v|1u))return -1;
++  if(direct_delay(a,st,d))return -1;
++  spent+=d;
++  if(direct_read(a,st,0x18060000u,&v))return -1;
++  a->clock_last=v;a->clock_polls++;
++  if((v&6u)==6u)break;
++  d=10;
++ }
++ a->clock_spent+=spent;
++ if((v&6u)!=6u||i==1600||spent>=16000)return -1;
++ if(direct_read(a,st,0x180602d4u,&v))return -1;
++ a->irq_last=v;if(!(v&1u))return -1;
++ if(direct_read(a,st,0x18060184u,&v))return -1;
++ return (v&(1u<<5))?-1:0;
++}
++/* Source M2 semaphore20: base18070000 + M2_OWN_STA2000/REL2200 +20*4. */
++static int sem_try(void *p) {
++ struct nrpa *a=p;unsigned st=a->state.stage;uint32_t v;
++ if((st!=NRPC_CPU_HELD&&st!=NRPC_RELEASE)||a->sem20owned||guard(a,st))return -1;
++ a->sem20pending=1;
++ if(a->hw->read32(a->ctx,0x18072050u,&v))return -1;
++ if(v&1u){a->sem20owned=1;a->sem20pending=0;return 1;}
++ a->sem20pending=0;return 0;
++}
++static int sem_release(void *p) {
++ struct nrpa *a=p;unsigned st=a->state.stage;
++ if((st!=NRPC_CPU_HELD&&st!=NRPC_RELEASE)||!a->sem20owned||guard(a,st))return -1;
++ a->sem20pending=1;
++ if(a->hw->write32(a->ctx,0x18072250u,1))return -1;
++ a->sem20pending=0;a->sem20owned=0;return 0;
++}
++static int native_owner(void *p,enum nrb_owner_stage stage) {
++ struct nrpa *a=p;struct nrpc_state *s;
++ if(!a||a->blocked||a->asleep||!a->hw||a->hw->owner(a->ctx))return -1;
++ s=&a->state;
++ if(stage==NRB_COLD_BEFORE_POWER)
++  return !(s->stage==NRPC_COMMON_READY&&s->cold_valid==0x1fu&&
++   !(s->cold[0]&1u)&&!(s->cold[1]&0x80u)&&!(s->cold[2]&4u)&&
++   !(s->cold[3]&1u)&&!(s->cold[4]&0x80u)&&
++   s->ap_vote&&s->wf_vote&&!s->cpu_held&&!s->clock_vote&&
++   !s->power&&!s->sem20&&!s->cpu_released);
++ if(stage==NRB_POWERED_CPU_HELD)
++  return !(s->stage==NRPC_ROM_PLACE&&s->local_id&&s->cpu_held&&
++   s->ap_vote&&s->wf_vote&&s->clock_vote&&s->power&&
++   s->protection&&!s->sem20&&!s->cpu_released&&
++   s->wfsys_id==0x20010000u);
++ return -1;
++}
++static int rom_policy(void *p,struct nrb_native *n) {
++ struct nrpa *a=p;if(!a||n!=a->rom||native_owner(a,NRB_COLD_BEFORE_POWER))return -1;
++ return nrb_xnu_policy(n,native_owner,a);
++}
++static int rom_place(void *p,struct nrb_native *n) {
++ struct nrpa *a=p;if(!a||n!=a->rom||native_owner(a,NRB_POWERED_CPU_HELD))return -1;
++ return nrb_xnu_place(n);
++}
++int nrpa_start(struct nrpa *a,const struct nrpa_hw *h,void *ctx,
++ struct nrb_native *prepared,unsigned optin) {
++ static const struct nrpc_ops ops={proof,read32,write32,delay_us,readable,
++  sem_try,sem_release,rom_policy,rom_place};
++ if(!a||!prepared||!optin||optin!=1||a->state.entered)return -1;
++ if(!h||!h->owner||!h->read32||!h->write32||!h->delay_us)return -1;
++ if(!prepared->state.prepared||prepared->state.policy_attempted||
++    prepared->state.halt||prepared->state.phase!=1)return -1;
++ a->hw=h;a->ctx=ctx;a->rom=prepared;
++ return nrpc_run(&ops,a,1,prepared,&a->state);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rom_powered_adapter.h
+@@ -0,0 +1,21 @@
++#ifndef NORD2_PRIVATE_ROM_POWERED_ADAPTER_H
++#define NORD2_PRIVATE_ROM_POWERED_ADAPTER_H
++#include "wifi_rom_powered.h"
++struct nrpa_hw {
++ int (*owner)(void *); /* retained common owner, fresh radio lifetime */
++ int (*read32)(void *,uint32_t,uint32_t *);
++ int (*write32)(void *,uint32_t,uint32_t);
++ int (*delay_us)(void *,unsigned);
++};
++struct nrpa {
++ const struct nrpa_hw *hw;void *ctx;struct nrb_native *rom;
++ struct nrpc_state state;
++ unsigned asleep,blocked,sem20owned,sem20pending,clock_step;
++ unsigned clock_polls,clock_spent;
++ uint32_t last_addr,last_value,clock_last,irq_last;
++ unsigned last_valid;
++};
++/* `prepared` was produced by nrb_xnu_prepare in sleepable UFS context.
++ * optin=1 only; reentry or disabled invocation performs zero callbacks. */
++int nrpa_start(struct nrpa *,const struct nrpa_hw *,void *,struct nrb_native *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_rom_bind.inc
+@@ -0,0 +1,205 @@
++/* PRIVATE proposed XNU binding. Fresh ROM owner only; no old wake object reuse. */
++#include "wifi_rom_powered_adapter.h"
++static struct {
++ struct nrpa diag;
++ struct nrb_native rom;
++ vm_offset_t brcm,local,dynamic,rom_done;
++ bool active,prepare_attempted,prepared,run_attempted;
++ int prepare_status;
++} nrpa_native;
++
++static int nrpa_source_owner(void)
++{
++ if(!nrpa_native.active||!npa_persistent_lifetime||!npa_native.outer_retained||
++    !npa_native.state.entered||!npa_native.state.retained||npa_native.state.fatal||
++    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
++    !npa_native.state.result.retained||npa_native.state.result.halt||
++    npa_native.state.sema11||npa_native.state.sema19||npa_native.state.spi_inflight||
++    !ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty||
++    nawa_native.active||nawa_native.diag.result.entered||
++    nwsa_native.active||nwsa_native.diag.state.entered)return -1;
++ if(!nw.spm||!nw.infra||!nw.gals||!npa_native.host||!npa_native.cfg||
++    !npa_native.rgu||!npa_native.afe||!npa_native.debug||!npa_native.sem)return -1;
++ return 0;
++}
++static int nrpa_xnu_owner(void *cookie)
++{
++ (void)cookie;
++ return nrpa_source_owner()||!nrpa_native.prepared||
++  !nrpa_native.rom.enabled||!nrpa_native.brcm||!nrpa_native.local||
++  !nrpa_native.dynamic||!nrpa_native.rom_done;
++}
++static vm_offset_t nrpa_xnu_base(uint32_t p)
++{
++ switch(p){
++ case 0x10006304:case 0x1000616c:case 0x10006170:return nw.spm;
++ case 0x10001228:case 0x10001724:return nw.infra;
++ case 0x1020e504:return nw.gals;
++ case 0x180601a0:case 0x180601a4:case 0x18060184:
++ case 0x18060000:case 0x180602d4:case 0x180602cc:return npa_native.host;
++ case 0x18001000:case 0x18001620:case 0x18001624:
++ case 0x18001120:return npa_native.cfg;
++ case 0x18000010:case 0x18000000:case 0x18000018:
++ case 0x18000014:case 0x18000008:return npa_native.rgu;
++ case 0x18003008:return npa_native.afe;
++ case 0x1800f000:return npa_native.debug;
++ case 0x18072050:case 0x18072250:return npa_native.sem;
++ case 0x1800e06c:return nrpa_native.brcm;
++ case 0x184b0010:return nrpa_native.local;
++ case 0x185001dc:case 0x185001e0:return nrpa_native.dynamic;
++ case 0x184c1604:return nrpa_native.rom_done;
++ default:return 0;
++ }
++}
++static int nrpa_xnu_read(void *cookie,uint32_t p,uint32_t *v)
++{
++ (void)cookie;
++ if(!v||nrpa_native.diag.asleep)return -1;
++ switch(p){
++ case 0x18072250:case 0x18001120:case 0x185001dc:
++ case 0x185001e0:case 0x1800f000:return -1;
++ default:break;
++ }
++ vm_offset_t b=nrpa_xnu_base(p);if(!b)return -1;
++ *v=ni_rd(b,p&0xfff);return 0;
++}
++static int nrpa_xnu_write(void *cookie,uint32_t p,uint32_t v)
++{
++ (void)cookie;if(nrpa_native.diag.asleep)return -1;
++ struct nrpc_state *s=&nrpa_native.diag.state;
++ switch(p){
++ case 0x180601a0:
++  if(!((s->stage==NRPC_PREWAKE&&v==1)||
++       (s->stage==NRPC_RELEASE&&v==0&&s->rom_ready&&
++        !s->wf_vote&&!s->clock_vote&&!s->sem20)))return -1;
++  break;
++ case 0x18000010:
++  if(v&1u){
++   if(s->stage!=NRPC_CPU_RELEASE||!s->cpu_release_attempted||
++      !nrpc_receipt_ok(&nrpa_native.rom)||!s->cpu_held||s->cpu_released)return -1;
++   /* Captured state only, before the irreversible CPU-release write. */
++   printf("NORD2 WIFI ROM CPU ARM: stage=%u attempted=%u placed=%u policy=%u/%u raw=%#llx/%#llx writes=%u reads=%u barriers=%u\n",
++    s->stage,s->cpu_release_attempted,nrpa_native.rom.state.placed,
++    nrpa_native.rom.state.accepted,nrpa_native.rom.state.issued,
++    (unsigned long long)nrpa_native.rom.state.raw[0][0],
++    (unsigned long long)nrpa_native.rom.state.raw[1][0],
++    nrpa_native.rom.state.writes,nrpa_native.rom.state.reads,
++    nrpa_native.rom.state.barriers);
++  }else if(s->stage!=NRPC_COMMON_READY)return -1;
++  break;
++ case 0x18000000:
++  if(s->stage!=NRPC_CLOCKS||(v&0xffff0000)!=0x57460000||
++     (v&0x80u)==0)return -1;
++  break;
++ case 0x18072250:
++  if(v!=1||(s->stage!=NRPC_CPU_HELD&&s->stage!=NRPC_RELEASE))return -1;
++  break;
++ case 0x18001120:
++  if(s->stage!=NRPC_ROM_CONFIG||!s->rom_placed||v!=0x89040000u)return -1;
++  break;
++ case 0x185001dc:case 0x185001e0:
++  if(s->stage!=NRPC_ROM_CONFIG||!s->rom_placed||v)return -1;
++  break;
++ case 0x1800f000:
++  if(s->stage!=NRPC_RUNNING_CONFIG||v!=0x32c8001cu||!s->rom_ready)return -1;
++  break;
++ case 0x180601a4:
++  if(s->stage!=NRPC_AP_READY&&s->stage!=NRPC_RELEASE)return -1;
++  break;
++ case 0x18060000:
++  if(s->stage!=NRPC_AP_ACK&&s->stage!=NRPC_WF_ACK&&
++     s->stage!=NRPC_CPU_HELD&&s->stage!=NRPC_POWERED&&
++     s->stage!=NRPC_RELEASE)return -1;
++  break;
++ case 0x18001620:case 0x18001624:
++  if(s->stage!=NRPC_POWERED)return -1;
++  break;
++ case 0x18000018:
++  if(s->stage!=NRPC_ROM_CONFIG||(v&1u))return -1;
++  break;
++ case 0x18003008:
++  if(s->stage!=NRPC_CPU_HELD&&s->stage!=NRPC_RELEASE)return -1;
++  break;
++ case 0x1800e06c:
++  if(s->stage!=NRPC_PROTECTION)return -1;
++  break;
++ default:return -1;
++ }
++ vm_offset_t b=nrpa_xnu_base(p);if(!b)return -1;
++ ni_wr(b,p&0xfff,v);NCC_DEVICE_BARRIER();return 0;
++}
++static int nrpa_xnu_delay(void *cookie,unsigned us)
++{(void)cookie;if(nrpa_native.diag.asleep)return -1;delay(us);return 0;}
++static const struct nrpa_hw nrpa_xnu_hw={
++ nrpa_xnu_owner,nrpa_xnu_read,nrpa_xnu_write,nrpa_xnu_delay
++};
++/* Proposed ni_thread insertion: AFTER ni_wifi_snapshot(), before the radio
++ * power probe. This may sleep on UFS; no WFSYS ownership or SMC yet. */
++static void nrpa_prepare_before_power(void)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifirom",&opt,sizeof(opt));
++ if(opt!=1)return;
++ if(nrpa_native.prepare_attempted)panic("NORD2 WIFI ROM: prepare reentry");
++ nrpa_native.prepare_attempted=true;
++ nrpa_native.prepare_status=nrb_xnu_prepare(&nrpa_native.rom);
++ nrpa_native.prepared=nrpa_native.prepare_status==0&&nrpa_native.rom.enabled&&
++  nrpa_native.rom.state.prepared&&nrpa_native.rom.state.phase==1;
++ printf("NORD2 WIFI ROM PREP: status=%d prepared=%u supply_error=%d claim_source=%u\n",
++  nrpa_native.prepare_status,nrpa_native.prepared,nrpa_native.rom.supply_error,
++  nrpa_native.rom.claim.source);
++}
++/* Proposed retained phase-10 call. Old `nord2wifiwake` and
++ * `nord2wifiwfsys` flags must be absent from the planned image. */
++static void nrpa_after_persistent(void)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifirom",&opt,sizeof(opt));
++ if(opt!=1)return;
++ if(!nrpa_native.prepare_attempted||!nrpa_native.prepared){
++  printf("NORD2 WIFI ROM: skipped=1 reason=prepare status=%d\n",nrpa_native.prepare_status);
++  return;
++ }
++ if(nrpa_native.active||nrpa_native.run_attempted||nrpa_native.diag.state.entered)
++  panic("NORD2 WIFI ROM: reentry; retain common owner");
++ nrpa_native.run_attempted=true;
++ nrpa_native.active=true;
++ if(nrpa_source_owner()){
++  nrpa_native.active=false;
++  printf("NORD2 WIFI ROM: skipped=1 reason=persistent-owner-or-wake-conflict\n");
++  return;
++ }
++ /* Mapping is metadata only; no powered-off WFSYS register is read. AP2WF
++  * uses retained CFG map, debug uses retained debug map. */
++ nrpa_native.brcm=ml_io_map(0x1800e000,0x1000);
++ nrpa_native.local=ml_io_map(0x184b0000,0x1000);
++ nrpa_native.dynamic=ml_io_map(0x18500000,0x1000);
++ nrpa_native.rom_done=ml_io_map(0x184c1000,0x1000);
++ if(!nrpa_native.brcm||!nrpa_native.local||!nrpa_native.dynamic||!nrpa_native.rom_done){
++  nrpa_native.active=false;
++  printf("NORD2 WIFI ROM: skipped=1 reason=map\n");return;
++ }
++ int status=nrpa_start(&nrpa_native.diag,&nrpa_xnu_hw,0,&nrpa_native.rom,1);
++ const struct nrpc_state *s=&nrpa_native.diag.state;
++ /* Captured software results only. Final AP sleep has already occurred. */
++ printf("NORD2 WIFI ROM: status=%d stage=%u policy=%u placed=%u cpu_attempt=%u cpu_release=%u done=%#x halt=%u error=%d\n",
++  status,s->stage,s->policy_accepted,s->rom_placed,s->cpu_release_attempted,
++  s->cpu_released,s->rom_done,s->halt,s->error);
++ printf("NORD2 WIFI ROM OWNER: ap=%u wf=%u sem=%u sem_hw=%u pending=%u clock=%u power=%u protection=%u asleep=%u balanced=%u\n",
++  s->ap_vote,s->wf_vote,s->sem20,nrpa_native.diag.sem20owned,nrpa_native.diag.sem20pending,
++  s->clock_vote,s->power,s->protection,nrpa_native.diag.asleep,s->balanced);
++ printf("NORD2 WIFI ROM RECEIPT: phase=%u accepted=%u issued=%u raw_valid=%u raw0=%#llx raw1=%#llx backup=%u writes=%u reads=%u barriers=%u\n",
++  nrpa_native.rom.state.phase,nrpa_native.rom.state.accepted,nrpa_native.rom.state.issued,
++  nrpa_native.rom.state.raw_valid,
++  (unsigned long long)nrpa_native.rom.state.raw[0][0],
++  (unsigned long long)nrpa_native.rom.state.raw[1][0],
++  nrpa_native.rom.state.backup_complete,nrpa_native.rom.state.writes,
++  nrpa_native.rom.state.reads,nrpa_native.rom.state.barriers);
++ printf("NORD2 WIFI ROM OBS: conn=%#x local=%#x clock=%#x irq=%#x cold=%#x pwr=%#x polls=%u/%u/%u/%u\n",
++  s->cfg_id,s->wfsys_id,nrpa_native.diag.clock_last,nrpa_native.diag.irq_last,
++  s->cold_valid,s->final_power,s->ap_ack_polls,s->wf_ack_polls,s->id_polls,s->rom_polls);
++ if(status||s->halt||s->dirty||s->unverified||!s->balanced||!s->rom_ready||
++    !s->cpu_released||s->ap_vote||s->wf_vote||s->sem20||s->clock_vote||
++    !s->power||!s->protection||nrpa_native.diag.sem20owned||
++    nrpa_native.diag.sem20pending||!nrpa_native.diag.asleep)
++  panic("NORD2 WIFI ROM: uncertain stage%u; retain resources; manual reset",s->stage);
++ nrpa_native.active=false;
++}
+--- /dev/null
++++ b/iokit/Kernel/arm/nord2_battery.c
+@@ -0,0 +1,47 @@
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++#include "nord2_battery.h"
++static int get(const struct nbg_ops *o,void *c,unsigned bus,unsigned slave,unsigned reg,unsigned bytes,uint16_t *v){
++ return o->owned(c)||o->read(c,bus,slave,reg,bytes,v);
++}
++static int capture(const struct nbg_ops *o,void *c,struct nbg_sample *s,unsigned bit,unsigned bus,unsigned slave,unsigned reg,unsigned bytes,uint16_t *v){
++ int e=get(o,c,bus,slave,reg,bytes,v);if(!e)s->raw_valid|=1u<<bit;return e;
++}
++int nbg_collect(const struct nbg_ops *o,void *c,unsigned enabled,unsigned identified,struct nbg_sample *s){
++ if(!s)return -1;
++ *s=(struct nbg_sample){0};s->error=-1;
++ if(enabled!=1||!o||!o->owned||!o->read||!o->delay_ms)return -1;
++ if(capture(o,c,s,0,7,0x55,0x2c,2,&s->raw_soc[0]))return -1;
++ if(o->owned(c)||o->delay_ms(c,10))return -1;
++ if(capture(o,c,s,1,7,0x55,0x2c,2,&s->raw_soc[1]))return -1;
++ unsigned a=s->raw_soc[0],b=s->raw_soc[1];
++ if(a>100||b>100||(a>b?a-b:b-a)>3)return -1;
++ s->percent=b;s->soc_valid=1;s->error=0;
++ /* Optional ancillary observations never fabricate/erase a valid SOC. */
++ if(!capture(o,c,s,2,7,0x55,8,2,&s->raw_voltage)&&s->raw_voltage>=5000&&s->raw_voltage<=10000){s->voltage_valid=1;s->pack_mv=s->raw_voltage;}
++ if(!capture(o,c,s,3,7,0x55,6,2,&s->raw_temperature)&&s->raw_temperature>=2000&&s->raw_temperature<=4000){s->temperature_valid=1;s->temperature_centi_c=((int)s->raw_temperature-2731)*10;}
++ /* Linux selects0c only after reading device type BQ28Z610/ZY0603.
++  * Gauge current is positive charging; Linux getter negates for its API,
++  * IOPMPowerSource uses positive charging so preserve signed word here. */
++ if(identified==1&&!capture(o,c,s,4,7,0x55,0x0c,2,&s->raw_current)&&s->raw_current!=0x8000){
++  s->current_ma=(s->raw_current&0x8000)?(int)s->raw_current-65536:s->raw_current;
++  if(s->current_ma>=-15000&&s->current_ma<=15000)s->current_valid=1;
++ }
++ /* MP2650 source REG13 powergood active-low, charging[3:2], REG14 faults.
++  * Independent optional charger bus; do not infer cable solely from current. */
++ if(!capture(o,c,s,5,11,0x5c,0x13,1,&s->raw_status[0])&&
++    !capture(o,c,s,6,11,0x5c,0x14,1,&s->raw_fault)&&
++    !capture(o,c,s,7,11,0x5c,0x13,1,&s->raw_status[1])&&
++    s->raw_status[0]<=255&&s->raw_status[1]<=255&&s->raw_fault<=255&&
++    ((s->raw_status[0]^s->raw_status[1])&0x0e)==0){
++  s->charger_valid=1;s->external=!(s->raw_status[1]&2);
++  unsigned state=(s->raw_status[1]>>2)&3;
++  s->charging=s->external&&(state==1||state==2)&&!(s->raw_fault&0x3f);
++  s->full=s->external&&state==3&&!(s->raw_fault&0x3f);
++ }
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/iokit/Kernel/arm/nord2_battery.h
+@@ -0,0 +1,25 @@
++#ifndef NORD2_BATTERY_H
++#define NORD2_BATTERY_H
++#include <stdint.h>
++/* Sample-only transport: SMBus command pointer+read, no data writes/control,
++ * MAC, dataflash, unseal, learning, charger enable, GPIO or PMIF operations.
++ * Caller serializes against controller users/VOOC gauge master and proves
++ * the selected pre-VOOC default policy, correct bus/pinmux/clock ownership.
++ * If a VOOC protocol driver is later added it must supply its real dynamic
++ * allow_reading gate; this observer implements no fastcharge negotiation. */
++struct nbg_ops {
++ int (*owned)(void *);
++ int (*read)(void *,unsigned bus,unsigned slave,unsigned command,unsigned bytes,uint16_t *);
++ int (*delay_ms)(void *,unsigned);
++};
++/* current_register_identified must prove BQ28Z610/ZY0603 source identity;
++ * no arbitrary device-ID constants or automatic control writes here. */
++struct nbg_sample {
++ uint16_t raw_soc[2],raw_voltage,raw_temperature,raw_current,raw_status[2],raw_fault;
++ unsigned raw_valid; /*bits0/1SOC1/2,2voltage,3temp,4current,5status0,6fault,7status1*/
++ unsigned soc_valid,voltage_valid,temperature_valid,current_valid,charger_valid;
++ unsigned percent,pack_mv;int temperature_centi_c,current_ma;
++ unsigned external,charging,full;int error;
++};
++int nbg_collect(const struct nbg_ops *,void *,unsigned enabled,unsigned current_register_identified,struct nbg_sample *);
++#endif
+--- /dev/null
++++ b/iokit/Kernel/arm/mtk_i2c_read.c
+@@ -0,0 +1,92 @@
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++/* Selected MT6893 I2Cv2 PIO derivative, GPL-2.0 source contract documented. */
++#include "mtk_i2c_read.h"
++static int allowed(unsigned b,unsigned s,unsigned cmd,unsigned n){
++ if(b==7&&s==0x55&&n==2)return cmd==0x2c||cmd==8||cmd==6||cmd==0x0c;
++ return b==11&&s==0x5c&&n==1&&(cmd==0x13||cmd==0x14);
++}
++int nbg_i2c_read(const struct nbg_i2c_io *o,void *c,struct nbg_i2c_state *s,
++ unsigned bus,unsigned slave,unsigned cmd,unsigned count,uint16_t *value){
++ if(!o||!o->read||!o->write||!o->delay_us||!s||s->offline||s->inflight||!value||!allowed(bus,slave,cmd,count))return -1;
++ uint32_t base=bus==7?0x11d03000:0x1101a000,gate=bus==7?0x11d05000:0x11008000;
++ uint32_t bit=bus==7?8:4,v,oldgate=0;unsigned touched=0,gate_changed=0;
++ const uint32_t offs[]={4,8,0x10,0x14,0x18,0x1c,0x20,0x28,0x2c,0x30,0x34,0x40,0x44,0x48};
++ /* cnt_constraint1/div5/26M ->sample0/step26; v2timeout bit0. */
++ uint32_t next[]={0,0,0x3a,1,2,10,0x1b,0x8001,0x1a,0,3,1,0,0x404};
++ uint32_t old[14];s->entered=1;s->polls=0;s->error=-1;
++ s->stage=1;s->failure=s->observed=s->last_valid=0;
++ s->mux=s->parent_hz=s->pinmux=s->initial_gate=s->completion_irq=0;
++#define R(pa,w,out) do{s->last_addr=(pa);s->last_width=(w);s->last_write=0;s->last_valid=0;s->last_value=0;if(o->read(c,pa,w,out)){s->failure=10;goto unknown;}s->last_value=*(out);s->last_valid=1;}while(0)
++#define W(pa,w,val) do{s->last_addr=(pa);s->last_width=(w);s->last_write=1;s->last_value=(val);s->last_valid=1;if(o->write(c,pa,w,val)){s->failure=11;goto unknown;}}while(0)
++ /* Read selected source PLL/mux, never retune it, before controller access. */
++ uint32_t mux,mux_after,parent=26000000;
++ R(0x100000b0,4,&mux);s->mux=mux;s->observed|=1;if(mux&0x8000){s->failure=1;return -1;}
++ unsigned select=(mux>>8)&3;if(select==3){s->failure=1;return -1;}
++ s->stage=2;
++ if(select){
++  uint32_t pll=select==1?0x1000c340:0x1000c308,con,pcw,again,power;
++  R(pll,4,&con);R(pll+4,4,&pcw);R(pll+12,4,&power);R(pll+4,4,&again);
++  if(pcw!=again||!(con&1)||!(con&0x800000)||(power&3)!=1){s->failure=2;return -1;}
++  unsigned div=1u<<((pcw>>24)&7);uint64_t hz=((uint64_t)26000000*(pcw&0x3fffff)+16383)>>14;
++  hz=(hz+div-1)/div;hz/=select==1?32:20;
++  if(hz<1000000||hz>250000000){s->failure=2;return -1;}
++  parent=(uint32_t)hz;
++ }
++ s->parent_hz=parent;s->observed|=2;
++ R(0x100000b0,4,&mux_after);if(mux!=mux_after){s->failure=1;return -1;}
++ s->stage=3;
++ /* Selected source speed calculator,100kHz,div5,cnt_constraint1. */
++ unsigned hclk=(parent/5)/1000,min_div=((hclk>>1)+99)/100,best=512,sample=0,step=0;
++ for(unsigned a=1;a<=8;a++){
++  unsigned b=(min_div+a-1)/a;if(!b||b>64)continue;
++  if(a*b<best){best=a*b;sample=a;step=b;if(best==min_div)break;}
++ }
++ if(!sample||!step||hclk/(2*sample*step)>100){s->failure=3;return -1;}
++ sample--;if(sample)step--;
++ next[6]=(sample<<8)|step|1;next[8]=(sample<<6)|step;
++ s->stage=4;R(0x100053f0,4,&v);s->pinmux=v;s->observed|=4;
++ if(bus==7){if((v&0xff0000)!=0x110000){s->failure=4;return -1;}}
++ else {if((v&0xff000000)!=0x55000000){s->failure=4;return -1;}} /*126/127sourceSCL11/SDA11*/
++ s->stage=5;R(gate+0xe00,4,&oldgate);s->initial_gate=oldgate;s->observed|=8;
++ if(oldgate&bit){gate_changed=1;W(gate+0xe04,4,bit);R(gate+0xe00,4,&v);if(v&bit){s->failure=5;goto unknown;}}
++ s->stage=6;R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
++ R(base+0x10,2,&v);if(v&4){s->failure=7;goto unknown;} /* never touch inheritedDMA */
++ R(base+0x0c,2,&v);if(v){s->failure=8;goto unknown;} /* do not discard another transaction's IRQ */
++ R(base+0xf4,2,&v);if(v){s->failure=9;goto unknown;} /* conservative: no inherited FIFO state */
++ s->stage=7;for(unsigned i=0;i<14;i++)R(base+offs[i],2,&old[i]);
++ s->stage=8;for(unsigned i=0;i<14;i++){
++  uint32_t n=next[i];if(i==0)n=slave<<1;if(i==12)n=count;
++  touched=i+1;W(base+offs[i],2,n);
++ }
++ s->stage=9;W(base+0x38,2,1); /*sourceFIFOclear; preconditionFIFOempty*/
++ W(base,1,cmd); /* only target write is SMBus read command pointer */
++ s->stage=10;s->inflight=1;W(base+0x24,2,1);
++ s->stage=11;
++ for(unsigned i=0;i<2000;i++){
++  R(base+0x0c,2,&v);s->polls++;s->completion_irq=v;s->observed|=16;
++  if(v&0x1ff)break;
++  if(o->delay_us(c,10)){s->failure=12;goto unknown;}
++ }
++ if(!(v&1)||(v&0x1fe)){s->failure=(v&0x1fe)?14:13;goto unknown;}
++ s->stage=12;R(base+0x24,2,&v);if(v&3){s->failure=6;goto unknown;}
++ /* Known complete, no error: source reads exactly requested FIFO bytes. */
++ uint32_t lo,hi=0;R(base,1,&lo);if(count==2)R(base,1,&hi);
++ if(lo>255||hi>255){s->failure=15;goto unknown;}
++ *value=(uint16_t)(lo|(hi<<8));s->error=0;s->inflight=0;
++ s->stage=13;W(base+0x0c,2,1);W(base+0x38,2,1);
++ /* No command replay, START restore, reset, DMA or forceclock access. */
++ s->stage=14;while(touched){unsigned i=--touched;W(base+offs[i],2,old[i]);}
++ s->stage=15;if(gate_changed){W(gate+0xe08,4,bit);}
++ s->stage=16;return s->error;
++unknown:
++ /* Even failed write may have committed; retain setup/clock, never resetbus.
++  * No future attempt on this bus until explicit independently reviewed reset. */
++ s->offline=1;s->error=-2;return -1;
++#undef R
++#undef W
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/iokit/Kernel/arm/mtk_i2c_read.h
+@@ -0,0 +1,21 @@
++#ifndef NBG_MTK_I2C_READ_H
++#define NBG_MTK_I2C_READ_H
++#include <stdint.h>
++struct nbg_i2c_io {
++ int (*read)(void *,uint32_t,unsigned,uint32_t *);
++ int (*write)(void *,uint32_t,unsigned,uint32_t);
++ int (*delay_us)(void *,unsigned);
++};
++/* Telemetry is captured from existing operations only. failure codes:
++ * 1mux,2PLL,3timing,4pinmux,5gate,6busy,7DMA,8priorIRQ,9FIFO,
++ * 10read,11write,12delay,13timeout,14completionIRQ,15bytebounds.
++ * observed bits:1mux,2parentHz,4pinmux,8initialgate,16completionIRQ. */
++struct nbg_i2c_state {unsigned entered,inflight,offline,polls;int error;
++ unsigned stage,failure,observed,last_width,last_write,last_valid;
++ uint32_t last_addr,last_value,mux,parent_hz,pinmux,initial_gate,completion_irq;
++};
++/* Exact board buses/slaves/RO commands. Parent serializes complete sample.
++ * No DMA/reset/pinmux/PLL change. Unknown completion ->offline, no cleanup.
++ * Supports26MHz or source-derived stable MAINPLL/UNIVPLL rate; noPLL retune. */
++int nbg_i2c_read(const struct nbg_i2c_io *,void *,struct nbg_i2c_state *,unsigned,unsigned,unsigned,unsigned,uint16_t *);
++#endif
+--- /dev/null
++++ b/iokit/Kernel/arm/nord2_battery_platform.cpp
+@@ -0,0 +1,85 @@
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++/* PRIVATE native polling provider. No touch/PMIF/DMA/charger/gauge controls.
++ * Explicit nord2battery=1 activates class polling, this file supplies I2C PIO.
++ * Read-only SMBus commands; chip/charger configurations are never written. */
++#include <stdint.h>
++#include <mach/mach_types.h>
++#include <kern/clock.h>
++extern "C" {
++#include "nord2_battery.h"
++#include "mtk_i2c_read.h"
++#include "nbg_telemetry.h"
++extern void IOLog(const char *,...) __attribute__((format(printf,1,2)));
++extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
++extern void delay(int);
++}
++struct nbg_map {uint32_t pa;vm_size_t size;vm_offset_t va;};
++static struct nbg_map maps[]={{0x10000000,0x1000,0},{0x1000c000,0x1000,0},{0x10005000,0x1000,0},
++ {0x11d05000,0x1000,0},{0x11008000,0x1000,0},{0x11d03000,0x1000,0},{0x1101a000,0x1000,0}};
++static unsigned busy;
++static struct nbg_i2c_state buses[2];
++static unsigned bus_logged[2],bus_last_stage[2],bus_last_failure[2];
++static int bus_last_rc[2];
++static unsigned sample_logged,sample_last_valid;
++static int sample_last_rc;
++static void report_bus(unsigned bus,int rc,const struct nbg_i2c_state *s){
++ unsigned i=bus==7?0:1;
++ if(bus_logged[i]&&bus_last_stage[i]==s->stage&&bus_last_failure[i]==s->failure&&bus_last_rc[i]==rc)return;
++ bus_logged[i]=1;bus_last_stage[i]=s->stage;bus_last_failure[i]=s->failure;bus_last_rc[i]=rc;
++ IOLog(NBG_I2C_LOG,bus,rc,s->stage,s->failure,s->observed,s->offline,s->inflight,
++  s->last_addr,s->last_value,s->last_valid,s->last_write,s->last_width);
++ IOLog(NBG_CLOCK_LOG,bus,s->mux,s->parent_hz,s->pinmux,s->initial_gate,s->completion_irq,s->polls,s->observed);
++}
++static vm_offset_t address(uint32_t p,unsigned bytes){
++ for(unsigned i=0;i<7;i++)if(p>=maps[i].pa&&(uint64_t)p+bytes<=(uint64_t)maps[i].pa+maps[i].size){
++  if(!maps[i].va)maps[i].va=ml_io_map(maps[i].pa,maps[i].size);
++  return maps[i].va?maps[i].va+p-maps[i].pa:0;
++ }
++ return 0;
++}
++static int rd(void *,uint32_t p,unsigned width,uint32_t *out){
++ vm_offset_t v=address(p,width);if(!v||!out||(p&(width-1)))return -1;
++ if(width==1)*out=*(volatile uint8_t *)v;
++ else if(width==2)*out=*(volatile uint16_t *)v;
++ else if(width==4)*out=*(volatile uint32_t *)v;else return -1;
++ __asm__ volatile("dmb oshld" ::: "memory");return 0;
++}
++static int wr(void *,uint32_t p,unsigned width,uint32_t value){
++ vm_offset_t v=address(p,width);if(!v||(p&(width-1)))return -1;
++ __asm__ volatile("dmb oshst" ::: "memory");
++ if(width==1)*(volatile uint8_t *)v=(uint8_t)value;
++ else if(width==2)*(volatile uint16_t *)v=(uint16_t)value;
++ else if(width==4)*(volatile uint32_t *)v=value;else return -1;
++ __asm__ volatile("dsb osh" ::: "memory");return 0;
++}
++static int us(void *,unsigned n){if(n>10000)return -1;delay((int)n);return 0;}
++static const struct nbg_i2c_io io={rd,wr,us};
++static int owned(void *){return busy==1?0:-1;}
++static int read(void *,unsigned bus,unsigned slave,unsigned cmd,unsigned bytes,uint16_t *out){
++ if(bus!=7&&bus!=11)return -1;
++ struct nbg_i2c_state *s=&buses[bus==7?0:1];
++ int rc=nbg_i2c_read(&io,0,s,bus,slave,cmd,bytes,out);
++ report_bus(bus,rc,s);return rc;
++}
++static int ms(void *,unsigned n){if(n!=10)return -1;delay(10000);return 0;}
++static const struct nbg_ops ops={owned,read,ms};
++extern "C" int nord2_battery_platform_sample(struct nbg_sample *s){
++ if(!s)return -1;
++ if(!__sync_bool_compare_and_swap(&busy,0u,1u)){*s=(struct nbg_sample){};s->error=-1;return -1;}
++ /* Nocontrol-device-type query yet: SOC standardread available, current0c
++  * deliberately unavailable rather than guessing BQ/ZY installed identity. */
++ int e=nbg_collect(&ops,0,1,0,s);
++ unsigned valid=s->raw_valid|(s->soc_valid<<8)|(s->charger_valid<<9);
++ if(!sample_logged||sample_last_valid!=valid||sample_last_rc!=e){
++  sample_logged=1;sample_last_valid=valid;sample_last_rc=e;
++  IOLog(NBG_RAW_LOG,e,s->raw_valid,(unsigned)s->raw_soc[0],(unsigned)s->raw_soc[1],
++   (unsigned)s->raw_voltage,(unsigned)s->raw_temperature,(unsigned)s->raw_current,
++   (unsigned)s->raw_status[0],(unsigned)s->raw_status[1],(unsigned)s->raw_fault,s->soc_valid,s->charger_valid);
++ }
++ __sync_lock_release(&busy);return e;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/iokit/Kernel/arm/nbg_telemetry.h
+@@ -0,0 +1,7 @@
++#ifndef NBG_TELEMETRY_H
++#define NBG_TELEMETRY_H
++/* Separate bounded software-only log lines; all captured fields are32bit. */
++#define NBG_I2C_LOG "NORD2 BAT I2C: bus=%u rc=%d stage=%u why=%u seen=%#x off=%u flight=%u last=%#x value=%#x valid=%u wr=%u width=%u\n"
++#define NBG_CLOCK_LOG "NORD2 BAT CLK: bus=%u mux=%#x parent_hz=%u pins=%#x gate=%#x irq=%#x polls=%u seen=%#x\n"
++#define NBG_RAW_LOG "NORD2 BAT RAW: rc=%d seen=%#x soc=%#x/%#x volt=%#x temp=%#x cur=%#x chg=%#x/%#x fault=%#x soc_valid=%u charger_valid=%u\n"
++#endif

@@ -80,7 +80,10 @@ else
     python3 tools/mkpayload.py "$tmp/kernel.strip" "$tmp/nord2.adt" "$tmp/payload.bin" \
         --cmdline "$cmdline"
 fi
-set -- "$base" shim/out/nord2-xnu/loader-Image "$tmp/payload.bin" "$out"
+# The current-boot CONN claim requires the matching loader/FDT helper. Always
+# compile from current sources; a prior loader-Image must never be reused.
+sh tools/nord2-build-loader.sh "$tmp/loader"
+set -- "$base" "$tmp/loader/loader-Image" "$tmp/payload.bin" "$out"
 if [ -n "$zopfli" ]; then
     set -- "$@" --zopfli "$zopfli"
 fi

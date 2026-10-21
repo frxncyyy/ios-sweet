@@ -111,16 +111,7 @@ python3 tools/mkpayload.py "$out/kernel.nord2.strip" "$out/nord2-probe.adt" \
 # 5. Loader. The probe entry point; also buildable as -DNORD2_LOADER_ONLY=1
 #    (validate only) or -DNORD2_COPY_ONLY=1 (also copy the segments), which
 #    both chain straight back to Android and are useful when isolating a hang.
-clang --target=aarch64-none-elf -O2 -ffreestanding -nostdlib -fno-pic \
-    -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-builtin \
-    -Wall -Wextra -Werror -c shim/nord2-xnu/start.S -o "$out/start.S.o"
-clang --target=aarch64-none-elf -O2 -ffreestanding -nostdlib -fno-pic \
-    -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-builtin \
-    -Wall -Wextra -Werror -c shim/nord2-xnu/loader.c -o "$out/loader.c.o"
-ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none "$out/start.S.o" "$out/loader.c.o" \
-    -o "$out/loader.elf"
-ld.lld -T shim/nord2-xnu/xnu.ld --build-id=none --oformat=binary \
-    "$out/start.S.o" "$out/loader.c.o" -o "$out/loader-Image"
+sh tools/nord2-build-loader.sh "$out"
 
 # 6. Boot images and static verification.
 for spec in "boot:payload.bin" "continue:payload-continue.bin" "vm:payload-vm.bin" \

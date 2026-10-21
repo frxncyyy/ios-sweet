@@ -21,6 +21,8 @@
  */
 #include <stdint.h>
 #include <stddef.h>
+#include "wifi_rom_contract.h"
+static struct nrc_claim nrc_loader_owner;
 
 #define PSTORE_BASE 0x48090000UL
 #define PSTORE_SIZE 0xe0000UL
@@ -360,6 +362,28 @@ void loader_exception(uint64_t slot)
     chain_stock();
 }
 
+/* Explicit firmware opt-in only. Duplicate/malformed tokens fail closed.
+ * A claim records current-boot selection, not monitor permission. */
+static int nrc_loader_optin(const char *line, size_t cap)
+{
+    const char key[] = "nord2wifirom=";
+    unsigned seen = 0, enabled = 0;
+    size_t n = 0;
+    while (n < cap && line[n]) n++;
+    if (n == cap) return -1;
+    for (size_t i = 0; i < n;) {
+        while (i < n && line[i] == ' ') i++;
+        size_t start = i;
+        while (i < n && line[i] != ' ') i++;
+        size_t len = i - start, j = 0;
+        while (j < sizeof(key)-1 && j < len && line[start+j] == key[j]) j++;
+        if (j != sizeof(key)-1) continue;
+        if (++seen != 1 || len != sizeof(key) || line[start+j] != '1') return -1;
+        enabled = 1;
+    }
+    return (int)enabled;
+}
+
 /* ---- ADT: fill in the /chosen chain-back properties ---- */
 
 /* ADT integers are little-endian (unlike the FDT, which is big-endian). */
@@ -395,7 +419,7 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
     unsigned char *node = p;
     uint32_t cnprops = adt_le32(node);
     unsigned char *q = node + 8;
-    int seen = 0;
+    int seen = 0, conn_seen = 0;
     for (uint32_t i = 0; i < cnprops; i++) {
         if (q + 36 > end) {
             fatal("ADT truncated");
@@ -406,7 +430,17 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
         if (val + len > end) {
             fatal("ADT truncated");
         }
-        if (same(name, "nord2-stock-entry")) {
+        if (same(name, "nord2-conn-claim")) {
+            if (len != 24 || conn_seen++) fatal("ADT CONN claim encoding");
+            for (unsigned b = 0; b < 8; b++) {
+                val[b] = (unsigned char)(nrc_loader_owner.base >> (8*b));
+                val[8+b] = (unsigned char)(nrc_loader_owner.bytes >> (8*b));
+            }
+            for (unsigned b = 0; b < 4; b++) {
+                val[16+b] = (unsigned char)((uint32_t)nrc_loader_owner.source >> (8*b));
+                val[20+b] = (unsigned char)((uint32_t)(nrc_loader_owner.source != NRC_CLAIM_NONE) >> (8*b));
+            }
+        } else if (same(name, "nord2-stock-entry")) {
             if (len != 8) {
                 fatal("ADT nord2-stock-entry size");
             }
@@ -434,7 +468,7 @@ static void patch_chosen(unsigned char *adt, uint32_t size, uint64_t entry,
         }
         q = val + ((len + 3) & ~3U);
     }
-    if (seen != 3) {
+    if (seen != 3 || (nrc_loader_owner.source != NRC_CLAIM_NONE && conn_seen != 1)) {
         fatal("ADT missing chain-back properties");
     }
 }
@@ -518,6 +552,18 @@ void xnu_main(uintptr_t dtb)
     uint64_t payload_limit = 0x10000000;
     if (pl->adt_off + pl->adt_size > payload_limit) {
         fatal("payload ADT out of range");
+    }
+    int rom_opt = nrc_loader_optin(pl->cmdline, sizeof(pl->cmdline));
+    if (rom_opt < 0) fatal("invalid ROM opt-in");
+    if (rom_opt) {
+        const unsigned char *fdt = (const unsigned char *)dtb;
+        uint32_t fdt_bytes = be32(fdt + 4);
+        if (fdt_bytes < 40 || fdt_bytes > 0x100000 ||
+            dtb > UINT64_MAX - fdt_bytes ||
+            (dtb < NRC_CONN_BASE + NRC_CONN_BYTES && NRC_CONN_BASE < dtb + fdt_bytes) ||
+            nrc_ios_fixed_claim_from_fdt(fdt, fdt_bytes, &nrc_loader_owner))
+            fatal("current-boot CONN claim refused");
+        puts_log("NORD2-XNU LOADER: CONN fixed claim recorded; no DRAM write\n");
     }
     puts_log("NORD2-XNU LOADER: payload ok\n");
     hex_log("nsegs", pl->nsegs);

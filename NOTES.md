@@ -3,6 +3,52 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **ROM + BATTERY SOURCE READY FOR FULL CI.**
+  Canonical source, loader and generated patch integrated. Actual canonical
+  loader/contract/placement/native/core/binding host tests passed: 539
+  placement callback faults, 1172 power callback faults, exact source SET,
+  same-object receipt, uncertain CPU release and ROM timeout. Binding switch
+  break whitespace normalized for GCC; no behavioral delta from reviewed
+  b845aa9754d4c3dbf07993cbd115e0f4505199e1d9b5a3e0d7370a14c8adcdff.
+  Seven focused Wi-Fi ARM64 objects pass; fuel canonical tests and four
+  objects pass. Parent caught/fixed helper guard ordering: real CI has no
+  -DNORD2, so new fuel TUs now load board_config before NORD2 guards. Exports
+  verified under normal CI flags and absent for alternate T8103. Generated
+  patch10960 lines applies/reproduces exact tree. Frozen UFS SHA unchanged.
+  Private wifi-rom/ios build/one-use runner/strict evidence parser prepared,
+  all identity/approval gates false; no image or new device action yet.
+  Next args: exact current49c8 minus nord2wifiwfsys=1, plus nord2wifirom=1
+  and nord2battery=1. Full CI/artifact/linked/image checks precede approval.
+  External Opus audio worker and live viewer continue in private folder.
+
+
+
+- **ROM_DONE + FUEL INTEGRATION IN PROGRESS; CLAUDE AUDIO RUNNING.**
+  Phone remains the healthy WFSYS49c8c3ee baseline, human GUI/input confirmed;
+  USB collector stopped. No new image or flash authorization.
+  Reviewed ROM loader/claim, contract, placement, powered core promoted to
+  canonical source; native binding and durable diagnostics being completed.
+  Fresh loader build produces the reviewed 20228-byte binary, SHA256
+  da910e5ca646e1db275c1421cf9b62e50c3ad063253d46cea54fbcf5dfd73429.
+  Image builder now rebuilds loader/FDT helper to prevent stale reuse.
+  Fuel provider/presentation and captured-only telemetry passed independent
+  review, canonical sanitizer and focused ARM64 tests; active IOKit wiring
+  promoted. Full generated patch/CI/image still pending. UFS unchanged.
+  At the user's explicit request, external Claude Code started with Opus
+  (resolved claude-opus-5-5, high effort) on audio, isolated source snapshot
+  3d3725a under research/nord2/audio/claude-opus. Session/PID, prompt, stream,
+  STATUS.md and artifacts stay private there. Read-only source references;
+  no device/CI/active-source authority. A foot window titled
+  "Claude Opus — Audio Nord 2 (live)" shows its live text/tool activity;
+  closing the viewer does not terminate Claude. Built-in --bg refused the
+  new untrusted directory; documented print mode is running as a detached
+  immediate task instead, with normal tool restrictions, not bypass mode.
+  Parent remains sole device/CI/integration owner. Next: finish/review binding,
+  regenerate patch, full CI, verify concrete combined ROM/battery boot image,
+  then request that exact boot-only test. ROM_DONE is not networking.
+
+
 - **WFSYS49c8c3ee HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
   Boot-only flash/reboot OKAY, runner EXECUTED once; never rerun.
   NativeUSB180s completed, 230446B SHA256 734345bbddd24c4a3a1a3efd5e0b9447eb468439ba35e25cbd255809caa8ba66.
