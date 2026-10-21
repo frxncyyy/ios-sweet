@@ -3,6 +3,30 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Async image1c5aa596 HARDWARE-HEALTHY; scan still zero networks.**
+  User confirms lockscreen/touch/buttons call_d3dc9bad9f2f4b759f4020859fcf39e7.
+  MAIN/CAP/BASIC pass; all22normal commands and22channel scan complete;
+  pinnedasync parserPASS/noissues. RX14events =13sleepy+SCAN_DONE; allfour
+  DATAqueuesDIDX0, untouchedDDONE0 before/after. BothRXDMAsnapshots valid.
+  SCANRFversion4: all22beacon/probecounters0, MDRDY0 exceptchannel165=1;
+  idle/time remain rawunits. ZeroBSSID fix executed butdidnotresolveemptyRX.
+  BASIC hadnosleepyevent thisboot; don'tclaimthat specificracewasexercised.
+  Clean180s collector exit0/deadline/noUSBerror, finalios/backend-full.log
+  250210B SHAb5053eba426f24862da7316ba5ecb0e6a89a52b829b958ca7f3819b8af079368; root session1659closed.
+  Currentphone1c5healthy; no recovery needed, no collector, runnerUSED.
+  Root foundLinuxUP lifecycle omittedCID0a: nl80211requiresWDEVUP; dev_open
+  invokesdev_set_rx_mode; MediaTekforcesALLMULTI, ordinaryawake mask0xc.
+  RFsourceaudit8797d528 confirmsgap, notyetcausalproof. format_stage prepares
+  private rx-lifecycle correction/tests; after_id auditsOEM/defaultconfig;
+  cap_stage DMAaudit findsnojustifiedring/enablewrite. No newCI/imageyet.
+
+- **Async image1c5aa596 AUTHORIZED and BOOT-ONLY flashed/rebooted OKAY.**
+  User exact approval call_cde2f19f1bcd4938b82cf44b106af099 includes conditional
+  healthyc3/RAMrescue recovery. Known single Nord2/productoplus6893/boot32MiB/
+  nonuserspace verified. Fresh wifi-async-scan/ios runner now USED; never rerun.
+  Root session1659 collectingUSB180s; hardware outcome/health still pending.
+  Current phone1c5, notc3. No stockAndroid boot over iOSuserdata permitted.
+
 - **Async scan image1c5aa596 VERIFIED; exact boot-only approval pending.**
   shim/out/nord2-xnu/nord2-ios-wifi-async-scan-battery-stop23.img33386496B
   SHA2561c5aa596436e98e74cbc3b2bf72ed66d004ba49599ad77f63f452ceae029eb56
