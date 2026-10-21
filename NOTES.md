@@ -4,6 +4,43 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **c3ce7dcf full capture closed and preserved; current image stays installed.**
+  Collector180s exit0/stop_reason=deadline/transport_error=null.
+  Immutable wifi-normal-scan/ios/backend-full.log244598B SHA256
+  c6055d4b27a46c6ea6290a6249c85a785b4d1aa88c8496afbc1863e07aeee45a.
+  Full v3 parser passes same config/scan receipts. Humanhealthy; userconfirms
+  nearby networks visible on BOTH bands call_b28bae79c17f4775888173e11b923964.
+  Zero BSS remains a real reception/discovery gap. No recovery/device action
+  pending; no collector remains. Native backend currently parks afterscan.
+  PassiveSSIDType0/count0 and dwell/min/timeout0 match source cfg80211→AIS→SCN;
+  do not invent wildcard/dwell fixes. DataDMA0 mapping matches source, but
+  retained actual DMA0 readback not captured; agents reviewing prerequisites.
+  Servicebridge completed-scan adapter private4f0ac27a ASan/UBSan PASS:
+  real empty vs partial/timeout preserved, no interface published; populated
+  Apple rate/age units still explicit unresolved inputs, no guessed encoding.
+
+- **c3ce7dcf hardware: complete22-command batch + scan completion; HUMAN-HEALTHY.**
+  Actual MAIN/CAP/BASIC allsuccessful; NORMAL status0/phase7/complete22,
+  no halt/error; SCAN done1/state7/completed_channels22 in ~1.21seconds.
+  RX11packets=10sleepy EID7 + matchingSCAN_DONE; ALL DATA QUEUES EMPTY,
+  BSS0/frames0. Command path succeeded, RF reception/network discovery is
+  NOT yet proven; do not call this usable Wi-Fi or connection availability.
+  First immutable161342B receipt d30e6b393426316a9d16794f92c53c50940a2e3d65ffaddac1ca02cc0076555d
+  under wifi-normal-scan/ios/backend-first-receipt.log; v3 parsercomplete=true,
+  configtransferred=true/scancomplete=true, noissues, network/interfacefalse.
+  User confirms lockscreen/touch/buttons call_d54e5e06ff0b42bab29e2c987c25e12a.
+  Retainnewimage; no recovery needed. See latest full-capture completion above.
+  cap_stage investigating zeroRX/MACfilters vs source; format_stage config/
+  passive scan prerequisites. Root only deviceowner; no new flash requested.
+
+- **Combined backend c3ce7dcf AUTHORIZED and BOOT-ONLY FLASHED.**
+  User exact-image/calibration/conditional e0d3/RAMrescue authorization:
+  call_90526ebbdec14bd68cf6a1b84293bb7a. Known singlefastboot Nord2 identity,
+  oplus6893, boot0x2000000 and nonuserspace verified. Flash boot and reboot
+  both OKAY. Fresh wifi-normal-scan/ios runner has executed; NEVER rerun it.
+  USB collector active180s, root session87889; hardware result pending.
+  Phone now testing c3ce7dcf, not e0d3. No scan success yet observed.
+
 - **ONE combined backend image VERIFIED; exact-image user approval pending.**
   shim/out/nord2-xnu/nord2-ios-wifi-normal-scan-battery-stop23.img33384448B
   SHA256c3ce7dcfcce13085579e59998b6f29a9fb0e2b11a7a3420b9cc97db5a8ab3f1a
