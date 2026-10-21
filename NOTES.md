@@ -3,6 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **0ce01268 RECOVERY COMPLETE; NEW FAILURE CAUSE UNKNOWN.**
+  Authorized e0d3 boot-only restore/reboot succeeded 2026-10-21 14:37:12
+  Europe/Rome. USB90s capture completed: 223215 bytes, SHA256
+  41a9294d7bccbf818e14ea8b037f2274929992d8d91564d29c9d8d7d832312b6.
+  User confirms lockscreen/touch/buttons healthy. Frozen full current log and
+  restoration-report.json under wifi-main-state/ios. NO previous-log marker
+  survived this restore, therefore no final failed suffix or raw PRESPAN state
+  was recovered; do not mistake old b60 diagnostics in initial capture for
+  the new failure. Initial immutable101500B snapshot remains preserved.
+  All collectors stopped; do not rerun executed image/restore runners.
+  Private failure-drain candidate a38018d5 adds bounded30s scheduler sleep
+  before existing terminal panic so CPU0 USB can drain captured diagnostics;
+  independent review pending. No new radio-cause inference or flash approval.
+  UFS/boot speed unchanged; audio4 remains private/unintegrated.
+
+
+
+- **STATE IMAGE0ce01268 BOOTLOOP; RESTORE PENDING FASTBOOT.**
+  Authorized boot-only flash/reboot OKAY. Native USB first capture101500B
+  SHA2848c106798b93e1a4664d35c17b5a149e3f4abf4cd9f7622155fef1e6a308e1
+  ends during MAIN ARM2 with READ54 timeout, no final PRESPAN diagnostics yet.
+  User reports another bootloop. Capture and immutable first snapshot saved
+  under wifi-main-state/ios; collector stopped, runner must NEVER be rerun.
+  User asked manual fastboot for already-authorized exact e0d3 restoration;
+  retrieve preserved final failure log from restored native USB. Actual
+  failure cause/new readiness state unknown until final log is recovered.
+
+
+
+- **STATE-CHECK IMAGE0ce01268 AUTHORIZED; ONE-USE RUNNER STARTED.**
+  User explicitly authorized the exact image, RF calibration, boot-only flash
+  and conditional recovery to healthy e0d3/RAM rescue, and reports fastboot.
+  New runner wifi-main-state/ios/run-approved-boot.py started exactly once;
+  native USB180s capture follows reboot. Never rerun after flash.log exists.
+  Runtime main firmware outcome pending. No networking claim.
+
+
 
 - **STATE-CHECK IMAGE VERIFIED; EXACT NEW FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-state-battery-stop23.img`, 33345536 bytes,
