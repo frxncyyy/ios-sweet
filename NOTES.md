@@ -3,6 +3,22 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Async scan image1c5aa596 VERIFIED; exact boot-only approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-async-scan-battery-stop23.img33386496B
+  SHA2561c5aa596436e98e74cbc3b2bf72ed66d004ba49599ad77f63f452ceae029eb56
+  payloadd8c162742863d0fd181c0337af2ce3d4235240879c4012b643cd15a2f338cfcd;
+ 167936B boot spare. CI39672757944/source361b8eac; kernel8bc54611.
+  Bounded1GiB pack exit0, independent contents/segments/loader/rescue/ADT/
+  originalLinux/dualDT/header and --check-existing PASS. Fresh wifi-async-scan/ios
+  identity/schema/prepared gates true; human approval flags false, runner UNUSED.
+  Includes shared EID7 hint handling across CAP/BASIC/normal, zeroBSSID source
+  correction and readonly RX/RF snapshots; actual scan correction not yet tested.
+  Current phone stays humanhealthy c3ce7dcf; exactc3 and RAMrescue fallback
+  retained. No collector/device action. Next: obtain exactimage approval and
+  physicalfastboot, then new one-use runner only and pinned async parser.
+  Private iOS bridge CARDv2 and lifecyclev2 independently reviewed but not
+  registered/backend-bound or included in this radio image. No network promise.
+
 - **Async CI39672757944 SUCCESS; bounded image pack in progress.**
   Exact source361b8eac9be79101091a86471d4fd3f43fd44099, kernel17534512B
   SHA8bc54611a1fee1b099ec126bbf0e8b40f0ff7b3b325920f433f2dbe134b47205.
