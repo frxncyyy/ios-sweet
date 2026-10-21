@@ -3,6 +3,27 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **FIRST OWNER-FAILURE DIAGNOSTICS PROMOTED; READY FOR FULL CI.**
+  Reviewed private owner-guard-diagnostics-v2 manifest9a8b2a3f promoted:
+  native header, adapter and coordinator plus native fixture. Only trailing
+  whitespace normalized in adapter (canonical e214cdb7, provenance in
+  wifi-main-ownerdiag/focused/normalization.json). No guard relaxation or
+  extra MMIO. All114 ordered software predicates and18 hardware read paths
+  unchanged; first reason/stage and failed raw/mask/expected are captured.
+  A later halt cannot replace or misattribute an earlier non-guard error.
+  Parent canonical native/pre-span/drain ASan+UBSan PASS. Pre-span fixture
+  had stale missing scheduler declarations and overwritten-error expectation;
+  repaired with forbidden-path stubs and first-error expectation. Actual
+  generated normal-context ARM64 sweet_touch/FW/PHY helpers PASS. ARM64 ABI
+  checks: nwt1176/nwi3040 unchanged, nwfn7472 (32 bytes appended at7440), old
+  offsets unchanged. Patch13943 applies/reproduces. Full CI/link required.
+  Private ownerdiag stage source/schema pins ready, CI/prepared/approval false.
+  Selected dynamic N9 source audit confirms CID41/72B/entry0/override0 and
+  mandatory ACK then FW_READY; no proven command bug or permission to ignore
+  owner failure. Actual failed guard remains unknown. Phone e0d3 human-healthy,
+  all collectors finished; UFS/boot speed unchanged.
+
+
 - **RX FORMAT HARDWARE: PATCH AND PHY PASS; N9 OWNER GUARD STOPS; RESTORED.**
   Authorized8f1824f1 boot-only flash/reboot OKAY. Patch-finish ACK accepted;
   PHY60-byte EID5/response81/status0 and 30720-byte calibration backup pass.

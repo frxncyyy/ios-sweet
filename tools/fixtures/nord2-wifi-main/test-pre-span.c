@@ -26,8 +26,19 @@ static void fresh(unsigned sync){
 static void stopped(unsigned reason){assert(nfp_native.pre_span_reason==reason);assert(nfp_native.halt&&nwfn_native.halt&&nwfn_native.init.halt&&nwfn_native.init.transport.halt&&nwfn_native.init.transport.dirty);assert(!span_calls);}
 static struct {uintptr_t cfg,host;}npa_native;
 static struct {unsigned active;struct {struct npp_state state;}probe;} nppa_native;
-static int nwfn_stop(struct nwfn_native *n,unsigned e){n->error=e;n->halt=1;n->init.halt=n->init.transport.halt=1;return -1;}
+static int nwfn_stop(struct nwfn_native *n,unsigned e){if(!n->error){n->error=e;n->failure_stage=n->stage;}n->halt=1;n->init.halt=n->init.transport.halt=1;return -1;}
 void panic(const char *format,...){(void)format;assert(0);}
+/* This fixture calls only pre-span checks and diagnostics. The separately
+ * tested terminal scheduler path must never execute here. */
+#define NSEC_PER_MSEC 1000000u
+#define THREAD_UNINT 1
+#define THREAD_WAITING 1
+#define THREAD_CONTINUE_NULL ((void *)0)
+static int preemption_enabled(void){assert(0);return 0;}
+static void clock_interval_to_deadline(unsigned n,unsigned scale,uint64_t *d){(void)n;(void)scale;(void)d;assert(0);}
+static void clock_get_uptime(uint64_t *t){(void)t;assert(0);}
+static int assert_wait_deadline(void *p,int mode,uint64_t d){(void)p;(void)mode;(void)d;assert(0);return 0;}
+static void thread_block(void *p){(void)p;assert(0);}
 #include "wifi_main_bind.inc"
 int main(void){
  (void)nwfn_after_pool;
@@ -52,7 +63,7 @@ int main(void){
  /* Shared halt makes a later call refuse before any owner/read/copy. */
  unsigned prior=owner_calls;assert(nfp_xnu_span(0)==-1&&owner_calls==prior&&!span_calls);
  fresh(0);nwfn_native.error=6;nwfn_native.halt=1;
- nwfn_main_failure(-1);assert(nwfn_main.original_native_error==6&&nwfn_main.original_native_halt==1&&nwfn_native.error==21);
+ nwfn_main_failure(-1);assert(nwfn_main.original_native_error==6&&nwfn_main.original_native_halt==1&&nwfn_native.error==6);
  prior=owner_calls;nwfn_main_diagnostics();assert(owner_calls==prior);
  puts("PASS actual native pre-span adapter: raw0/1/2 proceed, full3 refuses; same bit reasons, owner original error, prior event/finish/coex order, shared halt, no copy/remap on refusal. Synthetic model only.");
 }

@@ -20,6 +20,8 @@ struct nwfn_native {
  uint32_t live[5],live_valid;
  uint32_t last_address,last_value;unsigned last_valid;
  uint8_t finish_tx[72],finish_rx[3840];size_t finish_received;
+ unsigned failure_stage,guard_reason,guard_source,guard_valid;
+ uint32_t guard_address,guard_raw,guard_mask,guard_expected;
 };
 /* One native object in the owning sweet-touch TU. New flag nord2wifimain=1
  * additionally requires the existing ROM and DMA flags. It cannot repurpose

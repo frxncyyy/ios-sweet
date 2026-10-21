@@ -30,6 +30,10 @@ static void nwfn_main_diagnostics(void)
  printf("NORD2 WIFI MAIN PREORDER: index=%u events=%u finish=%u coex=%u prepared=%u\n",
   nfp_native.pre_span_index,nwfn_native.init.transport.completed,
   nwfn_native.init.transport.finish_phase,nfp_native.coex_attempted,nfp_native.prepared);
+ printf("NORD2 WIFI MAIN GUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",
+  nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,
+  nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,
+  nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);
  const struct nwi_state *i=&nwfn_native.init;
  const struct nwt_state *t=&i->transport;
  const struct nfp_state *f=&nfp_native.state;

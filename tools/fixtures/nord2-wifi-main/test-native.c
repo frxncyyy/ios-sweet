@@ -113,4 +113,41 @@ int main(void){fixture();main_flag=0;assert(nwfn_prepare()==1&&!mmio_reads&&!mmi
  }
  fixture();assert(!nwfn_prepare()&&!nwfn_start());assert(nwfn_finish_command(0x42)==-1&&!nwfn_native.init.transport.submit_attempted&&!nwfn_native.init.transport.completed);
  puts("PASS native INIT format: measured0007 and legacye000, real finish helper, CID request validation retained, response CID metadata only, sequence/status negatives; synthetic model.");
+ static const struct {uint32_t a,v,mask,want;unsigned reason;} guards[]={
+ {0x10006304,0,0x1f,0xd,2},{0x1000616c,0,2,2,2},{0x10006170,0,2,2,2},
+ {0x1020e504,0,1,1,2},{0x10001228,0x2000,0x2000,0,2},{0x10001724,4,4,0,2},
+ {0x0c000130,1u<<23,(1u<<23)|(1u<<26),0,3},
+ {0x180601a0,0,0xffffffffu,1,4},{0x180601a4,0,0xffffffffu,1,4},
+ {0x18060184,0x20,0x20,0,4},{0x18060000,0,6,6,4},
+ {0x180602d4,0,1,1,4},{0x18001000,0,0xffffffffu,0x20010101,4},
+ {0x18024204,1,0x33f800ff,0,5},{0x18025204,1,0x7d37ffff,0,5},
+ {0x18060010,4,4,0,6},{0x18024200,1u<<20,0x300000,0,22},
+ {0x18025200,1u<<21,0x300000,0,22}};
+ for(unsigned k=0;k<sizeof(guards)/sizeof(guards[0]);k++){
+  fixture();assert(!nwfn_prepare()&&!nwfn_start());
+  hardware_register(guards[k].a,guards[k].v);unsigned writes=mmio_writes,before_reads=mmio_reads;
+  assert(nwfn_owner(&nwfn_native)<0&&nwfn_native.error==guards[k].reason);
+  assert(mmio_reads-before_reads==k+1); /* exact original short-circuit reads */
+  assert(nwfn_native.guard_valid&&nwfn_native.guard_address==guards[k].a&&
+   nwfn_native.guard_raw==guards[k].v&&nwfn_native.guard_mask==guards[k].mask&&
+   nwfn_native.guard_expected==guards[k].want&&nwfn_native.failure_stage==NWFN_RETAINED);
+  unsigned reads=mmio_reads,source=nwfn_native.guard_source;
+  nwfn_stop(&nwfn_native,20);nwfn_main_failure(-1);
+  assert(nwfn_native.error==guards[k].reason&&nwfn_native.guard_source==source&&
+   nwfn_native.guard_address==guards[k].a&&mmio_reads==reads&&mmio_writes==writes);
+  assert(nwfn_owner(&nwfn_native)<0&&mmio_reads==reads&&nwfn_native.guard_address==guards[k].a);
+ }
+ fixture();assert(!nwfn_prepare()&&!nwfn_start());nwfn_native.init.transport.tx_ring+=16;
+ old=mmio_reads;assert(nwfn_owner(&nwfn_native)<0&&nwfn_native.guard_reason==1&&
+  nwfn_native.guard_source&&!nwfn_native.guard_valid&&mmio_reads==old);
+ for(unsigned error=19;error<=20;error++){
+  fixture();assert(!nwfn_prepare()&&!nwfn_start());
+  nwfn_stop(&nwfn_native,error);unsigned reads=mmio_reads,writes=mmio_writes;
+  assert(nwfn_owner(&nwfn_native)<0&&!nwfn_native.guard_reason&&!nwfn_native.guard_valid);
+  nwfn_main_failure(-1);
+  assert(nwfn_native.error==error&&nwfn_native.failure_stage==NWFN_RETAINED&&
+   !nwfn_native.guard_reason&&!nwfn_native.guard_valid&&
+   mmio_reads==reads&&mmio_writes==writes);
+ }
+ puts("PASS captured guard diagnostics: all18 hardware predicates, software identity refusal, first-error/stage retention through finish/coordinator, no MMIO on reporting/overwrite/reentry.");
  puts("PASS native callback model: default off, preparation without MMIO, fresh retained ownership, exact transport identity, memory bounds, GIC refusal, inherited balanced sleep/no post-sleep access, bounded ACK/clock failures. Coordinator source order, all child failure boundaries/common halt and no replay. No hardware execution.");}

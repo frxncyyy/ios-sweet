@@ -13199,7 +13199,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_main_wfdma_native.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +#ifndef PRIVATE_NORD2_WFDMA_NATIVE_H
 +#define PRIVATE_NORD2_WFDMA_NATIVE_H
 +#include "wifi_main_initializer.h"
@@ -13222,6 +13222,8 @@
 + uint32_t live[5],live_valid;
 + uint32_t last_address,last_value;unsigned last_valid;
 + uint8_t finish_tx[72],finish_rx[3840];size_t finish_received;
++ unsigned failure_stage,guard_reason,guard_source,guard_valid;
++ uint32_t guard_address,guard_raw,guard_mask,guard_expected;
 +};
 +/* One native object in the owning sweet-touch TU. New flag nord2wifimain=1
 + * additionally requires the existing ROM and DMA flags. It cannot repurpose
@@ -13257,14 +13259,14 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_main_wfdma_bind.inc
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,504 @@
 +/* PRIVATE. Include after pool_bind.inc. No production hook is added here.
 + * All source helpers below use fresh state, not sleeping adapter callbacks. */
 +#include "wifi_main_wfdma_native.h"
 +struct nwfn_native nwfn_native;
 +static int nwfn_stop(struct nwfn_native *n,unsigned error)
 +{
-+ n->error=error;n->halt=1;n->init.halt=1;n->init.transport.halt=1;return -1;
++ if(!n->error){n->error=error;n->failure_stage=n->stage;}n->halt=1;n->init.halt=1;n->init.transport.halt=1;return -1;
 +}
 +static uintptr_t nwfn_base(uint32_t p)
 +{
@@ -13297,56 +13299,144 @@
 + unsigned off=p>=0x18024000u&&p<0x18028000u?(p&0x1fffu):(p&0xfffu);
 + ni_wr(base,off,v);
 +}
++/* Capture only a failed existing read/predicate, never sample again. */
++static int nwfn_guard_failure(struct nwfn_native *n,unsigned reason,unsigned source,
++ uint32_t address,uint32_t raw,uint32_t mask,uint32_t expected,unsigned valid)
++{
++ if(!n->error&&!n->guard_reason){n->guard_reason=reason;n->guard_source=source;
++  n->guard_address=address;n->guard_raw=raw;n->guard_mask=mask;
++  n->guard_expected=expected;n->guard_valid=valid;}
++ return -1;
++}
 +static int nwfn_source(struct nwfn_native *n)
 +{
 + const struct npp_state *p=&nppa_native.probe.state;
 + const struct nrpc_state *r=&nrpa_native.diag.state;
 + struct ndp_subpool sub;
-+ if(ndp_subpool_layout(&n->claim,&sub)||n->init.command!=sub.tx_cmd)return -1;
-+ if(n!=&nwfn_native||!n->prepared||!n->active||n->halt||n->init.halt||n->asleep||
-+    n->rom!=&nrpa_native.rom||n->pool!=p||n->init.pool!=p||
-+    n->claim.base!=NDP_POOL_BASE||n->claim.bytes!=NDP_POOL_BYTES||
-+    n->claim.source!=3||n->claim.valid!=1||
-+    nppa_native.claim.base!=n->claim.base||nppa_native.claim.bytes!=n->claim.bytes||
-+    nppa_native.claim.source!=n->claim.source||nppa_native.claim.valid!=n->claim.valid||
-+    n->pool_va!=(uintptr_t)nppa_native.pool||!n->pool_va||
-+    !nppa_native.prepared||!nppa_native.attempted||nppa_native.active||
-+    p->stage!=NPP_DONE||p->error||p->halt||p->uncertain||p->inherited_dma||
-+    !p->verified||!p->mapped||!p->zero_complete||!p->balanced||!p->asleep||
-+    p->ap_owned||p->wf_owned||p->set_accepted!=2||p->set_attempted!=3||
-+    p->raw_valid!=3||p->raw[0][0]||p->raw[1][0]||
-+    p->words_written!=32768||p->words_read!=32768||
-+    !nrpc_receipt_ok(&nrpa_native.rom)||nrpa_native.active||
-+    !r->entered||r->stage!=NRPC_RUNNING||!r->rom_ready||
-+    !r->cpu_release_attempted||!r->cpu_released||
-+    !r->power||!r->protection||!r->balanced||r->halt||r->dirty||
-+    r->unverified||r->ap_vote||r->wf_vote||r->sem20||r->clock_vote||
-+    r->rom_done!=0x1d1eu||!nrpa_native.diag.asleep||
-+    !npa_persistent_lifetime||!npa_native.outer_retained||
-+    !npa_native.state.retained||npa_native.state.fatal||
-+    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
-+    !npa_native.state.result.retained||npa_native.state.result.halt||
-+    npa_native.state.sema11||npa_native.state.sema19||npa_native.state.spi_inflight||
-+    !ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty||
-+    nawa_native.active||nawa_native.diag.result.entered||
-+    nwsa_native.active||nwsa_native.diag.state.entered||
-+    !nw.spm||!nw.infra||!nw.gals||!npa_native.host||!npa_native.cfg||
-+    !npa_native.rgu||!nrpa_native.local||!nrpa_native.rom_done||
-+    !nppa_native.wfdma||!n->scheduler_va||!n->dummy_va||!n->gic_va)return -1;
-+ if(n->init.claim.base!=n->claim.base||n->init.claim.bytes!=n->claim.bytes||
-+    n->init.claim.source!=n->claim.source||n->init.claim.valid!=n->claim.valid)return -1;
++ if(ndp_subpool_layout(&n->claim,&sub))return nwfn_guard_failure(n,1,1,0,1,1,0,0);
++ if(n->init.command!=sub.tx_cmd)return nwfn_guard_failure(n,1,2,0,1,1,0,0);
++
++ if(n!=&nwfn_native)return nwfn_guard_failure(n,1,3,0,1,1,0,0);
++ if(!n->prepared)return nwfn_guard_failure(n,1,4,0,1,1,0,0);
++ if(!n->active)return nwfn_guard_failure(n,1,5,0,1,1,0,0);
++ if(n->halt)return nwfn_guard_failure(n,1,6,0,1,1,0,0);
++ if(n->init.halt)return nwfn_guard_failure(n,1,7,0,1,1,0,0);
++ if(n->asleep)return nwfn_guard_failure(n,1,8,0,1,1,0,0);
++ if(n->rom!=&nrpa_native.rom)return nwfn_guard_failure(n,1,9,0,1,1,0,0);
++ if(n->pool!=p)return nwfn_guard_failure(n,1,10,0,1,1,0,0);
++ if(n->init.pool!=p)return nwfn_guard_failure(n,1,11,0,1,1,0,0);
++ if(n->claim.base!=NDP_POOL_BASE)return nwfn_guard_failure(n,1,12,0,1,1,0,0);
++ if(n->claim.bytes!=NDP_POOL_BYTES)return nwfn_guard_failure(n,1,13,0,1,1,0,0);
++ if(n->claim.source!=3)return nwfn_guard_failure(n,1,14,0,1,1,0,0);
++ if(n->claim.valid!=1)return nwfn_guard_failure(n,1,15,0,1,1,0,0);
++ if(nppa_native.claim.base!=n->claim.base)return nwfn_guard_failure(n,1,16,0,1,1,0,0);
++ if(nppa_native.claim.bytes!=n->claim.bytes)return nwfn_guard_failure(n,1,17,0,1,1,0,0);
++ if(nppa_native.claim.source!=n->claim.source)return nwfn_guard_failure(n,1,18,0,1,1,0,0);
++ if(nppa_native.claim.valid!=n->claim.valid)return nwfn_guard_failure(n,1,19,0,1,1,0,0);
++ if(n->pool_va!=(uintptr_t)nppa_native.pool)return nwfn_guard_failure(n,1,20,0,1,1,0,0);
++ if(!n->pool_va)return nwfn_guard_failure(n,1,21,0,1,1,0,0);
++ if(!nppa_native.prepared)return nwfn_guard_failure(n,1,22,0,1,1,0,0);
++ if(!nppa_native.attempted)return nwfn_guard_failure(n,1,23,0,1,1,0,0);
++ if(nppa_native.active)return nwfn_guard_failure(n,1,24,0,1,1,0,0);
++ if(p->stage!=NPP_DONE)return nwfn_guard_failure(n,1,25,0,1,1,0,0);
++ if(p->error)return nwfn_guard_failure(n,1,26,0,1,1,0,0);
++ if(p->halt)return nwfn_guard_failure(n,1,27,0,1,1,0,0);
++ if(p->uncertain)return nwfn_guard_failure(n,1,28,0,1,1,0,0);
++ if(p->inherited_dma)return nwfn_guard_failure(n,1,29,0,1,1,0,0);
++ if(!p->verified)return nwfn_guard_failure(n,1,30,0,1,1,0,0);
++ if(!p->mapped)return nwfn_guard_failure(n,1,31,0,1,1,0,0);
++ if(!p->zero_complete)return nwfn_guard_failure(n,1,32,0,1,1,0,0);
++ if(!p->balanced)return nwfn_guard_failure(n,1,33,0,1,1,0,0);
++ if(!p->asleep)return nwfn_guard_failure(n,1,34,0,1,1,0,0);
++ if(p->ap_owned)return nwfn_guard_failure(n,1,35,0,1,1,0,0);
++ if(p->wf_owned)return nwfn_guard_failure(n,1,36,0,1,1,0,0);
++ if(p->set_accepted!=2)return nwfn_guard_failure(n,1,37,0,1,1,0,0);
++ if(p->set_attempted!=3)return nwfn_guard_failure(n,1,38,0,1,1,0,0);
++ if(p->raw_valid!=3)return nwfn_guard_failure(n,1,39,0,1,1,0,0);
++ if(p->raw[0][0])return nwfn_guard_failure(n,1,40,0,1,1,0,0);
++ if(p->raw[1][0])return nwfn_guard_failure(n,1,41,0,1,1,0,0);
++ if(p->words_written!=32768)return nwfn_guard_failure(n,1,42,0,1,1,0,0);
++ if(p->words_read!=32768)return nwfn_guard_failure(n,1,43,0,1,1,0,0);
++ if(!nrpc_receipt_ok(&nrpa_native.rom))return nwfn_guard_failure(n,1,44,0,1,1,0,0);
++ if(nrpa_native.active)return nwfn_guard_failure(n,1,45,0,1,1,0,0);
++ if(!r->entered)return nwfn_guard_failure(n,1,46,0,1,1,0,0);
++ if(r->stage!=NRPC_RUNNING)return nwfn_guard_failure(n,1,47,0,1,1,0,0);
++ if(!r->rom_ready)return nwfn_guard_failure(n,1,48,0,1,1,0,0);
++ if(!r->cpu_release_attempted)return nwfn_guard_failure(n,1,49,0,1,1,0,0);
++ if(!r->cpu_released)return nwfn_guard_failure(n,1,50,0,1,1,0,0);
++ if(!r->power)return nwfn_guard_failure(n,1,51,0,1,1,0,0);
++ if(!r->protection)return nwfn_guard_failure(n,1,52,0,1,1,0,0);
++ if(!r->balanced)return nwfn_guard_failure(n,1,53,0,1,1,0,0);
++ if(r->halt)return nwfn_guard_failure(n,1,54,0,1,1,0,0);
++ if(r->dirty)return nwfn_guard_failure(n,1,55,0,1,1,0,0);
++ if(r->unverified)return nwfn_guard_failure(n,1,56,0,1,1,0,0);
++ if(r->ap_vote)return nwfn_guard_failure(n,1,57,0,1,1,0,0);
++ if(r->wf_vote)return nwfn_guard_failure(n,1,58,0,1,1,0,0);
++ if(r->sem20)return nwfn_guard_failure(n,1,59,0,1,1,0,0);
++ if(r->clock_vote)return nwfn_guard_failure(n,1,60,0,1,1,0,0);
++ if(r->rom_done!=0x1d1eu)return nwfn_guard_failure(n,1,61,0,1,1,0,0);
++ if(!nrpa_native.diag.asleep)return nwfn_guard_failure(n,1,62,0,1,1,0,0);
++ if(!npa_persistent_lifetime)return nwfn_guard_failure(n,1,63,0,1,1,0,0);
++ if(!npa_native.outer_retained)return nwfn_guard_failure(n,1,64,0,1,1,0,0);
++ if(!npa_native.state.retained)return nwfn_guard_failure(n,1,65,0,1,1,0,0);
++ if(npa_native.state.fatal)return nwfn_guard_failure(n,1,66,0,1,1,0,0);
++ if(npa_native.state.hw_handoff!=2)return nwfn_guard_failure(n,1,67,0,1,1,0,0);
++ if(npa_native.state.result.phase!=10)return nwfn_guard_failure(n,1,68,0,1,1,0,0);
++ if(!npa_native.state.result.retained)return nwfn_guard_failure(n,1,69,0,1,1,0,0);
++ if(npa_native.state.result.halt)return nwfn_guard_failure(n,1,70,0,1,1,0,0);
++ if(npa_native.state.sema11)return nwfn_guard_failure(n,1,71,0,1,1,0,0);
++ if(npa_native.state.sema19)return nwfn_guard_failure(n,1,72,0,1,1,0,0);
++ if(npa_native.state.spi_inflight)return nwfn_guard_failure(n,1,73,0,1,1,0,0);
++ if(!ni_saved)return nwfn_guard_failure(n,1,74,0,1,1,0,0);
++ if(!ncc_fresh_owned)return nwfn_guard_failure(n,1,75,0,1,1,0,0);
++ if(!nw.saved)return nwfn_guard_failure(n,1,76,0,1,1,0,0);
++ if(!nw.domain_touched)return nwfn_guard_failure(n,1,77,0,1,1,0,0);
++ if(ncc_latched_dirty)return nwfn_guard_failure(n,1,78,0,1,1,0,0);
++ if(nawa_native.active)return nwfn_guard_failure(n,1,79,0,1,1,0,0);
++ if(nawa_native.diag.result.entered)return nwfn_guard_failure(n,1,80,0,1,1,0,0);
++ if(nwsa_native.active)return nwfn_guard_failure(n,1,81,0,1,1,0,0);
++ if(nwsa_native.diag.state.entered)return nwfn_guard_failure(n,1,82,0,1,1,0,0);
++ if(!nw.spm)return nwfn_guard_failure(n,1,83,0,1,1,0,0);
++ if(!nw.infra)return nwfn_guard_failure(n,1,84,0,1,1,0,0);
++ if(!nw.gals)return nwfn_guard_failure(n,1,85,0,1,1,0,0);
++ if(!npa_native.host)return nwfn_guard_failure(n,1,86,0,1,1,0,0);
++ if(!npa_native.cfg)return nwfn_guard_failure(n,1,87,0,1,1,0,0);
++ if(!npa_native.rgu)return nwfn_guard_failure(n,1,88,0,1,1,0,0);
++ if(!nrpa_native.local)return nwfn_guard_failure(n,1,89,0,1,1,0,0);
++ if(!nrpa_native.rom_done)return nwfn_guard_failure(n,1,90,0,1,1,0,0);
++ if(!nppa_native.wfdma)return nwfn_guard_failure(n,1,91,0,1,1,0,0);
++ if(!n->scheduler_va)return nwfn_guard_failure(n,1,92,0,1,1,0,0);
++ if(!n->dummy_va)return nwfn_guard_failure(n,1,93,0,1,1,0,0);
++ if(!n->gic_va)return nwfn_guard_failure(n,1,94,0,1,1,0,0);
++
++ if(n->init.claim.base!=n->claim.base)return nwfn_guard_failure(n,1,95,0,1,1,0,0);
++ if(n->init.claim.bytes!=n->claim.bytes)return nwfn_guard_failure(n,1,96,0,1,1,0,0);
++ if(n->init.claim.source!=n->claim.source)return nwfn_guard_failure(n,1,97,0,1,1,0,0);
++ if(n->init.claim.valid!=n->claim.valid)return nwfn_guard_failure(n,1,98,0,1,1,0,0);
++
 + for(unsigned i=0;i<9;i++){
 +  const struct nwi_ring *a=&n->init.rings[i],*b=&n->expected_rings[i];
-+  if(a->descriptors!=b->descriptors||a->buffers!=b->buffers||
-+     a->base!=b->base||a->count!=b->count||a->ext!=b->ext||a->rx!=b->rx)return -1;
++  if(a->descriptors!=b->descriptors)return nwfn_guard_failure(n,1,99,0,1,1,0,0);
++ if(a->buffers!=b->buffers)return nwfn_guard_failure(n,1,100,0,1,1,0,0);
++ if(a->base!=b->base)return nwfn_guard_failure(n,1,101,0,1,1,0,0);
++ if(a->count!=b->count)return nwfn_guard_failure(n,1,102,0,1,1,0,0);
++ if(a->ext!=b->ext)return nwfn_guard_failure(n,1,103,0,1,1,0,0);
++ if(a->rx!=b->rx)return nwfn_guard_failure(n,1,104,0,1,1,0,0);
++
 + }
 + if(n->init.initialized){
 +  const struct nwt_state *t=&n->init.transport;
-+  if(n->init.phase!=5||t->phase!=2||t->halt||t->missing_init||
-+     t->tx_ring!=n->expected_rings[2].descriptors||
-+     t->rx_ring!=n->expected_rings[5].descriptors||
-+     t->rx_buffers!=n->expected_rings[5].buffers||t->command!=n->init.command||
-+     t->tx_index>=1024||t->rx_index>=16)return -1;
++  if(n->init.phase!=5)return nwfn_guard_failure(n,1,105,0,1,1,0,0);
++ if(t->phase!=2)return nwfn_guard_failure(n,1,106,0,1,1,0,0);
++ if(t->halt)return nwfn_guard_failure(n,1,107,0,1,1,0,0);
++ if(t->missing_init)return nwfn_guard_failure(n,1,108,0,1,1,0,0);
++ if(t->tx_ring!=n->expected_rings[2].descriptors)return nwfn_guard_failure(n,1,109,0,1,1,0,0);
++ if(t->rx_ring!=n->expected_rings[5].descriptors)return nwfn_guard_failure(n,1,110,0,1,1,0,0);
++ if(t->rx_buffers!=n->expected_rings[5].buffers)return nwfn_guard_failure(n,1,111,0,1,1,0,0);
++ if(t->command!=n->init.command)return nwfn_guard_failure(n,1,112,0,1,1,0,0);
++ if(t->tx_index>=1024)return nwfn_guard_failure(n,1,113,0,1,1,0,0);
++ if(t->rx_index>=16)return nwfn_guard_failure(n,1,114,0,1,1,0,0);
++
 + }
 + return 0;
 +}
@@ -13354,27 +13444,40 @@
 +{
 + static const uint32_t addr[6]={0x10006304,0x1000616c,0x10006170,0x1020e504,0x10001228,0x10001724};
 + static const uint32_t mask[6]={0x1f,2,2,1,0x2000,4},want[6]={0xd,2,2,1,0,0};
++ uint32_t raw;
 + if(nwfn_source(n))return nwfn_stop(n,1);
-+ for(unsigned i=0;i<6;i++)if((nwfn_load(addr[i])&mask[i])!=want[i])return nwfn_stop(n,2);
-+ /* Saved selected DT: Wi-Fi SPIs375/378 => INTIDs407/410. Read only.
-+  * No enable/disable or GIC ownership takeover occurs in this candidate. */
++ for(unsigned i=0;i<6;i++){
++  raw=nwfn_load(addr[i]);if((raw&mask[i])!=want[i]){
++   nwfn_guard_failure(n,2,i+1,addr[i],raw,mask[i],want[i],1);return nwfn_stop(n,2);}
++ }
 + n->gic_enabled=ni_rd(n->gic_va,0x130);
-+ if(n->gic_enabled&((1u<<23)|(1u<<26)))return nwfn_stop(n,3);
++ if(n->gic_enabled&((1u<<23)|(1u<<26))){
++  nwfn_guard_failure(n,3,0,0x0c000130,n->gic_enabled,(1u<<23)|(1u<<26),0,1);return nwfn_stop(n,3);}
 + if(!full)return 0;
-+ if(!n->ap_owned||!n->wf_owned||nwfn_load(0x180601a0)!=1||
-+    nwfn_load(0x180601a4)!=(n->wf_initial|1u)||
-+    (nwfn_load(0x18060184)&0x20)||
-+    (nwfn_load(0x18060000)&6)!=6||!(nwfn_load(0x180602d4)&1)||
-+    nwfn_load(0x18001000)!=0x20010101)return nwfn_stop(n,4);
-+ if((nwfn_load(0x18024204)&0x33f800ffu)||
-+    (nwfn_load(0x18025204)&0x7d37ffffu))return nwfn_stop(n,5);
-+ if(n->init.driver_owned&&(nwfn_load(0x18060010)&4))return nwfn_stop(n,6);
++ if(!n->ap_owned||!n->wf_owned){
++  nwfn_guard_failure(n,4,!n->ap_owned?1:2,0,0,1,1,0);return nwfn_stop(n,4);}
++ /* Exactly the previous short-circuit read order, with captured failures. */
++ static const uint32_t live_addr[6]={0x180601a0,0x180601a4,0x18060184,0x18060000,0x180602d4,0x18001000};
++ const uint32_t live_mask[6]={0xffffffffu,0xffffffffu,0x20,6,1,0xffffffffu};
++ const uint32_t live_want[6]={1,n->wf_initial|1u,0,6,1,0x20010101};
++ for(unsigned i=0;i<6;i++){
++  raw=nwfn_load(live_addr[i]);if((raw&live_mask[i])!=live_want[i]){
++   nwfn_guard_failure(n,4,i+3,live_addr[i],raw,live_mask[i],live_want[i],1);return nwfn_stop(n,4);}
++ }
++ for(unsigned i=0;i<2;i++){
++  uint32_t address=0x18024204+0x1000*i,mask=i?0x7d37ffffu:0x33f800ffu;
++  raw=nwfn_load(address);if(raw&mask){
++   nwfn_guard_failure(n,5,i+1,address,raw,mask,0,1);return nwfn_stop(n,5);}
++ }
++ if(n->init.driver_owned){raw=nwfn_load(0x18060010);if(raw&4){
++  nwfn_guard_failure(n,6,0,0x18060010,raw,4,0,1);return nwfn_stop(n,6);}}
 + if(n->init.dirty||n->init.initialized){
 +  struct nwt_state *t=&n->init.transport;t->irq_status_valid=0;
 +  for(unsigned dma=0;dma<2;dma++){
 +   t->irq_status[dma]=nwfn_load(0x18024200+0x1000*dma);
 +   t->irq_status_valid|=1u<<dma;
-+   if(t->irq_status[dma]&0x00300000u)return nwfn_stop(n,22);
++   if(t->irq_status[dma]&0x00300000u){
++    nwfn_guard_failure(n,22,dma+1,0x18024200+0x1000*dma,t->irq_status[dma],0x00300000,0,1);return nwfn_stop(n,22);}
 +  }
 + }
 + return 0;
@@ -13663,7 +13766,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_main_bind.inc
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,146 @@
 +#include "failure_drain.inc"
 +/* PRIVATE coordinator. Include after wfdma_bind.inc; external firmware/PHY
 + * implementations are separate TUs. Hook immediately after nppa_after_rom. */
@@ -13696,6 +13799,10 @@
 + printf("NORD2 WIFI MAIN PREORDER: index=%u events=%u finish=%u coex=%u prepared=%u\n",
 +  nfp_native.pre_span_index,nwfn_native.init.transport.completed,
 +  nwfn_native.init.transport.finish_phase,nfp_native.coex_attempted,nfp_native.prepared);
++ printf("NORD2 WIFI MAIN GUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",
++  nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,
++  nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,
++  nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);
 + const struct nwi_state *i=&nwfn_native.init;
 + const struct nwt_state *t=&i->transport;
 + const struct nfp_state *f=&nfp_native.state;
