@@ -3,6 +3,16 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Receive lifecycle26 source8d6960fb CI39678188048 running.**
+  Root watcher14045 saves run/log/artifacts under research/ci-39678188048.
+  Canonical all5 suites PASS; three affected normalARM64 TUs PASS.
+  Fresh wifi-rx-lifecycle/ios has148sourcepins, parser26, all device gatesfalse,
+  runnerUNUSED. No newimage/exactapproval yet. Phone stays humanhealthy1c5.
+  cap_stage prepares independent linked review; format_stage reviews stage;
+  after_id advances private scan-to-iOS lifecycle adapter, no live registration.
+  Next verify exactsource/artifact, bounded1GiB pack, exactnewimageapproval.
+
+
 - **Receive lifecycle26 integrated; source and independent reviews PASS.**
   Adds three public OnePlus CID70 SET/no-response default batches (11keys,
   body284/frame348, grouping4/4/3) and CID0a RXfilter0xc (body68/frame132)
