@@ -78,8 +78,28 @@ not read-back; bit1 means observed. Mismatch bits0..3 identify pointer, SDL0,
 DW2 and DW3 and are evaluated only after DDONE. A completed mismatch still
 halts before any RX event processing or rearm. No command replay is added.
 
-A partial writeback race remains only a hypothesis. The selected initializer
-sets TX_WB_DDONE; CODA describes it as waiting for full host-AXI writeback before
-interrupt, and TX17 completion was observed. The new diagnostics must identify
-the actual completed fields before any further contract change. Struct fields
-are appended and every consuming translation unit must rebuild together.
+The 923d7cea hardware test then captured expected DIDX1 and DDONE1 with
+submitted words `90005000/40440000/0/0` and observed words
+`90005000/80000000/0/0`. SDL0 and LastSec0 had been consumed; the pointer and
+unused words matched. The strict SDL0 echo caused error16. This evidence does
+not support the earlier partial-writeback hypothesis. No firmware event was
+received before the guard halted. The phone was restored to healthy e0d3.
+
+The transport now accepts that exact DDONE-only control word as an additional
+completed form, after expected DIDX, DDONE, pointer and unused-word checks.
+Zero length with any other control bit and a wrong nonzero length still fail.
+The original-length branch retains its previous policy. Software `used` remains
+the authoritative buffer extent; consumed length zero never supplies an extent
+or address. This is a narrow exception based on the measured device, not a
+claim that every MT6893 descriptor uses this writeback form. A matching actual
+RX event is still required to advance command completion; no response is
+fabricated and no retry, reset or extra backend access is added.
+
+`TXWB` records constructed/observed validity, DDONE, accepted consumed-zero
+classification and software length. Mismatch bit4 rejects zero length with
+unexpected control bits. The flag is set only after all completion checks
+pass, and is independent of firmware acknowledgment. The captured failure
+drain remains. Struct fields are appended and all consuming translation units
+must rebuild together. Host tests include the measured shape with synthetic
+RX, invalid zero-control forms and a wrong response sequence; hardware success
+remains unverified.

@@ -4,7 +4,7 @@
 #include <string.h>
 #define BASE 0x90000000u
 static unsigned char memory[0x20000];
-struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied,partial,descriptor_reads,corrupt_word,wrong_didx;};
+struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied,partial,descriptor_reads,corrupt_word,wrong_didx,control_mode;};
 static int step(struct mock *m){if(m->failed)m->after++;if(++m->calls==m->fail){m->failed=1;return -1;}return 0;}
 static uint32_t get(const unsigned char *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put(unsigned char *p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(unsigned char)(v>>(8*i));}
@@ -28,7 +28,18 @@ static int mr(void *c,uint64_t a,void *p,uint32_t n){struct mock *m=c;if(step(m)
  if(a<BASE+0x4000&&n==16){
   m->descriptor_reads++;
   if(m->partial&&m->descriptor_reads==1)memset(p,0,16);
-  else if(m->corrupt_word){unsigned char *d=p;
+  else if(m->control_mode){unsigned char *d=p;uint32_t value=0;
+   if(m->control_mode==1)value=0x80000000u;
+   if(m->control_mode==2)value=0xc0000000u;
+   if(m->control_mode==3)value=0x80008000u;
+   if(m->control_mode==4)value=0xc0010000u;
+   if(m->control_mode==5)value=0x80440000u;
+   if(m->control_mode==6)value=0;
+   if(m->control_mode==7)value=0x80000001u;
+   if(m->control_mode==8)value=0x80004000u;
+   put(d+4,value);
+  }
+  if(m->corrupt_word){unsigned char *d=p;
    if(m->corrupt_word==1)put(d,get(d)^4u);
    if(m->corrupt_word==2)put(d+4,get(d+4)^(1u<<16));
    if(m->corrupt_word==3)put(d+8,4);
@@ -66,6 +77,21 @@ int main(void){struct nwt_state s={0};struct mock m={0};assert(nwt_preflight(&io
   before=m.calls;assert(nwt_exchange(&io,&m,&s,0x40)&&m.calls==before);
  }
  s=seeded();m=(struct mock){.active=1,.wrong_didx=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==15&&s.halt&&s.tx_descriptor_valid==1&&!m.descriptor_reads);
+ s=seeded();m=(struct mock){.active=1,.control_mode=1};assert(!nwt_exchange(&io,&m,&s,0x40)&&s.tx_consumed_zero&&s.tx_used==68&&s.completed==1&&!s.tx_mismatch&&s.tx_observed[1]==0x80000000u&&s.command==BASE+0x15000);
+ for(unsigned word=1;word<=4;word++)if(word!=2){
+  s=seeded();m=(struct mock){.active=1,.control_mode=1,.corrupt_word=word};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==16&&s.tx_mismatch==(1u<<(word-1))&&!s.tx_consumed_zero&&!s.rx_descriptor_bytes);
+ }
+ for(unsigned mode=2;mode<=4;mode++){
+  s=seeded();m=(struct mock){.active=1,.control_mode=mode};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==16&&s.halt&&!s.completed&&!s.tx_consumed_zero&&!s.rx_descriptor_bytes&&s.tx_mismatch==(mode==4?2u:16u));
+  before=m.calls;assert(nwt_exchange(&io,&m,&s,0x40)&&m.calls==before);
+ }
+ for(unsigned mode=7;mode<=8;mode++){
+  s=seeded();m=(struct mock){.active=1,.control_mode=mode};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==16&&s.tx_mismatch==16&&!s.tx_consumed_zero&&!s.rx_descriptor_bytes);
+ }
+ s=seeded();m=(struct mock){.active=1,.control_mode=1,.badseq=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==21&&s.tx_consumed_zero&&!s.completed&&!s.finish_phase&&s.halt);
+ s=seeded();m=(struct mock){.active=1,.control_mode=5};assert(!nwt_exchange(&io,&m,&s,0x40)&&!s.tx_consumed_zero&&s.tx_used==68);/* Original-length branch retains previous flag policy. */
+ s=seeded();m=(struct mock){.active=1,.control_mode=6};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==17&&s.polls==1000&&!s.tx_consumed_zero&&!s.completed&&!s.rx_descriptor_bytes);
+ puts("PASS consumed zero: exact observed DDONE-only accepts with software length68 retained; zero+LS0, zero+Burst, other length reject; original-length policy unchanged; DDONE0 never accepts. Synthetic event only.");
  puts("PASS delta: invalid partial descriptor with DDONE0 waits; each DDONE1 pointer/length/DW2/DW3 corruption still fails; wrong DIDX/coherent stop retained; captured raw words and mismatch bits; no replay or RX rearm on error.");
  printf("PASS transport: %u legacy preflight faults; %u exchange callback faults; two finish commands; PHY-sized generic capture; bounded raw counts; no replay; TX DIDX plus DDONE; RX matching event; visibility; 1000-poll timeout. Host callback model only.\n",total,exchange);
 }

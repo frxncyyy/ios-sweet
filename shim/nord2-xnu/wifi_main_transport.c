@@ -78,7 +78,7 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
  uint64_t rxbuf=s->rx_buffers+4096u*s->rx_index;
  if(nwt_tx_desc(d,s->command,used))return fail(s,14);
  s->tx_descriptor_address=txd;s->tx_used=(uint32_t)used;s->tx_descriptor_valid=1;
- s->tx_mismatch=0;s->tx_ddone_waits=0;s->tx_didx=s->tx_index;
+ s->tx_mismatch=0;s->tx_ddone_waits=0;s->tx_consumed_zero=0;s->tx_didx=s->tx_index;
  for(unsigned word=0;word<4;word++){s->tx_submitted[word]=get32(d+4*word);s->tx_observed[word]=0;}
  if(mw(o,c,s,s->command,cmd,(uint32_t)used)||sync(o,c,s,s->command,(uint32_t)used,1)||mw(o,c,s,txd,d,16)||sync(o,c,s,txd,16,1))return -1;
  unsigned next=(s->tx_index+1)%NWT_TX_COUNT;s->submit_attempted=1;
@@ -99,10 +99,17 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
   /* Selected hal_pdma completion waits for DMADONE before consuming any
    * descriptor fields. Preserve strict echo checks once writeback is done. */
   if(!(get32(d+4)&(1u<<31))){s->tx_ddone_waits++;continue;}
+  uint32_t control=get32(d+4),length=(control>>16)&0x3fffu;
+  /* Observed selected MT6893 completion consumes SDL0 and LastSec0.
+   * Zero length accepts only exact DDONE-only; original-length checks
+   * remain unchanged.
+   * Retained software used/command extent remains the ownership authority. */
   s->tx_mismatch=(get32(d)!=(uint32_t)s->command?1u:0u)|
-   (((get32(d+4)>>16)&0x3fff)!=used?2u:0u)|
-   (get32(d+8)?4u:0u)|(get32(d+12)?8u:0u);
+   (length!=0&&length!=used?2u:0u)|
+   (get32(d+8)?4u:0u)|(get32(d+12)?8u:0u)|
+   (length==0&&control!=UINT32_C(0x80000000)?16u:0u);
   if(s->tx_mismatch)return fail(s,16);
+  s->tx_consumed_zero=control==UINT32_C(0x80000000);
   s->tx_done=1;break;
  }
  if(!s->tx_done)return fail(s,17);

@@ -4,6 +4,22 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+
+- **MEASURED TX WRITEBACK EXCEPTION PROMOTED; READY FOR FULL CI.**
+  Privatecandidatefc14aeb9 independently reviewedPASS. Exactword1=80000000
+  acceptedonlyafter expectedDIDX/DDONE/exactpointer/DW2DW3zero, retaining
+  softwareused/ownership/realRXchecks. Zero+extraflags/wrongnonzerolength
+  reject; original-lengthpolicy unchanged. Appendedtx_consumed_zero and
+  capturedTXWB marker; noextraIO/replay/reset;30sdrain retained.
+  Threecanonical transportC/header/coordinator files promoted together,
+  canonical transport/initializer/native/halt ASanUBSan PASS. Exact priorCI-
+  derived actualgenerated sweet_touch/transport ARM64 PASS, noextra private
+  includes/forcedNORD2. Patch13812lines applies/reproduces. Newprivate stage
+  wifi-main-txwriteback/ios source/schema pinned; CI/prepared/approvalfalse.
+  Currentphonee0d3 humanhealthy, allcollectors stopped. No newimage or
+  hardwareapproval yet. UFS/boot speed unchanged.
+
+
 - **TXDONE923d7cea IDENTIFIES CONSUMED DESCRIPTOR; e0d3 RESTORED/HEALTHY.**
   Boot-only flash/reboot OKAY. Immutable failure snapshot150834B SHA256
   8f8da54e00bef8e7f25ec472c2954e55753ddd5d942f30e71eee84ac42b6d6cd.
