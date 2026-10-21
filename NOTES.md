@@ -4,6 +4,58 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **PERSISTENT RADIO IMAGE READY; AWAIT EXACT BOOT-ONLY APPROVAL.**
+  shim/out/nord2-xnu/nord2-ios-wifi-persistent-stop23.img,33,288,192B,
+  SHA256 c6cb126fe53c3c50c4a2959d9981ed8c00d546147c448e639027e578a4192b8e.
+  Payload64bb81aeafdd449a4289a98b16d871c3e8e8d2d9b548237d853ca4e624a8879b.
+  CI39563384413/source196417186ec7bf7827fbc64f9779dbbd37d25425;
+  kernelb10bdeff4f41ef3641082032ff0e9ecb89564cacb982fc048766befbe5188d7b.
+  Independent linked review PASS. All loaded kernel segments/header/Linux/
+  bothDTs/rawCPIO/productADT checked;266240B spare. Explicit persist1 replaces
+  common/ADIE diagnostic opt-ins; legacy observer absent/EMI0; other args exact.
+  Private research/nord2/wifi-persistent/ios identity/manifest/prepared filled;
+  authorization FALSE, runner NEVER EXECUTED. After exact new approval and
+  physical fastboot: fill private authorization with conditional rescue/working
+  8ca8 restoration, run ONCE --authorized-wifi-persistent-boot and capture180s.
+  Never rerun with flash.log/hardware-live present. Parse using new persistent
+  parser, not legacy/ADIE parser; phase10 retained/handoff2 and outer success
+  are expected, restoring common logs are not. Manual reset recovery only;
+  normal Android must never boot over iOS userdata. No DRAM firmware writes,
+  MPU SET, WFSYS/BGFSYS CPU release or networking implemented in this image.
+  Current phone remains tested97922165 with confirmed lockscreen/touch/buttons;
+  USB client stopped. Preferred fallback8ca8 and tested rescue preserved.
+  Boot-speed agent closed as requested, only Wi-Fi agents used. UFS/boot frozen.
+  Future private AP-wake candidate has independent source PASS, not integrated;
+  documentary nuance: deterministic clock polling is bounded but not always
+  earlier refusal than vendor randomized-delay policy. No future hardware claim.
+
+
+- **PERSISTENT CI39563384413 SUCCEEDED; IMAGE PACKING IN PROGRESS.**
+  Source196417186ec7bf7827fbc64f9779dbbd37d25425, job119099715025 success.
+  Kernel17,306,184B SHA256
+  b10bdeff4f41ef3641082032ff0e9ecb89564cacb982fc048766befbe5188d7b.
+  Artifact sums/source/all1105 genericARMv8.2-a+crypto compile invocations
+  verified, including both new persistent translation units. Private identity
+  pinned; bounded imagepacking session86869 running. Independent linked review
+  in parallel. Current phone97922165 healthy; no new flash approval/device I/O.
+  Private next-stage/ap-wake-candidate has focused independent PASS and tests,
+  but no native integration/hardware acceptance. Future MPU setter source audit
+  found group0 monitor-forced software lock; never call it a reversible probe
+  or ignore return codes as the selected Linux caller does. No setter is in
+  this image; no DRAM firmware writes/CPU release/networking implemented.
+
+
+- **PERSISTENT RADIO FULL CI39563384413 RUNNING.**
+  Source196417186ec7bf7827fbc64f9779dbbd37d25425 pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39563384413
+  Await success, downloadkernel/buildlog/runjson, run privateverify-kernel.py;
+  independent linked review then verifiedimagepack under1GiB process limit.
+  Persistent image identity/approval still blank; no new device operation.
+  Current97922165iOS remains healthy, USBcapture ended. All agents Wi-Fi only.
+  Source-only follow-ups examine next wake/ROM sequence and authoritative
+  MPU setup semantics; no MPU/DRAM/firmware execution work integrated.
+
+
 - **PERSISTENT RADIO SOURCE INTEGRATED; READY FOR FULL CI.**
   Canonical wifi_persistent core/adapter/bind and explicit nord2wifipersist=1
   branch promoted from independently reviewed native v2. Two separate guarded
