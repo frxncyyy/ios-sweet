@@ -3,6 +3,14 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CAPABILITY FULL CI39637874421 STARTED.**
+  Sourcece8f968afa45303c9ba3ccaa3e7c01aa9d755e7e; canonical capability CID8a/EIDec query,
+  defaultoff,3s/16events/oneworker, no scan/interface. Local validation PASS.
+  Full artifact/link/image validation pending; no new device authorization.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39637874421
+  Current phone remains humanhealthy fa13, no hardware action performed.
+
+
 - **CAPABILITY QUERY PROMOTED; HOST/ARM64 CHECKS PASS, FULL CI NEXT.**
   Exact independently reviewed production candidate manifest75fc0de8 promoted:
   five canonical wifi_capability files, generated sweet_touch deferred hook,
