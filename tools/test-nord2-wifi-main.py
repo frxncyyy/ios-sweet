@@ -2,12 +2,13 @@
 """Host checks of the actual Nord2 Wi-Fi init/transport; no device access."""
 from pathlib import Path
 import subprocess,tempfile,argparse
-ap=argparse.ArgumentParser();ap.add_argument("--private-fixtures",action="store_true");ap.add_argument("--only",choices=('command','plan','dmashdl','transport','initializer','native','halt','pre-span','drain','spans'));args=ap.parse_args()
+ap=argparse.ArgumentParser();ap.add_argument("--private-fixtures",action="store_true");ap.add_argument("--only",choices=('command','plan','dmashdl','transport','initializer','native','halt','pre-span','drain','spans','init-event'));args=ap.parse_args()
 if args.only=='spans' and not args.private_fixtures:ap.error('--only spans requires --private-fixtures')
 R=Path(__file__).resolve().parents[1];S=R/'shim/nord2-xnu';F=R/'tools/fixtures/nord2-wifi-main'
 with tempfile.TemporaryDirectory(prefix='nord2-wifi-main-') as d:
  for test,names in [
   ('command',['command']),('plan',['init_plan']),
+  ('init-event',['layout','phy_force']),
   ('dmashdl',['dmashdl','init_plan']),
   ('transport',['transport','command','layout']),
   ('initializer',['initializer','dmashdl','init_plan','transport','command','layout']),

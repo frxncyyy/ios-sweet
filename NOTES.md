@@ -3,6 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MEASURED INIT FORMAT FIX PROMOTED; READY FOR FULL CI.**
+  Four exact reviewed runtime files from candidate e174323a promoted together.
+  Accept only measured inner type 0007 and legacy e000; remove three CID echo
+  assertions absent from selected gen4m fw_dl.c consumer. Request CID40/41,
+  actual EID/sequence/status0, bounds, PHY TLV/status/60-byte checks and DMA
+  ownership/halt/drain remain. No struct, marker or backend operation added.
+  Fixture package fbcffd49 promoted; canonical transport/native/init-event,
+  initializer/halt/private-spans ASan+UBSan pass. Actual generated normal
+  CI-context ARM64 sweet_touch/transport/PHY/layout compiles pass with nonempty
+  objects; no extra private includes. Patch13836 applies and reproduces.
+  Private wifi-main-rxformat/ios source/schema pins complete; CI, prepared
+  image and approval gates remain closed until full verification. Phone e0d3
+  human-healthy; UFS/boot speed unchanged. No new hardware approval yet.
+
+
+- **RX HEADER TEST IDENTIFIED INIT FORMAT; e0d3 RESTORED AND HUMAN-HEALTHY.**
+  Authorized 0a4b7ade boot-only test reached RX: expected and actual EID/seq
+  both 1/1; only inner packet type differed, observed 0007 vs expected e000.
+  Validity 0xf means printed status/CID zero are INVALID placeholders, not
+  success. No PHY attempt or FW_READY. Immutable failure 152508 bytes, SHA256
+  5a484204e4181a6d4c3a73cb8884d3cbe66cf04f0b67973d50b789eea2d4387a.
+  Conditional e0d3 boot-only restoration/reboot succeeded; 90s USB capture
+  227166 bytes, SHA256
+  6bbb2ec7be16b3a3e7473c890e2bf2b07320479abcfa624f0a143451c2bba085.
+  User confirms lockscreen/touch/buttons healthy. All collectors finished;
+  never rerun executed RXHEADER runner or restoration. Private evidence in
+  research/nord2/wifi-main-rxheader/ios. Reviewed INIT format candidate
+  e174323a accepts exact 0007/e000 and removes source-unsupported CID echo
+  assertions; EID/seq/status/bounds/ownership checks stay. Promotion underway,
+  not yet built or authorized for hardware. UFS/boot speed remain unchanged.
+
+- **CLAUDE AUDIO RESUMED AFTER USAGE RESET.**
+  Existing session 8f43c7d1-ae71-4989-a701-b5712553f9a0, Opus/high, resumed
+  from reviewed revision4 into private audio/claude-opus/candidate-next.
+  Stream and prompt in resume-20261021-1620; visible live viewer on desktop3.
+  Claude may edit private audio candidate only, no device/active source/CI.
+  Current work is source/implementation preparation, not working audio.
 
 
 
@@ -12,6 +49,16 @@
 
 
 
+
+
+
+
+
+- **RX HEADER0a4b7ade AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approvedexactimage/samefirmwareattempt/conditional e0d3 orRAMrescue.
+  Fastbootidentity confirmed privately. wifi-main-rxheader/ios runnerexecutes
+  once; USB180s collectorbefore reboot. Do notrerun onceflash.logexists.
+  Runtime rawheaderunknown; UFS/boot speed unchanged.
 
 
 - **RX HEADER IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**

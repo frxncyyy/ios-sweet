@@ -134,11 +134,11 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
   if(sync(o,c,s,rxbuf,(uint32_t)bytes,2)||mr(o,c,s,rxbuf,frame,(uint32_t)bytes)){s->rx_failure_reason=6;return -1;}
   s->rx_packet_type=(unsigned)frame[26]|(unsigned)frame[27]<<8;
   s->rx_event_eid=frame[28];s->rx_event_sequence=frame[29];s->rx_diag_valid|=8;
-  if(bytes>=34&&s->rx_packet_type==0xe000&&frame[28]==1){s->rx_status=frame[32];s->rx_cid=frame[33];s->rx_diag_valid|=16;}
+  if(bytes>=34&&(s->rx_packet_type==0xe000||s->rx_packet_type==7)&&frame[28]==1){s->rx_status=frame[32];s->rx_cid=frame[33];s->rx_diag_valid|=16;}
   s->rx_descriptor_bytes=(uint32_t)bytes;
   s->rx_mac_bytes=get32(frame)&0xffffu;
   s->rx_init_bytes=(uint32_t)frame[24]|(uint32_t)frame[25]<<8;
-  if(frame[26]!=0||frame[27]!=0xe0||frame[28]!=eid||frame[29]!=s->next_sequence){s->rx_failure_reason=3;return fail(s,21);}
+  if((s->rx_packet_type!=0xe000&&s->rx_packet_type!=7)||frame[28]!=eid||frame[29]!=s->next_sequence){s->rx_failure_reason=3;return fail(s,21);}
   s->rx_done=1;break;
  }
  if(!s->rx_done){s->rx_failure_reason=4;return fail(s,22);}
@@ -155,8 +155,9 @@ int nwt_exchange(const struct nwt_io *o,void *c,struct nwt_state *s,uint8_t cid)
  uint8_t cmd[72],frame[3840];size_t used=0,received=0;
  if(!s||cid!=(s->finish_phase?0x41:0x40)||s->finish_phase>1||nwt_finish(cmd,sizeof(cmd),cid,s->next_sequence,&used))return -1;
  if(nwt_capture(o,c,s,cmd,used,1,frame,sizeof(frame),&received))return -1;
- /* Selected source parses status and CID, ignoring embedded length fields.
+ /* Selected source validates EID/sequence/status, not the CID echo.
+  * Raw CID remains captured for diagnosis; embedded lengths are not equated.
   * Descriptor length need only contain the fields, within the owned buffer. */
- if(received<34||frame[32]!=0||frame[33]!=cid){s->dirty=1;return fail(s,21);}
+ if(received<34||frame[32]!=0){s->dirty=1;return fail(s,21);}
  s->finish_phase++;return 0;
 }

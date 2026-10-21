@@ -113,7 +113,7 @@ int nfa_force_response(const uint8_t *f,size_t n,uint8_t seq,
  struct nfa_result r={0};
  if(!f||!out||n!=NFA_RX_BYTES||!seq||!conn_bytes)return -1;
  const uint8_t *e=f+24,*p=e+8;
- if(e[2]!=0||e[3]!=0xe0||e[4]!=5||e[5]!=seq||
+ if((le16(e+2)!=0xe000&&le16(e+2)!=7)||e[4]!=5||e[5]!=seq||
     le32(p)!=0x556789aau||p[4]!=1||p[5]!=1||le16(p+6)!=20||
     le16(p+8)!=1||le16(p+10)!=16||p[12]!=0x81||p[13]!=0||
     le16(p+14)!=0)return -1;

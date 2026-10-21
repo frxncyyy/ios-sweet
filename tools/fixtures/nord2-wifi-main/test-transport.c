@@ -4,7 +4,7 @@
 #include <string.h>
 #define BASE 0x90000000u
 static unsigned char memory[0x20000];
-struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied,partial,descriptor_reads,corrupt_word,wrong_didx,control_mode,rx_corrupt,rx_range,rx_wait,rx_bad_done;};
+struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied,partial,descriptor_reads,corrupt_word,wrong_didx,control_mode,rx_corrupt,rx_range,rx_wait,rx_bad_done,packet_type,badcid,badstatus;};
 static int step(struct mock *m){if(m->failed)m->after++;if(++m->calls==m->fail){m->failed=1;return -1;}return 0;}
 static uint32_t get(const unsigned char *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put(unsigned char *p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(unsigned char)(v>>(8*i));}
@@ -22,7 +22,7 @@ static int rw(void *c,uint32_t a,uint32_t v){struct mock *m=c;int e=step(m);m->w
  if(a==0x18025418){assert(m->command_sync&&m->desc_sync);unsigned old=m->txidx;m->txidx=v;
   unsigned char *d=addr(BASE+16*old,16);if(!m->badddone)put(d+4,get(d+4)|(1u<<31));
   unsigned char *rx=addr(BASE+0x4000+16*m->rxidx,16);unsigned bytes=m->response_bytes?m->response_bytes:36;put(rx+4,(bytes<<16)|(3u<<30));
-  unsigned char *f=addr(BASE+0x5000+4096*m->rxidx,bytes);memset(f,0,bytes);f[27]=0xe0;f[28]=m->eid?m->eid:1;f[29]=addr(BASE+0x15000,72)[39]+m->badseq;if(bytes>33)f[33]=addr(BASE+0x15000,72)[36];
+  unsigned char *f=addr(BASE+0x5000+4096*m->rxidx,bytes);memset(f,0,bytes);f[26]=(uint8_t)m->packet_type;f[27]=(uint8_t)(m->packet_type?m->packet_type>>8:0xe0);f[28]=m->eid?m->eid:1;f[29]=addr(BASE+0x15000,72)[39]+m->badseq;if(bytes>33){f[32]=(uint8_t)m->badstatus;f[33]=(uint8_t)(addr(BASE+0x15000,72)[36]+m->badcid);}
   if(m->rx_corrupt)put(rx,get(rx)^4u);
   if(m->rx_bad_done)put(rx+4,get(rx+4)&~(1u<<31));
   m->rxidx=(m->rxidx+1)%16;
@@ -103,8 +103,17 @@ int main(void){struct nwt_state s={0};struct mock m={0};assert(nwt_preflight(&io
  s=seeded();m=(struct mock){.active=1,.rx_wait=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.rx_failure_reason==4&&s.rx_diag_valid==3);
  s=seeded();m=(struct mock){.active=1,.rx_bad_done=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.rx_failure_reason==4&&s.rx_diag_valid==7&&!(s.rx_descriptor_raw[1]&(1u<<31)));
  s=seeded();m=(struct mock){.active=1,.coherent=3};assert(nwt_exchange(&io,&m,&s,0x40)&&s.rx_failure_reason==5&&s.error==24);
+ s=seeded();m=(struct mock){.active=1};assert(nwt_exchange(&io,&m,&s,0x42)==-1&&!m.calls);
+ s=seeded();m=(struct mock){.active=1,.packet_type=7,.eid=5};assert(nwt_exchange(&io,&m,&s,0x40)==-1&&s.rx_failure_reason==3&&!s.completed);
+ s=seeded();m=(struct mock){.active=1,.packet_type=7,.badcid=1};assert(!nwt_exchange(&io,&m,&s,0x40)&&s.completed==1&&s.finish_phase==1&&s.rx_packet_type==7&&s.rx_diag_valid==31&&s.rx_status==0&&s.rx_cid==0x41);
+ s=seeded();m=(struct mock){.active=1,.packet_type=7,.badstatus=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.halt&&!s.finish_phase&&s.rx_status==1);
+ s=seeded();m=(struct mock){.active=1,.packet_type=7,.badseq=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==21&&!s.completed&&s.rx_failure_reason==3);
+ s=seeded();m=(struct mock){.active=1,.packet_type=8};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==21&&!s.completed&&s.rx_failure_reason==3);
+ s=seeded();m=(struct mock){.active=1,.packet_type=0xe007};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==21&&!s.completed);
+ puts("PASS INIT format: exact measured0007 and legacye000 only; EID/sequence/status mandatory; CID metadata captured but not an unsupported ACK-echo requirement.");
  puts("PASS RX diagnostics: same52 success callbacks, copied-only descriptor/header metadata, status/CID only EID1+34B, PHY payload excluded, exact failure checkpoint and validity; no extra backend operation.");
  puts("PASS consumed zero: exact observed DDONE-only accepts with software length68 retained; zero+LS0, zero+Burst, other length reject; original-length policy unchanged; DDONE0 never accepts. Synthetic event only.");
  puts("PASS delta: invalid partial descriptor with DDONE0 waits; each DDONE1 pointer/length/DW2/DW3 corruption still fails; wrong DIDX/coherent stop retained; captured raw words and mismatch bits; no replay or RX rearm on error.");
  printf("PASS transport: %u legacy preflight faults; %u exchange callback faults; two finish commands; PHY-sized generic capture; bounded raw counts; no replay; TX DIDX plus DDONE; RX matching event; visibility; 1000-poll timeout. Host callback model only.\n",total,exchange);
+ return 0;
 }

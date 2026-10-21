@@ -87,8 +87,8 @@ int nmt_validate_init_result(const uint8_t *frame, size_t frame_length,
     if (!frame || frame_length != 24u + 8u + 4u ||
         (expected_cid != 0x40u && expected_cid != 0x41u)) return -1;
     e = frame + 24u;
-    if (e[2] != 0x00u || e[3] != 0xe0u || e[4] != 1u ||
-        e[5] != expected_sequence || e[8] != 0u ||
-        e[9] != expected_cid) return -1;
+    if (!((e[2] == 0x00u && e[3] == 0xe0u) ||
+          (e[2] == 0x07u && e[3] == 0x00u)) || e[4] != 1u ||
+        e[5] != expected_sequence || e[8] != 0u) return -1;
     return 0;
 }
