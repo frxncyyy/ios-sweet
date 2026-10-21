@@ -3,6 +3,60 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **TXDONE IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-txdone-battery-stop23.img`,
+  33347584B SHA256 923d7cea9abf666ef11ec78026f6421c74cce2d8c719047def0caf0e5fc6bfb2.
+  Payload 53714120c267ab986299b00023000d889efc7539e830a383e5c3cbae312f176c.
+  CI39606475052/source45a03c3f3aeb6c94f92bf308a3aefb20aee6675c;
+  kernel17479800B SHA2d60508c3503202892ae4a943caef78cb6f1bd916b2284efbea7bf8dadba0440.
+  Targeted linked DDONE-first/strictchecks/tracewriter+coordinatoroffsets
+  reviewPASS, no additional backendIO,1000poll/drain retained. Bound1GiB
+  packingexit0; full freshloader/payloadsegments/ADT/calibration/Linux/dualDT/
+  rawrescue/Androidheader verificationPASS,206848Bspare. Existingpayload+
+  manifest rechecked; e0d3/RAMrescue recoveryhashes rechecked. Private stage
+  wifi-main-txdone/ios identity/schema/prepared true, exact human/RF/recovery
+  gatesFALSE; runner NEVER executed. Source-order correction not a proven
+  repair; rawwords/DDONE of originalerror16 unknown. Ask NEW exact boot-only
+  approval with conditional e0d3/RAMrescue fallback, samefirmware/RF attempt.
+  Currentphonee0d3 human-confirmed healthy, allcollectors stopped. UFS/boot
+  speed unchanged. runtimec1ef0929 rebase/audio4 remain private only.
+
+
+- **TXDONE CI39606475052 SUCCESS; IMAGE PACKING.**
+  Source45a03c3f3aeb6c94f92bf308a3aefb20aee6675c; kernel17479800B SHA256
+  2d60508c3503202892ae4a943caef78cb6f1bd916b2284efbea7bf8dadba0440.
+  ArtifactSHA256SUMS/source identity PASS. Parallel build log split an
+  AppleARMSMP compiler echo across adjacentlines and wifi_firmware source tail;
+  privateverify-kernel.py preserves/reunites explicitfragment evidence, checks
+  separateCCmarker/source tail and all1146Build CPU/archpairs genericarmv8.2.
+  1135 matchedcomplete/reunitedinvocations; no claim all echoes arewholelines.
+  Newstageidentity/schema gatestrue; bounded1GiB packing and targetedlinked
+  TXDONE/strictchecks/crossTUoffset review underway. Prepared/human gatesfalse.
+  Currentphonee0d3 healthy/no collectors. Runtimec1ef0929 rebaseprivate only.
+
+
+- **PRIVATE RUNTIME REBASE VERIFIED; NO ACTIVATION.**
+  after-fw-ready/runtime-txdone-rebase manifestc1ef0929 pinnedcanonical
+  45a03c3 independently reviewedPASS. Dispatcher/corecapability behavior
+  byteidentical original; currentdependencyheaders/source snapshots include
+  appendedTXDESC/pre-span/drain fields. Separate21field crossTUlayout check
+  PASS (nwt1104/nwi2968/nwfn7368/nfp336,txdesc1040), hostsanitizersPASS.
+  Private ARM64 uses qualified extra harness; productioncompile stillrequired
+  before any integration. ActualFW_READY absent, defaultoff gate unchanged.
+  Original05f1707f runtime remains frozen. MainTXDONE CI stillrunning.
+
+
+- **TXDONE CI39606475052 RUNNING.**
+  Source45a03c3f3aeb6c94f92bf308a3aefb20aee6675c. Same radio attempt,
+  DDONE-first order with strict echo retained and rawcaptured descriptors.
+  New wifi-main-txdone/ios schema pinned; identity/prepared/authorization
+  gatesfalse until successfulCI/artifactverification/linkedreview/packing.
+  Phonee0d3 human-confirmed healthy, no collectors. runtimecapability package
+  getting a PRIVATE rebase for appendedstructures; never activated before
+  genuine mainFW_READY. UFS/boot speed unchanged.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39606475052
+
+
 - **TXDONE ORDER/RAW DIAGNOSTICS PROMOTED; READY FOR CI.**
   Private candidate68ff8bca independently reviewed PASS. Transport waits
   DDONE before unchanged strict pointer/SDL0/DW2/DW3 checks, same1000poll
