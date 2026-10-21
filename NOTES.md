@@ -3,6 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CAPABILITY IMAGE VERIFIED; EXACT NEW FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-capability-battery-stop23.img`,
+  33353728bytes SHA256
+  6ddf8c15dd33ccdf84131b356a54f9857925c8e3f52391f4701368aa50eee3e9.
+  Payloadc6ee6d4411b43ee1b97e1416c154d6699ded9d958f2a68f72b62a7bd3876689f.
+  CI39637874421/sourcece8f968afa45303c9ba3ccaa3e7c01aa9d755e7e;
+  kernel17464304/SHA2f9c5d4c1d77cd61d818826e8012d8b63ad88c4cdcda862a4665c51f1fbbb991.
+  Linked capability reviewf5b6c101 PASS actualdefaultoff/FW_READY/worker/
+  singlequery/boundedRX/commonhalt/drain/parking/usedABI. Bounded1GiB pack
+  exit0; fresh independent loader/segments/ADT/privatecal/Linux/dualDT/raw
+  rescue/header verificationPASS;200704bytes spare. Existing manifest/payload
+  rechecked; actuale0d3/rescue hasheschecked. Currentstagepin43280d60 after
+  exactcmdline474-byte repair; parser7c5bdf4f unchanged and reviewed.
+  CI/schema/preparedtrue, humanexact/RF/recoveryfalse. Runner NEVER executed.
+  New test asks only firstcapability query after mainFWREADY; no scan/network
+  interface/association. May fail;30sdrain/manualfastboot conditionale0d3/rescue.
+  Currentphonefa13humanhealthy; no restore needed/performed. UFS/bootspeed
+  unchanged. Ask new exact boot-only approval after saving handoff.
+
+
+- **CAPABILITY CI39637874421 SUCCESS; IMAGE PACKING.**
+  Sourcece8f968afa45303c9ba3ccaa3e7c01aa9d755e7e, kernel17464304bytes,
+  SHA2f9c5d4c1d77cd61d818826e8012d8b63ad88c4cdcda862a4665c51f1fbbb991.
+  Full download/artifact SHA/source and1136genericARMv8.2+crypto commands
+  verified, including bothnewTUs. Targeted linked review running. Newstage
+  preflight caught two inherited template omissions BEFORE imagebuild:
+  nord2ufsprofile=1 and nord2fbdiag=1. Parent restored EXACT executedfa13
+  commandline plus nord2wificap=1 (474bytes), recordedrepair+newstagepins;
+  original author report preserved, privateREADME/testlength corrected.
+  Preflight nowPASS, CI/schema true; bounded1GiB packstarted, image/human
+  gatesfalse. No hardware actions. Currentphone remainsfa13humanhealthy.
+
+
 - **CAPABILITY RECEIPT/IMAGE SOURCE CONTRACT REVIEWED.**
   New private stage wifi-capability/ios stagepin5f561142 (templates only,
   excludes mutable gates) and strict parser7c5bdf4f reviewed by parent.
