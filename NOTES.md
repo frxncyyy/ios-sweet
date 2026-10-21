@@ -4,6 +4,63 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **LEGACY EMI IMAGE READY; AWAITING NEW EXACT BOOT-ONLY APPROVAL.**
+  Image: shim/out/nord2-xnu/nord2-ios-wifi-emi-legacy-stop23.img,
+  33,282,048 bytes, SHA256
+  979221654522038778ae470dbbc8d299775360994fbe93626d462f39ab984a85.
+  Payload: 72c90840a1519134cf79ce60bdc2bdc5111d3b0eb4dc3072161ae5063675ef52.
+  CI39560131423/source d068e5448f53cf8df59c2d7882c4b20e0d34284d;
+  kernel746d391bab3b68ad9111788fc5d83739134a2c94c07521d35cb5e1d703dbe7be.
+  Independent linked review PASS; exact loaded kernel segments, Linux, both
+  DTs, raw rescue CPIO, product ADT and Android header verified; 272384 bytes
+  spare. Exact working8ca8 commandline plus nord2wifiemilegacy=1 only.
+  Private identity/manifest/prepared image fields filled; authorization FALSE,
+  runner NEVER EXECUTED. Next: exact approval, physical fastboot, record private
+  authorization, run once --authorized-wifi-emi-legacy-boot, collect180s.
+  Preserve any flash.log/hardware-live; never rerun after a partial execution.
+  Conditional recovery must be recorded for tested rescue/current8ca8 image;
+  manual reset only, never normal Android over iOS userdata. Current phone
+  remains healthy8ca8; no USB client active. UFS/boot tuning unchanged.
+  New offline decoder preserves raw region evidence without asserting effective
+  permissions, overlap priority, disabled encodings or lock-bit semantics.
+  Private phase10 radio core independently reviewed PASS. Native retained
+  adapter/full touch candidate ARM64 compile PASS, final review pending; no
+  production integration. Historical CONN8fb00000/MCIF8a000000 remap provenance
+  accepted for register-only private design; not permission for DRAM access.
+
+
+- **LEGACY EMI CI39560131423 SUCCEEDED; PACKING NEXT IMAGE.**
+  Source d068e5448f53cf8df59c2d7882c4b20e0d34284d, job119089119811 success.
+  Kernel17,354,104B SHA256
+  746d391bab3b68ad9111788fc5d83739134a2c94c07521d35cb5e1d703dbe7be.
+  Artifact sums/source/all1102 genericARMv8.2-a+crypto invocations verified;
+  compile list includes new collector. Private image identity pinned. New
+  Wi-Fi reviewer checks linked legacy path in parallel with bounded packing.
+  Current8ca8phone healthy; no USB operation/new flash authorization.
+
+
+- **BOOT-SPEED AGENT CLOSED AT HUMAN REQUEST; ALL ACTIVE AGENTS WI-FI ONLY.**
+  /root/boot_speed completed its final frozen phase7 radio review (PASS) and
+  was interrupted/retired; do not assign more work to it. New Sol agent
+  /root/wifi_radio_review independently reviews the frozen phase10 extension.
+  /root/wifi_after_id prepares a separate private native retained-lifetime
+  adapter. No UFS or boot tuning. Current phone stays on healthy8ca8 image;
+  no USB client active and no new image authorization. CI39560131423 running.
+  Private completion phase10 adds source status/RC lowpower/topclock/final
+  HW-control, 8725 callback-fault tests PASS; no native/hardware claim yet.
+
+
+- **LEGACY EMI FULL CI39560131423 RUNNING.**
+  Source d068e5448f53cf8df59c2d7882c4b20e0d34284d pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39560131423
+  Await success, downloadkernel+buildlog, run privateverify-kernel.py, pin
+  source/hash/flags (newcollectoraddsonecompile), independentlinkedreview,
+  fillblank wifi-emi-legacy/ios identity thenpack plannednewimage. No new
+  authorization; nextflashrequiresconcreteimageapproval. Current8ca8iOSgood,
+  USBcapturefinished. PrivatepostIDauthor continues sourceexactlowpower/stages;
+  reviewerchecks frozenphase7 thenlinkedEMI. NoUFS/bootchangesallowed.
+
+
 - **LEGACY EMI OBSERVER INTEGRATED; READY FOR FULL CI.**
   Reviewedprivatecore/probe copiedbyteexact: wifi_emi_legacy.{c,h} and modified
   wifi_emi_probe.c, sharedpostrootstart/onceguard; explicitnew1andold0required.
