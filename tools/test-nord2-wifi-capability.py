@@ -3,7 +3,7 @@
 from pathlib import Path
 import argparse,os,subprocess,tempfile
 ap=argparse.ArgumentParser()
-NAMES=('dispatcher','native-adapter','current-owner','drain','header','basic-owner','basic-faults')
+NAMES=('dispatcher','native-adapter','current-owner','drain','header','basic-owner','basic-faults','debug')
 ap.add_argument('--only',choices=NAMES)
 args=ap.parse_args()
 R=Path(__file__).resolve().parents[1]
@@ -13,8 +13,9 @@ flags=[os.environ.get('CC','cc'),'-std=c11','-O1','-g','-Wall','-Wextra','-Werro
 with tempfile.TemporaryDirectory(prefix='nord2-capability-host-') as temporary:
  for name in NAMES:
   if args.only and args.only!=name:continue
-  files=[] if name=='drain' else [S/'wifi_capability.c',S/'wifi_capability_dispatcher.c',
+  files=[] if name in ('drain','debug') else [S/'wifi_capability.c',S/'wifi_capability_dispatcher.c',
                                  S/'wifi_main_command.c',S/'dma_pool_contract.c']
+  if name=='debug':files=[S/'wifi_capability.c',S/'wifi_main_command.c',S/'dma_pool_contract.c']
   if name in ('native-adapter','current-owner','header','basic-owner','basic-faults'):
    files += [S/('wifi_basic_'+n+'.c') for n in ('config','resources','metadata','primitives')]
   if name in ('current-owner','basic-owner','basic-faults'):

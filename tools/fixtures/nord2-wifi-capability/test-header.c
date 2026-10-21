@@ -3,7 +3,7 @@
 #include <stddef.h>
 int main(void){
  /* Every u16 inner type is captured byte-exact before the unchanged policy.
-  * All inner values remain opaque only on the exact bounded capability path. */
+  * All inner values are opaque on bounded capability and ASCII EID27 paths. */
  for(unsigned type=0;type<=65535;type++){
   fixture();struct mock m={.txidx=3,.rxidx=3,.mode=100+type};struct ncd_state s={0};
   int rc=ncd_run(&io,&m,&init,&firmware,&s,1);
@@ -51,6 +51,6 @@ int main(void){
   * remain identical and never observe any payload/TLV/MAC body byte. */
  memset(ncd_native.diag.frame+36,0xa5,sizeof(ncd_native.diag.frame)-36);
  ncd_report(0);assert(model.calls==calls&&!model.after);
- printf("PASS header-only diagnostics: all65536 inner types captured; opaque inner only for bounded EIDec;32crossed guard cases and224pure truncations and8wrongouter atomic refusals; actual-shaped504/480 synthetic match; no after-completion callbacks/body output; eventsize=%zu state=%zu headeroffset=%zu. NO actual inner value inferred.\n",sizeof(struct ncd_event),sizeof(struct ncd_state),offsetof(struct ncd_event,header));
+ printf("PASS header-only diagnostics: all65536 inner types captured; opaque inner for bounded EIDec and ASCII EID27;32crossed guard cases and224pure truncations and8wrongouter atomic refusals; actual-shaped504/480 synthetic match; no after-completion callbacks/body output; eventsize=%zu state=%zu headeroffset=%zu. NO actual inner value inferred.\n",sizeof(struct ncd_event),sizeof(struct ncd_state),offsetof(struct ncd_event,header));
  return 0;
 }

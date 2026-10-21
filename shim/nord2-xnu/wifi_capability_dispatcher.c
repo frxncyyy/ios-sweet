@@ -67,8 +67,8 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
  if((h->rx_class&0x380fu)!=0x3800u)return fail(s,20);
  /* Capture only the already-owned, copied RXD24 + event12 header. Never
   * include byte36 onward (capability/debug body and possible MAC TLV).
-  * The inner type remains opaque for exact EIDec capability; debug and
-  * unsupported EIDs retain the existing strict inner-type fail-stop. */
+  * The inner type is opaque for exact EIDec capability and bounded EID27
+  * ASCII debug; unsupported EIDs retain strict inner-type fail-stop. */
  h->inner_type=u16(p+26);
  for(unsigned k=0;k<sizeof(h->header);k++)h->header[k]=p[k];
  h->header_valid=1;
@@ -80,9 +80,8 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
   if(ncp_parse(p,n,h->sequence,&s->capability))return fail(s,21);
   return 0;
  }
- /* Selected capability waiter treats inner u2PacketType as opaque.
-  * Preserve the existing strict inner policy for debug/unsupported EIDs. */
- if(p[26]||p[27]!=0xe0)return fail(s,20);
+ /* Selected normal event dispatch is outer/EID based. EID27 reaches only
+  * the unchanged bounded ASCII parser; unknown event policy stays below. */
  if(h->eid==0x27){
   /* Selected EVENT_DEBUG_MSG header12; bounded ASCII log only. No payload
    * logging, memory dereference, QA command or resource-state transition. */
@@ -91,6 +90,7 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
   if(h->debug_bytes>1200||h->debug_bytes>n-48)return fail(s,22);
   h->kind=2;s->debug_events++;return 0;
  }
+ if(p[26]||p[27]!=0xe0)return fail(s,20);
  /* Sleepy/TXdone/ownership/failure/unknown events need their actual handler.
   * Capture metadata but never silently discard, acknowledge or rearm them. */
  h->kind=4;return fail(s,23);

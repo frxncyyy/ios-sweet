@@ -4,6 +4,48 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **Combined Wi-Fi backend promoted; one substantive CI/image target.**
+  Canonical shim sources and regenerated0082 patch now include full source-
+  backed20 normal config commands (legacy domains/power,12 authenticated board
+  NVRAM fragments, OEM project20827→20817 power), first AIS activation and
+  passive non-DFS scan. Same actual CAP/BASIC worker; exact command lease;
+  PSE3 minus retained BASIC1, source AXI software release after publication,
+  DDONE buffer reuse, all five owned RX queues, bounded copied BSS cache and
+  matching scan-done after queue drain. Command-only runtime report policy:
+  no data TX tokens/stations yet; reports are counted/rearmed, not fake credits.
+  This is NOT hardware success or an iOS Wi-Fi interface/association.
+  UFS/boot/input/display unchanged; phone e0d3 healthy/untouched this turn.
+  BASIC TXD source-parity fix and bounded ASCII EID27 opaque-inner correction
+  included. No standalone TXD CI/flash. Optional Android override files are
+  not loaded: new iOS profile intentionally uses source/OEM defaults.
+  Config c4bea629/review6c81ed03; transport32324b25/review9d0a7cb7;
+  scan c67341c3/normalized645e02bb; debug70969c74/reviewff33cc20.
+  Eight helper TUs + owning sweet_touch normal ARM64 compile PASS.
+  Exact final synthetic22-command/fivequeue/BSS/timeout integration and202
+  actual native RX callback faults PASS: full-tests8ff2f28f/reportbd7b4065,
+  candidate-pinsec3ad092, promotion03a57c7a. Canonical normal runner PASS.
+  All eight canonical CAP/BASIC suites PASS (GCC ASan/UBSan); all65536
+  EID27 inner values checked. Private proofs remain under combined-backend.
+  Fresh wifi-normal-scan/ios stage CLOSED: no CI/image/new authorization yet.
+  Next: commit complete source, ONE full CI, verify linked result, prepare
+  exact image with1GiB pack limit, then request exact boot-only approval.
+
+- **USER CHANGED NEXT MILESTONE: cohesive backend + real passive scan.**
+  Stop per-command/diagnostic-only builds. The reviewed TXD correction9e75195f
+  and fresh CLOSED wifi-basic-txdone/ios template are not a standalone CI/image
+  target anymore; all its gates remain false, no artifact or approval exists.
+  Fold correction into combined normal initialization/config/calibration/credit
+  reuse/five-queue RX/BSS activation/real passive scan, with phase diagnostics.
+  Current phone e0d3 is recovered and human-healthy, no device action pending.
+  Root owns RX/scan and final native integration; wifi_cap_stage implements
+  same-worker command transport/credit ledger in combined-backend/transport;
+  wifi_format_stage implements actual SKU0 legacy domain/power/board batch in
+  combined-backend/config; wifi_after_id continues exact iOS service contracts.
+  Actual observed PSEcmd3/BASICdebit1/remaining2 and absentTAG3 select legacy,
+  not V2. Minimize hardware attempts by finishing and validating full path first.
+  No promise that one hardware test will suffice; no scan/networking achieved yet.
+
+
 - **e0d3 RECOVERED AND HUMAN-HEALTHY; BASIC89b3 stage closed/immutable.**
   User confirms lockscreen/touch/buttons call_2c6e0543be0c4694a71cbc345fa775fc.
   Restore90s collector exit0/deadline/no transporterror; immutable222928B,

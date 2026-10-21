@@ -67,7 +67,7 @@ static int drain(const struct ncd_io*o,void*c,struct nbc_state*s){struct nwt_sta
   h->eid=p[28];h->sequence=p[29];h->inner_type=u16(p+26);h->header_valid=1;h->kind=4;
   for(unsigned k=0;k<36;k++)h->header[k]=p[k];
   if(n>=48){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
-  if(n<48||p[26]||p[27]!=0xe0||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
+  if(n<48||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
   h->kind=2;s->debug_events++;if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
   s->rearmed++;t->rx_index=(t->rx_index+1)%16;
  }
@@ -83,6 +83,7 @@ int nbc_run(const struct ncd_io*o,void*c,struct nbc_state*s){uint32_t v;
  if(rr(o,c,s,0x180600f0,&v)||(v&3)!=3)return fail(s,11);
  if(coherent(o,c,s)||rr(o,c,s,0x18025418,&v)||v!=t->tx_index||rr(o,c,s,0x1802541c,&v)||v!=t->tx_index)return fail(s,12);
  uint64_t d=t->tx_ring+16u*t->tx_index;
+ s->tx_descriptor_address=d;s->tx_expected_buffer=t->command;
  if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
  if(!(u32(s->descriptor+4)&0x80000000)||u32(s->descriptor+8)||u32(s->descriptor+12)||(u32(s->descriptor)&&u32(s->descriptor)!=(uint32_t)t->command))return fail(s,13);
  if(nwt_tx_desc(s->descriptor,t->command,sizeof(s->command)))return fail(s,14);
@@ -98,11 +99,15 @@ int nbc_run(const struct ncd_io*o,void*c,struct nbc_state*s){uint32_t v;
   if(v>=1024||(v!=s->tx_index&&v!=next))return fail(s,16);
   if(v==next){
    if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
-   uint32_t control=u32(s->descriptor+4);
-   if(control&0x80000000){
-    if(u32(s->descriptor)!=(uint32_t)t->command||u32(s->descriptor+8)||u32(s->descriptor+12)||(control!=0x80000000&&control!=0xc04c0000))return fail(s,17);
-    s->tx_done=1;s->tx_control=control;s->tx_consumed=control==0x80000000;
-   }
+   /* Capture the owned software cell before interpreting completion. Selected
+    * AXI halWpdmaProcessCmdDmaDone uses DIDX and DMADONE only; other returned
+    * descriptor fields are opaque metadata, never an address/extent authority.
+    * The failed earlier packet's exact rejected field remains unknown. */
+   for(unsigned word=0;word<4;word++)s->tx_raw[word]=u32(s->descriptor+4*word);
+   s->tx_observed++;
+   uint32_t control=s->tx_raw[1];
+   s->tx_control=control;s->tx_consumed=control==0x80000000;
+   if(control&0x80000000)s->tx_done=1;
   }
   if(drain(o,c,s))return -1;
   if(s->tx_done)break;

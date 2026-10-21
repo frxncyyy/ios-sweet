@@ -1,0 +1,65 @@
+static void full_test_probe(unsigned);
+static unsigned long long full_clock_extra(void);
+#ifdef FULL_FAULTS
+static int full_test_fail(void);
+#endif
+#include "owner-fixture.inc"
+static unsigned mode,delivered,probe_memory,probe_write,delayed_trigger;
+static unsigned long long full_clock_extra(void){
+ if(mode==4&&!delayed_trigger&&nct_native.active&&nct_native.session.phase==NCT_SERVICE&&ncb_native.rx.done_pending){
+  delayed_trigger=1;struct ncr_queue*q=&ncb_native.rx.queue[0];uint8_t*d=pool_memory+(q->ring.descriptors-NDP_POOL_BASE)+16*q->next;put32(d+4,get32(d+4)|0x80000000u);return 14500000000ULL;
+ }return 0;
+}
+static void full_test_probe(unsigned writing){
+ struct ncr_state*r=&ncb_native.rx;if(!nct_native.active||!r->active)return;
+ const struct ncr_queue*q=&r->queue[r->current];unsigned reads=mmio_reads,writes=mmio_writes;
+ if(!writing&&r->phase==NCR_DESC_READ){
+  uint64_t a=q->ring.descriptors+16u*q->next;
+  assert(ncb_rx_memory(&nwfn_native,a,16,0)&&nwfn_memory_range(&nwfn_native,a,16,0));
+  assert(!ncb_rx_memory(&nwfn_native,a+16,16,0)&&!nwfn_memory_range(&nwfn_native,a+16,16,0));
+  assert(!ncb_rx_memory(&nwfn_native,a,16,1)&&!ncb_rx_memory(&nwfn_native,a,15,0));
+  struct nwfn_native clone=nwfn_native;assert(!ncb_rx_memory(&clone,a,16,0));
+  worker_thread=3;assert(!ncb_rx_memory(&nwfn_native,a,16,0));worker_thread=2;
+  probe_memory|=1u<<r->current;
+ }
+ if(writing&&r->phase==NCR_PUBLISH){
+  assert(ncb_rx_write(&nwfn_native,q->ring.base+8,q->next));
+  assert(!ncb_rx_write(&nwfn_native,q->ring.base+8,(q->next+1)%q->ring.count)&&!ncb_rx_write(&nwfn_native,q->ring.base+12,q->next));
+  probe_write|=1u<<r->current;
+ }
+ assert(mmio_reads==reads&&mmio_writes==writes);
+}
+static void w16(uint8_t*p,unsigned v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
+static void deliver(unsigned k,const uint8_t*frame,unsigned n,unsigned ddone){
+ struct ncr_queue*q=&ncb_native.rx.queue[k];assert(q->ring.count&&n<=3840);
+ uint8_t*d=pool_memory+(q->ring.descriptors-NDP_POOL_BASE)+16*q->next;
+ uint8_t*b=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;
+ put32(d,0xdeadbeef);put32(d+4,(ddone?0x80000000u:0)|0x40000000u|(n<<16));put32(d+8,0xffffffff);put32(d+12,0x12345678);memcpy(b,frame,n);
+ hardware_register(q->ring.base+12,(q->next+1)%q->ring.count);
+}
+static void beacon(unsigned k,unsigned id,unsigned ddone){uint8_t p[63]={0};w16(p,63);w16(p+2,0x3801);put32(p+8,12u<<8);put32(p+12,6u<<8);p[24]=0x80;p[34]=2;p[40]=2;w16(p+56,100);p[60]=0;p[61]=1;p[62]=(uint8_t)id;deliver(k,p,sizeof(p),ddone);}
+static void full_deliver(const unsigned char*cmd){
+ if(cmd[36]!=3)return;
+ assert(!delivered++&&nct_native.session.cursor==21&&nct_native.session.record[21].publication_attempted&&!nct_native.session.record[21].published);
+ beacon(0,'X',mode!=2&&mode!=4);if(mode==4){struct ncr_queue*q=&ncb_native.rx.queue[0];uint8_t*b=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;w16(b+2,6u<<11);}beacon(2,'Y',1);
+ uint8_t p[512]={0};w16(p,32);w16(p+2,6u<<11);deliver(3,p,32,1);w16(p+2,11u<<11);deliver(4,p,32,1);
+ if(mode==1)return; /* actual no completion => bounded truthful partial */
+ memset(p,0,sizeof(p));w16(p,512);w16(p+2,0x3800);w16(p+24,488);w16(p+26,0x1234);p[28]=mode==3?0xf0:0x0d;p[36]=1;p[40]=(uint8_t)ncb_native.plan.channel_count;p[41]=7;deliver(1,p,sizeof(p),1);
+}
+static void setup(unsigned which){ready_fixture();memset(&ncb_native,0,sizeof(ncb_native));memset(&nct_native,0,sizeof(nct_native));mode=which;delivered=no_board=probe_memory=probe_write=delayed_trigger=0;normal_enabled=1;scan_flag=1;normal_pubs=normal_no_ddone=normal_wrong_didx=0;basic_flag=1;}
+int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(f&&fread(authenticated_board,1,sizeof(authenticated_board),f)==sizeof(authenticated_board));fclose(f);
+ setup(0);run_worker();struct nct_session*t=&nct_native.session;struct ncr_state*r=&ncb_native.rx;
+ assert(!manual_halts&&ncd_native.parked&&t->phase==NCT_DONE&&t->completed==22&&normal_pubs==22&&ncb_native.prepared);
+ assert(r->scan_requested&&r->scan.done&&!r->scan.timed_out&&!r->scan.partial&&r->scan.count==2&&r->scan.frames==2&&r->drain_passes==1&&t->scan_complete);
+ assert(r->packets==5&&r->rearmed==5&&r->msdu_reports==1&&r->rx_reports==1&&r->history_count==1&&r->history[0].inner==0x1234&&probe_memory==31&&probe_write==31);
+ for(unsigned k=0;k<5;k++)assert(r->queue[k].packets==1&&r->queue[k].rearmed==1&&r->queue[k].raw[0]==0xdeadbeef);
+ assert(t->pse_total==3&&t->basic_spent==1&&t->capacity==2&&t->available==2&&!t->reserved&&t->acquired==22&&t->released==22&&nwfn_native.init.transport.completed==27);
+ unsigned reads=mmio_reads,writes=mmio_writes;assert(!nct_native_owner_window(&nwfn_native)&&nct_native_run(0,0)<0&&reads==mmio_reads&&writes==mmio_writes);
+ setup(1);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->scan.timed_out&&r->scan.partial&&!r->scan.done&&r->scan.count==2);
+ setup(2);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->queue[0].wait_ddone&&!r->queue[0].rearmed);
+ setup(4);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(!manual_halts&&delayed_trigger&&ncd_native.parked&&t->completed==22&&t->service_timed_out&&!t->scan_complete&&r->done_pending&&!r->scan.done&&r->scan_expired&&r->scan.timed_out&&r->scan.partial);
+ setup(3);run_worker();t=&nct_native.session;r=&ncb_native.rx;assert(manual_halts==1&&nwm_drain_entered&&drain_blocks==1&&t->halt&&r->halt&&r->error==20&&t->completed==21&&normal_pubs==22&&t->available==2&&!t->reserved);
+ setup(0);no_board=1;run_worker();assert(!manual_halts&&ncd_native.parked&&!nct_native.attempted&&!normal_pubs&&ncb_native.refusal==2&&nwfn_native.init.transport.completed==5);
+ setup(0);scan_flag=0;run_worker();assert(!manual_halts&&ncd_native.parked&&!nct_native.attempted&&!ncb_native.attempted&&!normal_pubs&&nwfn_native.init.transport.completed==5);
+ puts("PASS actual22 sourceconfig/pinnedboard+BSS/scan coordinator, real native lease and five RXrings/opaque descriptors, copiedBSS+matchingdone, softwarecredits/noACK, retained clean timeout/DDONEpending partial, firmwareerror actual30sdrain, missingboard/defaultoff preIO refusal. Synthetic only; no hardware scan claim.");return 0;
+}

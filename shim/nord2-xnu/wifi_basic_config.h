@@ -12,7 +12,8 @@ struct nbc_state {
  struct ncd_state *cap;struct nwi_state *init;const struct nfp_native *firmware;
  unsigned attempted,prepared,entered,phase,halt,error,mutated,submit_attempted,tx_done,completed;
  unsigned skipped,skip_reason,polls,debug_events,rearmed,metadata_valid;
- unsigned tx_index,rx_index,callbacks,publications,tx_didx,tx_consumed;uint32_t tx_control;uint8_t sequence;
+ unsigned tx_index,rx_index,callbacks,publications,tx_didx,tx_consumed;uint32_t tx_control,tx_raw[4];unsigned tx_observed;
+ uint64_t tx_descriptor_address,tx_expected_buffer;uint8_t sequence;
  struct ncd_event last_debug;unsigned debug_index;
  uint64_t started,last,deadline;uint32_t irq[2];unsigned irq_valid;
  struct ncp_result verified_cap;struct nbc_caps caps;struct nnr_plan plan;struct nnr_budget budget;

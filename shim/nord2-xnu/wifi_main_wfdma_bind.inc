@@ -4,6 +4,11 @@
 #ifndef NWFN_NORMAL_LEASE
 #define NWFN_NORMAL_LEASE(n) 0
 #endif
+#ifndef NWFN_RX_ACTIVE
+#define NWFN_RX_ACTIVE(n) 0
+#define NWFN_RX_MEMORY(n,a,b,w) 0
+#define NWFN_RX_WRITE(n,a,v) 0
+#endif
 struct nwfn_native nwfn_native;
 static int nwfn_stop(struct nwfn_native *n,unsigned error)
 {
@@ -215,7 +220,7 @@ static int nwfn_guard(struct nwfn_native *n,unsigned full)
        n->init.transport.submit_attempted)||
       (n->init.transport.finish_phase==2&&
        (n->init.transport.completed==3||
-        (n->init.transport.completed==4&&NWFN_NORMAL_LEASE(n))))))
+        NWFN_NORMAL_LEASE(n)))))
    mask&=~0x20000000u;
   raw=nwfn_load(address);
   if(raw&mask){
@@ -279,7 +284,8 @@ static int nwfn_write(void *c,uint32_t p,uint32_t value)
  if(n->stage==NWFN_RETAINED){
   struct nwt_state *t=&n->init.transport;
   allowed=(p==0x18025418&&t->submit_attempted&&value==(t->tx_index+1)%1024)||
-          (p==0x18025508&&value==t->rx_index);
+          (!NWFN_RX_ACTIVE(n)&&p==0x18025508&&value==t->rx_index)||
+          NWFN_RX_WRITE(n,p,value);
  }else if(n->stage==NWFN_INITIALIZING){
   if(n->init.phase==1)allowed=p==0x18060010&&value==2&&n->init.driver_requested;
   if(n->init.phase==2){
@@ -332,6 +338,7 @@ static int nwfn_memory_range(struct nwfn_native *n,uint64_t a,uint32_t bytes,uns
   const struct nwt_state *t=&n->init.transport;
   if(a==t->command&&write&&bytes<=4096)return 1;
   if(a==t->tx_ring+16u*t->tx_index&&bytes==16)return 1;
+  if(NWFN_RX_ACTIVE(n))return NWFN_RX_MEMORY(n,a,bytes,write);
   if(a==t->rx_ring+16u*t->rx_index&&bytes==16)return 1;
   if(!write&&a==t->rx_buffers+4096u*t->rx_index&&bytes<=3840)return 1;
   return 0;

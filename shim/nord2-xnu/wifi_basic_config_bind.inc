@@ -1,12 +1,20 @@
 /* One same-worker lease; the opt-in flag itself never grants MMIO authority. */
 #include "wifi_basic_config.h"
 static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
+#ifdef NCT_AFTER_BASIC
+#include "wifi_normal_transport_bind.inc"
+#define NCT_OWNER_WINDOW(n) nct_native_owner_window(n)
+#else
+#define NCT_AFTER_BASIC() 0
+#define NCT_OWNER_WINDOW(n) 0
+#endif
 static int ncd_normal_owner_window(const struct nwfn_native*n)
 {
  return n==&nwfn_native&&nbc_native.enabled==1&&nbc_native.attempted==1&&
   ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&
   ncd_native.worker==current_thread()&&
-  nbc_lease_window(&nbc_native.state,&ncd_native.diag,&nwfn_native.init,&nfp_native);
+  (nbc_lease_window(&nbc_native.state,&ncd_native.diag,&nwfn_native.init,&nfp_native)||
+   NCT_OWNER_WINDOW(n));
 }
 static void nbc_report(int result)
 {
@@ -15,6 +23,9 @@ static void nbc_report(int result)
   result,s->phase,s->completed,s->skipped,s->skip_reason,s->halt,s->error,s->submit_attempted,s->tx_done,s->polls,s->debug_events,s->rearmed,s->callbacks,s->publications);
  if(s->prepared)printf("NORD2 WIFI BASIC TX: cid=%#x seq=%u bytes=%u from=%u to=%u completed=%u didx=%u control=%#x consumed=%u ack_expected=0 firmware_ack=0\n",
   2,s->sequence,NNI_BASIC_BYTES,s->tx_index,(s->tx_index+1)%1024,nwfn_native.init.transport.completed,s->tx_didx,s->tx_control,s->tx_consumed);
+ if(s->prepared)printf("NORD2 WIFI BASIC TXDESC: observed=%u address=%#llx expected=%#llx software_used=%u raw=%#x/%#x/%#x/%#x\n",
+  s->tx_observed,(unsigned long long)s->tx_descriptor_address,(unsigned long long)s->tx_expected_buffer,NNI_BASIC_BYTES,
+  s->tx_raw[0],s->tx_raw[1],s->tx_raw[2],s->tx_raw[3]);
  printf("NORD2 WIFI BASIC RESOURCE: valid=%u version=%#x pse=%u/%u ple=%u/%u pages=%u/%u extra=%u debit=%u/%u reserved=%u remaining=%u\n",
   c->decoded&&c->resources_supported,c->resource_version,c->resources[0],c->resources[1],c->resources[2],c->resources[3],
   (unsigned)(uint16_t)c->resources[4],(unsigned)(uint16_t)(c->resources[4]>>16),c->resources[5],
@@ -47,6 +58,7 @@ static int nbc_after_cap(void)
  }
  nbc_report(result); /* captured-only after failure, no backend reads */
  if(result<0)return -1;
+ if(!result&&NCT_AFTER_BASIC()<0)return -1;
  printf("NORD2 WIFI BASIC WORKER: parking=1 retained=1 callbacks_complete=1\n");
  return 0;
 }
