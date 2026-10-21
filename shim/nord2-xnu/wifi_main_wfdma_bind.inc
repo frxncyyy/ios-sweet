@@ -204,7 +204,16 @@ static int nwfn_guard(struct nwfn_native *n,unsigned full)
  }
  for(unsigned i=0;i<2;i++){
   uint32_t address=0x18024204+0x1000*i,mask=i?0x7d37ffffu:0x33f800ffu;
-  raw=nwfn_load(address);if(raw&mask){
+  /* Measured late N9-start transition: only MCU software-event enable.
+   * Delivery remains GIC-masked; a pending software event is fatal below. */
+  if(i==1&&n->stage==NWFN_RETAINED&&n->finish_tx[36]==0x41&&
+     n->finish_tx[37]==0xa0&&
+     ((n->init.transport.finish_phase==1&&n->init.transport.completed==2&&
+       n->init.transport.submit_attempted)||
+      (n->init.transport.finish_phase==2&&n->init.transport.completed==3)))
+   mask&=~0x20000000u;
+  raw=nwfn_load(address);
+  if(raw&mask){
    nwfn_guard_failure(n,5,i+1,address,raw,mask,0,1);return nwfn_stop(n,5);}
  }
  if(n->init.driver_owned){raw=nwfn_load(0x18060010);if(raw&4){
@@ -216,6 +225,12 @@ static int nwfn_guard(struct nwfn_native *n,unsigned full)
    t->irq_status_valid|=1u<<dma;
    if(t->irq_status[dma]&0x00300000u){
     nwfn_guard_failure(n,22,dma+1,0x18024200+0x1000*dma,t->irq_status[dma],0x00300000,0,1);return nwfn_stop(n,22);}
+   if(dma==1&&(t->irq_status[dma]&0x20000000u)){
+    /* No software-event handler/recovery exists. Capture the existing raw
+     * summary and stop; no subordinate read, W1C or retry. */
+    nwfn_guard_failure(n,23,2,0x18025200,t->irq_status[dma],0x20000000,0,1);
+    return nwfn_stop(n,23);
+   }
   }
  }
  return 0;

@@ -3,6 +3,19 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MEASURED LATE MCU INTERRUPT ENABLE POLICY PROMOTED; CI NEXT.**
+  Independently reviewed mcu-swint-enable-v2 manifestfbb8a9cf, single binder
+  53ef37d1 promoted exactly with native fixture. Allows only DMA1 ENA29 at
+  retained actualCID41/typea0 phase1/completed2/submitted or postACKphase2/
+  completed3. Existing DMA1 STA read stops reason23 on pendingSWINT29.
+  No ABI/marker/extra MMIO/W1C/retry/recovery; all other enables/GIC/ownership/
+  coherent guards and real ACK/FW_READY checks remain. Parent actual canonical
+  native ASan/UBSan PASS; generated normal-context sweet_touch ARM64 compile
+  nonempty PASS. Patch13958 applies/reproduces. New wifi-main-swint/ios pins
+  current reviewed source; schema true, CI/prepared/human approval false.
+  Phone e0d3 human-healthy, collectors finished; UFS/boot speed unchanged.
+
+
 - **OWNERDIAG TEST COMPLETE; e0d3 RESTORED AND HUMAN-HEALTHY.**
   Conditional boot-only restoration/reboot OKAY; USB90s capture223847 bytes,
   SHA25640c4bf832c7bbfd265b07fee8e098eedb4a8efa1b00642e0bafac247106076b1.

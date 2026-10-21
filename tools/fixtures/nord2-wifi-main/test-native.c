@@ -16,13 +16,14 @@ static struct {unsigned active;struct{struct{unsigned entered;}state;}diag;}nwsa
 static unsigned ni_saved,ncc_fresh_owned,ncc_latched_dirty,npa_persistent_lifetime;
 static struct {struct{struct npp_state state;unsigned asleep;}probe;struct ndp_claim claim;uintptr_t pool,wfdma;unsigned prepared,attempted,active;}nppa_native;
 static unsigned char pool_memory[NDP_POOL_BYTES];
+static unsigned late_ena;
 static unsigned event_type=0xe000,event_cid_override=256,event_status,event_badseq;
 static struct {uint32_t address,value;}reg[2048];
 static unsigned registers,mmio_reads,mmio_writes,delays,barriers,manual_halts,main_flag=1,gic_active,clock_fail,ack_fail,inherited;
 static int nrpc_receipt_ok(struct nrb_native*n){return n==&nrpa_native.rom&&n->receipt;}
 static void PE_parse_boot_argn(const char*s,unsigned*v,unsigned bytes){assert(bytes==4);*v=!strcmp(s,"nord2wifimain")?main_flag:1;}
 static uintptr_t ml_io_map(uintptr_t p,unsigned n){assert(n==0x1000||n==0x2000);return p;}
-static uint32_t ni_rd(uintptr_t b,unsigned o){uint32_t a=(uint32_t)b+o;mmio_reads++;
+static uint32_t ni_rd(uintptr_t b,unsigned o){uint32_t a=(uint32_t)b+o;assert(a!=0x180251f0);mmio_reads++;
  for(unsigned i=0;i<registers;i++)if(reg[i].address==a)return reg[i].value;
  switch(a){case 0x10006304:return 0xd;case 0x1000616c:case 0x10006170:return 2;case 0x1020e504:return 1;
  case 0x0c000130:return gic_active?(1u<<23):0;
@@ -42,6 +43,7 @@ static void simulated_completion(unsigned next){
  unsigned char *rx=pool_memory+t->rx_ring-NDP_POOL_BASE+16*t->rx_index;
  unsigned char *cmd=pool_memory+t->command-NDP_POOL_BASE;
  unsigned bytes=cmd[36]==8?60:36;
+ if(late_ena&&cmd[36]==0x41)hardware_register(0x18025204,0x20000000);
  unsigned char *event=pool_memory+t->rx_buffers-NDP_POOL_BASE+4096*t->rx_index;
  put32(tx+4,get32(tx+4)|0x80000000u);put32(rx+4,(bytes<<16)|0xc0000000u);
  memset(event,0,bytes);event[26]=(uint8_t)event_type;event[27]=(uint8_t)(event_type>>8);event[28]=cmd[36]==8?5:1;event[29]=(uint8_t)(cmd[39]+event_badseq);event[32]=(uint8_t)event_status;event[33]=(uint8_t)(event_cid_override<256?event_cid_override:cmd[36]);
@@ -82,7 +84,7 @@ static void clock_get_uptime(uint64_t *n){*n=drain_now;}
 static int assert_wait_deadline(void *channel,int mode,uint64_t d){assert(channel&&mode==THREAD_UNINT&&d==drain_deadline);return THREAD_WAITING;}
 static void thread_block(void *cont){assert(!cont&&nwfn_native.halt&&nwfn_native.init.halt&&nwfn_native.init.transport.halt);drain_blocks++;drain_now=drain_deadline;}
 #include "wifi_main_bind.inc"
-static void fixture(void){event_type=0xe000;event_cid_override=256;event_status=event_badseq=0;nwm_drain_entered=0;drain_now=drain_deadline=drain_blocks=0;memset(&nwfn_main,0,sizeof(nwfn_main));memset(&nfp_native,0,sizeof(nfp_native));memset(&nfa_native,0,sizeof(nfa_native));child_calls=child_fail=child_failed=child_after=span_next=0;memset(&nwfn_native,0,sizeof(nwfn_native));memset(&nppa_native,0,sizeof(nppa_native));memset(reg,0,sizeof(reg));registers=mmio_reads=mmio_writes=delays=barriers=manual_halts=gic_active=clock_fail=ack_fail=inherited=0;main_flag=1;
+static void fixture(void){late_ena=0;event_type=0xe000;event_cid_override=256;event_status=event_badseq=0;nwm_drain_entered=0;drain_now=drain_deadline=drain_blocks=0;memset(&nwfn_main,0,sizeof(nwfn_main));memset(&nfp_native,0,sizeof(nfp_native));memset(&nfa_native,0,sizeof(nfa_native));child_calls=child_fail=child_failed=child_after=span_next=0;memset(&nwfn_native,0,sizeof(nwfn_native));memset(&nppa_native,0,sizeof(nppa_native));memset(reg,0,sizeof(reg));registers=mmio_reads=mmio_writes=delays=barriers=manual_halts=gic_active=clock_fail=ack_fail=inherited=0;main_flag=1;
  nrpa_native.rom.receipt=1;nrpa_native.diag.state=(struct nrpc_state){.entered=1,.stage=16,.rom_ready=1,.cpu_release_attempted=1,.cpu_released=1,.power=1,.protection=1,.balanced=1,.rom_done=0x1d1e};nrpa_native.diag.asleep=1;nrpa_native.local=0x184b0000;nrpa_native.rom_done=0x184c1000;
  npa_native.host=0x18060000;npa_native.cfg=0x18001000;npa_native.rgu=0x18000000;npa_native.outer_retained=1;npa_native.state.retained=1;npa_native.state.hw_handoff=2;npa_native.state.result.phase=10;npa_native.state.result.retained=1;
  nw.spm=0x10006000;nw.infra=0x10001000;nw.gals=0x1020e000;nw.saved=nw.domain_touched=1;ni_saved=ncc_fresh_owned=npa_persistent_lifetime=1;ncc_latched_dirty=0;
@@ -149,5 +151,45 @@ int main(void){fixture();main_flag=0;assert(nwfn_prepare()==1&&!mmio_reads&&!mmi
    !nwfn_native.guard_reason&&!nwfn_native.guard_valid&&
    mmio_reads==reads&&mmio_writes==writes);
  }
+ for(unsigned pending=0;pending<3;pending++){
+  fixture();assert(!nwfn_prepare()&&!nwfn_start());
+  nwfn_native.init.transport.completed=2;nwfn_native.init.transport.finish_phase=1;
+  nwfn_native.init.transport.submit_attempted=1;nwfn_native.finish_tx[36]=0x41;nwfn_native.finish_tx[37]=0xa0;
+  hardware_register(0x18025204,0x20000000u);
+  hardware_register(0x18025200,pending?0x20000000u:0x08000001u);
+  hardware_register(0x180251f0,pending==2?4:0);
+  unsigned reads=mmio_reads,writes=mmio_writes;
+  int rc=nwfn_owner(&nwfn_native);
+  assert(mmio_reads-reads==18&&mmio_writes==writes);
+  if(pending){assert(rc<0&&nwfn_native.error==23&&nwfn_native.guard_reason==23&&
+   nwfn_native.guard_address==0x18025200);
+   reads=mmio_reads;assert(nwfn_owner(&nwfn_native)<0&&reads==mmio_reads);
+  }else{assert(!rc);
+   /* Post-ACK/ready owner keeps the same pending-event fail-stop boundary. */
+   nwfn_native.init.transport.completed=3;nwfn_native.init.transport.finish_phase=2;
+   assert(!nwfn_owner(&nwfn_native));
+   hardware_register(0x18025200,0x20000000);assert(nwfn_owner(&nwfn_native)<0&&nwfn_native.error==23);
+  }
+ }
+ fixture();assert(!nwfn_prepare()&&!nwfn_start());
+ nwfn_native.init.transport.completed=2;nwfn_native.init.transport.finish_phase=1;
+  nwfn_native.init.transport.submit_attempted=1;nwfn_native.finish_tx[36]=0x41;nwfn_native.finish_tx[37]=0xa0;
+ hardware_register(0x18025204,0x20000001);assert(nwfn_owner(&nwfn_native)<0&&nwfn_native.error==5);
+ fixture();assert(!nwfn_prepare()&&!nwfn_start());
+ assert(!nwfn_finish_command(0x40));
+ memset(phy,0,sizeof(phy));phy[36]=8;phy[37]=0xa0;phy[39]=nwfn_native.init.transport.next_sequence;
+ assert(!nwt_capture(&nwfn_io,&nwfn_native,&nwfn_native.init.transport,phy,sizeof(phy),5,event,sizeof(event),&received));
+ late_ena=1;assert(!nwfn_finish_command(0x41)&&nwfn_native.init.transport.completed==3&&nwfn_native.init.transport.finish_phase==2);
+ assert(!nwfn_owner(&nwfn_native));
+ for(unsigned early=0;early<3;early++){
+  fixture();assert(!nwfn_prepare()&&!nwfn_start());
+  nwfn_native.init.transport.completed=2;nwfn_native.init.transport.finish_phase=1;
+  if(early!=0)nwfn_native.init.transport.submit_attempted=1;
+  nwfn_native.finish_tx[36]=early==1?0x40:0x41;nwfn_native.finish_tx[37]=0xa0;
+  if(early==2)nwfn_native.init.transport.completed=1;
+  hardware_register(0x18025204,0x20000000);
+  assert(nwfn_owner(&nwfn_native)<0&&nwfn_native.error==5);
+ }
+ puts("PASS measured late ENA29 admission; all other enables/GIC unchanged; pending29 always stops including sub0 and postACK, existing raw summary only/no extra MMIO/W1C/replay.");
  puts("PASS captured guard diagnostics: all18 hardware predicates, software identity refusal, first-error/stage retention through finish/coordinator, no MMIO on reporting/overwrite/reentry.");
  puts("PASS native callback model: default off, preparation without MMIO, fresh retained ownership, exact transport identity, memory bounds, GIC refusal, inherited balanced sleep/no post-sleep access, bounded ACK/clock failures. Coordinator source order, all child failure boundaries/common halt and no replay. No hardware execution.");}
