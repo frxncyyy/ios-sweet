@@ -3,6 +3,50 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **DMA + BATTERY IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
+  shim/out/nord2-xnu/nord2-ios-wifi-dma-battery-stop23.img,33325056B,
+  SHA256 e0d3a50f7a706f27a8d9fb19bbd6951c85f016e8b179b47b726c331331ec65d5.
+  Payloadc00073d2bc5025503e0a5c049d04e4f223bb174342e27e52728a45b5ee93cc85.
+  CI39584842714/sourceed88fdc641a365efa6f11cd6c867b36be5147ec3;
+  kernele005f651248b1f46baa987cebd7d1183a0ec218b39ef87933a7a257b7272e06c.
+  Independent actual linked-path review PASS (DT/receipt/SET/map/wordbounds,
+  battery priorIRQ1 branch). Bounded1GiB image build exit0; exact freshly
+  rebuilt loader/full2MiB padding, all loaded segments/fixups, dualzeroADT
+  claims/productADT, Linux/bothDTs/rawrescue/header checks PASS;229376B spare.
+  Identity/prepared gates TRUE; human authorization FALSE; runner NEVER
+  EXECUTED. Current23a9 image independently rehashed as fallback; tested RAM
+  rescue preserved. Current phone still23a9 healthy; no USB collector.
+  Scope: post-ROM fresh wake, read-only112read/27ring WFDMA snapshot; only
+  empty/stable allows region18 SET/map/first128KiBzero+readback/sleep. Known
+  inherited state returns without policy/pool writes. No DMA enable/mainFW/
+  RF/network. Includes reviewed battery initial completion-latch fix.
+  Next exact approval/physicalfastboot, one-use boot-only runner+180sUSB.
+  Private future firmware transport v1 under review: coherent-fault polling
+  gap found and separate v2 being corrected; no active integration. Future
+  execution uses distinct nord2wifimain=1, never repurposes existing
+  read-only nord2wififw=1. Private PHY/span/calibration work continues; no
+  private calibration bytes committed. Audio completion still private.
+
+
+- **DMA + BATTERY CI39584842714 SUCCEEDED; LINKED REVIEW IN PROGRESS.**
+  Kernel17427288B SHA256 e005f651248b1f46baa987cebd7d1183a0ec218b39ef87933a7a257b7272e06c.
+  Sourceed88fdc641a365efa6f11cd6c867b36be5147ec3; all1122 actual compiler
+  invocations generic armv8.2-a+crypto, requiredTUs/markers/SHA256SUMS PASS.
+  Artifact saved locally. Independent linked-path review precedes identity
+  gate/image build. New loader26456B SHA256 ca1bdd787df9ef516f63131a0abdc131d4839702e73ffa6d25cacdd20348e59b.
+  No new device action or flash approval. Audio revision completed privately
+  by Sol in audio/revision-completion, tests pass; still needs independent
+  review before any promotion. Opus original remains interrupted/preserved.
+
+
+- **DMA + BATTERY CI39584842714 STARTED.**
+  Source ed88fdc641a365efa6f11cd6c867b36be5147ec3 pushed to fork/codex/nord2-bringup.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39584842714
+  Local source/focused checks passed; wait for full CI artifact, linked
+  review and bounded image packaging. Next image not authorized or flashed.
+  Phone remains human-confirmed23a9bd30; USB collector idle.
+
+
 - **DMA POOL + BATTERY SOURCE READY FOR FULL CI (2026-10-21).**
   Promoted frozen pool manifest3ac8f504/native4b3fad0d after independent
   core/native/loader review. Actual canonical host ASan/UBSan tests PASS:
