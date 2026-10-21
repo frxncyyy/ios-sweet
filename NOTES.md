@@ -3,7 +3,7 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **2026-10-22: cohesive iOS passive-scan service integrated; CI next, hardware untested.**
+- **2026-10-22: iOS scan service source52bb4e7, CI39690505727 running; hardware untested.**
   Explicit nord2wifiios=1 activates the retained radio worker queue and software
   ADT wlan provider. No firmware replay or repeated startup26 sequence. New
   scans preserve actual DMA/credit/sequence state; stale RX must drain before
@@ -23,6 +23,7 @@
   Canonical normal/capability/VCN33 and new scan-service sanitizer suites PASS:
   250+continuations, pending/budget drain refusal, wraps, cancellation, fatal
   drain/defaultoff; private actual IOUC/registry lifetime suites also PASS.
+  CI watcher root session88190 saves exact-source artifacts under research/ci-39690505727.
   New source in shim/nord2-xnu/wifi_ios_* and wifi_scan_service*, canonical
   runner tools/test-nord2-wifi-scan-service.py. Fresh stage wifi-ios-scan/ios;
   no image or new approval yet, runner UNUSED. Phone remains healthy6a6a,
