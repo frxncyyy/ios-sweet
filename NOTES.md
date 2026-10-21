@@ -4,6 +4,76 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **NEW WI-FI CHIP_ID IMAGE VERIFIED; AWAIT EXACT FLASH AUTHORIZATION.**
+  shim/out/nord2-xnu/nord2-ios-wifi-adie-id-stop23.img,33,282,048B,
+  SHA2568ca8ee39ff7b6a46c5ea76d839607c22e519211b657a9c9bcde014c43c84cd95.
+  Payload5c2a71c3a07fa149e8526b431cdc18553f035b4b0e4f5f7db961dcb60982f1f7.
+  CI39557231502/source639f6ba7719b4a3cc2db3ae4031175d5428251bd;
+  kernel7b79aa1824c044b788737e5fdd2ee89c0405d2fca10729ccac65d0d54e9361d0.
+  Independent linked review and image checks PASS: all patched MachOsegments,
+  original Linux/bothDTs/rescue rawCPIO/productADT/header verified;272384Bspare.
+  Args EXACTprevious3b2e plus nord2wifiadieid=1. UFS/boot/input/display/USB
+  unchanged. Conditionalcommon40+strap/reset+clockIRQ+TOPSPI CHIP_ID read;
+  complete reverse restore or dirtyhalt/manualreset. No network/firmwareexec.
+  Private research/nord2/wifi-adie-id/ios manifest/preparedidentity populated;
+  authorization-required.json FALSE, no serial, runner NEVER EXECUTED.
+  Parent requests exact boot-only authorization including conditional testedADB
+  rescue/currentworking3b2e restore. After approval and physicalfastboot, fill
+  privateauthorization; run once --authorized-wifi-adie-id-boot fromreporoot.
+  Never rerun ifflash.log/hardware-live exists. Capture180s, newAP2000/ADIE
+  parser; preserveoldAP6000evidence. NoUSBclient/deviceoperation yetthisturn.
+  Currentphone lastknownworking3b2eiOS. NEVERbootstockAndroidoveriOSuserdata.
+
+
+- **WI-FI CHIP_ID KERNEL VERIFIED; IMAGE COMPRESSION RUNNING.**
+  CI39557231502 source639f6ba; kernel17,337,416B SHA256
+  7b79aa1824c044b788737e5fdd2ee89c0405d2fca10729ccac65d0d54e9361d0.
+  Artifact sums/source and all1102 genericARMv8.2+crypto invocations verified.
+  Independent linked-path-review.json PASS, exact production helpers match
+  source639f6ba. Private image identity now filled from this evidence only.
+  Packing session2227 under1GiB process limit; image-build/build-console.log
+  in research/nord2/wifi-adie-id/ios. No hardware/authorization yet.
+  Monitor offline independent review also PASS:330 instruction words match
+  tee1 originals; legacy82000261 read helper and50b action2 semantics verified,
+  128 aligned SA/EA/APC offsets for32regions/two groups checked. Currentmonitor
+  attribution still not observed; future observer design private, no active
+  SMC changes. Source-only after-id-20261021.md maps later analog/calibration
+  prerequisites; none are proven by CHIP_ID alone. All agents now completed.
+
+
+- **WI-FI CHIP_ID CI39557231502 SUCCEEDED; ARTIFACT VERIFICATION NEXT.**
+  Source639f6ba7719b4a3cc2db3ae4031175d5428251bd. Job119079733089 success
+  in7m24s; run.json/build.log saved, kernel downloading. Parent pins kernel
+  hash/compiler flags before filling image identity; independent linked review
+  in parallel. No device access or new authorization on this resumed turn.
+  Offline follow-up found concrete EMI ABI mismatch in original tee backups:
+  private research/nord2/wifi/next-stage/monitor-abi/REPORT.md and identity.json.
+  Backed-up ATF function50b action2 returns2 unchanged, explaining old capture
+  if same monitor runs; action4 writes hardware, action5 returns0, action0 SET.
+  Separate legacy SMC32 82000261 dispatch/helper performs bounded-offset32bit
+  MPU read at10226000+offset (max93c). This is static backup evidence only;
+  current-monitor attribution/loadbase/region-overlap semantics not proven.
+  REA firmware provider unavailable (Binwalk); ordinary bounded LLVM fallback
+  used, no installs/device/SMCs. Exact tee1 hash in private identity/report.
+  New CI/image REMAINS ID-ONLY, nord2wifiemi=0. Future legacy observer requires
+  independent helper/offset/currentcontext review before any added hardware call.
+
+
+- **WI-FI CHIP_ID CI RUNNING; PRODUCTION REVIEW PASSED.**
+  Source639f6ba7719b4a3cc2db3ae4031175d5428251bd pushed to fork.
+  CI39557231502: https://github.com/frxncyyy/ios-sweet/actions/runs/39557231502
+  Independent production-review.json verifies all8 canonical helpers equal
+  reviewed private algorithms after only include/guard-name renaming; active
+  wrappers/copies exact, whole touch body and outer power unchanged.
+  UFS exact1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
+  All focused host/ARM64 tests passed. New private image/runner/parser templates
+  in research/nord2/wifi-adie-id/ios; CI identity deliberately still empty.
+  Await successful CI, download and pin artifact+compiler/source evidence,
+  independent linked review, fill identity then pack exact image. Next flash
+  requires new exact approval; no device command performed on resumed turn.
+  Source-only Sol investigation of later Wi-Fi prerequisites runs in parallel.
+
+
 - **RESUMED WI-FI ONLY — REVIEWED CHIP_ID CANDIDATE INTEGRATED.**
   Human resumed this morning. UFS/boot remain frozen. Production helpers
   wifi_common_scope, wifi_adie_id, wifi_adie_strap and wifi_adie_adapter.inc
