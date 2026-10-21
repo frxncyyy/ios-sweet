@@ -3,6 +3,22 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Receive lifecycle26 imagec31ff5e4 VERIFIED; exact boot-only approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-rx-lifecycle-battery-stop23.img33386496B
+  SHAc31ff5e47611fac18d6eb242cab86f39fa049d751ba0a9e0fa65ed3658ad8b1f
+  payload6ed8e309c2bcd670bd088552003996e1054bf974b0fc024e6fe44aeb723c3c6a;
+  bootspare167936B. CI39678188048/source8d6960fb/kernel3c86a847.
+  Bounded1GiBpack completed0; independent segment/loader/rescue/ADT/Linux/DT/
+  header and --check-existing PASS. Fresh wifi-rx-lifecycle/ios prepared,
+  identity/schema gatestrue; allhumanapprovalflagsfalse, runnerUNUSED.
+  Adds verified3CID70 publicdefault batches +CID0a RXfilter beforeAIS/scan;
+  total26commands, ordinarysourcecorrect startup; RFbenefit stillUNTESTED.
+  Currentphone remains humanhealthy1c5, noUSBcollector. Exacthealthy1c5 and
+  verifiedRAMrescue fallback pinned. Next obtain exactnewimageapproval+
+  physicalfastboot; run onlyfresh gatedrunner; collectUSB and strict26parser.
+  No association/iOSWifiinterface claim. Private bridgeadapter uncalled.
+
+
 - **Receive lifecycle26 CI39678188048 SUCCESS; verified kernel, packing.**
   Source8d6960fb52a07aa381a93a36418b6e128a4f3518, kernel17534736B
   SHA3c86a847219334ea02e3e531aa36c77ac48c06a228211233d4bb71444d096e4d.
