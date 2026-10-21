@@ -1,5 +1,27 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-21: common setup and A-die identification pass on hardware
+
+Image `8ca8ee39…3c84cd95` (CI39557231502, source639f6ba) successfully read
+`0x66358a11`. Both clock bits and the timeout IRQ check passed on the first
+poll. All40 common registers were saved, programmed, verified and restored;
+all four reset/strap fields were restored, the semaphore released and outer
+power restored. The scoped transaction reported202047 ticks at13MHz (~15.54ms).
+The final180-second USB capture contains233025 bytes, no kernel panic and no
+transport error. The user confirmed lockscreen, touch and buttons. Two-lane
+UFS remains unchanged. This proves the ID transport and its prerequisites,
+not firmware execution, calibration or networking.
+
+Offline examination of the backed-up monitor explains the older constant2
+EMI results: function50b returns unsupported action2 unchanged. Its action4
+writes hardware and is not an alternate read. A separate legacy82000261
+handler reads an offset from the MPU register block; exact original bytes
+and the128 region offsets were independently reviewed. This remains static
+backup evidence, not observed execution of that handler. A separately gated
+read-only observer is being prepared. Raw protection words alone do not prove
+overlap priority, disabled-region encoding or lock state (the monitor keeps
+locks in software). Firmware placement and CPU release remain unimplemented.
+
 ## 2026-10-21: AP failure identified; conditional A-die ID probe integrated
 
 The working `3b2e7ecb…14204434` image identified the first failure precisely:

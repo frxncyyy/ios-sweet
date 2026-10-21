@@ -4,6 +4,39 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **WI-FI CHIP_ID HARDWARE SUCCESS; CURRENT IOS HEALTHY.**
+  Authorized8ca8ee39 runner EXECUTED; NEVERrerun. Flash/rebootOKAY; USB180s
+  exit0,233025B final log SHA256
+  bb31a1bfd3f76bc88f431fba192513047d5f33d95dde0e4033f4da56da03053b.
+  Final strict parser complete/combinedsuccess, noissues/nokernelpanic,
+  hardware-report-final.json plus human "Sì, lockscreen e comandi funzionano".
+  A-die66358a11 valid/known/complete/clean1,error/restore_error0; strapf/f,
+  semowned0; clockraw4006 IRQ1 polls1. Common40snapshots/verified, touched/
+  restoredffffffffff clean1;202047ticks/13MHz. Outerpowerstage3success1/restored1.
+  UFS verifiedretainedx2/root1/handoff0 unchanged. USBcaptureended; noactiveclient.
+  Currentimage8ca8ee39ff7b6a46c5ea76d839607c22e519211b657a9c9bcde014c43c84cd95
+  is now testedworkingfallback; previous3b2e/rescue also preserved. No Wi-Fi
+  networking or firmware execution yet. Human resumesongoingWiFigoal.
+  Next privatework: wifi_evidence prepares separate nord2wifiemilegacy=1
+  readonly128offsetobserver (oldnord2wifiemi=0 required), reuseexistingthreadhook
+  withoutUFSfilechange. Reviewedlegacy82000261ABI, rawcapture only; noMPUSET.
+  wifi_after_id prepares source-exact persistent coldDdie/A-dieE3/AFE/PLL path,
+  retainingownedCONN and manualresetonuncertainty; unlike prior reversibleprobe,
+  no requirement to inventanalogrollback. PreservevendorSYSRAMclear/order and
+  gatesbeforeWFSYScpurelease; source-only privateuntilreview/newimageapproval.
+  Permission interpretation report: nooverlappriority/disabledencodingproof;
+  APCbit31notlockproof (ATFsoftwarelock); Androidcarveout8fb00000+450000 known,
+  currentXNUownership still must be checked beforefirmwareplacement.
+
+
+- **WI-FI CHIP_ID 8ca8ee39 AUTHORIZED; RUNNER STARTING ONCE.**
+  Human: "Autorizzo, pronto in fastboot" for exact8ca8ee39…3c84cd95.
+  Private authorization-required.json records boot-only and conditional rescue/
+  current3b2e restoration. Fastboot device matches known Nord2. Parent owns USB;
+  run prepared runner once, collect180s. Never repeat afterflash.log exists.
+  Test is ID-only; no network/firmware execution. UFS/boot unchanged.
+
+
 - **NEW WI-FI CHIP_ID IMAGE VERIFIED; AWAIT EXACT FLASH AUTHORIZATION.**
   shim/out/nord2-xnu/nord2-ios-wifi-adie-id-stop23.img,33,282,048B,
   SHA2568ca8ee39ff7b6a46c5ea76d839607c22e519211b657a9c9bcde014c43c84cd95.
