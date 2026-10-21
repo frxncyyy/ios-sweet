@@ -3,6 +3,44 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **MAIN-FW + BATTERY IMAGE VERIFIED; EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-battery-stop23.img`,33345536B,
+  SHA256368062de75a2bcf8b44954c61a1a924cbd01ebd77083d4691144c7604af73521.
+  Payloadac51872e96db932f7503c30f0bf5f8c86de0de5de09dca6e6871209a79d280dc.
+  CI39591024820/source825781f52ee2f967d8e329051d627e7dac1180fa;
+  kernel2a6068312bd95bbdf3fa2c6a253059288e4e360779700c7d866e10d5e5188cd4.
+  Targeted independent linked review PASS, including actual mainblob0,
+  region18/DMA ownership, source firmware sequence/shared halt/panic and
+  both battery FIFO low5 paths. Bounded1GiB packing exit0; full freshloader,
+  payload segments, privatecalADT-only addition, Androidheader and byte-exact
+  Linux/dualDT/rawrescue checks PASS. Bootspare208896B. Identity/schema/
+  prepared gates true; authorization FALSE and one-use runner NEVER run.
+  Private stage research/nord2/wifi-main/ios; incomplete parser wrapper
+  preserves unknown DMA/RF effects. This image requests actual RF calibration
+  and N9 FW_READY, not scan/networking. User exact approval requested.
+  Current phone remains healthy e0d3; fallback samee0d3 and tested RAMrescue.
+  UFS/boot speed closed/unchanged. User also explicitly requested OpenCode
+  DeepSeek4.1Flash audio session visible desktop3; delegated startup ongoing,
+  private-source-only work, no audio integration or device access.
+
+
+- **MAIN-FW CI39591024820 SUCCEEDED; LINKED REVIEW / PACKING.**
+  Source825781f52ee2f967d8e329051d627e7dac1180fa. Kernel17463256B SHA256
+  2a6068312bd95bbdf3fa2c6a253059288e4e360779700c7d866e10d5e5188cd4.
+  ArtifactSHA and1135actual genericARMv8.2+crypto compile invocations pass,
+  including12newTUs. Private identity/schema gates true; image/prepared and
+  approval gates still closed. Independent linked review and1GiB-bounded
+  image construction next. No new hardware action; phone e0d3 healthy.
+
+
+- **REPLACEMENT MAIN-FW CI39591024820 RUNNING.**
+  Exact source825781f52ee2f967d8e329051d627e7dac1180fa; header-only fix.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39591024820
+  Private native-schema source hash refreshed; identity/prepared/approval
+  still closed. Wait successful full artifact and independent linked review.
+  Current phone e0d3 healthy; no new hardware action.
+
+
 - **MAIN-FW CI39589483352 FAILED; LOCAL INCLUDE FIX VERIFIED.**
   Only three compile errors: angle-bracket includes of sibling ROM headers in
   wifi_main_fw_xnu/phy_xnu. Changed to quotes; no runtime logic change.
