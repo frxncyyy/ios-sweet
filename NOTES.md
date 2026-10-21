@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **CAPABILITY QUERY PROMOTED; HOST/ARM64 CHECKS PASS, FULL CI NEXT.**
+  Exact independently reviewed production candidate manifest75fc0de8 promoted:
+  five canonical wifi_capability files, generated sweet_touch deferred hook,
+  bsd/conf/files entries and generator. Patch14375 lines applies/reproduces.
+  Actual canonical four ASan/UBSan host suites PASS (dispatcher128 callback
+  fault positions, native worker/ownership, actual current owner and drain).
+  Three normal focused ARM64 objects PASS: sweet_touch370896, capability13496,
+  dispatcher34968 bytes. Source-backed CID8a/EIDec normal reply query is bounded
+  to3s/16events, defaultoff without nord2wificap=1, one worker/one submit;
+  no scan/network interface. Full CI/link/image/actual capability result pending.
+  SWINT fa13 currentphone remains humanhealthy, all prior collectors finished;
+  reviewed separate main evidence-v2 also passes full236116-byte snapshot.
+  Session briefly read-only interrupted commit/build; write/USB access now
+  restored and tested. Capabilitystage parser/schema work resumed privately;
+  all CI/image/human authorization gates remain false. No new flash performed.
+  Keep UFS/boot speed unchanged; kmod untracked user directory untouched.
+
+
 - **SWINT fa13be9b STABLE; FULL CAPTURE AND HUMAN HEALTH CONFIRMED.**
   USB180s capture completed without transport error; full236116 bytes SHA
   7e177f368be4f854fb7a43c305cf4a27dcae5f48f31959d186ad9522b246d69b. Matching N9 ACK and real FW_READY confirmed, no
