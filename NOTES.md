@@ -3,7 +3,45 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **iOS Wi-Fi scan-service image58f62ae6 VERIFIED; exact boot-only approval pending.**
+- **2026-10-22: PAUSED BY USER after scan-service58f62ae6 hardware collection.**
+  Exact approval call_5680d604ecda40a985661be914631868; boot-only flash/reboot
+  OKAY. Current phone is58f62ae6, NOT6a6a. No recovery performed, no device
+  mutation after flash: only read-only USB collection. Fresh wifi-ios-scan/ios
+  runner USED: NEVER rerun. Root97916, final24587 and settings89958 CLOSED0;
+  no collector active. User requested logs then resume tomorrow morning;
+  subsequent report that Settings opens does NOT revoke the pause. No more
+  source changes, builds or flashes until resumed. UFS/boot speed remain closed.
+  Initial radio startup26 and22-channel scan PASS,4BSS/4frames. Retained owner
+  ready, interface registered carrier-down,3actual client opens. NO fresh UI
+  scans enqueued/completed, NO event notifications or result rows delivered.
+  User: Settings initially froze on Wi-Fi and Control Center toggle was grey;
+  after many attempts Wi-Fi page opens but displays NO networks. Separate
+  full lockscreen/all-buttons health was not explicitly confirmed on58f6.
+  Latest logs show additional requests beyond the first96/97: GET103 returned
+  unsupported76times; SET383 eight times, SET365/25 once each unsupported.
+  Full observed request set/counts in private ios-request-counts.json; do not
+  mistake successful registry/client discovery for functional Settings Wi-Fi.
+  All published USB buffer captured to research/nord2/wifi-ios-scan/ios/backend-full.log,
+  375276B SHA555765f9ba8a1d46ccb788b7c2c13cddab968b7b1bf9faa0535f8ce8b5aa3563.
+  Earlier340921B and365787B captures are exact prefixes; all3 collectors have
+  nativeUSB protocol2, no transport error, no buffer overflow or userdata command.
+  backend-full-parsed.json complete=true/issues=[]; ios-service-parsed.json
+  records the incomplete UI path; hardware-result.json and stage-pending.json
+  preserve actual outcome and pause. These are XNU USB logs, not an extraction
+  of all iOS userland filesystem logs. Raw/private data remain outside git.
+  Next morning: review COMPLETE request trace and implement a cohesive consumer
+  contract correction. Bounded request96/97 evidence saved under
+  research/nord2/wifi/ios-service-bridge/request-96-97-handoff/handoff.json,
+  SHAcdfb99df6669bed651440e5f9490c6ea5bab94568f7c7dec47496e9351fff4bb.
+  Proven names VIRTUAL_IF_ROLE/PARENT, GET96 scalar value at requestoffset20,
+  GET97 raw16namebytes. Infrastructure enum and correct physical parent remain
+  unproven; fallback role6 does NOT establish enum. Causality of UI freeze is
+  also unproven. Agent stopped; do not resume analysis during requested pause.
+  Healthy6a6a/RAM rescue available under original conditional recovery approval;
+  never boot stock Android over installed iOS userdata. New image needs exact
+  boot-only approval. Association/security/data/IP remain unimplemented.
+
+- **Pre-flash history: iOS Wi-Fi scan-service image58f62ae6 verified (superseded above).**
   shim/out/nord2-xnu/nord2-ios-wifi-service-scan-battery-stop23.img,
   33409024B SHA256 58f62ae6c3e7650bd71d9c8f723360602ee6ac90ff1a21d03e269ec8ca769b4c,
   payload b9d72642bf3e4eaa7de6b1b62af54e383c4f0fdb3bcda068d21de9fe2100b658;
