@@ -3,6 +3,19 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **VCN33 CI39684479974 SUCCESS; verified kernel and linked review, packing.**
+  Source97c2150d0f7e77b2a00af18a9c5d081017b00652; kernel17535336B
+  SHAce122a75228da792a25c2fc448d9bfd7904fe751f4b1d976a9079936e19a6e2d.
+  All163generatedfiles equal CI;14actualgenericARMv8.2 TUs;2,242,684decoded
+  instructions withoutLDAPUR/STLUR. Linked review54b57a6f/manifesta64af978
+  verifies actual five-write transaction, input-only PMIF and retained halt.
+  Fresh wifi-vcn33/ios identity/schema gates true; bounded1GiB pack session65284
+  running. Image/prepared/humanapproval pending, runner UNUSED; phone healthyc31.
+  Private iOS bridge boot-cache-native manifest84b8020a/review6ebd5cad PASS:
+  actual normal-worker immutable nsb export,45guard cases and selected owning
+  TU compile. NOT activated, no fresh UI scan/IOUC registration/event producer.
+  Next finishpack and independent image check, then exact new boot-only approval.
+
 - **VCN33 source97c2150d CI39684479974 running.**
   Root watcher30924 downloads CI artifacts to research/ci-39684479974.
   Canonical VCN33/main/persistent/normal/capability tests and focused
