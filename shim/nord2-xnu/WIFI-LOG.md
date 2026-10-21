@@ -1,5 +1,36 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-21: AP failure identified; conditional A-die ID probe integrated
+
+The working `3b2e7ecb…14204434` image identified the first failure precisely:
+all nine ownership checks passed, AP valid mask was `0x1f`, failed field4,
+and INFRA status was `0xe70c500e`. Bit14 was set while bit13 was clear.
+Later RX and HOST fields were unread; their printed zeros are not observations.
+The power probe reached ID `0x20010101` and restored its state. No common
+register writes occurred. iOS lockscreen and controls still worked.
+
+This corrects the earlier statement that all seven AP predicates matched the
+selected Android source: its persistent access check uses bit13, while its
+power sequence explicitly disables the bit14 release-acknowledgement check.
+The integrated correction changes only the persistent mask from `0x6000`
+to `0x2000`; it preserves the original outer power sequence and initial wait.
+
+Optional `nord2wifiadieid=1` now retains verified common setup during one
+TOPSPI CHIP_ID read. Four GPIO180/reset fields are saved before common setup;
+clock detection and the timeout IRQ gate precede semaphore11 acquisition.
+Cleanup restores the command address, releases the semaphore, restores reset
+and strap, reverses common setup, then restores outer power. Unknown command
+completion retains ownership and halts. Clock-detection history and read-data
+side effects are not restorable configuration. The source resets detection
+on each retry with jitter; this bounded probe resets once and polls, refusing
+to proceed if both clocks are not observed.
+
+The exact native fault/lifetime tests, source checks and ARM64 compilation
+pass. Independent review of the private candidate passed before integration;
+production CI and hardware validation are pending. This stage does not execute
+firmware, calibrate the radio or provide networking. The existing two-lane UFS
+and boot configuration remain unchanged at the user's request.
+
 ## 2026-10-21: common setup stopped at its AP guard; iOS remains functional
 
 The authorized `2e4f315e…a33dfd1d` image completed its 180-second capture.

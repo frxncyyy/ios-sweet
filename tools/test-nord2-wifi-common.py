@@ -61,6 +61,8 @@ with tempfile.TemporaryDirectory() as directory:
             "-I" + str(CANON),
             str(ROOT / f"tools/fixtures/nord2-wifi-common-{fixture}.c"),
             str(CANON / "wifi_common.c"), str(CANON / "wifi_cold_snapshot.c"),
+            str(CANON / "wifi_common_scope.c"), str(CANON / "wifi_adie_id.c"),
+            str(CANON / "wifi_adie_strap.c"),
             "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
     for helper in ("wifi_common", "wifi_cold_snapshot"):

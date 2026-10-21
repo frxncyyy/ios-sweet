@@ -10,12 +10,14 @@
 typedef uintptr_t vm_offset_t;
 static struct {vm_offset_t spm,infra,gals;bool saved,domain_touched;} nw;
 static bool ncc_fresh_owned,ncc_latched_dirty;
+static vm_offset_t ni_gpio=0x10005000;
+static void delay(unsigned usec){(void)usec;assert(0 && "ID disabled");}
 static unsigned enabled,maps,reads,writes,logs,ap_fail,pred_fail,map_fail,write_fail,drop_after_write,outer_restores;
 static bool trace_ap;static unsigned trace_count;static uint32_t trace[8];
 static uint32_t regs[40],original[40];
 static unsigned order[80];
 static jmp_buf panic_target;
-static int PE_parse_boot_argn(const char*k,unsigned*v,unsigned n){assert(!strcmp(k,"nord2wificommon")&&n==4);*v=enabled;return 1;}
+static int PE_parse_boot_argn(const char*k,unsigned*v,unsigned n){assert(n==4);if(!strcmp(k,"nord2wificommon"))*v=enabled;else{assert(!strcmp(k,"nord2wifiadieid"));*v=0;}return 1;}
 static vm_offset_t ml_io_map(uint64_t a,unsigned n){assert(n==4096&&(a==0x18000000||a==0x18004000||a==0x18005000||a==0x18008000));maps++;return maps==map_fail?0:a;}
 static unsigned table_index(uint32_t a){for(unsigned i=0;i<40;i++)if(ncc_table[i].address==a)return i;assert(0);return 0;}
 static uint32_t ni_rd(vm_offset_t,unsigned);
@@ -34,7 +36,7 @@ static uint32_t ni_rd(vm_offset_t b,unsigned o){uint32_t a=b+o;reads++;if(trace_
  case 0x1000616c:return ap_fail==2?0:2;
  case 0x10006170:return ap_fail==3?0:2;
  case 0x1020e504:return ap_fail==4?0:1;
- case 0x10001228:return ap_fail==5?0x6000:0;
+ case 0x10001228:return ap_fail==5?0xe70c700e:0xe70c500e;
  case 0x10001724:return ap_fail==6?4:0;
  case 0x18060184:return ap_fail==7?0x20:0;
  }

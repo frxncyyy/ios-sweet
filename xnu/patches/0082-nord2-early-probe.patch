@@ -4750,10 +4750,13 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,823 @@
+@@ -1,3 +1,826 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
++#include "wifi_common_scope.c"
++#include "wifi_adie_id.c"
++#include "wifi_adie_strap.c"
 +#include "wifi_cold_snapshot.c"
 +/*
 + * Nord2 FT3518 and physical keys. Pin assignments/report format come from
@@ -5574,7 +5577,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1478,4 @@
+@@ -658,3 +1481,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -7185,7 +7188,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_common_adapter.inc
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,178 @@
 +/* Opt-in MT6893 common-configuration diagnostic, included by sweet_touch.c.
 + * Existing sole probe thread; never a worker. No address outside allowlists. */
 +struct ncc_pred {uint32_t address,mask;};
@@ -7232,7 +7235,7 @@
 +#define NCC_AP(i,base,off,mask,want) do { raw[i]=ni_rd(base,off);valid|=1u<<(i);if((raw[i]&(mask))!=(want)){failed=i;goto ap_fail;} } while(0)
 + NCC_AP(0,nw.spm,0x304,0x1f,0xd);
 + NCC_AP(1,nw.spm,0x16c,2,2);NCC_AP(2,nw.spm,0x170,2,2);
-+ NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x6000,0);
++ NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x2000,0);
 + NCC_AP(5,nw.infra,0x724,4,0);NCC_AP(6,ncc_native.host,0x184,0x20,0);
 +#undef NCC_AP
 + return 0;
@@ -7315,6 +7318,7 @@
 +{ uint64_t value; __asm__ volatile("mrs %0, cntfrq_el0" : "=r" (value)); return value; }
 +#define NCC_FREQUENCY() ncc_frequency()
 +#endif
++#include "wifi_adie_adapter.inc"
 +static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
 +{
 + unsigned enabled=0;PE_parse_boot_argn("nord2wificommon",&enabled,sizeof(enabled));
@@ -7345,7 +7349,7 @@
 + }
 + const struct ncc_ops ops={ncc_native_check,ncc_native_read,ncc_native_write,ncc_native_barrier};
 + uint64_t begin=NCC_TICKS();
-+ status=ncc_run(&ops,0,1,2,&ncc_native.result);
++ status=nis_scope_or_common(&ops,&ncc_native.result);
 + uint64_t elapsed=NCC_TICKS()-begin;
 + struct ncc_result *r=&ncc_native.result;
 + printf("NORD2 WIFI COMMON: status=%d phase=%u snapshots=%u verified=%u error=%d restore_error=%d clean=%d\n",
@@ -7469,4 +7473,377 @@
 +{
 + printf("NORD2 UFS X2 LIVE REFUSED: error=%d root_allowed=0 return_blocked=1 manual_reset=1\n",error);
 + for(;;){delay(1000000);}
++}
+--- /dev/null
++++ b/bsd/dev/wifi_common_scope.c
+@@ -0,0 +1,48 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_common_scope.h"
++static int ncc_scope_guard(const struct ncc_ops *o,void *c){return o->check(c,NCC_REQUIRED);}
++int ncc_scope(const struct ncc_ops *o,void *c,unsigned opt,struct ncc_result *r,int (*inner)(void *,int *),int *inner_clean)
++{
++ unsigned i,n; uint32_t v,w; int e;
++ if(!r)return -1;
++ *r=(struct ncc_result){0}; r->clean=1;
++ if(inner_clean)*inner_clean=1;
++ if(opt!=1||!inner||!inner_clean||!o||!o->check||!o->read||!o->write||!o->barrier){r->error=-1;return -1;}
++ *inner_clean=1; n=NCC_COUNT; r->phase=1;
++ for(i=0;i<n;i++){
++  if(ncc_scope_guard(o,c)||o->read(c,ncc_table[i].address,&r->before[i])){r->error=-2;return -1;}
++  r->snapshots++;
++ }
++ r->phase=2;
++ for(i=0;i<n;i++){
++  /* Recheck full snapshot before writing: unexpected concurrent changes fail. */
++  if(ncc_scope_guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=r->before[i]){r->error=-3;break;}
++  w=(v&~ncc_table[i].mask)|(ncc_table[i].value&ncc_table[i].mask);
++  if(ncc_scope_guard(o,c)){r->error=-3;break;}
++  r->touched|=UINT64_C(1)<<i; r->clean=0;
++  e=o->write(c,ncc_table[i].address,w);
++  if(e||ncc_scope_guard(o,c)||o->barrier(c)||ncc_scope_guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=w){r->error=-4;break;}
++  r->verified++;
++ }
++ if(!r->error){
++  *inner_clean=0;
++  int ie=inner(c,inner_clean);
++  if(!*inner_clean){r->error=-10;return -1;} /* retain ALL common ownership */
++  if(ie)r->error=-11;
++ }
++ r->phase=3;
++ /* Best effort for every touched register. Never claim restoration merely
++  * because a failing write may actually have reached the device. */
++ for(i=n;i>0;){i--;if(!(r->touched&(UINT64_C(1)<<i)))continue;
++  if(ncc_scope_guard(o,c)){r->restore_error=-5;continue;}
++  e=o->write(c,ncc_table[i].address,r->before[i]);
++  if(e||ncc_scope_guard(o,c)||o->barrier(c)||ncc_scope_guard(o,c)||o->read(c,ncc_table[i].address,&v)||v!=r->before[i]){r->restore_error=-6;continue;}
++  r->restored|=UINT64_C(1)<<i;
++ }
++ r->clean=(r->restored==r->touched);
++ if(!r->error&&!r->restore_error)r->phase=4;
++ return r->error||r->restore_error?-1:0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_common_scope.h
+@@ -0,0 +1,10 @@
++#ifndef NORD2_WIFI_COMMON_SCOPE_H
++#define NORD2_WIFI_COMMON_SCOPE_H
++#include "wifi_common.h"
++/* Scoped callback variant. Same40 snapshots/apply/reverse as canonical.
++ * inner invoked ONLY after all40 sourcevalues verified, before anyrestore.
++ * inner must return clean1 ONLY after its owned resources restored; clean0
++ * leaves common snapshots/power ownership retained for mandatory dirtyhalt.
++ * No callback on failed commonapply. optin1; allprereqs canonical. */
++int ncc_scope(const struct ncc_ops *,void *,unsigned,struct ncc_result *,int (*)(void *,int *),int *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_adie_id.c
+@@ -0,0 +1,55 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_adie_id.h"
++#define STA 0x18004000u
++#define ADDR 0x18004050u
++#define WD 0x18004054u
++#define RD 0x18004058u
++static int nai_guard(const struct nai_ops *o,void *c){return o->check(c,NAI_REQUIRED);}
++static int poll(const struct nai_ops *o,void *c,struct nai_result *r)
++{
++ uint32_t v;
++ for(unsigned i=0;i<100;i++){
++  if(nai_guard(o,c)||o->read(c,STA,&v))return -1;
++  r->polls++;
++  if(!(v&0x20))return 0;
++  if(i<99&&(nai_guard(o,c)||o->delay_us(c,50)))return -1;
++ }
++ return -1;
++}
++int nai_read_id(const struct nai_ops *o,void *c,unsigned opt,struct nai_result *r)
++{
++ int e;uint32_t v;
++ if(!r)return -1;
++ *r=(struct nai_result){0};r->clean=1;
++ if(opt!=1||!o||!o->check||!o->acquire||!o->release||!o->read||!o->write||!o->barrier||!o->delay_us){r->error=-1;return -1;}
++ r->phase=1;if(nai_guard(o,c)){r->error=-2;return -1;}
++ e=o->acquire(c,11);
++ if(e){r->error=-3;if(e!=1){r->semaphore_owned=1;r->clean=0;}return -1;}
++ r->semaphore_owned=1;r->clean=0;
++ if(poll(o,c,r)||nai_guard(o,c)||o->read(c,ADDR,&r->original_address)){r->error=-4;goto cleanup;}
++ r->phase=2;
++ if(nai_guard(o,c)){r->error=-5;goto cleanup;}
++ r->address_touched=1;
++ if(o->write(c,ADDR,0x0000b02c)||nai_guard(o,c)||o->barrier(c)||nai_guard(o,c)||o->read(c,ADDR,&v)||v!=0xb02c){r->error=-5;goto cleanup;}
++ if(nai_guard(o,c)){r->error=-5;goto cleanup;}
++ r->command_touched=1;
++ if(o->write(c,WD,0)||nai_guard(o,c)||o->barrier(c)||poll(o,c,r)){
++  r->error=-6;return -1; /* no replay/release while completion unknown */
++ }
++ r->command_complete=1;r->phase=3;
++ if(nai_guard(o,c)||o->read(c,RD,&r->id)){r->error=-7;goto cleanup;}
++ r->id_valid=1;
++ r->known_chip=r->id==0x66358a00||r->id==0x66358a10||r->id==0x66358a11;
++cleanup:
++ r->phase=4;
++ if(r->address_touched){
++  if(nai_guard(o,c)||o->write(c,ADDR,r->original_address)||nai_guard(o,c)||o->barrier(c)||nai_guard(o,c)||o->read(c,ADDR,&v)||v!=r->original_address){r->restore_error=-8;return -1;}
++  r->address_touched=0;
++ }
++ if(nai_guard(o,c)||o->release(c,11)){r->restore_error=-9;return -1;}
++ r->semaphore_owned=0;r->clean=1;r->phase=5;
++ return r->error?-1:!r->known_chip;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_adie_id.h
+@@ -0,0 +1,36 @@
++#ifndef NORD2_ADIE_ID_H
++#define NORD2_ADIE_ID_H
++#include <stdint.h>
++/* Fresh owned cold CONN; common table APPLIED and retained; source-correct
++ *26/52MHz strap GPIO ownership; A-die reset deasserted; SPI aperture readable;
++ *WFSYS/BGF CPUs held; all other clients inactive. Do not test SPI busy here:
++ *the command itself legitimately asserts it. No EMI permission prerequisite. */
++#define NAI_REQUIRED 0x7fu
++struct nai_ops {
++ int (*check)(void *,unsigned);
++ /* exact RF SPI semaphore11. acquire0=owned,1=known notowned; other=uncertain.
++  * Adapter bounds acquisition and must not clear someone else's ownership. */
++ int (*acquire)(void *,unsigned);
++ int (*release)(void *,unsigned); /*0 confirmed complete,else ownership unknown*/
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t); /*failure can be partial*/
++ int (*barrier)(void *);
++ int (*delay_us)(void *,unsigned);
++};
++struct nai_result {
++ uint32_t id,original_address;
++ unsigned polls,phase;
++ int error,restore_error,semaphore_owned,address_touched,command_touched;
++ int command_complete,id_valid,known_chip,clean;
++};
++/* optin1 only. At most100 status reads before+after trigger,50us betweenbusy
++ *reads. Addresses restricted to18004000/50/54/58. NO TOPSPI analog write,
++ *CPU release, SYSRAM/EMI access, strap/reset changes, or calibration.
++ *Snapshots command-address register; restores it ONLY when own command is
++ *known complete (or triggerneverattempted). NEVER restore WD/trigger register.
++ *Unknown commandcompletion: preserve semaphore/outerpower; caller must HALT.
++ *Return0 knownID/clean;1 unknownID/clean;-1 error (consult clean).
++ *clean refers transport/address+semaphore, not strap/common outertransaction.
++ *Caller must prove strap/reset/shared ownership before invoking this engine. */
++int nai_read_id(const struct nai_ops *,void *,unsigned,struct nai_result *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_adie_strap.c
+@@ -0,0 +1,49 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_adie_strap.h"
++const struct nis_field nis_fields[4]={
++ {0x10005050,0x100000,0x100000}, /*GPIO180 direction output*/
++ {0x10005150,0x100000,0x100000}, /*GPIO180 data high*/
++ {0x10005460,0x70000,0},        /*GPIO180 muxGPIO*/
++ {0x18001900,1,1}              /*A-die resetdeassert*/
++};
++int nis_prepare(const struct nis_ops *o,void *c,struct nis_result *r)
++{
++ if(!r)return -1;
++ *r=(struct nis_result){0};r->clean=1;
++ if(!o||!o->check||!o->read||!o->write_mask||!o->barrier){r->error=-1;return -1;}
++ for(unsigned i=0;i<4;i++){
++  if(o->check(c)||o->read(c,nis_fields[i].address,&r->before[i])){r->error=-2;return -1;}
++  r->snapshots++;
++ }
++ if(r->before[3]&1){r->error=-3;return -1;}
++ r->prepared=1;return 0;
++}
++int nis_execute(const struct nis_ops *o,const struct nai_ops *id,void *c,struct nis_result *r)
++{
++ uint32_t v;int e;
++ if(!r||!r->prepared||r->snapshots!=4||!o||!o->check||!o->read||!o->write_mask||!o->barrier)return -1;
++ for(unsigned i=0;i<4;i++){
++  const struct nis_field *f=&nis_fields[i];
++  if(o->check(c)||o->read(c,f->address,&v)||v!=r->before[i]){r->error=-4;break;}
++  if(o->check(c)){r->error=-4;break;}
++  r->touched|=1u<<i;r->clean=0;
++  if(o->write_mask(c,f->address,f->mask,f->value)||o->check(c)||o->barrier(c)||o->check(c)||o->read(c,f->address,&v)||v!=((r->before[i]&~f->mask)|f->value)){r->error=-5;break;}
++ }
++ if(!r->error){
++  e=nai_read_id(id,c,1,&r->id);
++  if(!r->id.clean){r->error=-6;return -1;} /* noreset/strap/common cleanup */
++  if(e)r->error=-7;
++ }
++ for(unsigned i=4;i>0;){i--;if(!(r->touched&(1u<<i)))continue;
++  const struct nis_field *f=&nis_fields[i];
++  if(o->check(c)||o->read(c,f->address,&v)||(v&~f->mask)!=(r->before[i]&~f->mask))continue;
++  if(o->check(c)||o->write_mask(c,f->address,f->mask,r->before[i]&f->mask)||o->check(c)||o->barrier(c)||o->check(c)||o->read(c,f->address,&v)||v!=r->before[i])continue;
++  r->restored|=1u<<i;
++ }
++ r->clean=r->restored==r->touched;
++ if(!r->clean&&!r->error)r->error=-8;
++ return r->error||!r->clean?-1:0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_adie_strap.h
+@@ -0,0 +1,19 @@
++#ifndef NORD2_WIFI_ADIE_STRAP_H
++#define NORD2_WIFI_ADIE_STRAP_H
++#include "wifi_adie_id.h"
++struct nis_field {uint32_t address,mask,value;};
++extern const struct nis_field nis_fields[4];
++struct nis_ops {
++ int (*check)(void *); /*owned AP/power/readability/cold CPUs,not SPIbusy*/
++ int (*read)(void *,uint32_t,uint32_t *);
++ /* must change ONLY given source-ownedmask; failure may partialwrite */
++ int (*write_mask)(void *,uint32_t,uint32_t,uint32_t);
++ int (*barrier)(void *);
++};
++struct nis_result {uint32_t before[4];unsigned snapshots,touched,restored;int prepared,error,clean;struct nai_result id;};
++/* prepare called BEFORE common mutation; snapshots all4fields and requires
++ * A-die reset0. execute is scoped commoncallback; retains common ifdirty.
++ * No SYSRAM,calibration,CPUrelease; GPIO180strap+ADIEreset only. */
++int nis_prepare(const struct nis_ops *,void *,struct nis_result *);
++int nis_execute(const struct nis_ops *,const struct nai_ops *,void *,struct nis_result *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_adie_adapter.inc
+@@ -0,0 +1,135 @@
++/* Scoped MT6893 A-die CHIP_ID probe, called only inside the owned common
++ * transaction. Reuses its access proofs and persistent dirty latch. */
++#include "wifi_common_scope.h"
++#include "wifi_adie_strap.h"
++static struct {vm_offset_t sem;bool retained;struct nis_result result;
++ uint32_t clock_raw,irq_raw;unsigned clock_polls;bool clock_attempted,clock_ok;} nis_native;
++static int nis_native_check(void *c)
++{
++ (void)c;if(ncc_ap_check())return -1;
++ if(nis_native.retained&&ncc_native.result.verified!=NCC_COUNT)return -1;
++ /* Same cold request/power proof, EXCEPT SPIbusy may be ours in-flight. */
++ for(unsigned i=0;i<13;i++){
++  if(ncc_ap_check())return -1;
++  vm_offset_t b=ncc_aperture(ncc_predicates[i].address);if(!b)return -1;
++  if(ni_rd(b,ncc_predicates[i].address&0xfff)&ncc_predicates[i].mask)return -1;
++ }
++ return 0;
++}
++static int nis_read(void *c,uint32_t a,uint32_t *v)
++{
++ (void)c;if(!v||ncc_ap_check())return -1;
++ if(a==0x10005050||a==0x10005150||a==0x10005460){*v=ni_rd(ni_gpio,a-0x10005000);return 0;}
++ if(a==0x18001900){*v=ni_rd(ncc_native.cfg,0x900);return 0;}
++ return -1;
++}
++static int nis_write_mask(void *c,uint32_t a,uint32_t mask,uint32_t v)
++{
++ (void)c;unsigned i;
++ for(i=0;i<4;i++)if(nis_fields[i].address==a)break;
++ if(i==4||mask!=nis_fields[i].mask||(v&~mask)||ncc_ap_check())return -1;
++ if(v!=nis_fields[i].value&&v!=(nis_native.result.before[i]&mask))return -1;
++ if(a==0x10005050||a==0x10005150){
++  /* SET/CLR aliases prevent writes to unrelated GPIO fields. */
++  ni_wr(ni_gpio,a-0x10005000+(v?4:8),mask);return 0;
++ }
++ vm_offset_t b=a==0x10005460?ni_gpio:ncc_native.cfg;
++ unsigned off=a==0x10005460?0x460:0x900;
++ uint32_t old=ni_rd(b,off);ni_wr(b,off,(old&~mask)|v);return 0;
++}
++static int nis_barrier(void *c){(void)c;if(ncc_ap_check())return -1;NCC_DEVICE_BARRIER();return 0;}
++static const struct nis_ops nis_ops={nis_native_check,nis_read,nis_write_mask,nis_barrier};
++static int nis_id_check(void *c,unsigned required)
++{
++ if(required!=NAI_REQUIRED||!nis_native.retained||nis_native_check(c))return -1;
++ for(unsigned i=0;i<4;i++){
++  uint32_t v;if(nis_read(c,nis_fields[i].address,&v))return -1;
++  if(v!=((nis_native.result.before[i]&~nis_fields[i].mask)|nis_fields[i].value))return -1;
++ }
++ return 0;
++}
++/* Selected consys_check_reg_readable clockdetect/IRQ portion. Source resets
++ * detector by settingHOST0bit0; bits1/2 report offbus+osc clocks. This is a
++ * measurement trigger, not a restorable power/clockconfiguration register. */
++static int nis_clock_probe(void *c)
++{
++ nis_native.clock_attempted=true;nis_native.clock_ok=false;nis_native.clock_polls=0;
++ nis_native.clock_raw=nis_native.irq_raw=0;
++ if(nis_id_check(c,NAI_REQUIRED))return -1;
++ uint32_t old=ni_rd(ncc_native.host,0);
++ ni_wr(ncc_native.host,0,old|1u); /* same source-preserving SET_BIT */
++ for(unsigned i=0;i<1600;i++){
++  if(nis_id_check(c,NAI_REQUIRED))return -1;
++  delay(i?10:1);
++  nis_native.clock_raw=ni_rd(ncc_native.host,0);nis_native.clock_polls++;
++  if((nis_native.clock_raw&6)==6)break;
++ }
++ if((nis_native.clock_raw&6)!=6||nis_id_check(c,NAI_REQUIRED))return -1;
++ nis_native.irq_raw=ni_rd(ncc_native.host,0x2d4);
++ if(!(nis_native.irq_raw&1))return -1;
++ nis_native.clock_ok=true;return 0;
++}
++static int nis_acquire(void *c,unsigned index)
++{
++ if(index!=11||!nis_native.sem)return -1;
++ if(nis_clock_probe(c))return 1; /* no semaphore acquisition attempted */
++ /* Source semaphore acquisition is a side-effecting READ, not a plain
++  * ownership observation. Do not read it during snapshots or cleanup. */
++ for(unsigned i=0;i<1000;i++){
++  if(nis_id_check(c,NAI_REQUIRED))return 1; /* no acquired status observed */
++  if(ni_rd(nis_native.sem,0x2c)&1)return 0;
++  delay(1);
++ }
++ return 1;
++}
++static int nis_release(void *c,unsigned index)
++{
++ if(index!=11||!nis_native.sem||nis_id_check(c,NAI_REQUIRED))return -1;
++ ni_wr(nis_native.sem,0x22c,1);return 0;
++}
++static int nis_id_read(void *c,uint32_t a,uint32_t *v)
++{
++ (void)c;if(!v||ncc_ap_check())return -1;
++ if(a!=0x18004000&&a!=0x18004050&&a!=0x18004058)return -1;
++ *v=ni_rd(ncc_native.spi,a&0xfff);return 0;
++}
++static int nis_id_write(void *c,uint32_t a,uint32_t v)
++{
++ (void)c;if(ncc_ap_check())return -1;
++ if(a==0x18004050){if(v!=0xb02c&&v!=nis_native.result.id.original_address)return -1;}
++ else if(a!=0x18004054||v)return -1;
++ ni_wr(ncc_native.spi,a&0xfff,v);return 0;
++}
++static int nis_delay(void *c,unsigned usec){(void)c;if(usec!=50||ncc_ap_check())return -1;delay(usec);return 0;}
++static const struct nai_ops nis_id_ops={nis_id_check,nis_acquire,nis_release,nis_id_read,nis_id_write,nis_barrier,nis_delay};
++static int nis_inner(void *c,int *clean)
++{
++ nis_native.retained=true;
++ int e=nis_execute(&nis_ops,&nis_id_ops,c,&nis_native.result);
++ *clean=nis_native.result.clean;
++ if(*clean)nis_native.retained=false; /* keep true for dirty evidence */
++ return e;
++}
++static int nis_scope_or_common(const struct ncc_ops *ops,struct ncc_result *r)
++{
++ unsigned enabled=0;PE_parse_boot_argn("nord2wifiadieid",&enabled,sizeof(enabled));
++ if(enabled!=1)return ncc_run(ops,0,1,2,r);
++ nis_native.retained=false;nis_native.clock_attempted=nis_native.clock_ok=false;
++ nis_native.clock_polls=0;nis_native.clock_raw=nis_native.irq_raw=0;
++ nis_native.result=(struct nis_result){0};nis_native.result.clean=1;
++ nis_native.sem=ml_io_map(0x18072000,0x1000);
++ if(!nis_native.sem)nis_native.result.error=-9;
++ if(!nis_native.sem||nis_prepare(&nis_ops,0,&nis_native.result)){
++  *r=(struct ncc_result){0};r->clean=1;r->error=-12;
++  printf("NORD2 WIFI ADIE: skipped=1 prepare_error=%d snapshots=%u\n",nis_native.result.error,nis_native.result.snapshots);return -1;
++ }
++ int inner_clean=1;
++ int e=ncc_scope(ops,0,1,r,nis_inner,&inner_clean);
++ struct nis_result *s=&nis_native.result;struct nai_result *id=&s->id;
++ printf("NORD2 WIFI ADIE: attempted=%d id=%#x valid=%d known=%d complete=%d clean=%d error=%d restore_error=%d\n",id->phase!=0,id->id,id->id_valid,id->known_chip,id->command_complete,id->clean,id->error,id->restore_error);
++ printf("NORD2 WIFI ADIE RESTORE: strap_touched=%#x restored=%#x clean=%d error=%d sem_owned=%d inner_clean=%d\n",s->touched,s->restored,s->clean,s->error,id->semaphore_owned,inner_clean);
++ printf("NORD2 WIFI ADIE CLOCK: attempted=%u ok=%u raw=%#x irq=%#x polls=%u\n",
++  (unsigned)nis_native.clock_attempted,(unsigned)nis_native.clock_ok,
++  nis_native.clock_raw,nis_native.irq_raw,nis_native.clock_polls);
++ return e; /* enclosing existing common wrapper latches+panics if !r.clean */
 +}

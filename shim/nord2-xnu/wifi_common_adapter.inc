@@ -44,7 +44,7 @@ static int ncc_ap_check(void)
 #define NCC_AP(i,base,off,mask,want) do { raw[i]=ni_rd(base,off);valid|=1u<<(i);if((raw[i]&(mask))!=(want)){failed=i;goto ap_fail;} } while(0)
  NCC_AP(0,nw.spm,0x304,0x1f,0xd);
  NCC_AP(1,nw.spm,0x16c,2,2);NCC_AP(2,nw.spm,0x170,2,2);
- NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x6000,0);
+ NCC_AP(3,nw.gals,0x504,1,1);NCC_AP(4,nw.infra,0x228,0x2000,0);
  NCC_AP(5,nw.infra,0x724,4,0);NCC_AP(6,ncc_native.host,0x184,0x20,0);
 #undef NCC_AP
  return 0;
@@ -127,6 +127,7 @@ static uint64_t ncc_frequency(void)
 { uint64_t value; __asm__ volatile("mrs %0, cntfrq_el0" : "=r" (value)); return value; }
 #define NCC_FREQUENCY() ncc_frequency()
 #endif
+#include "wifi_adie_adapter.inc"
 static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
 {
  unsigned enabled=0;PE_parse_boot_argn("nord2wificommon",&enabled,sizeof(enabled));
@@ -157,7 +158,7 @@ static void ncc_power_window(vm_offset_t host,vm_offset_t cfg,uint32_t id)
  }
  const struct ncc_ops ops={ncc_native_check,ncc_native_read,ncc_native_write,ncc_native_barrier};
  uint64_t begin=NCC_TICKS();
- status=ncc_run(&ops,0,1,2,&ncc_native.result);
+ status=nis_scope_or_common(&ops,&ncc_native.result);
  uint64_t elapsed=NCC_TICKS()-begin;
  struct ncc_result *r=&ncc_native.result;
  printf("NORD2 WIFI COMMON: status=%d phase=%u snapshots=%u verified=%u error=%d restore_error=%d clean=%d\n",

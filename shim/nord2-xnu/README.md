@@ -10,19 +10,42 @@ the tested ADB recovery in RAM, which mounts no block filesystem.
 The loader packages Sweet XNU built for MT6893 with the preserved Android
 Linux kernel and device trees. It supports both bounded diagnostic stops and
 continuous iOS mode at point23. Current iOS images use the tested rescue
-ramdisk for a permissible Linux return. Unsafe controller or restoration
+ramdisk for a permissible Linux return in diagnostic modes. Retained two-lane
+UFS mode permanently blocks Linux return and requires physical reset followed
+by an explicit fastboot recovery flash. Unsafe controller or restoration
 state halts instead. Native USB exposes live logs; the early console and
 ramoops pmsg log remain useful before USB starts.
 
 The user confirmed substantially faster startup after console optimization,
 skipping the missing RTC service wait and restoring the standard Display Zoom
-dimensions. The latest measured display-ownership marker is 47.72 seconds
+dimensions. The latest measured display-ownership marker is 48.43 seconds
 from early XNU framebuffer initialization; it is not an exact power-on-to-lockscreen measurement.
-UFS is currently G4, one lane in each direction, HS seriesB. About 2 GB of boot
-reads took 7.31 aggregate command seconds with no errors in the latest report.
-Two-lane negotiation is still a diagnostic experiment. Wi-Fi power and four
+UFS now retains two verified lanes for the installed iOS filesystem. The latest
+capture reports about 2 GB read, 7.43 aggregate command seconds and no UFS
+errors; the user confirmed lockscreen and input. This does not demonstrate
+a boot-speed gain over the previous one-lane captures. UFS and boot tuning
+are frozen at the user's request. Wi-Fi power and four
 firmware files in RAM have been verified; firmware execution and networking
 are not working yet. See `WIFI-LOG.md` for the next initialization stages.
+
+### Conditional Wi-Fi chip identification
+
+The next untested hardware stage uses `nord2wifiadieid=1` together with
+`nord2wifi=2 nord2wificommon=1`. It runs only inside a freshly owned, cold
+radio power window. The persistent AP access check follows the selected
+Android source's bit13 condition; bit14 is deliberately excluded there.
+The original power-up sequence and its initial wait remain unchanged.
+
+All 40 common registers must be programmed and verified before the probe
+applies the GPIO180 strap and releases A-die reset. Clock detection and the
+bus-timeout IRQ check precede semaphore11 acquisition and one TOPSPI CHIP_ID
+read. Successful cleanup restores the command address, releases the semaphore,
+restores reset/strap, reverses the common table and restores outer power.
+Unknown command completion retains ownership and halts for manual recovery.
+The clock measurement and read-data side effects cannot be undone; cleanup
+refers to the owned configuration. No analog write command, firmware execution,
+calibration or network traffic is enabled. Host fault tests and ARM64 compilation
+pass; this is not yet a hardware result.
 
 Exact current images, authorization, capture results and the next action are
 in the active handoff at the top of `NOTES.md`. The sections below preserve

@@ -4,6 +4,25 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **RESUMED WI-FI ONLY — REVIEWED CHIP_ID CANDIDATE INTEGRATED.**
+  Human resumed this morning. UFS/boot remain frozen. Production helpers
+  wifi_common_scope, wifi_adie_id, wifi_adie_strap and wifi_adie_adapter.inc
+  integrate the reviewed private candidate with include/symbol renaming only.
+  Persistent AP mask2000; original outer power6000wait unchanged. Scoped ID
+  default-off, conditional on all40common verified, clock/IRQ checks before
+  semaphore11; ambiguous completion retains ownership and halts.
+  Tracked common640callback/default-off/AP/restore tests and ID28callback/
+  native91write-fault/clock-IRQ/lifetime suites PASS. Whole sweet_touch ARM64
+  compile PASS. Generated patch7849lines applies/reproduces active tree.
+  Active sweet_ufs.c unchanged SHA256
+  1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
+  Independent production review pending; no CI/image/device action yet.
+  New private templates research/nord2/wifi-adie-id/ios keep identity empty
+  until parent pins successful CI; planned nord2-ios-wifi-adie-id-stop23.img.
+  Current 3b2e iOS remains the known-good fallback. Ask new exact boot-only
+  approval only after completed CI/image verification. Preserve kmod/.
+
+
 - **PAUSED BY HUMAN — resume only on the next user request.**
   Human: "possiamo mettere un po' in pausa? riprendiamo domattina".
   All three Sol agents completed; no CI, image packing, USB capture or flashing
