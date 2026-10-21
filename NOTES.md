@@ -3,6 +3,17 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **VCN33 source97c2150d CI39684479974 running.**
+  Root watcher30924 downloads CI artifacts to research/ci-39684479974.
+  Canonical VCN33/main/persistent/normal/capability tests and focused
+  wifi_vcn33/sweet_touch ARM64 compilation PASS. Parser review5c1b99b7
+  validates strict26/RXRF plus rail observations; all physical claims pending.
+  Fresh wifi-vcn33/ios source_complete true, CI/identity/schema/image/human
+  gates false; exact c31 fallback, no executed runner or device action.
+  cap_stage prepares linked review; after_id advances private real iOS hook.
+  Next verify source/artifact, bounded1GiB pack, independent image check,
+  then exact new boot-only approval. Current phone remains healthyc31.
+
 - **VCN33 source integrated; independent safety review and focused ARM64 PASS.**
   Private candidate5db2e819, independent implementation review7cbe6cca;
   selected source/safety reports6552260e/234ea377. Added explicit
