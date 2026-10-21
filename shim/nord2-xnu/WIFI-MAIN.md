@@ -60,3 +60,26 @@ MAIN ARM2, and its final log did not survive restoration. Its actual failure
 stage, original error and SW_SYNC0 value remain unknown. The phone was restored
 to e0d3 and confirmed healthy; the drain change does not claim to fix that radio
 failure. UFS and boot-speed tuning remain closed and unchanged.
+
+The ebfa71f6 hardware test captured a narrower failure: both patch spans were
+copied and verified, then CID40 advanced TX17 DIDX and set completion bit27.
+Transport error16 rejected descriptor pointer/SDL0/DW2/DW3 before checking
+DMADONE. Bit27 is ordinary TX completion; coherent error bits20/21 were clear.
+The raw descriptor and DDONE were not logged, so the mismatching field remains
+unknown. The phone was restored to e0d3 and confirmed healthy.
+
+Completion now waits for DMADONE before applying the unchanged strict echo
+checks, matching the selected driver's ordering. The 1000-poll bound, coherent
+fault checks and retained failure lifetime remain. Captured TXDESC/TXSUBMIT/
+TXOBSERVED lines record the constructed intended words, latest successfully
+copied descriptor, descriptor address, DIDX, length, validity, mismatch mask and
+DDONE wait count without extra backend reads. Valid bit0 means constructed,
+not read-back; bit1 means observed. Mismatch bits0..3 identify pointer, SDL0,
+DW2 and DW3 and are evaluated only after DDONE. A completed mismatch still
+halts before any RX event processing or rearm. No command replay is added.
+
+A partial writeback race remains only a hypothesis. The selected initializer
+sets TX_WB_DDONE; CODA describes it as waiting for full host-AXI writeback before
+interrupt, and TX17 completion was observed. The new diagnostics must identify
+the actual completed fields before any further contract change. Struct fields
+are appended and every consuming translation unit must rebuild together.

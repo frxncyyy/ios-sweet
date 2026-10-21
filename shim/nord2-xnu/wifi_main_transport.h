@@ -23,6 +23,9 @@ struct nwt_state {
  unsigned tx_index,rx_index,finish_phase;uint8_t next_sequence;
  uint32_t irq_status[2];unsigned irq_status_valid;
  uint32_t rx_descriptor_bytes,rx_mac_bytes,rx_init_bytes;
+ uint64_t tx_descriptor_address;
+ uint32_t tx_submitted[4],tx_observed[4],tx_didx,tx_used,tx_mismatch;
+ unsigned tx_descriptor_valid,tx_ddone_waits;
 };
 /* Read-only exactaffected-domain preflight. ALWAYS refuses initialization
  * until finite full-source initport is completed. Never resets/enables DMA.

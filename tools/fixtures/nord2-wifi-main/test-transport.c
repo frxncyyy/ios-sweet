@@ -4,7 +4,7 @@
 #include <string.h>
 #define BASE 0x90000000u
 static unsigned char memory[0x20000];
-struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied;};
+struct mock {unsigned calls,fail,failed,after,writes,reads,txidx,rxidx,command_sync,desc_sync,event_sync,timeout,badseq,badddone,active,response_bytes,eid,coherent,copied,partial,descriptor_reads,corrupt_word,wrong_didx;};
 static int step(struct mock *m){if(m->failed)m->after++;if(++m->calls==m->fail){m->failed=1;return -1;}return 0;}
 static uint32_t get(const unsigned char *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put(unsigned char *p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(unsigned char)(v>>(8*i));}
@@ -15,7 +15,7 @@ static int rr(void *c,uint32_t a,uint32_t *v){struct mock *m=c;if(step(m))return
  else if(a==0x18025208)*v=m->active?5:0;
  else if(a==0x18024400&&m->active==2)*v=1;
  else if(a==0x18025418)*v=m->txidx;
- else if(a==0x1802541c)*v=m->timeout?m->txidx-1:m->txidx;
+ else if(a==0x1802541c)*v=m->wrong_didx?m->txidx+1:m->timeout?m->txidx-1:m->txidx;
  else if(a==0x1802550c)*v=m->rxidx;
  return 0;}
 static int rw(void *c,uint32_t a,uint32_t v){struct mock *m=c;int e=step(m);m->writes++;
@@ -24,7 +24,19 @@ static int rw(void *c,uint32_t a,uint32_t v){struct mock *m=c;int e=step(m);m->w
   unsigned char *rx=addr(BASE+0x4000+16*m->rxidx,16);unsigned bytes=m->response_bytes?m->response_bytes:36;put(rx+4,(bytes<<16)|(3u<<30));
   unsigned char *f=addr(BASE+0x5000+4096*m->rxidx,bytes);memset(f,0,bytes);f[27]=0xe0;f[28]=m->eid?m->eid:1;f[29]=addr(BASE+0x15000,72)[39]+m->badseq;f[33]=addr(BASE+0x15000,72)[36];m->rxidx=(m->rxidx+1)%16;
  }else assert(a==0x18025508);return e;}
-static int mr(void *c,uint64_t a,void *p,uint32_t n){struct mock *m=c;if(step(m))return -1;assert(m->event_sync);memcpy(p,addr(a,n),n);if(a>=BASE+0x5000&&a<BASE+0x15000)m->copied=1;return 0;}
+static int mr(void *c,uint64_t a,void *p,uint32_t n){struct mock *m=c;if(step(m))return -1;assert(m->event_sync);memcpy(p,addr(a,n),n);
+ if(a<BASE+0x4000&&n==16){
+  m->descriptor_reads++;
+  if(m->partial&&m->descriptor_reads==1)memset(p,0,16);
+  else if(m->corrupt_word){unsigned char *d=p;
+   if(m->corrupt_word==1)put(d,get(d)^4u);
+   if(m->corrupt_word==2)put(d+4,get(d+4)^(1u<<16));
+   if(m->corrupt_word==3)put(d+8,4);
+   if(m->corrupt_word==4)put(d+12,1);
+  }
+ }
+ if(a>=BASE+0x5000&&a<BASE+0x15000)m->copied=1;
+ return 0;}
 static int mw(void *c,uint64_t a,const void *p,uint32_t n){struct mock *m=c;int e=step(m);m->writes++;memcpy(addr(a,n),p,n);return e;}
 static int syncmem(void *c,uint64_t a,uint32_t n,unsigned way){struct mock *m=c;if(step(m))return -1;(void)addr(a,n);if(way==1){if(a==BASE+0x15000)m->command_sync=1;else m->desc_sync=1;}else {assert(way==2);m->event_sync=1;}return 0;}
 static int us(void *c,unsigned n){assert(n==1000);return step(c);}
@@ -47,5 +59,13 @@ int main(void){struct nwt_state s={0};struct mock m={0};assert(nwt_preflight(&io
  s=seeded();m=(struct mock){.active=1,.response_bytes=60,.eid=5};phy[39]=s.next_sequence;assert(nwt_capture(&io,&m,&s,phy,sizeof(phy),5,event,36,&captured)&&s.halt&&!captured);
  s=seeded();m=(struct mock){.active=1};assert(!nwt_exchange(&io,&m,&s,0x40));m.response_bytes=60;m.eid=5;phy[39]=s.next_sequence;assert(!nwt_capture(&io,&m,&s,phy,sizeof(phy),5,event,sizeof(event),&captured));m.response_bytes=0;m.eid=0;assert(!nwt_exchange(&io,&m,&s,0x41)&&s.completed==3&&s.finish_phase==2);
  for(unsigned mode=1;mode<=3;mode++){s=seeded();m=(struct mock){.active=1,.coherent=mode};assert(nwt_exchange(&io,&m,&s,0x40)&&s.halt&&!s.completed&&s.error==24);if(mode==1)assert(!m.writes);}
+ s=seeded();m=(struct mock){.active=1,.partial=1};assert(!nwt_exchange(&io,&m,&s,0x40)&&s.completed==1&&s.tx_ddone_waits==1&&s.tx_descriptor_valid==3&&!s.tx_mismatch&&s.tx_didx==1&&s.tx_used==68);
+ assert(s.tx_submitted[0]==s.command&&s.tx_observed[0]==s.command&&(s.tx_observed[1]&(1u<<31)));
+ for(unsigned word=1;word<=4;word++){
+  s=seeded();m=(struct mock){.active=1,.corrupt_word=word};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==16&&s.halt&&!s.completed&&s.tx_mismatch==(1u<<(word-1))&&s.tx_descriptor_valid==3&&!s.rx_descriptor_bytes);
+  before=m.calls;assert(nwt_exchange(&io,&m,&s,0x40)&&m.calls==before);
+ }
+ s=seeded();m=(struct mock){.active=1,.wrong_didx=1};assert(nwt_exchange(&io,&m,&s,0x40)&&s.error==15&&s.halt&&s.tx_descriptor_valid==1&&!m.descriptor_reads);
+ puts("PASS delta: invalid partial descriptor with DDONE0 waits; each DDONE1 pointer/length/DW2/DW3 corruption still fails; wrong DIDX/coherent stop retained; captured raw words and mismatch bits; no replay or RX rearm on error.");
  printf("PASS transport: %u legacy preflight faults; %u exchange callback faults; two finish commands; PHY-sized generic capture; bounded raw counts; no replay; TX DIDX plus DDONE; RX matching event; visibility; 1000-poll timeout. Host callback model only.\n",total,exchange);
 }

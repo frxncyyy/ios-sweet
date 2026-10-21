@@ -66,8 +66,22 @@ int nfp_xnu_span(unsigned span){assert(span==span_next++&&nwfn_native.stage==NWF
 int nfa_xnu_run(void){if(child())return -10;uint8_t cmd[464]={0};size_t bytes=0;cmd[36]=8;cmd[37]=0xa0;cmd[39]=nwfn_native.init.transport.next_sequence;assert(nwfn_native.init.transport.finish_phase==1);if(nwt_capture(&nwfn_io,&nwfn_native,&nwfn_native.init.transport,cmd,sizeof(cmd),5,nfa_native.exchange.rx,sizeof(nfa_native.exchange.rx),&bytes))return -11;nfa_native.exchange.event_valid=nfa_native.exchange.backup_valid=1;return 0;}
 int nfp_xnu_coex(void){assert(nfa_native.exchange.backup_valid);if(child())return -10;nfp_native.coex_done=1;return 0;}
 int nfp_xnu_finish(void){if(child())return -10;int r=nwfn_finish_command(0x41);if(!r)nfp_native.ready=1;return r;}
+/* Host scheduler model for the real terminal-drain helper. This fixture
+ * checks coordinator failure lifetime; detailed wake/context tests are in
+ * test-drain.c. No wall-clock sleep or device operation occurs here. */
+#define NSEC_PER_MSEC 1000000u
+#define THREAD_UNINT 0
+#define THREAD_WAITING (-1)
+#define THREAD_CONTINUE_NULL NULL
+static uint64_t drain_now,drain_deadline;
+static unsigned drain_blocks;
+static int preemption_enabled(void){return 1;}
+static void clock_interval_to_deadline(unsigned ms,unsigned scale,uint64_t *d){assert(ms==30000&&scale==NSEC_PER_MSEC);*d=drain_deadline=drain_now+ms;}
+static void clock_get_uptime(uint64_t *n){*n=drain_now;}
+static int assert_wait_deadline(void *channel,int mode,uint64_t d){assert(channel&&mode==THREAD_UNINT&&d==drain_deadline);return THREAD_WAITING;}
+static void thread_block(void *cont){assert(!cont&&nwfn_native.halt&&nwfn_native.init.halt&&nwfn_native.init.transport.halt);drain_blocks++;drain_now=drain_deadline;}
 #include "wifi_main_bind.inc"
-static void fixture(void){memset(&nwfn_main,0,sizeof(nwfn_main));memset(&nfp_native,0,sizeof(nfp_native));memset(&nfa_native,0,sizeof(nfa_native));child_calls=child_fail=child_failed=child_after=span_next=0;memset(&nwfn_native,0,sizeof(nwfn_native));memset(&nppa_native,0,sizeof(nppa_native));memset(reg,0,sizeof(reg));registers=mmio_reads=mmio_writes=delays=barriers=manual_halts=gic_active=clock_fail=ack_fail=inherited=0;main_flag=1;
+static void fixture(void){nwm_drain_entered=0;drain_now=drain_deadline=drain_blocks=0;memset(&nwfn_main,0,sizeof(nwfn_main));memset(&nfp_native,0,sizeof(nfp_native));memset(&nfa_native,0,sizeof(nfa_native));child_calls=child_fail=child_failed=child_after=span_next=0;memset(&nwfn_native,0,sizeof(nwfn_native));memset(&nppa_native,0,sizeof(nppa_native));memset(reg,0,sizeof(reg));registers=mmio_reads=mmio_writes=delays=barriers=manual_halts=gic_active=clock_fail=ack_fail=inherited=0;main_flag=1;
  nrpa_native.rom.receipt=1;nrpa_native.diag.state=(struct nrpc_state){.entered=1,.stage=16,.rom_ready=1,.cpu_release_attempted=1,.cpu_released=1,.power=1,.protection=1,.balanced=1,.rom_done=0x1d1e};nrpa_native.diag.asleep=1;nrpa_native.local=0x184b0000;nrpa_native.rom_done=0x184c1000;
  npa_native.host=0x18060000;npa_native.cfg=0x18001000;npa_native.rgu=0x18000000;npa_native.outer_retained=1;npa_native.state.retained=1;npa_native.state.hw_handoff=2;npa_native.state.result.phase=10;npa_native.state.result.retained=1;
  nw.spm=0x10006000;nw.infra=0x10001000;nw.gals=0x1020e000;nw.saved=nw.domain_touched=1;ni_saved=ncc_fresh_owned=npa_persistent_lifetime=1;ncc_latched_dirty=0;
@@ -85,6 +99,6 @@ int main(void){fixture();main_flag=0;assert(nwfn_prepare()==1&&!mmio_reads&&!mmi
  fixture();assert(!nwfn_prepare());ack_fail=1;assert(nwfn_start()<0&&nwfn_native.halt&&nwfn_native.ap_owned&&nwfn_native.ap_polls==12);
  fixture();assert(!nwfn_prepare());clock_fail=1;assert(nwfn_start()<0&&nwfn_native.halt&&nwfn_native.ap_owned&&nwfn_native.clock_spent<=16010);
  fixture();nwfn_after_pool();assert(nwfn_main.ready&&!nwfn_main.halt&&nwfn_native.stage==NWFN_RETAINED&&nwfn_native.init.transport.completed==3&&span_next==7);unsigned steps=child_calls;old=mmio_reads;nwfn_after_pool();assert(mmio_reads==old);
- for(unsigned failure=1;failure<=steps;failure++){fixture();child_fail=failure;nwfn_after_pool();assert(nwfn_main.halt&&!nwfn_main.ready&&nwfn_native.halt&&nwfn_native.init.halt&&nwfn_native.init.transport.halt&&!child_after);assert(manual_halts==(failure>=3));}
+ for(unsigned failure=1;failure<=steps;failure++){fixture();child_fail=failure;nwfn_after_pool();assert(nwfn_main.halt&&!nwfn_main.ready&&nwfn_native.halt&&nwfn_native.init.halt&&nwfn_native.init.transport.halt&&!child_after);assert(manual_halts==(failure>=3)&&drain_blocks==(failure>=3));}
  fixture();nppa_native.probe.state.halt=1;nwfn_after_pool();assert(nwfn_main.halt&&!child_calls&&!mmio_reads&&!mmio_writes);
  puts("PASS native callback model: default off, preparation without MMIO, fresh retained ownership, exact transport identity, memory bounds, GIC refusal, inherited balanced sleep/no post-sleep access, bounded ACK/clock failures. Coordinator source order, all child failure boundaries/common halt and no replay. No hardware execution.");}

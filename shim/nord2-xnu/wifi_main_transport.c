@@ -77,6 +77,9 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
  uint64_t txd=s->tx_ring+16u*s->tx_index,rxd=s->rx_ring+16u*s->rx_index;
  uint64_t rxbuf=s->rx_buffers+4096u*s->rx_index;
  if(nwt_tx_desc(d,s->command,used))return fail(s,14);
+ s->tx_descriptor_address=txd;s->tx_used=(uint32_t)used;s->tx_descriptor_valid=1;
+ s->tx_mismatch=0;s->tx_ddone_waits=0;s->tx_didx=s->tx_index;
+ for(unsigned word=0;word<4;word++){s->tx_submitted[word]=get32(d+4*word);s->tx_observed[word]=0;}
  if(mw(o,c,s,s->command,cmd,(uint32_t)used)||sync(o,c,s,s->command,(uint32_t)used,1)||mw(o,c,s,txd,d,16)||sync(o,c,s,txd,16,1))return -1;
  unsigned next=(s->tx_index+1)%NWT_TX_COUNT;s->submit_attempted=1;
  if(rw(o,c,s,TXBASE+8,next))return -1;
@@ -86,12 +89,21 @@ int nwt_capture(const struct nwt_io *o,void *c,struct nwt_state *s,
   if(coherent(o,c,s))return -1;
   if(rr(o,c,s,TXBASE+12,&idx))return -1;
   s->polls++;
+  s->tx_didx=idx;
   if(idx>=NWT_TX_COUNT)return fail(s,15);
   if(idx==s->tx_index)continue;
   if(idx!=next)return fail(s,15);
   if(sync(o,c,s,txd,16,2)||mr(o,c,s,txd,d,16))return -1;
-  if(get32(d)!=(uint32_t)s->command||((get32(d+4)>>16)&0x3fff)!=used||get32(d+8)||get32(d+12))return fail(s,16);
-  if(get32(d+4)&(1u<<31)){s->tx_done=1;break;}
+  for(unsigned word=0;word<4;word++)s->tx_observed[word]=get32(d+4*word);
+  s->tx_descriptor_valid|=2;
+  /* Selected hal_pdma completion waits for DMADONE before consuming any
+   * descriptor fields. Preserve strict echo checks once writeback is done. */
+  if(!(get32(d+4)&(1u<<31))){s->tx_ddone_waits++;continue;}
+  s->tx_mismatch=(get32(d)!=(uint32_t)s->command?1u:0u)|
+   (((get32(d+4)>>16)&0x3fff)!=used?2u:0u)|
+   (get32(d+8)?4u:0u)|(get32(d+12)?8u:0u);
+  if(s->tx_mismatch)return fail(s,16);
+  s->tx_done=1;break;
  }
  if(!s->tx_done)return fail(s,17);
  for(i=0;i<1000;i++){

@@ -3,6 +3,24 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **TXDONE ORDER/RAW DIAGNOSTICS PROMOTED; READY FOR CI.**
+  Private candidate68ff8bca independently reviewed PASS. Transport waits
+  DDONE before unchanged strict pointer/SDL0/DW2/DW3 checks, same1000poll
+  bound/ownership/coherenthalt/no replay/RXrearm on failure. Appended trace
+  captures intended/observed4words,descriptorPA,DIDX,length,validity,mismatch
+  andwaitcount; newTXDESC/TXSUBMIT/TXOBSERVED markers, no extra backendIO.
+  Main transportC/header/coordinator promoted together. 30sdrain retained.
+  Partialwriteback is NOT proven: configuredTX_WB_DDONE promises fullAXI
+  writeback beforeIRQ, so actualraw/DDONE capture still needed.
+  Canonical transport/initializer/native/halt ASanUBSan PASS. Native fixture
+  needed scheduler mocks for prior drain include; host-only fix now asserts
+  commonhalt and exactlyone drain beforeuncertainpanic. Exact priorCI-derived
+  actualgenerated sweet_touch andtransport ARM64 PASS withoutprivateincludes.
+  Patch13800lines applies/reproduces. New wifi-main-txdone/ios schema pinned;
+  CI/prepared/human gatesfalse. Currente0d3 healthy/no collectors. No new
+  hardwareapproval. UFS/boot speed closed; audio/nextWiFipackages private.
+
+
 - **DRAIN TEST CAPTURED ERROR16; e0d3 RESTORED/HUMAN-CONFIRMED.**
   Authorized ebfa71f6 boot-only flash/reboot OKAY. New30s failure drain
   enabled complete captured failure diagnostics before terminalpanic.
