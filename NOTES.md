@@ -3,7 +3,28 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **2026-10-22: iOS scan service source52bb4e7, CI39690505727 running; hardware untested.**
+- **iOS Wi-Fi scan-service image58f62ae6 VERIFIED; exact boot-only approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-service-scan-battery-stop23.img,
+  33409024B SHA256 58f62ae6c3e7650bd71d9c8f723360602ee6ac90ff1a21d03e269ec8ca769b4c,
+  payload b9d72642bf3e4eaa7de6b1b62af54e383c4f0fdb3bcda068d21de9fe2100b658;
+  boot spare145408B. CI39690505727 SUCCESS/source52bb4e7b9c1e7cf5cfab3a72e9d608ccf04368dd.
+  Kernel17603624B SHA820a1879f676177633ca877506a60ea0a06cba6ccfbca87d53cd5dada71e99f0.
+  All193 generated files equal CI;19 actual affected compilation units use
+  genericARMv8.2;2,250,267 decoded instructions contain no LDAPUR/STLUR.
+  Linked review9e567859/manifest53fbbac4 PASS: actual metaclasses/constructors,
+  registry/ifnet/userclient/cache/event and retained scan owner/drain paths.
+  Bounded1GiB pack and independent existing-image/header/loader/ADT/calibration/
+  kernel segments/rescue verification PASS. Root watcher88190 and pack50283
+  CLOSED. New wifi-ios-scan/ios prepared/source/identity gates true; all human
+  approval flags FALSE, runner UNUSED. Collector will allow300seconds for UI.
+  Current phone remains humanhealthy6a6a, no collector or device action.
+  Next obtain exact58f62ae6 boot-only approval plus physicalfastboot; use only
+  fresh stage runner. Conditional healthy6a6a and verified RAM rescue available;
+  never stock Android. Test actual wifid discovery/fresh scan/result/event and
+  Settings display separately from lockscreen/input health. No association,
+  security, data traffic, IP networking or UI success claimed before hardware.
+
+- **Source integration history: iOS scan service52bb4e7; CI subsequently passed above.**
   Explicit nord2wifiios=1 activates the retained radio worker queue and software
   ADT wlan provider. No firmware replay or repeated startup26 sequence. New
   scans preserve actual DMA/credit/sequence state; stale RX must drain before
@@ -23,7 +44,7 @@
   Canonical normal/capability/VCN33 and new scan-service sanitizer suites PASS:
   250+continuations, pending/budget drain refusal, wraps, cancellation, fatal
   drain/defaultoff; private actual IOUC/registry lifetime suites also PASS.
-  CI watcher root session88190 saves exact-source artifacts under research/ci-39690505727.
+  Exact-source artifacts are saved under research/ci-39690505727; watcher88190 closed.
   New source in shim/nord2-xnu/wifi_ios_* and wifi_scan_service*, canonical
   runner tools/test-nord2-wifi-scan-service.py. Fresh stage wifi-ios-scan/ios;
   no image or new approval yet, runner UNUSED. Phone remains healthy6a6a,
