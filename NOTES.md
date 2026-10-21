@@ -3,70 +3,45 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
-- **VCN33 image6a6a2ef7 VERIFIED; exact boot-only approval pending.**
-  shim/out/nord2-xnu/nord2-ios-wifi-vcn33-battery-stop23.img33390592B
-  SHA6a6a2ef79f03eaef540f4247016234217d5f8655b320c6afdf5dd81485c155ad
-  payloadde67271427569078c6544727fe73c459943679f5f453b7b0bbdbe78823318341;
-  bootspare163840B. CI39684479974/source97c2150d/kernelce122a75.
-  Bounded1GiB pack and independent loader/segment/ADT/privatecal/rescue/Linux/
-  DT/header checks plus --check-existing PASS. Fresh wifi-vcn33/ios prepared,
-  identity/schema true; all human authorization flags false, runner UNUSED.
-  Pending async question asks exact image plus conditional healthyc31/RAMrescue
-  recovery and physical fastboot. Do not flash until reply explicitly approves.
-  Phone still human-healthy c31, no collector or device action on this turn.
-  Next approved fresh runner only, collect fullUSB/strictVCN33+26/RXRF receipt,
-  compare actual MON/nominalselectors and RF counters without assuming success.
-  No fresh network interface/association/iOS service bridge activation yet.
+- **2026-10-22: VCN33 image 6a6a2ef7 is the current healthy baseline; real RF reception works.**
+  User confirms lockscreen, touch and buttons: call_dcedce3836584301a4a60eb424d84b2a.
+  Boot-only flash/reboot succeeded under approval call_657c74a78b6943c9bc996e2594f1d4d0.
+  Current image shim/out/nord2-xnu/nord2-ios-wifi-vcn33-battery-stop23.img,
+  33390592 bytes, SHA256 6a6a2ef79f03eaef540f4247016234217d5f8655b320c6afdf5dd81485c155ad.
+  CI 39684479974, source 97c2150d0f7e77b2a00af18a9c5d081017b00652;
+  kernel SHA256 ce122a75228da792a25c2fc448d9bfd7904fe751f4b1d976a9079936e19a6e2d.
+  Selected Android Wi-Fi power callback requires VCN33_1/2 RC configuration.
+  Five guarded writes select nominal 3.3 V and RC channels; no SW_EN or shared
+  VS2 write. Both MON registers read 3 before calibration and after firmware
+  ready. All 26 startup commands and the 22-channel scan complete successfully:
+  7 BSS, 8 received management frames/beacons, observed RF on 2.4 GHz.
+  The nine selected 5 GHz channels still have zero counters; 5 GHz reception,
+  association, packet networking and iOS Settings integration are NOT proven.
+  Independent hardware comparison preserves all 8 DMA queue rows, configuration
+  and command structure versus c31: strong evidence for the VCN33 correction.
+  Audit combined-backend/hardware-audit/vcn33-6a6a/REPORT.md,
+  manifest bb5fa99a391d1125a94d8fc3ad5f3aada3a4edf6404373738587886571b66847.
+  Immutable full USB log research/nord2/wifi-vcn33/ios/backend-full.log,
+  304825 bytes, SHA256 f3dc779e9f59145b77fd45462ee4cb7c0bbe45ebfb75f30f964a0d4ebcf40f85.
+  Strict VCN33 + 26-command/RXRF parser PASS, no issues. Collector 24737 exited
+  0 at deadline with no transport error, now CLOSED. hardware-result.json and
+  stage-pending.json record completed hardware and human health. Runner USED,
+  never rerun. No recovery, new device action or approval question pending.
+  Keep this boot on the phone. UFS and boot speed are completed by user request.
 
-- **VCN33 CI39684479974 SUCCESS; verified kernel and linked review, packing.**
-  Source97c2150d0f7e77b2a00af18a9c5d081017b00652; kernel17535336B
-  SHAce122a75228da792a25c2fc448d9bfd7904fe751f4b1d976a9079936e19a6e2d.
-  All163generatedfiles equal CI;14actualgenericARMv8.2 TUs;2,242,684decoded
-  instructions withoutLDAPUR/STLUR. Linked review54b57a6f/manifesta64af978
-  verifies actual five-write transaction, input-only PMIF and retained halt.
-  Fresh wifi-vcn33/ios identity/schema gates true; bounded1GiB pack session65284
-  running. Image/prepared/humanapproval pending, runner UNUSED; phone healthyc31.
-  Private iOS bridge boot-cache-native manifest84b8020a/review6ebd5cad PASS:
-  actual normal-worker immutable nsb export,45guard cases and selected owning
-  TU compile. NOT activated, no fresh UI scan/IOUC registration/event producer.
-  Next finishpack and independent image check, then exact new boot-only approval.
-
-- **VCN33 source97c2150d CI39684479974 running.**
-  Root watcher30924 downloads CI artifacts to research/ci-39684479974.
-  Canonical VCN33/main/persistent/normal/capability tests and focused
-  wifi_vcn33/sweet_touch ARM64 compilation PASS. Parser review5c1b99b7
-  validates strict26/RXRF plus rail observations; all physical claims pending.
-  Fresh wifi-vcn33/ios source_complete true, CI/identity/schema/image/human
-  gates false; exact c31 fallback, no executed runner or device action.
-  cap_stage prepares linked review; after_id advances private real iOS hook.
-  Next verify source/artifact, bounded1GiB pack, independent image check,
-  then exact new boot-only approval. Current phone remains healthyc31.
-
-- **VCN33 source integrated; independent safety review and focused ARM64 PASS.**
-  Private candidate5db2e819, independent implementation review7cbe6cca;
-  selected source/safety reports6552260e/234ea377. Added explicit
-  nord2wifivcn33=1, five guarded writes, owner-thread PMIF telemetry and
-  retained failure handling. No SW_EN or shared VS2 write; MON observational.
-  Generated0082 applies and matches; normal ARM64 wifi_vcn33/sweet_touch PASS.
-  Canonical VCN33/main/persistent/full normal/capability suites PASS.
-  Fresh wifi-vcn33/ios gates remain false, fallback healthyc31; no device action.
-  Next finish tests, commit/push source to fork, full CI and linked/image checks.
-
-- **2026-10-22: Claude RF analysis complete; VCN33 omission independently confirmed.**
-  research/nord2/wifi/claude-opus-rf-c31/REPORT.md identifies the separate
-  conninfra Wi-Fi power callback configuring VCN33_1/2; current port omits it.
-  Independent selected-source review is combined-backend/vcn33-source-review/
-  REPORT.md, manifest6552260e. Initial c31 snapshots show both MON=0,
-  OP_EN=8000, VOSEL=f00. Later rail state and causality remain unmeasured.
-  Selected Linux4.19 uses masked OP_CFG clearing, not the alternate SET0
-  branch. RC channels6/5 and6, nominal3.3V selectorD, no SW_EN. Candidate
-  under private implementation: off-state guards, voltage-first deliberate
-  refinement, bounded full readbacks, retained failure policy, owner-thread
-  PMIF observations. Shared VS2 is read-only metadata, never blind adjustment.
-  Root owns integration/CI/device; format_stage implements privately,
-  cap_stage reviews, after_id prepares fresh wifi-vcn33/ios stage/parser.
-  No new source integrated/build/image/flash approval yet. Phone remains
-  human-healthy c31; collector closed. Existing executed runners stay unused.
+- **Next cohesive task: actual iOS Wi-Fi scan service and association path.**
+  Root owns canonical source, CI and device actions. Existing private bridge
+  boot-cache-native manifest84b8020a/review6ebd5cad has a real immutable nsb
+  cache export but remains unactivated; it does not perform fresh UI scans.
+  after_id now implements retained worker scan continuation/queue and fresh
+  completion; format_stage implements actual service/IOUserClient registration,
+  cache/event wiring and honest unsupported association; cap_stage resolves
+  populated Apple scan conversion and matching and reviews the candidates.
+  Do not build another tiny radio diagnostic or tune VS2/DMA speculatively.
+  Before a new destructive flash, prepare/verify the concrete image and obtain
+  its exact approval per AGENTS.md. Healthy 6a6a and verified RAM rescue remain
+  available; never boot stock Android over the installed iOS userdata.
+  Previous c31 receipt/history below is retained as comparison evidence.
 
 - **c31 receive lifecycle26 HARDWARE-HEALTHY, still ZERO RF; delegated to Claude.**
   Human lockscreen/touch/buttons confirmed call_858994b387c746c392746d6863609a2e.
