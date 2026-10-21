@@ -3,6 +3,65 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **RX FORMAT IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-rxformat-battery-stop23.img`,
+  33347584 bytes, SHA256
+  8f1824f18a3ec8a70d75dbbcc65a8f2075da2fe12259253c1a0896786e9bcf0b.
+  Payload7b3cbcea20645b82c0367359b21659527d9094e5e701ff25bd57f455cbea1e0e.
+  CI39617764738/source8b33a45453c6d3222c73a1acacf3dadf97d21c5b;
+  kernel17463416 bytes SHAfa02e1e181bc18e8736ed658526927fad3978a4585a3fd522425aad25086d416.
+  Targeted linked format/status/CID/PHY/ABI review PASS. Bounded1GiB pack
+  exit0; independent fresh loader/segments/ADT/calibration/Linux/dualDT/raw
+  rescue/header verification PASS,206848 bytes spare. Existing manifest and
+  payload rechecked; e0d3/RAM-rescue actual hashes rechecked. Private stage
+  identity/schema/prepared gates true; human exact/RF/conditional-recovery
+  authorization FALSE, runner NEVER executed. New exact approval required
+  for same firmware/calibration attempt, boot only, 30-second failure drain,
+  conditional e0d3 or verified RAM-rescue recovery. No actual ACK/PHY/main
+  success yet. Current phone e0d3 human-healthy; no collectors running.
+  UFS/boot speed unchanged. Claude audio partial revision5 is frozen as
+  revision5-review/input, manifest547baeeb; Sol review/test completion active.
+
+
+- **RX FORMAT CI39617764738 SUCCESS; IMAGE PACKING.**
+  Source8b33a45453c6d3222c73a1acacf3dadf97d21c5b; kernel17463416 bytes,
+  SHA256 fa02e1e181bc18e8736ed658526927fad3978a4585a3fd522425aad25086d416.
+  Full artifact/SHA/source identity verified; 1134 generic ARMv8.2+crypto
+  invocations across1133 lines, one interleaved pair. Targeted linked INIT
+  format/CID/status/PHY/ABI review PASS. Private stage identity/schema gates
+  true; bounded1GiB image compression underway, prepared/approval false.
+  Phone e0d3 human-healthy. UFS/boot speed unchanged.
+
+- **CLAUDE AUDIO HIT LIMIT AGAIN; PARTIAL WORK PRESERVED.**
+  Resumed Opus5.5 wrote audio_afe.h/c, snapshot POWERON_CONFIG_EN addition
+  and partial binder evidence mapping in candidate-next, then returned
+  session limit (reset21:20 Europe/Rome). No completed tests/manifest claimed.
+  Original partial files are preserved; Sol is reviewing a separate private
+  audio/revision5-review copy, including concrete checks/fixes. No active
+  audio integration or hardware execution. Visible desktop3 viewer retains
+  session output, including rate-limit result.
+
+
+- **PRIVATE CAPABILITY PREPARATION UPDATED; NOT ACTIVATED.**
+  after-fw-ready/runtime-init-format-rebase manifest40dc28d3 matches current
+  RX ABI (nwt1176/nwi3040/nwfn7440), with 35 cross-TU checks and sanitizer
+  tests. Peer review found unchanged normal-command TX still rejected the
+  measured consumed-zero completion. Separate runtime-tx-completion candidate
+  0b2550ce fixes DDONE-first/exact80000000 with pointer/DW2/DW3/software-owned
+  length checks; independent review and both sanitizer suites pass. Normal
+  event E000 format remains unproven and unchanged. Default-off and actual
+  FW_READY gate remain; no activation. Production integration still needs
+  whole-context compile/link and an explicit failure-log capture policy.
+
+
+- **RX FORMAT FULL CI39617764738 STARTED.**
+  Source8b33a45453c6d3222c73a1acacf3dadf97d21c5b contains the measured INIT
+  format correction and focused fixtures. Local normal-context compiles and
+  affected sanitizer checks passed. Full artifact/linked/image verification
+  pending; new image approval not yet requested. Phone e0d3 human-healthy.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39617764738
+
+
 - **MEASURED INIT FORMAT FIX PROMOTED; READY FOR FULL CI.**
   Four exact reviewed runtime files from candidate e174323a promoted together.
   Accept only measured inner type 0007 and legacy e000; remove three CID echo
