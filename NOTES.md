@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **TXDONE923d7cea IDENTIFIES CONSUMED DESCRIPTOR; e0d3 RESTORED/HEALTHY.**
+  Boot-only flash/reboot OKAY. Immutable failure snapshot150834B SHA256
+  8f8da54e00bef8e7f25ec472c2954e55753ddd5d942f30e71eee84ac42b6d6cd.
+  Stage4 patchfinish, transporterror16: expectedDIDX1,DDONE1, used68,
+  submitted90005000/40440000/0/0 observed90005000/80000000/0/0.
+  Pointer/DW2/DW3 match; SDL0ANDLastSec0 consumed. Not earlyDDONE race.
+  DMA1bit27 normalTX17completion; coherent20/21 clear. NoRX/PHY/mainready.
+  Exact measured zero-control exception candidatefc14aeb9 reviewedPASS;
+  retains expectedDIDX/DDONE/pointer/unusedwords/softwareused/ownership,
+  rejects zero plus othercontrolbits; actual matchingRX stillrequired.
+  User manuallyenteredfastboot; conditional e0d3 restore/reboot OKAY,
+  USB90s capture224056B SHA256
+  8a96dbccc7fde179f275f90546ab66c066f46b8be4c9262771e736d220d8c629.
+  Human confirms lockscreen/touch/buttons. No preservedfailureprefix;
+  original failure safelycaptured. Allcollectors finished. Evidence under
+  wifi-main-txdone/ios; NEVER rerun either executed runner or restoration.
+  Next private stage wifi-main-txwriteback/ios gatesfalse; no newimage or
+  approval. UFS/boot speed unchanged; nextWiFi/audio remain private.
+
+
+- **TXDONE IMAGE923d7cea AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exactimage/samefirmwareRF attempt/conditional e0d3 or RAMrescue
+  restoration, fastboot confirmed privately. wifi-main-txdone/ios runner
+  executes once, USB180s collector before reboot. Do not rerun onceflash.log
+  exists. Runtime result pending. UFS/boot speed unchanged.
+
+
 - **TXDONE IMAGE VERIFIED; NEW EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-txdone-battery-stop23.img`,
   33347584B SHA256 923d7cea9abf666ef11ec78026f6421c74cce2d8c719047def0caf0e5fc6bfb2.
