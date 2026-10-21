@@ -3,6 +3,18 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **AP-WAKE FULL CI39568093909 RUNNING.**
+  Source6978794fde46fd1410c631eb0ee4b918a6065c2a pushed to fork.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39568093909
+  Production parity/default-off/build wiring review PASS. Focused ARM64 and
+  canonical sanitizer tests PASS. Await full success, artifact/source/flags
+  verification and linked review, then bounded image packing and exact new
+  boot-only approval. Current c6cb phone remains healthy; no device operation.
+  Next args equal current c6cb plus nord2wifiwake=1 only. Private templates
+  remain unapproved. UFS/boot untouched. Source-only WFSYS/ROM prerequisite
+  audit proceeds independently; no DRAM/MPU/CPU release in this image.
+
+
 - **AP-WAKE SOURCE PROMOTED; FOCUSED VALIDATION PASSED.**
   Exact independently reviewed native-binding files promoted to canonical
   wifi_wake core/adapter/bind, two separate guarded BSD translation units.
