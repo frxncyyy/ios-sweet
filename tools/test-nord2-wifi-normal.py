@@ -5,7 +5,7 @@ import argparse,hashlib,json,subprocess,tempfile
 R=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--board',type=Path,default=R/'research/nord2/wifi/calibration/WIFI',help='Read-only authenticated 6146-byte board file; never embedded in fixtures/output')
-parser.add_argument('--only',choices=('all','full','faults'),default='all')
+parser.add_argument('--only',choices=('all','full','faults','sleepy','sleepy-faults','sleepy-decoder'),default='all')
 parser.add_argument('--cc',default='clang')
 parser.add_argument('--log-dir',type=Path,help='Optional directory for synthetic captured test output')
 parser.add_argument('--report',type=Path,help='Optional JSON source/fixture hashes and summaries, no packet/board bytes')
@@ -29,6 +29,9 @@ with tempfile.TemporaryDirectory(prefix='nord2-normal-') as td:
   adapter,n=re.subn(r'(static int ncd_native_'+name+r'\([^)]*\)\s*\{)',r'\1\n#ifdef FULL_FAULTS\nif(full_test_fail())return -1;\n#endif\n',adapter,count=1)
   if n!=1:raise RuntimeError('callback fixture schema mismatch: '+name)
  (d/'wifi_capability_bind.inc').write_text(adapter)
+ basic=(S/'wifi_basic_config_bind.inc').read_text();marker=' int result=nbc_prepare'
+ if basic.count(marker)!=1:raise RuntimeError('preCID2 firmware-arrival fixture schema mismatch')
+ (d/'wifi_basic_config_bind.inc').write_text(basic.replace(marker,' sleepy_pre_basic();\n'+marker))
  # Only the call site is instrumented; the canonical readback helper and native owner remain unchanged.
  rx=(S/'wifi_normal_rx.c').read_text()
  marker='#include \"wifi_normal_rx.h\"'
@@ -36,8 +39,8 @@ with tempfile.TemporaryDirectory(prefix='nord2-normal-') as td:
  rx=rx.replace(marker,marker+'\nextern int nrd_host_probe(const struct ncd_io*,void*,struct ncr_state*,struct nrd_snapshot*,unsigned);\n#define nrd_capture nrd_host_probe')
  (d/'wifi_normal_rx.c').write_text(rx)
  files=[d/'wifi_normal_rx.c' if x.name=='wifi_normal_rx.c' else x for x in files]
- for name in (('full','faults') if args.only=='all' else (args.only,)):
-  exe=d/name;cmd=[args.cc,'-std=c11','-DNCFG_HOST_TEST','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-I'+str(d),'-I'+str(S),str(P/('test-'+name+'.c'))]+list(map(str,files))+['-lcrypto','-o',str(exe)]
+ for name in (('full','faults','sleepy','sleepy-faults','sleepy-decoder') if args.only=='all' else (args.only,)):
+  exe=d/name;cmd=[args.cc,'-std=c11','-DNCFG_HOST_TEST','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-I'+str(d),'-I'+str(S),str(P/('test-'+name+'.c'))]+list(map(str,[] if name=='sleepy-decoder' else files))+['-lcrypto','-o',str(exe)]
   subprocess.run(cmd,check=True);run=subprocess.run([str(exe),str(board)],capture_output=True,text=True)
   if run.returncode:
    print(run.stdout[-6000:]);print(run.stderr);run.check_returncode()

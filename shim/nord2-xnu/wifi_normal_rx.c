@@ -1,4 +1,5 @@
 #include "wifi_normal_rx.h"
+#include "wifi_async_event.h"
 static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
 static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
 static void copy(void*d,const void*s,size_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
@@ -66,7 +67,7 @@ static int classify(struct ncr_state*s,uint64_t now){
  }else if(h.eid==0x27){
   h.kind=2;if(n<48||u16(p+44)>n-48){s->malformed++;}else s->debug++;
  }else if(h.eid==7){
-  h.kind=3;if(n<40)s->malformed++;else{s->sleepy++;h.status=p[36];}
+  h.kind=3;uint8_t state;if(nwe_sleepy(p,n,&state)!=1)s->malformed++;else{s->sleepy++;h.status=state;}
   /* Record firmware sleep advice only. Never yield AP/WF ownership. */
  }else if(h.eid==0xf0||(h.eid==0xed&&p[32]==0x23)){
   h.kind=4;

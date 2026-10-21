@@ -3,6 +3,21 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **Async EID7 correction integrated; one CI build next.**
+  Current phone remains c3ce7dcf, human confirms healthy after f53 recovery.
+  Shared source-exact sleepy decoder covers CAP/BASIC/normal; raw uint8 hint
+  never creates ACK, TX completion or firmware ownership. Proposal951320e1,
+  independent reviewb63ce626; explicit async parser84538436/review1f03e14f.
+  Canonical full22/fivequeues plus450faults,185new BASICfaults,65578decoder
+  checks and all8 CAP/BASIC suites PASS. Old EID7-refusal fixture updated to
+  require hints consumed but no capability completion. Four actual normal
+  ARM64 focused compiles PASS; generated0082 clean/equal, new header only.
+  Fresh wifi-async-scan/ios has exact source/parser pins, CI/schema gatesfalse,
+  image/authorization absent and runnerunused. Keeps source-correct V2 scan
+  BSSID and readonly DMA/RF snapshots, still hardware-unreached after f53.
+  Next: one CI, artifact/linked verification, bounded image pack, exact new
+  boot-only approval. Never rerun failedf53/restore-c3 runners or stock boot.
+
 
 - **c3 recovery complete and HUMAN-HEALTHY after failedf53 test.**
   User confirms lockscreen/touch/buttons call_7cbc3ffb5d7b4dfe9555d7bb01c996e5.

@@ -1,4 +1,5 @@
 #include "wifi_capability_dispatcher.h"
+#include "wifi_async_event.h"
 #define TX_CIDX 0x18025418u
 #define TX_DIDX 0x1802541cu
 #define RX_CIDX 0x18025508u
@@ -68,7 +69,7 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
  /* Capture only the already-owned, copied RXD24 + event12 header. Never
   * include byte36 onward (capability/debug body and possible MAC TLV).
   * The inner type is opaque for exact EIDec capability and bounded EID27
-  * ASCII debug; unsupported EIDs retain strict inner-type fail-stop. */
+  * ASCII debug and unsolicited sleepy metadata; unsupported EIDs retain strict inner-type fail-stop. */
  h->inner_type=u16(p+26);
  for(unsigned k=0;k<sizeof(h->header);k++)h->header[k]=p[k];
  h->header_valid=1;
@@ -90,8 +91,13 @@ static int event_kind(struct ncd_state*s,struct ncd_event*h){
   if(h->debug_bytes>1200||h->debug_bytes>n-48)return fail(s,22);
   h->kind=2;s->debug_events++;return 0;
  }
+ if(h->eid==7){
+  uint8_t state;
+  if(nwe_sleepy(p,n,&state)!=1)return fail(s,22);
+  h->kind=3;h->debug_type=state;return 0;
+ }
  if(p[26]||p[27]!=0xe0)return fail(s,20);
- /* Sleepy/TXdone/ownership/failure/unknown events need their actual handler.
+ /* TXdone/ownership/failure/unknown events need their actual handler.
   * Capture metadata but never silently discard, acknowledge or rearm them. */
  h->kind=4;return fail(s,23);
 }

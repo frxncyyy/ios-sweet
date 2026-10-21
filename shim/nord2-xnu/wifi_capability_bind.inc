@@ -86,6 +86,7 @@ static void ncd_report(int result)
   printf("NORD2 WIFI CAP EVENT: n=%u kind=%u type=%#x eid=%#x seq=%u bytes=%u declared=%u/%u debug_type=%u debug_bytes=%u\n",
    k,h->kind,h->rx_class,h->eid,h->sequence,h->bytes,h->rxd_bytes,h->event_bytes,
    h->debug_type,h->debug_bytes);
+  if(h->kind==3)printf("NORD2 WIFI CAP SLEEPY: n=%u state=%u\n",k,(unsigned)h->debug_type);
   printf("NORD2 WIFI CAP EVENTHEADER: n=%u valid=%u bytes=%u inner=%#x raw=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
    k,h->header_valid,h->header_valid?(unsigned)sizeof(h->header):0,h->inner_type,
    ncd_header_word(h,0),ncd_header_word(h,1),ncd_header_word(h,2),

@@ -66,7 +66,10 @@ static void fixture(void){memset(memory,0,sizeof(memory));pool=(struct npp_state
 int main(void){struct ncd_state s={0};struct mock m={.txidx=3,.rxidx=3};fixture();assert(ncd_run(&io,&m,&init,&firmware,&s,0)<0&&!m.calls);assert(!ncd_run(&io,&m,&init,&firmware,&s,1)&&s.completed&&s.events==2&&s.debug_events==1&&!s.sequence_echo&&s.sequence_mismatches==1&&s.rearmed==2&&s.capability.mac_valid&&init.transport.completed==4&&init.transport.finish_phase==2&&init.transport.rx_index==5);unsigned total=m.calls,old=m.calls;assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&m.calls==old);
  for(unsigned fault=1;fault<=total;fault++){fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.fail=fault};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.halt&&init.halt&&init.transport.halt&&!m.after);old=m.calls;assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&m.calls==old);}
  fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=1};assert(!ncd_run(&io,&m,&init,&firmware,&s,1)&&s.events==1&&s.sequence_echo&&!s.sequence_mismatches);
- for(unsigned mode=3;mode<=5;mode++){fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=mode};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.halt&&!m.rxpub);}
+ /* Unsolicited sleepy hints may be consumed, but cannot satisfy capability. */
+ fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=3};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.halt&&!s.completed&&!s.matched&&s.events==3&&s.rearmed==3&&m.rxpub==3&&init.transport.completed==3);
+ for(unsigned k=0;k<s.events;k++)assert(s.history[k].kind==3&&s.history[k].eid==7);
+ for(unsigned mode=4;mode<=5;mode++){fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=mode};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.halt&&!m.rxpub);}
  fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.coherent=1};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&!m.writes&&s.error==10);
  for(unsigned mode=6;mode<=10;mode++){fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=mode};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.halt&&!m.rxpub);}
  fixture();s=(struct ncd_state){0};m=(struct mock){.txidx=3,.rxidx=3,.mode=1,.coherent=2};assert(ncd_run(&io,&m,&init,&firmware,&s,1)<0&&s.error==10&&s.capability.decoded&&!s.completed&&!m.rxpub);

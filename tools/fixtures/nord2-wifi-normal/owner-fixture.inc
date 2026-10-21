@@ -43,6 +43,14 @@ static uint32_t ni_rd(uintptr_t b,unsigned o){uint32_t a=(uint32_t)b+o;assert(a!
 static uint32_t get32(const unsigned char *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put32(unsigned char *p,uint32_t v){for(unsigned i=0;i<4;i++)p[i]=(unsigned char)(v>>(8*i));}
 static void hardware_register(uint32_t a,uint32_t v){for(unsigned i=0;i<registers;i++)if(reg[i].address==a){reg[i].value=v;return;}assert(registers<2048);reg[registers].address=a;reg[registers++].value=v;}
+static unsigned sleep_cap,sleep_pre,sleep_post,sleep_state,sleep_eid=7,sleep_bytes=40,sleep_outer=0x3800,sleep_stream,sleep_pushed,sleep_mixed,sleep_normal,sleep_delay;
+static unsigned sleepy_didx(void){for(unsigned j=0;j<registers;j++)if(reg[j].address==0x1802550c)return reg[j].value;return nwfn_native.init.transport.rx_index;}
+static void sleepy_at(unsigned index){struct nwt_state*t=&nwfn_native.init.transport;uint8_t*d=pool_memory+(t->rx_ring-NDP_POOL_BASE)+16*index,*p=pool_memory+(t->rx_buffers-NDP_POOL_BASE)+4096*index;
+ memset(p,0,sleep_bytes);p[0]=p[1]=p[24]=p[25]=255;p[2]=(uint8_t)sleep_outer;p[3]=(uint8_t)(sleep_outer>>8);p[26]=0x34;p[27]=0x12;p[28]=(uint8_t)sleep_eid;p[29]=255;p[36]=(uint8_t)sleep_state;p[37]=p[38]=p[39]=255;if(sleep_bytes>40)memset(p+40,0xab,sleep_bytes-40);
+ if(sleep_mixed&&(sleep_pushed&1)){p[28]=0x27;p[38]=3;p[44]=p[45]=0;}
+ put32(d,(uint32_t)(t->rx_buffers+4096*index));put32(d+4,0xc0000000u|(sleep_bytes<<16));put32(d+8,0);put32(d+12,0);}
+static void sleepy_enqueue(unsigned count){unsigned index=sleepy_didx();while(count--){sleepy_at(index);index=(index+1)%16;sleep_pushed++;}hardware_register(0x1802550c,index);}
+static void sleepy_pre_basic(void){sleepy_enqueue(sleep_pre);}
 static void simulated_completion(unsigned next){
  struct nwt_state *t=&nwfn_native.init.transport;
  unsigned char *tx=pool_memory+(t->tx_ring-NDP_POOL_BASE)+16*t->tx_index;
@@ -58,6 +66,7 @@ static void simulated_completion(unsigned next){
   for(unsigned k=64;k<76;k++)assert(!cmd[k]);
   assert(get32(tx+4)==0x404c0000u);put32(tx+4,0x80000000u);if(completion_custom)for(unsigned k=0;k<4;k++)put32(tx+4*k,completion_raw[k]);hardware_register(0x1802541c,completion_didx_override==UINT32_MAX?next:completion_didx_override);basic_pubs++;
   if(basic_pending)hardware_register(0x18025200,0x20000000u);
+  sleepy_enqueue(sleep_post);
   return; /* no fabricated RX or firmware ACK for CID2 */
  }
  unsigned bytes=cmd[36]==0x8a?116:cmd[36]==8?60:36;
@@ -74,12 +83,14 @@ static void simulated_completion(unsigned next){
   put32(event+96,8);put32(event+100,12);event[106]=1;event[107]=2;event[108]=2;event[114]=15;
  }
  hardware_register(0x1802541c,next);hardware_register(0x1802550c,(t->rx_index+1)%16);
+ if(cmd[36]==0x8a&&sleep_cap){unsigned dst=(t->rx_index+sleep_cap)%16;uint8_t*dd=pool_memory+(t->rx_ring-NDP_POOL_BASE)+16*dst,*dp=pool_memory+(t->rx_buffers-NDP_POOL_BASE)+4096*dst;memcpy(dp,event,bytes);put32(dd,(uint32_t)(t->rx_buffers+4096*dst));put32(dd+4,0xc0000000u|(bytes<<16));put32(dd+8,0);put32(dd+12,0);for(unsigned k=0;k<sleep_cap;k++)sleepy_at((t->rx_index+k)%16);hardware_register(0x1802550c,(dst+1)%16);}
+
 }
-static void ni_wr(uintptr_t b,unsigned o,uint32_t v){uint32_t a=(uint32_t)b+o;mmio_writes++;
+static void ni_wr(uintptr_t b,unsigned o,uint32_t v){uint32_t a=(uint32_t)b+o;mmio_writes++;if(a==0x18025508&&basic_pubs&&sleep_pushed<sleep_stream)sleepy_enqueue(1);
  assert(a!=0x18024228&&a!=0x18025228);if(a==0x18025418&&nwfn_native.stage==NWFN_RETAINED&&nwfn_native.init.transport.submit_attempted)simulated_completion(v);if(a==0x18060010){assert(v==2);v=0;}if(a==0x18060000&&!clock_fail)v|=6;
  for(unsigned i=0;i<registers;i++)if(reg[i].address==a){reg[i].value=v;return;}
  assert(registers<2048);reg[registers].address=a;reg[registers++].value=v;}
-static void delay(unsigned us){assert(us==1||us==10||us==500||us==1000);delays++;}
+static void delay(unsigned us){if(us==1000&&basic_pubs&&sleep_delay){sleep_delay=0;sleepy_enqueue(1);struct nwt_state*t=&nwfn_native.init.transport;uint8_t*d=pool_memory+(t->tx_ring-NDP_POOL_BASE)+16*t->tx_index;put32(d+4,get32(d+4)|0x80000000u);}assert(us==1||us==10||us==500||us==1000);delays++;}
 static void nwfn_test_barrier(void){barriers++;}
 static void panic(const char *message){assert(strstr(message,"manual reset"));manual_halts++;longjmp(parked_exit,2);}
 static int ncd_normal_owner_window(const struct nwfn_native *);

@@ -12117,10 +12117,11 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_rx.c
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,159 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_normal_rx.h"
++#include "wifi_async_event.h"
 +static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
 +static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
 +static void copy(void*d,const void*s,size_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
@@ -12188,7 +12189,7 @@
 + }else if(h.eid==0x27){
 +  h.kind=2;if(n<48||u16(p+44)>n-48){s->malformed++;}else s->debug++;
 + }else if(h.eid==7){
-+  h.kind=3;if(n<40)s->malformed++;else{s->sleepy++;h.status=p[36];}
++  h.kind=3;uint8_t state;if(nwe_sleepy(p,n,&state)!=1)s->malformed++;else{s->sleepy++;h.status=state;}
 +  /* Record firmware sleep advice only. Never yield AP/WF ownership. */
 + }else if(h.eid==0xf0||(h.eid==0xed&&p[32]==0x23)){
 +  h.kind=4;
@@ -13014,10 +13015,11 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_basic_config.c
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,136 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_basic_config.h"
++#include "wifi_async_event.h"
 +static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
 +static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
 +static int cap_receipt(const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
@@ -13068,13 +13070,14 @@
 +static int sy(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,uint32_t n,unsigned w){if(before(o,c,s))return -1;s->callbacks++;return o->bus->sync(c,a,n,w)?fail(s,8):0;}
 +static int coherent(const struct ncd_io*o,void*c,struct nbc_state*s){s->irq_valid=0;for(unsigned d=0;d<2;d++){if(rr(o,c,s,0x18024200+0x1000*d,&s->irq[d]))return -1;s->irq_valid|=1u<<d;if(s->irq[d]&0x00300000)return fail(s,10);}return 0;}
 +/* Observe pending events without waiting for an invented command-result ACK.
-+ * Only bounded existing ASCII debug metadata may be consumed/rearmed. */
++ * Only bounded recognized ASCII debug and unsolicited sleepy metadata may
++ * be consumed/rearmed. Neither is a firmware ACK or ownership transition. */
 +static int drain(const struct ncd_io*o,void*c,struct nbc_state*s){struct nwt_state*t=&s->init->transport;uint32_t v;
 + for(;;){
 +  if(coherent(o,c,s)||rr(o,c,s,0x1802550c,&v))return -1;
 +  if(v>=16)return fail(s,20);
 +  if(v==t->rx_index)return 0;
-+  if(s->debug_events>=NBC_RX_BUDGET)return fail(s,21);
++  if(s->debug_events+s->sleepy_events>=NBC_RX_BUDGET)return fail(s,21);
 +  uint64_t d=t->rx_ring+16u*t->rx_index,b=t->rx_buffers+4096u*t->rx_index;
 +  if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
 +  if(nwt_rx_complete(s->descriptor,b,3840,&s->rx_bytes))return fail(s,22);
@@ -13085,9 +13088,15 @@
 +  h->bytes=(uint32_t)n;h->rxd_bytes=u16(p);h->event_bytes=u16(p+24);h->rx_class=u16(p+2);
 +  h->eid=p[28];h->sequence=p[29];h->inner_type=u16(p+26);h->header_valid=1;h->kind=4;
 +  for(unsigned k=0;k<36;k++)h->header[k]=p[k];
-+  if(n>=48){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
-+  if(n<48||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
-+  h->kind=2;s->debug_events++;if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
++  if(n>=48&&p[28]==0x27){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
++  if(p[28]==7){
++   uint8_t state;if(nwe_sleepy(p,n,&state)!=1)return fail(s,23);
++   h->kind=3;h->debug_type=state;s->sleepy_events++;s->last_sleepy=state;
++  }else{
++   if(n<48||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
++   h->kind=2;s->debug_events++;
++  }
++  if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
 +  s->rearmed++;t->rx_index=(t->rx_index+1)%16;
 + }
 +}
@@ -13145,7 +13154,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_basic_config.h
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,30 @@
 +#ifndef PRIVATE_BASIC_CONFIG_H
 +#define PRIVATE_BASIC_CONFIG_H
 +#include "wifi_capability_dispatcher.h"
@@ -13160,6 +13169,7 @@
 + struct ncd_state *cap;struct nwi_state *init;const struct nfp_native *firmware;
 + unsigned attempted,prepared,entered,phase,halt,error,mutated,submit_attempted,tx_done,completed;
 + unsigned skipped,skip_reason,polls,debug_events,rearmed,metadata_valid;
++ unsigned sleepy_events,last_sleepy;
 + unsigned tx_index,rx_index,callbacks,publications,tx_didx,tx_consumed;uint32_t tx_control,tx_raw[4];unsigned tx_observed;
 + uint64_t tx_descriptor_address,tx_expected_buffer;uint8_t sequence;
 + struct ncd_event last_debug;unsigned debug_index;
@@ -13371,10 +13381,11 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_dispatcher.c
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,179 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_capability_dispatcher.h"
++#include "wifi_async_event.h"
 +#define TX_CIDX 0x18025418u
 +#define TX_DIDX 0x1802541cu
 +#define RX_CIDX 0x18025508u
@@ -13444,7 +13455,7 @@
 + /* Capture only the already-owned, copied RXD24 + event12 header. Never
 +  * include byte36 onward (capability/debug body and possible MAC TLV).
 +  * The inner type is opaque for exact EIDec capability and bounded EID27
-+  * ASCII debug; unsupported EIDs retain strict inner-type fail-stop. */
++  * ASCII debug and unsolicited sleepy metadata; unsupported EIDs retain strict inner-type fail-stop. */
 + h->inner_type=u16(p+26);
 + for(unsigned k=0;k<sizeof(h->header);k++)h->header[k]=p[k];
 + h->header_valid=1;
@@ -13466,8 +13477,13 @@
 +  if(h->debug_bytes>1200||h->debug_bytes>n-48)return fail(s,22);
 +  h->kind=2;s->debug_events++;return 0;
 + }
++ if(h->eid==7){
++  uint8_t state;
++  if(nwe_sleepy(p,n,&state)!=1)return fail(s,22);
++  h->kind=3;h->debug_type=state;return 0;
++ }
 + if(p[26]||p[27]!=0xe0)return fail(s,20);
-+ /* Sleepy/TXdone/ownership/failure/unknown events need their actual handler.
++ /* TXdone/ownership/failure/unknown events need their actual handler.
 +  * Capture metadata but never silently discard, acknowledge or rearm them. */
 + h->kind=4;return fail(s,23);
 +}
@@ -13562,7 +13578,7 @@
 +};
 +struct ncd_event {
 + uint32_t bytes;uint16_t rxd_bytes,event_bytes,rx_class,debug_id,debug_bytes;
-+ uint8_t eid,sequence,kind,debug_type; /*1capability,2debug,4unsupported*/
++ uint8_t eid,sequence,kind,debug_type; /*1capability,2debug,3sleepy(raw state in debug_type),4unsupported*/
 + uint16_t inner_type;unsigned header_valid;uint8_t header[36]; /* captured RXD24 + WIFI_EVENT12 only; body starts36 */
 +};
 +struct ncd_state {
@@ -17250,7 +17266,7 @@
 +};
 --- /dev/null
 +++ b/bsd/dev/wifi_basic_config_bind.inc
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,66 @@
 +/* One same-worker lease; the opt-in flag itself never grants MMIO authority. */
 +#include "wifi_basic_config.h"
 +static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
@@ -17274,6 +17290,8 @@
 + const struct nbc_state*s=&nbc_native.state;const struct ncp_result*c=&s->verified_cap;
 + printf("NORD2 WIFI BASIC: status=%d phase=%u complete=%u skipped=%u reason=%u halt=%u error=%u submit=%u txdone=%u polls=%u debug=%u rearmed=%u callbacks=%u publications=%u\n",
 +  result,s->phase,s->completed,s->skipped,s->skip_reason,s->halt,s->error,s->submit_attempted,s->tx_done,s->polls,s->debug_events,s->rearmed,s->callbacks,s->publications);
++ printf("NORD2 WIFI BASIC ASYNC: events=%u sleepy=%u state_valid=%u state=%u\n",
++  s->debug_events+s->sleepy_events,s->sleepy_events,!!s->sleepy_events,s->last_sleepy);
 + if(s->prepared)printf("NORD2 WIFI BASIC TX: cid=%#x seq=%u bytes=%u from=%u to=%u completed=%u didx=%u control=%#x consumed=%u ack_expected=0 firmware_ack=0\n",
 +  2,s->sequence,NNI_BASIC_BYTES,s->tx_index,(s->tx_index+1)%1024,nwfn_native.init.transport.completed,s->tx_didx,s->tx_control,s->tx_consumed);
 + if(s->prepared)printf("NORD2 WIFI BASIC TXDESC: observed=%u address=%#llx expected=%#llx software_used=%u raw=%#x/%#x/%#x/%#x\n",
@@ -17317,7 +17335,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_capability_bind.inc
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,145 @@
 +/* PRIVATE normal capability adapter. Include after main_bind.inc. Proposed
 + * hook is ncd_schedule() after nwfn_after_pool(), never inside its stages. */
 +#ifndef NCD_NATIVE_HOST_TEST
@@ -17406,6 +17424,7 @@
 +  printf("NORD2 WIFI CAP EVENT: n=%u kind=%u type=%#x eid=%#x seq=%u bytes=%u declared=%u/%u debug_type=%u debug_bytes=%u\n",
 +   k,h->kind,h->rx_class,h->eid,h->sequence,h->bytes,h->rxd_bytes,h->event_bytes,
 +   h->debug_type,h->debug_bytes);
++  if(h->kind==3)printf("NORD2 WIFI CAP SLEEPY: n=%u state=%u\n",k,(unsigned)h->debug_type);
 +  printf("NORD2 WIFI CAP EVENTHEADER: n=%u valid=%u bytes=%u inner=%#x raw=%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x/%#x\n",
 +   k,h->header_valid,h->header_valid?(unsigned)sizeof(h->header):0,h->inner_type,
 +   ncd_header_word(h,0),ncd_header_word(h,1),ncd_header_word(h,2),
@@ -17462,6 +17481,26 @@
 + }
 + thread_deallocate(thread); /* worker has its kernel lifetime; buffers static */
 +}
+--- /dev/null
++++ b/bsd/dev/wifi_async_event.h
+@@ -0,0 +1,17 @@
++#ifndef NORD2_WIFI_ASYNC_EVENT_H
++#define NORD2_WIFI_ASYNC_EVENT_H
++#include <stdint.h>
++#include <stddef.h>
++/* Selected EID7 is unsolicited EVENT_SLEEPY_INFO: uint8 state + reserved3.
++ * Capture the raw hint only. Nonzero is not an ownership handoff or FW ACK.
++ * Outer discriminator/actual copied extent govern access; inner type,
++ * sequence, declared lengths and reserved bytes are captured/opaque.
++ * Caller retains the owned copied frame and independently bounds total IO. */
++static inline int nwe_sleepy(const uint8_t*p,size_t n,uint8_t*state){
++ if(!p||!state||n<36)return -1;
++ uint16_t outer=(uint16_t)p[2]|(uint16_t)p[3]<<8;
++ if((outer&0x380fu)!=0x3800u||p[28]!=7)return 0;
++ if(n<40)return -1;
++ *state=p[36];return 1;
++}
++#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_main_wfdma_native.h
 @@ -0,0 +1,41 @@

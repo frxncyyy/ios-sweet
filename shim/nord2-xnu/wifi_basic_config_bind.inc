@@ -21,6 +21,8 @@ static void nbc_report(int result)
  const struct nbc_state*s=&nbc_native.state;const struct ncp_result*c=&s->verified_cap;
  printf("NORD2 WIFI BASIC: status=%d phase=%u complete=%u skipped=%u reason=%u halt=%u error=%u submit=%u txdone=%u polls=%u debug=%u rearmed=%u callbacks=%u publications=%u\n",
   result,s->phase,s->completed,s->skipped,s->skip_reason,s->halt,s->error,s->submit_attempted,s->tx_done,s->polls,s->debug_events,s->rearmed,s->callbacks,s->publications);
+ printf("NORD2 WIFI BASIC ASYNC: events=%u sleepy=%u state_valid=%u state=%u\n",
+  s->debug_events+s->sleepy_events,s->sleepy_events,!!s->sleepy_events,s->last_sleepy);
  if(s->prepared)printf("NORD2 WIFI BASIC TX: cid=%#x seq=%u bytes=%u from=%u to=%u completed=%u didx=%u control=%#x consumed=%u ack_expected=0 firmware_ack=0\n",
   2,s->sequence,NNI_BASIC_BYTES,s->tx_index,(s->tx_index+1)%1024,nwfn_native.init.transport.completed,s->tx_didx,s->tx_control,s->tx_consumed);
  if(s->prepared)printf("NORD2 WIFI BASIC TXDESC: observed=%u address=%#llx expected=%#llx software_used=%u raw=%#x/%#x/%#x/%#x\n",

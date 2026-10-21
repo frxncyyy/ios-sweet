@@ -1,4 +1,5 @@
 #include "wifi_basic_config.h"
+#include "wifi_async_event.h"
 static uint16_t u16(const uint8_t*p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
 static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
 static int cap_receipt(const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
@@ -49,13 +50,14 @@ static int mw(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,const v
 static int sy(const struct ncd_io*o,void*c,struct nbc_state*s,uint64_t a,uint32_t n,unsigned w){if(before(o,c,s))return -1;s->callbacks++;return o->bus->sync(c,a,n,w)?fail(s,8):0;}
 static int coherent(const struct ncd_io*o,void*c,struct nbc_state*s){s->irq_valid=0;for(unsigned d=0;d<2;d++){if(rr(o,c,s,0x18024200+0x1000*d,&s->irq[d]))return -1;s->irq_valid|=1u<<d;if(s->irq[d]&0x00300000)return fail(s,10);}return 0;}
 /* Observe pending events without waiting for an invented command-result ACK.
- * Only bounded existing ASCII debug metadata may be consumed/rearmed. */
+ * Only bounded recognized ASCII debug and unsolicited sleepy metadata may
+ * be consumed/rearmed. Neither is a firmware ACK or ownership transition. */
 static int drain(const struct ncd_io*o,void*c,struct nbc_state*s){struct nwt_state*t=&s->init->transport;uint32_t v;
  for(;;){
   if(coherent(o,c,s)||rr(o,c,s,0x1802550c,&v))return -1;
   if(v>=16)return fail(s,20);
   if(v==t->rx_index)return 0;
-  if(s->debug_events>=NBC_RX_BUDGET)return fail(s,21);
+  if(s->debug_events+s->sleepy_events>=NBC_RX_BUDGET)return fail(s,21);
   uint64_t d=t->rx_ring+16u*t->rx_index,b=t->rx_buffers+4096u*t->rx_index;
   if(sy(o,c,s,d,16,2)||mr(o,c,s,d,s->descriptor,16))return -1;
   if(nwt_rx_complete(s->descriptor,b,3840,&s->rx_bytes))return fail(s,22);
@@ -66,9 +68,15 @@ static int drain(const struct ncd_io*o,void*c,struct nbc_state*s){struct nwt_sta
   h->bytes=(uint32_t)n;h->rxd_bytes=u16(p);h->event_bytes=u16(p+24);h->rx_class=u16(p+2);
   h->eid=p[28];h->sequence=p[29];h->inner_type=u16(p+26);h->header_valid=1;h->kind=4;
   for(unsigned k=0;k<36;k++)h->header[k]=p[k];
-  if(n>=48){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
-  if(n<48||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
-  h->kind=2;s->debug_events++;if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
+  if(n>=48&&p[28]==0x27){h->debug_id=u16(p+36);h->debug_type=p[38];h->debug_bytes=u16(p+44);}
+  if(p[28]==7){
+   uint8_t state;if(nwe_sleepy(p,n,&state)!=1)return fail(s,23);
+   h->kind=3;h->debug_type=state;s->sleepy_events++;s->last_sleepy=state;
+  }else{
+   if(n<48||p[28]!=0x27||p[38]!=3||u16(p+44)>1200||u16(p+44)>n-48)return fail(s,23);
+   h->kind=2;s->debug_events++;
+  }
+  if(coherent(o,c,s)||nwt_rx_desc(s->descriptor,b,3840)||mw(o,c,s,d,s->descriptor,16)||sy(o,c,s,d,16,1)||rw(o,c,s,0x18025508,t->rx_index))return -1;
   s->rearmed++;t->rx_index=(t->rx_index+1)%16;
  }
 }

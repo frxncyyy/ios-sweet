@@ -72,7 +72,7 @@ static void full_deliver(const unsigned char*cmd){
  beacon(0,'X',mode!=2&&mode!=4);if(mode==4){struct ncr_queue*q=&ncb_native.rx.queue[0];uint8_t*b=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;w16(b+2,6u<<11);}beacon(2,'Y',1);
  uint8_t p[512]={0};w16(p,32);w16(p+2,6u<<11);deliver(3,p,32,1);w16(p+2,11u<<11);deliver(4,p,32,1);
  if(mode==1)return; /* actual no completion => bounded truthful partial */
- memset(p,0,sizeof(p));w16(p,512);w16(p+2,0x3800);w16(p+24,488);w16(p+26,0x1234);p[28]=mode==3?0xf0:0x0d;p[36]=1;p[40]=(uint8_t)ncb_native.plan.channel_count;p[41]=7;p[42]=2;p[37]=1;p[38]=1;p[39]=6;put32(p+44,13);p[48]=1;p[52]=2;p[56]=6;p[57]=36;w16(p+120,0x1234);w16(p+122,0xabcd);p[248]=2;p[249]=3;p[312]=4;p[313]=5;put32(p+376,8);put32(p+380,5);w16(p+384,0x55aa);w16(p+386,0xa55a);deliver(1,p,sizeof(p),1);
+ memset(p,0,sizeof(p));w16(p,512);w16(p+2,0x3800);w16(p+24,488);w16(p+26,0x1234);p[28]=mode==3?0xf0:0x0d;p[36]=1;p[40]=(uint8_t)ncb_native.plan.channel_count;p[41]=7;p[42]=2;p[37]=1;p[38]=1;p[39]=6;put32(p+44,13);p[48]=1;p[52]=2;p[56]=6;p[57]=36;w16(p+120,0x1234);w16(p+122,0xabcd);p[248]=2;p[249]=3;p[312]=4;p[313]=5;put32(p+376,8);put32(p+380,5);w16(p+384,0x55aa);w16(p+386,0xa55a);deliver(1,p,sizeof(p),1);if(sleep_normal)sleepy_enqueue(1);
 }
 static void setup(unsigned which){ready_fixture();memset(&ncb_native,0,sizeof(ncb_native));memset(&nct_native,0,sizeof(nct_native));mode=which;delivered=no_board=probe_memory=probe_write=delayed_trigger=0;normal_enabled=1;scan_flag=1;normal_pubs=normal_no_ddone=normal_wrong_didx=0;basic_flag=1;}
 int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(f&&fread(authenticated_board,1,sizeof(authenticated_board),f)==sizeof(authenticated_board));fclose(f);
