@@ -3,6 +3,42 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **DRAIN IMAGE VERIFIED; NEW EXACT BOOT APPROVAL PENDING.**
+  `shim/out/nord2-xnu/nord2-ios-wifi-main-drain-battery-stop23.img`,
+  33345536 bytes, SHA256 ebfa71f63e4218a2613b6e9734c63bbcbf5c89fbc0afa418e22894cbb31a1cfd.
+  Payload 626f8aa812127fd79792b37566055169bbbab94ccdfd8ecb620f5111fddf7cc7.
+  CI39602168207/source5ced67ed016a9e22771f511b3b8bb7ca3513db1f; kernel
+  f4180433252673241e2769fe920e53d7ecd73d0935647f4b1dadb20368828ed5.
+  Targeted linked drain/context/deadline/originalpanic review PASS. Packing
+  with1GiB limit exit0; independent fresh loader/payload segments/ADT/private
+  calibration/Linux/dualDT/rawrescue/Androidheader checks PASS,208896 spare.
+  Existing manifest and payload rechecked. e0d3 and RAMrescue hashes rechecked.
+  New wifi-main-drain/ios identity/schema/prepared gates true; exact human/RF/
+  recovery approval stillFALSE, runner never executed. Scope is same main
+  firmware attempt plus30s failure-drain opportunity, NOT a proven radiofix.
+  Current e0d3 healthy human-confirmed/no collector. Ask NEW exact boot-only
+  approval with e0d3/RAMrescue conditionalrestore. UFS/boot speed unchanged.
+
+
+- **DRAIN CI39602168207 SUCCESS; BOUNDED IMAGE PACKING.**
+  Source5ced67ed016a9e22771f511b3b8bb7ca3513db1f; kernel17479800 bytes,
+  SHA256 f4180433252673241e2769fe920e53d7ecd73d0935647f4b1dadb20368828ed5.
+  Artifact SHA256SUMS/source identity and1135genericARMv8.2+crypto invocations
+  verified. New wifi-main-drain/ios identity/schema gates true. Packing
+  uses1GiB RLIMIT_AS; linked drain-only review in parallel. Prepared/human
+  authorization gates still false. Healthy e0d3 phone untouched/no collector.
+
+
+- **DRAIN CI39602168207 RUNNING.**
+  Source5ced67ed016a9e22771f511b3b8bb7ca3513db1f; only runtime delta is
+  bounded scheduler interval before uncertain-radio panic. New private stage
+  wifi-main-drain/ios reviewed/pinned schema including DRAIN/PRESPAN/PREORDER,
+  identity/prepared/human-authorization gates still false pending successful
+  CI, exact kernel/download checks, linked drain path review and packing.
+  Current phone e0d3 healthy human-confirmed, no device collector active.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39602168207
+
+
 - **PRE-PANIC DRAIN PROMOTED; READY FOR FULL CI.**
   Private candidate a38018d5 independently reviewed PASS. Actual canonical
   helper ASan/UBSan passes fixed30s absolute-deadline/one-use/unsafe-context
