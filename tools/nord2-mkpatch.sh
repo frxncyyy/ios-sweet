@@ -25,7 +25,8 @@ NEW_FILES="bsd/dev/wifi_firmware.c bsd/dev/wifi_firmware.h bsd/dev/wifi_firmware
 NEW_FILES="$NEW_FILES bsd/dev/ufs_two_lane_live.inc bsd/dev/wifi_common_scope.c bsd/dev/wifi_common_scope.h bsd/dev/wifi_adie_id.c bsd/dev/wifi_adie_id.h bsd/dev/wifi_adie_strap.c bsd/dev/wifi_adie_strap.h bsd/dev/wifi_adie_adapter.inc bsd/dev/wifi_emi_legacy.c bsd/dev/wifi_emi_legacy.h"
 NEW_FILES="$NEW_FILES bsd/dev/wifi_persistent.c bsd/dev/wifi_persistent.h bsd/dev/wifi_persistent_adapter.c bsd/dev/wifi_persistent_adapter.h bsd/dev/wifi_persistent_bind.inc"
 NEW_FILES="$NEW_FILES bsd/dev/wifi_wake.c bsd/dev/wifi_wake.h bsd/dev/wifi_wake_adapter.c bsd/dev/wifi_wake_adapter.h bsd/dev/wifi_wake_bind.inc"
-for name in wifi_firmware wifi_firmware_probe wifi_emi_snapshot wifi_emi_probe ufs_two_lane zoom_reset wifi_common wifi_cold_snapshot wifi_common_scope wifi_adie_id wifi_adie_strap wifi_emi_legacy wifi_persistent wifi_persistent_adapter wifi_wake wifi_wake_adapter; do
+NEW_FILES="$NEW_FILES bsd/dev/wifi_wfsys.c bsd/dev/wifi_wfsys.h bsd/dev/wifi_wfsys_adapter.c bsd/dev/wifi_wfsys_adapter.h bsd/dev/wifi_wfsys_bind.inc"
+for name in wifi_firmware wifi_firmware_probe wifi_emi_snapshot wifi_emi_probe ufs_two_lane zoom_reset wifi_common wifi_cold_snapshot wifi_common_scope wifi_adie_id wifi_adie_strap wifi_emi_legacy wifi_persistent wifi_persistent_adapter wifi_wake wifi_wake_adapter wifi_wfsys wifi_wfsys_adapter; do
     cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
     {
         printf '#include <arm64/sweet_early.h>\n#if defined(NORD2)\n'
@@ -40,6 +41,7 @@ cp shim/nord2-xnu/wifi_common_adapter.inc "$BT/bsd/dev/wifi_common_adapter.inc"
 cp shim/nord2-xnu/wifi_adie_adapter.inc "$BT/bsd/dev/wifi_adie_adapter.inc"
 cp shim/nord2-xnu/wifi_persistent_bind.inc "$BT/bsd/dev/wifi_persistent_bind.inc"
 cp shim/nord2-xnu/wifi_wake_bind.inc "$BT/bsd/dev/wifi_wake_bind.inc"
+cp shim/nord2-xnu/wifi_wfsys_bind.inc "$BT/bsd/dev/wifi_wfsys_bind.inc"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

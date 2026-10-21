@@ -2665,7 +2665,7 @@
  	if (disableConsoleOutput) {
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,16 @@
+@@ -108,6 +108,18 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
@@ -2678,6 +2678,8 @@
 +bsd/dev/wifi_persistent_adapter.c		standard
 +bsd/dev/wifi_wake.c			standard
 +bsd/dev/wifi_wake_adapter.c		standard
++bsd/dev/wifi_wfsys.c			standard
++bsd/dev/wifi_wfsys_adapter.c		standard
 +bsd/dev/zoom_reset.c			standard
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
@@ -4755,7 +4757,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,893 @@
+@@ -1,3 +1,896 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -5368,6 +5370,8 @@
 +#include "wifi_persistent_bind.inc"
 +#include "wifi_wake_adapter.h"
 +#include "wifi_wake_bind.inc"
++#include "wifi_wfsys_adapter.h"
++#include "wifi_wfsys_bind.inc"
 +/* Same input-thread caller owns PMIF and this retained radio lifetime.
 + * Fresh powered reset/master predicates are checked in adapter.c; these
 + * software baselines were captured before original outer PMIC/power changes.
@@ -5477,6 +5481,7 @@
 +		    npa_source_owner_proof, 0, 0x8fb00000, 0x8a000000, 3);
 +		if (retained != 1) { goto out; } /* no legacy diagnostic fallback */
 +		nawa_after_persistent(); /* explicit separate wake diagnostic only */
++		nwsa_after_persistent(); /* separate CPU-held WFSYS diagnostic */
 +	} else {
 +		ncc_power_window(host, conn, id);
 +	}
@@ -5649,7 +5654,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1548,4 @@
+@@ -658,3 +1551,4 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -8755,4 +8760,557 @@
 + if(r->halt||r->reference||r->retained)
 +  panic("NORD2 WIFI WAKE: uncertain phase%u; retain wake/common; manual reset",r->phase);
 + nawa_native.active=false;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_wfsys.c
+@@ -0,0 +1,201 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wfsys.h"
++#include <string.h>
++
++#define AP_WAKE 0x180601a0u
++#define WF_WAKE 0x180601a4u
++#define ACK 0x18060184u
++#define CFG_ID 0x18001000u
++#define CPU_RST 0x18000010u
++#define BGF_CPU_RST 0x18000014u
++#define BGF_TOP_PWR 0x18000008u
++#define SEMA_RST 0x18000018u
++#define AFE 0x18003008u
++#define TOP_PWR 0x18000000u
++#define PWR_ACK 0x180602ccu
++#define WF_PROT 0x18001620u
++#define DMA_PROT 0x18001624u
++#define VDNR 0x1800e06cu
++#define WF_ID 0x184b0010u
++#define IDLE 0x1800f004u
++#define EMI_REQ 0x18001c14u
++
++static int fail(struct nws_state *s,int e) {
++ s->error=e;s->halt=(s->dirty||s->ap_vote||s->wf_vote||s->sem20||s->power);
++ s->unverified=s->halt;return e;
++}
++static int proof(const struct nws_ops *o,void *c,struct nws_state *s) {
++ return o->proof(c,s->stage) ? fail(s,-2):0;
++}
++static int rd(const struct nws_ops *o,void *c,struct nws_state *s,uint32_t a,uint32_t *v) {
++ if(proof(o,c,s))return s->error;
++ return o->read(c,a,v)?fail(s,-3):0;
++}
++static int wr(const struct nws_ops *o,void *c,struct nws_state *s,uint32_t a,uint32_t v) {
++ if(proof(o,c,s))return s->error;
++ s->dirty=1;return o->write(c,a,v)?fail(s,-4):0;
++}
++static int delay(const struct nws_ops *o,void *c,struct nws_state *s,unsigned us) {
++ if(proof(o,c,s))return s->error;
++ return o->delay_us(c,us)?fail(s,-5):0;
++}
++static int readable(const struct nws_ops *o,void *c,struct nws_state *s) {
++ if(proof(o,c,s))return s->error;
++ return o->readable(c)?fail(s,-6):0;
++}
++static int rmw(const struct nws_ops *o,void *c,struct nws_state *s,uint32_t a,uint32_t clr,uint32_t set) {
++ uint32_t v;if(rd(o,c,s,a,&v))return s->error;
++ return wr(o,c,s,a,(v&~clr)|set);
++}
++static int poll(const struct nws_ops *o,void *c,struct nws_state *s,
++ uint32_t a,uint32_t mask,uint32_t want,unsigned count,unsigned us,unsigned *seen) {
++ uint32_t v;unsigned i;
++ for(i=0;i<count;i++) {
++  if(i&&delay(o,c,s,us))return s->error;
++  if(rd(o,c,s,a,&v))return s->error;
++  ++*seen;
++  if(a==PWR_ACK)s->final_power=v;
++  if((v&mask)==want)return 0;
++ }
++ return fail(s,-7);
++}
++static int version(const struct nws_ops *o,void *c,struct nws_state *s,
++ uint32_t a,uint32_t want,unsigned count,unsigned us,unsigned *seen,uint32_t *last) {
++ unsigned i;for(i=0;i<count;i++) {
++  if(i&&us&&delay(o,c,s,us))return s->error;
++  if(rd(o,c,s,a,last))return s->error;
++  ++*seen;if(*last==want)return 0;
++ }
++ return fail(s,-8);
++}
++static int sem_acquire(const struct nws_ops *o,void *c,struct nws_state *s,unsigned *tries) {
++ unsigned i;int v;
++ for(i=0;i<1000;i++) {
++  if(proof(o,c,s))return s->error;
++  v=o->sema20_try(c);++*tries;
++  if(v==1){s->sem20=1;return 0;}
++  if(v<0)return fail(s,-9);
++  if(i<999&&delay(o,c,s,1))return s->error;
++ }
++ return fail(s,-10);
++}
++static int sem_release(const struct nws_ops *o,void *c,struct nws_state *s) {
++ if(proof(o,c,s))return s->error;
++ if(o->sema20_release(c))return fail(s,-11);
++ s->sem20=0;return 0;
++}
++static int clocks_on(const struct nws_ops *o,void *c,struct nws_state *s) {
++ uint32_t v;
++ if(sem_acquire(o,c,s,&s->sem_tries))return s->error;
++ if(rd(o,c,s,AFE,&v))return s->error;
++ s->initial_afe=v;
++ /* Static WIFI vote starts empty and this diagnostic owns no other radio. */
++ if(v&((1u<<20)|(1u<<21)))return fail(s,-12);
++ s->clock_vote=1;
++ if(rmw(o,c,s,AFE,0,1u<<21))return s->error;
++ if(delay(o,c,s,30))return s->error;
++ if(rmw(o,c,s,AFE,0,1u<<20))return s->error;
++ if(delay(o,c,s,50))return s->error;
++ return sem_release(o,c,s);
++}
++static int clocks_off(const struct nws_ops *o,void *c,struct nws_state *s) {
++ uint32_t v;
++ if(sem_acquire(o,c,s,&s->reverse_sem_tries))return s->error;
++ if(rd(o,c,s,AFE,&v))return s->error;
++ if((v&((1u<<20)|(1u<<21)))!=((1u<<20)|(1u<<21)))return fail(s,-13);
++ /* Selected source releases WPLL then BPLL under semaphore 20. */
++ if(rmw(o,c,s,AFE,1u<<20,0))return s->error;
++ if(rmw(o,c,s,AFE,1u<<21,0))return s->error;
++ if(sem_release(o,c,s))return s->error;
++ s->clock_vote=0;return 0;
++}
++
++int nws_run(const struct nws_ops *o,void *c,unsigned optin,struct nws_state *s) {
++ uint32_t v;
++ if(!s||!optin||optin!=1||s->entered)return -1;
++ memset(s,0,sizeof(*s));s->entered=1;s->stage=NWS_PREWAKE;
++ if(!o||!o->proof||!o->read||!o->write||!o->delay_us||
++    !o->readable||!o->sema20_try||!o->sema20_release)return fail(s,-1);
++ if(rd(o,c,s,AP_WAKE,&v))return s->error;
++ if(v)return fail(s,-14); /* no inherited AP vote or unknown bits */
++ s->ap_vote=1;if(wr(o,c,s,AP_WAKE,1))return s->error;
++ s->stage=NWS_AP_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->ap_ack_polls))return s->error;
++ if(readable(o,c,s))return s->error;
++ s->stage=NWS_AP_READY;
++ if(version(o,c,s,CFG_ID,0x20010101u,10,0,&s->cfg_polls,&s->cfg_id))return s->error;
++
++ /* Fresh WLAN force-on lifetime; distinct from the AP 1a0 reference. */
++ if(rd(o,c,s,WF_WAKE,&v))return s->error;
++ if(v&1u)return fail(s,-15);
++ s->wf_vote=1;if(wr(o,c,s,WF_WAKE,v|1u))return s->error;
++ s->stage=NWS_WF_ACK;
++ if(poll(o,c,s,ACK,1u<<5,0,12,1000,&s->wf_ack_polls))return s->error;
++ if(readable(o,c,s))return s->error;
++ s->stage=NWS_COMMON_READY;
++ if(version(o,c,s,CFG_ID,0x20010101u,12,1000,&s->cfg_polls,&s->cfg_id))return s->error;
++ {
++  const uint32_t a[5]={CPU_RST,TOP_PWR,PWR_ACK,BGF_CPU_RST,BGF_TOP_PWR};
++  const uint32_t mask[5]={1u,0x80u,4u,1u,0x80u};unsigned i;
++  for(i=0;i<5;i++){
++   if(rd(o,c,s,a[i],&s->cold[i]))return s->error;
++   s->cold_valid|=1u<<i;
++   if(s->cold[i]&mask[i])return fail(s,-16);
++  }
++ }
++ /* Source asserts reset even though the cold proof already showed it held. */
++ if(rd(o,c,s,CPU_RST,&v))return s->error;
++ if(v&1u)return fail(s,-16);
++ if(wr(o,c,s,CPU_RST,v&~1u))return s->error;
++ s->cpu_held=1;
++ s->stage=NWS_CPU_HELD;
++ if(readable(o,c,s))return s->error; /* source sem20 pre-acquire check */
++ if(clocks_on(o,c,s))return s->error;
++ s->stage=NWS_CLOCKS;
++
++ if(rd(o,c,s,TOP_PWR,&v))return s->error;
++ s->power=1;
++ if(wr(o,c,s,TOP_PWR,(v&0x0000ff7fu)|0x57460080u))return s->error;
++ if(poll(o,c,s,PWR_ACK,1u<<2,1u<<2,12,500,&s->power_polls))return s->error;
++ s->stage=NWS_POWERED;
++ if(readable(o,c,s))return s->error;
++ if(rmw(o,c,s,WF_PROT,1u,0))return s->error;
++ if(poll(o,c,s,WF_PROT,1u<<3,0,102,500,&s->prot_polls))return s->error;
++ if(rmw(o,c,s,DMA_PROT,1u,0))return s->error;
++ if(poll(o,c,s,DMA_PROT,1u<<3,0,102,500,&s->prot_polls))return s->error;
++ s->protection=1;s->stage=NWS_PROTECTION;
++ if(rmw(o,c,s,VDNR,0,1u))return s->error;
++ if(version(o,c,s,WF_ID,0x20010000u,12,500,&s->id_polls,&s->wfsys_id))return s->error;
++ s->local_id=1;s->stage=NWS_LOCAL_ID;
++
++ /* CPU-held source-subset power-off. No FW_WIFI top-clock resource was
++  * acquired, so selected FW-resource release is deliberately not called. */
++ s->stage=NWS_REVERSE;
++ if(rmw(o,c,s,IDLE,0,1u))return s->error;
++ if(rmw(o,c,s,WF_PROT,0,1u))return s->error;
++ if(poll(o,c,s,WF_PROT,1u<<3,1u<<3,102,500,&s->prot_polls))return s->error;
++ if(rmw(o,c,s,DMA_PROT,0,1u))return s->error;
++ if(poll(o,c,s,DMA_PROT,1u<<3,1u<<3,102,500,&s->prot_polls))return s->error;
++ s->protection=0;
++ if(rmw(o,c,s,SEMA_RST,1u,0))return s->error;
++ if(readable(o,c,s))return s->error; /* source sem20 pre-acquire check */
++ if(clocks_off(o,c,s))return s->error;
++ if(readable(o,c,s))return s->error; /* selected post-release check */
++ if(rd(o,c,s,TOP_PWR,&v))return s->error;
++ if(wr(o,c,s,TOP_PWR,(v&0x0000ff7fu)|0x57460000u))return s->error;
++ if(poll(o,c,s,PWR_ACK,1u<<2,0,12,500,&s->off_polls))return s->error;
++ s->power=0;
++ if(rmw(o,c,s,IDLE,1u,0))return s->error;
++ if(rd(o,c,s,EMI_REQ,&v))return s->error;
++ if(wr(o,c,s,EMI_REQ,v|1u))return s->error;
++ if(wr(o,c,s,EMI_REQ,v&~1u))return s->error;
++ if(rmw(o,c,s,WF_WAKE,1u,0))return s->error;
++ s->wf_vote=0;
++ /* Final MMIO. No proof/read/log callback may follow this AP sleep write. */
++ if(wr(o,c,s,AP_WAKE,0))return s->error;
++ s->ap_vote=0;s->dirty=0;s->unverified=0;s->balanced=1;s->stage=NWS_ASLEEP;
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wfsys.h
+@@ -0,0 +1,37 @@
++#ifndef NORD2_PRIVATE_WFSYS_H
++#define NORD2_PRIVATE_WFSYS_H
++#include <stdint.h>
++
++/* Source-selected SOC3_0 WLAN power transaction, stopped before ROM placement.
++ * A future native adapter must prove the retained common owner in software and
++ * apply AP-only guards before WF wake; off-domain checks begin after WF ack. */
++enum nws_stage {
++ NWS_PREWAKE=0, NWS_AP_ACK=1, NWS_AP_READY=2,
++ NWS_WF_ACK=3, NWS_COMMON_READY=4, NWS_CPU_HELD=5,
++ NWS_CLOCKS=6, NWS_POWERED=7, NWS_PROTECTION=8,
++ NWS_LOCAL_ID=9, NWS_REVERSE=10, NWS_ASLEEP=11
++};
++struct nws_ops {
++ int (*proof)(void *,unsigned); /* 0=source-owned; software/AP-only PREWAKE */
++ int (*read)(void *,uint32_t,uint32_t *);
++ int (*write)(void *,uint32_t,uint32_t); /* ordered 32-bit completion */
++ int (*delay_us)(void *,unsigned);
++ int (*readable)(void *); /* selected conninfra readability after each wake ack */
++ int (*sema20_try)(void *); /* 1=acquired,0=busy,<0=uncertain */
++ int (*sema20_release)(void *); /* 0=confirmed, else uncertain */
++};
++struct nws_state {
++ unsigned entered,stage,halt,balanced,dirty,unverified;
++ unsigned ap_vote,wf_vote,sem20,clock_vote,power,protection,local_id,cpu_held;
++ unsigned ap_ack_polls,wf_ack_polls,cfg_polls,power_polls,prot_polls,id_polls,off_polls;
++ unsigned sem_tries,reverse_sem_tries;
++ unsigned cold_valid;uint32_t cold[5];
++ uint32_t cfg_id,wfsys_id,initial_afe,final_power;
++ int error;
++};
++/* optin must equal 1; disabled/reentry performs zero callbacks.
++ * Success reverses the CPU-held WFSYS power path, WF vote, then AP sleep.
++ * Any uncertain callback/timeout after WF request retains all owned state;
++ * no speculative rollback/replay, CPU release, DRAM, SMC or ROM operation. */
++int nws_run(const struct nws_ops *,void *,unsigned,struct nws_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wfsys_adapter.c
+@@ -0,0 +1,165 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wfsys_adapter.h"
++
++/* Only these six always-on AP/host predicates are read before AP wake. */
++static int guard(struct nwsa *a,unsigned st) {
++ static const uint32_t addr[6]={0x10006304u,0x1000616cu,0x10006170u,
++  0x1020e504u,0x10001228u,0x10001724u};
++ static const uint32_t mask[6]={0x1fu,2u,2u,1u,0x2000u,4u};
++ static const uint32_t want[6]={0xdu,2u,2u,1u,0,0};
++ uint32_t v;unsigned i;
++ if(!a||a->asleep||a->blocked||!a->hw||a->state.stage!=st||
++    a->hw->owner(a->ctx)){if(a)a->blocked=1;return -1;}
++ for(i=0;i<6;i++){
++  if(a->hw->read32(a->ctx,addr[i],&v)||(v&mask[i])!=want[i]){
++   a->blocked=1;return -1;
++  }
++ }
++ return 0;
++}
++static int allowed(unsigned st,uint32_t a,int write) {
++ switch(st) {
++ case NWS_PREWAKE:return a==0x180601a0u;
++ case NWS_AP_ACK:return !write&&a==0x18060184u;
++ case NWS_AP_READY:return a==0x180601a4u||(!write&&a==0x18001000u);
++ case NWS_WF_ACK:return !write&&a==0x18060184u;
++ case NWS_COMMON_READY:return a==0x18000010u||(!write&&(
++  a==0x18001000u||a==0x18000000u||a==0x180602ccu||
++  a==0x18000014u||a==0x18000008u));
++ case NWS_CPU_HELD:return a==0x18003008u;
++ case NWS_CLOCKS:return a==0x18000000u||(!write&&a==0x180602ccu);
++ case NWS_POWERED:return a==0x18001620u||a==0x18001624u;
++ case NWS_PROTECTION:return a==0x1800e06cu||(!write&&a==0x184b0010u);
++ case NWS_REVERSE:
++  return a==0x1800f004u||a==0x18001620u||a==0x18001624u||
++   a==0x18000018u||a==0x18003008u||a==0x18000000u||
++   (!write&&a==0x180602ccu)||a==0x18001c14u||
++   a==0x180601a4u||a==0x180601a0u;
++ default:return 0;
++ }
++}
++static int proof(void *p,unsigned st){return guard(p,st);}
++static int read32(void *p,uint32_t addr,uint32_t *v) {
++ struct nwsa *a=p;unsigned st=a->state.stage;
++ if(!v||!allowed(st,addr,0)||guard(a,st))return -1;
++ if(a->hw->read32(a->ctx,addr,v))return -1;
++ a->last_addr=addr;a->last_value=*v;a->last_valid=1;return 0;
++}
++static int write32(void *p,uint32_t addr,uint32_t v) {
++ struct nwsa *a=p;unsigned st=a->state.stage;
++ if(!allowed(st,addr,1)||guard(a,st))return -1;
++ if(addr==0x180601a0u){
++  if(!((st==NWS_PREWAKE&&v==1)||
++       (st==NWS_REVERSE&&v==0&&!a->state.wf_vote&&!a->state.power&&
++        !a->state.clock_vote&&!a->state.sem20)))return -1;
++ }else if(addr==0x180601a4u){
++  if(!a->last_valid||a->last_addr!=addr)return -1;
++  if(!((st==NWS_AP_READY&&v==(a->last_value|1u))||
++       (st==NWS_REVERSE&&v==(a->last_value&~1u)&&
++        !a->state.power&&!a->state.clock_vote&&!a->state.sem20)))return -1;
++ }else if(addr==0x18000010u){
++  if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value&~1u))return -1;
++ }else if(addr==0x18000018u){
++  if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value&~1u))return -1;
++ }else if(addr==0x18003008u){
++  if(!a->sem20owned||!a->last_valid||a->last_addr!=addr)return -1;
++  if(st==NWS_CPU_HELD){
++   if(a->clock_step==0&&v!=(a->last_value|(1u<<21)))return -1;
++   if(a->clock_step==1&&v!=(a->last_value|(1u<<20)))return -1;
++   if(a->clock_step>1)return -1;
++  }else{
++   if(a->clock_step==2&&v!=(a->last_value&~(1u<<20)))return -1;
++   if(a->clock_step==3&&v!=(a->last_value&~(1u<<21)))return -1;
++   if(a->clock_step<2||a->clock_step>3)return -1;
++  }
++ }else if(addr==0x18001620u||addr==0x18001624u){
++  if(!a->last_valid||a->last_addr!=addr||
++     v!=(st==NWS_POWERED?(a->last_value&~1u):(a->last_value|1u)))return -1;
++ }else if(addr==0x1800f004u){
++  if(!a->last_valid||a->last_addr!=addr||
++     v!=(a->state.power?(a->last_value|1u):(a->last_value&~1u)))return -1;
++ }else if(addr==0x1800e06cu){
++  if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value|1u))return -1;
++ }else if(addr==0x18001c14u){
++  if(!a->emi_pending){
++   if(!a->last_valid||a->last_addr!=addr||v!=(a->last_value|1u))return -1;
++  }else if(v!=(a->emi_original&~1u))return -1;
++ }
++ else if(addr==0x18000000u){
++  if(!a->last_valid||a->last_addr!=addr||
++    v!=((a->last_value&0x0000ff7fu)|
++      (st==NWS_CLOCKS?0x57460080u:0x57460000u)))return -1;
++ }
++ if(a->hw->write32(a->ctx,addr,v))return -1;
++ if(addr==0x18003008u)a->clock_step++;
++ if(addr==0x18001c14u){
++  if(!a->emi_pending){a->emi_original=a->last_value;a->emi_pending=1;}
++  else a->emi_pending=0;
++ }
++ a->last_valid=0;
++ if(st==NWS_REVERSE&&addr==0x180601a0u&&v==0)a->asleep=1;
++ return 0;
++}
++static int delay_us(void *p,unsigned us) {
++ struct nwsa *a=p;if(us!=1&&us!=30&&us!=50&&us!=500&&us!=1000)return -1;
++ if(guard(a,a->state.stage))return -1;
++ return a->hw->delay_us(a->ctx,us);
++}
++/* Direct selected readability: AP guards above, clock detector with bounded
++ * deterministic 1/10us waits, IRQ and HOST ack. No broad debug MMIO. */
++static int direct_read(struct nwsa *a,unsigned st,uint32_t addr,uint32_t *v) {
++ return guard(a,st)||a->hw->read32(a->ctx,addr,v);
++}
++static int direct_write(struct nwsa *a,unsigned st,uint32_t addr,uint32_t v) {
++ return guard(a,st)||a->hw->write32(a->ctx,addr,v);
++}
++static int direct_delay(struct nwsa *a,unsigned st,unsigned us) {
++ return guard(a,st)||a->hw->delay_us(a->ctx,us);
++}
++static int readable(void *p) {
++ struct nwsa *a=p;unsigned st=a->state.stage,spent=0,i,d=1;
++ uint32_t v=0;
++ if(st!=NWS_AP_ACK&&st!=NWS_WF_ACK&&st!=NWS_POWERED&&
++    st!=NWS_CPU_HELD&&st!=NWS_REVERSE)return -1;
++ for(i=0;i<1600&&spent<16000;i++){
++  if(direct_read(a,st,0x18060000u,&v))return -1;
++  if(direct_write(a,st,0x18060000u,v|1u))return -1;
++  if(direct_delay(a,st,d))return -1;
++  spent+=d;
++  if(direct_read(a,st,0x18060000u,&v))return -1;
++  a->clock_last=v;a->clock_polls++;
++  if((v&6u)==6u)break;
++  d=10;
++ }
++ a->clock_spent+=spent;
++ if((v&6u)!=6u||i==1600||spent>=16000)return -1;
++ if(direct_read(a,st,0x180602d4u,&v))return -1;
++ a->irq_last=v;if(!(v&1u))return -1;
++ if(direct_read(a,st,0x18060184u,&v))return -1;
++ return (v&(1u<<5))?-1:0;
++}
++/* Source M2 semaphore20: base18070000 + M2_OWN_STA2000/REL2200 +20*4. */
++static int sem_try(void *p) {
++ struct nwsa *a=p;unsigned st=a->state.stage;uint32_t v;
++ if((st!=NWS_CPU_HELD&&st!=NWS_REVERSE)||a->sem20owned||guard(a,st))return -1;
++ a->sem20pending=1;
++ if(a->hw->read32(a->ctx,0x18072050u,&v))return -1;
++ if(v&1u){a->sem20owned=1;a->sem20pending=0;return 1;}
++ a->sem20pending=0;return 0;
++}
++static int sem_release(void *p) {
++ struct nwsa *a=p;unsigned st=a->state.stage;
++ if((st!=NWS_CPU_HELD&&st!=NWS_REVERSE)||!a->sem20owned||guard(a,st))return -1;
++ a->sem20pending=1;
++ if(a->hw->write32(a->ctx,0x18072250u,1))return -1;
++ a->sem20pending=0;a->sem20owned=0;return 0;
++}
++int nwsa_start(struct nwsa *a,const struct nwsa_hw *h,void *ctx,unsigned optin) {
++ static const struct nws_ops ops={proof,read32,write32,delay_us,readable,sem_try,sem_release};
++ if(!a||!optin||optin!=1||a->state.entered)return -1;
++ if(!h||!h->owner||!h->read32||!h->write32||!h->delay_us)return -1;
++ a->hw=h;a->ctx=ctx;return nws_run(&ops,a,1,&a->state);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wfsys_adapter.h
+@@ -0,0 +1,22 @@
++#ifndef NORD2_PRIVATE_WFSYS_ADAPTER_H
++#define NORD2_PRIVATE_WFSYS_ADAPTER_H
++#include "wifi_wfsys.h"
++struct nwsa_hw {
++ int (*owner)(void *); /* software only: phase10 retained/terminal2, sole new owner */
++ int (*read32)(void *,uint32_t,uint32_t *);
++ int (*write32)(void *,uint32_t,uint32_t); /* ordered, synchronous */
++ int (*delay_us)(void *,unsigned);
++};
++struct nwsa {
++ const struct nwsa_hw *hw;void *ctx;
++ struct nws_state state;
++ unsigned asleep,blocked,sem20owned,sem20pending;
++ unsigned clock_step,emi_pending;
++ unsigned clock_polls,clock_spent;
++ uint32_t last_addr,last_value,clock_last,irq_last,emi_original;
++ unsigned last_valid;
++};
++/* Separate fresh one-shot state; never reuse old naw sleep or npa terminal2.
++ * optin0 and reentry perform no callback. No native backend supplied here. */
++int nwsa_start(struct nwsa *,const struct nwsa_hw *,void *,unsigned);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wfsys_bind.inc
+@@ -0,0 +1,113 @@
++/* Private CPU-held WFSYS binding. Same input thread and retained common owner;
++ * a new object owns AP/WF/clock/semaphore requests. No old terminal callbacks. */
++#include "wifi_wfsys_adapter.h"
++static struct {
++ struct nwsa diag;
++ vm_offset_t brcm,local;
++ bool active;
++} nwsa_native;
++
++static int nwsa_source_owner(void)
++{
++ if(!nwsa_native.active||!npa_persistent_lifetime||!npa_native.outer_retained||
++    !npa_native.state.entered||!npa_native.state.retained||npa_native.state.fatal||
++    npa_native.state.hw_handoff!=2||npa_native.state.result.phase!=10||
++    !npa_native.state.result.retained||npa_native.state.result.halt||
++    npa_native.state.sema11||npa_native.state.sema19||npa_native.state.spi_inflight||
++    !ni_saved||!ncc_fresh_owned||!nw.saved||!nw.domain_touched||ncc_latched_dirty||
++    nawa_native.active||nawa_native.diag.result.entered)return -1;
++ if(!nw.spm||!nw.infra||!nw.gals||!npa_native.host||!npa_native.cfg||
++    !npa_native.rgu||!npa_native.afe||!npa_native.debug||!npa_native.sem)return -1;
++ return 0;
++}
++static int nwsa_xnu_owner(void *cookie)
++{
++ (void)cookie;
++ return nwsa_source_owner()||!nwsa_native.brcm||!nwsa_native.local;
++}
++static vm_offset_t nwsa_xnu_base(uint32_t p)
++{
++ switch(p){
++ case 0x10006304:case 0x1000616c:case 0x10006170:return nw.spm;
++ case 0x10001228:case 0x10001724:return nw.infra;
++ case 0x1020e504:return nw.gals;
++ case 0x180601a0:case 0x180601a4:case 0x18060184:
++ case 0x18060000:case 0x180602d4:case 0x180602cc:return npa_native.host;
++ case 0x18001000:case 0x18001620:case 0x18001624:case 0x18001c14:return npa_native.cfg;
++ case 0x18000010:case 0x18000000:case 0x18000018:
++ case 0x18000014:case 0x18000008:return npa_native.rgu;
++ case 0x18003008:return npa_native.afe;
++ case 0x1800f004:return npa_native.debug;
++ case 0x18072050:case 0x18072250:return npa_native.sem;
++ case 0x1800e06c:return nwsa_native.brcm;
++ case 0x184b0010:return nwsa_native.local;
++ default:return 0;
++ }
++}
++static int nwsa_xnu_read(void *cookie,uint32_t p,uint32_t *v)
++{
++ (void)cookie;
++ if(!v||nwsa_native.diag.asleep||p==0x18072250)return -1;
++ vm_offset_t b=nwsa_xnu_base(p);if(!b)return -1;
++ *v=ni_rd(b,p&0xfff);return 0;
++}
++static int nwsa_xnu_write(void *cookie,uint32_t p,uint32_t v)
++{
++ (void)cookie;if(nwsa_native.diag.asleep)return -1;
++ switch(p){
++ case 0x180601a0:if(v>1)return -1;break;
++ case 0x18000010:if(v&1)return -1;break; /* CPU release is never allowed. */
++ case 0x18000000:if((v&0xffff0000)!=0x57460000)return -1;break;
++ case 0x18072250:if(v!=1)return -1;break;
++ case 0x180601a4:case 0x18060000:case 0x18001620:case 0x18001624:
++ case 0x18001c14:case 0x18000018:case 0x18003008:case 0x1800f004:
++ case 0x1800e06c:break;
++ default:return -1;
++ }
++ vm_offset_t b=nwsa_xnu_base(p);if(!b)return -1;
++ ni_wr(b,p&0xfff,v);NCC_DEVICE_BARRIER();return 0;
++}
++static int nwsa_xnu_delay(void *cookie,unsigned us)
++{(void)cookie;if(nwsa_native.diag.asleep)return -1;delay(us);return 0;}
++static const struct nwsa_hw nwsa_xnu_hw={
++ nwsa_xnu_owner,nwsa_xnu_read,nwsa_xnu_write,nwsa_xnu_delay
++};
++static void nwsa_after_persistent(void)
++{
++ unsigned opt=0;PE_parse_boot_argn("nord2wifiwfsys",&opt,sizeof(opt));
++ if(opt!=1)return;
++ if(nwsa_native.active||nwsa_native.diag.state.entered)
++  panic("NORD2 WIFI WFSYS: refuse reentry; retain common owner");
++ nwsa_native.active=true;
++ if(nwsa_source_owner()){
++  nwsa_native.active=false;
++  printf("NORD2 WIFI WFSYS: skipped=1 reason=persistent-owner-or-wake-conflict\n");
++  return;
++ }
++ /* Mapping alone does not access the powered-off WFSYS register aperture. */
++ nwsa_native.brcm=ml_io_map(0x1800e000,0x1000);
++ nwsa_native.local=ml_io_map(0x184b0000,0x1000);
++ if(!nwsa_native.brcm||!nwsa_native.local){
++  nwsa_native.active=false;
++  printf("NORD2 WIFI WFSYS: skipped=1 reason=map\n");return;
++ }
++ int status=nwsa_start(&nwsa_native.diag,&nwsa_xnu_hw,0,1);
++ struct nws_state *s=&nwsa_native.diag.state;
++ /* Only software result fields after the final AP sleep write. */
++ printf("NORD2 WIFI WFSYS: status=%d stage=%u local_id=%u cpu_held=%u balanced=%u halt=%u dirty=%u unverified=%u error=%d\n",
++  status,s->stage,s->local_id,s->cpu_held,s->balanced,s->halt,s->dirty,s->unverified,s->error);
++ printf("NORD2 WIFI WFSYS OWNER: ap=%u wf=%u sem=%u sem_hw=%u sem_pending=%u clock=%u power=%u protection=%u asleep=%u\n",
++  s->ap_vote,s->wf_vote,s->sem20,nwsa_native.diag.sem20owned,nwsa_native.diag.sem20pending,
++  s->clock_vote,s->power,s->protection,nwsa_native.diag.asleep);
++ printf("NORD2 WIFI WFSYS ID: conn=%#x local=%#x clock=%#x irq=%#x initial_afe=%#x final_power=%#x\n",
++  s->cfg_id,s->wfsys_id,nwsa_native.diag.clock_last,nwsa_native.diag.irq_last,s->initial_afe,s->final_power);
++ printf("NORD2 WIFI WFSYS COLD: valid=%#x cpu=%#x top=%#x power=%#x bgfcpu=%#x bgftop=%#x\n",
++  s->cold_valid,s->cold[0],s->cold[1],s->cold[2],s->cold[3],s->cold[4]);
++ printf("NORD2 WIFI WFSYS POLLS: ap=%u wf=%u cfg=%u power=%u protection=%u id=%u off=%u sem=%u sem_off=%u clock=%u\n",
++  s->ap_ack_polls,s->wf_ack_polls,s->cfg_polls,s->power_polls,s->prot_polls,
++  s->id_polls,s->off_polls,s->sem_tries,s->reverse_sem_tries,nwsa_native.diag.clock_polls);
++ if(s->halt||s->dirty||s->unverified||s->ap_vote||s->wf_vote||s->sem20||
++    s->clock_vote||s->power||nwsa_native.diag.sem20owned||nwsa_native.diag.sem20pending)
++  panic("NORD2 WIFI WFSYS: uncertain stage%u; retain resources; manual reset",s->stage);
++ nwsa_native.active=false;
 +}

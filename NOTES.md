@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WFSYS CPU-HELD SOURCE READY FOR CI; NO NEW DEVICE AUTHORIZATION.**
+  AP wake49f177ec remains healthy, human lockscreen/input confirmed; USB idle.
+  Canonical wifi_wfsys core/adapter/bind now behind nord2wifiwfsys=1; next
+  image must omit nord2wifiwake. Fresh AP/WF/PLL/semaphore ownership after
+  retained phase10, CPU reset held, power/local-ID then source-subset off.
+  No ROM/DRAM/MPU/CPU release/network operation. Parent reviewed source core;
+  independent Sol reviewed native binding. Exact promoted bytes match both.
+  Canonical ASan/UBSan tests PASS (1290 callback faults plus actual binding),
+  three focused ARM64 compiles PASS; patch9316 lines applies/reproduces tree.
+  UFS frozen SHA unchanged; boot-speed/UFS work remains closed.
+  Next: full CI, linked/image verification, concrete boot-only approval.
+  Sol preparing private ROM native design in parallel to reduce serial work.
+
+
 - **AP-WAKE49f177ec HARDWARE SUCCESS; CURRENT WORKING BASELINE.**
   Authorized boot-only runner EXECUTED once; flash/reboot OKAY. NativeUSB180s
   exit0,227028-byte log SHA256
