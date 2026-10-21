@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **WFSYS IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
+  shim/out/nord2-xnu/nord2-ios-wifi-wfsys-stop23.img, 33296384B,
+  SHA256 49c8c3ee9ff78336358201d176ef9ccc32e44a99e0a39c7f9fced1995e465131.
+  Payload df7d1d789bf2aa91013ccb414ca26ecd1b31e00104cbedd1761889633d1e1b36.
+  CI39572918115/source61398cb6675e8e7b5701c8fa6ea0da1bc067f5b9 succeeded;
+  kernel17373432B SHA256 8ec9b89ea7e1ee90701703f3761853973c40559e588ed773e3f42c5f38067cd5.
+  All1109 actual generic armv8.2-a+crypto compile invocations verified; one
+  interleaved .CFLAGS/header-install false match identified/excluded with
+  evidence preserved. Independent linked WFSYS review PASS. Loaded kernel
+  segments/fixups, ADT, original Linux/bothDTs/raw rescueCPIO/header PASS;
+  258048B spare. Exact49 args with wake1 replaced by wfsys1.
+  Private wifi-wfsys/ios identity/prepared pinned; human authorization FALSE,
+  runner NEVER EXECUTED. Current49 human-verified iOS remains running, USB idle.
+  Next: exact image approval/physical fastboot, one-use boot-only runner and
+  180s capture. Conditional recovery current49 or testedRAMrescue after manual
+  reset; never normal Android. No firmware CPU release/network in this image.
+  Parallel private work: wifi_after_id real ROM native mapping/SET/copy;
+  wifi_rom_plan current-FDT claim hardening/parent loader review;
+  wifi_evidence reassigned by human to fuel gauge (100%/charging is fake
+  SweetBattery fallback; actual Nord2 gauge I2C7/chargerI2C11 identified,
+  real native provider still being implemented). UFS/boot remains closed.
+
+
 - **WFSYS FULL CI39572918115 RUNNING.**
   Source61398cb6675e8e7b5701c8fa6ea0da1bc067f5b9 pushed to fork.
   https://github.com/frxncyyy/ios-sweet/actions/runs/39572918115
