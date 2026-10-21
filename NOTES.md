@@ -4,6 +4,45 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **FORMAT 0e949521 SUCCESS COMPLETE; CURRENTPHONE HEALTHY, NO RESTORE.**
+  USB180s collector exit0/deadline/no transport error; full immutable
+  237316bytes SHA2563b32249042c69db7d39bd4a1c122bb3219a9c8cb1cb65f1ddc47168e6ee2ab41.
+  StrictcapabilityparserPASS full andfirst; realEIDec504bytes/inner3800,
+  19TLVs,resourcesv1supported,capMACinvalid; all workerhalt/errorflags0.
+  Humanlockscreen/touch/buttons confirmed call_7c11e6d55caa4aed8072cfb77629355a.
+  Collectorfinished; phone stays0e949521. No recoveryneeded/performed.
+  NEVER rerun executed wifi-capability-format runner. No scan/interface.
+  Private next step: one source-backed BASIC_CONFIG CID2/noresponse after
+  sameownedcapreceipt, firstnormalresourceaccounting +capmetadata; defaultoff,
+  beforeIO prerequisitefail shouldpark ratherthanforcebootloop. UnsafeDMA
+  keepscommonhalt/drain. Agents own basic-config-runtime/normal-resources;
+  canonicalunchanged. Actualquotas/TAG3/PHY unlogged so cannotbeinvented.
+
+
+- **FORMAT 0e949521 HARDWARE SUCCESS; iOS HUMAN-HEALTHY, FULLCAPTURE RUNNING.**
+  Boot-only flash/reboot OKAY. RealMAIN status0/stage9/ready1/halt0/error0.
+  CAP status0/phase5/complete1/halt0/error0,1TX/1event/1rearm/match1/polls3.
+  Actual504-byte EIDec/seq4 header inner3800 (observed, not0007/E000).
+  19TLVs known6/unknown13, resourcesv1(80000001)supported; MACpresent1 but
+  invalid0, product/fw values0. Worker parked without error; strict parserPASS.
+  Firstimmutable159231bytes SHA256
+  286a3a8066286062b427aa163ff8b3a910fa787164182332ed4beec3531d4b88.
+  Valid1125x2436 frames; user confirmslockscreen/touch/buttons
+  (call_7c11e6d55caa4aed8072cfb77629355a). No recoveryneeded/performed.
+  Full180s capture session37782stillrunning; finish andfreeze beforeclosing.
+  No scan/interface/connection. Currentphone0e949521, notfallbacke0d3.
+  Private next resource/nativeworker work underway; realtag3/PHY/quotas
+  retained inRAM but notlogged. Do not infer unobserved values.
+
+
+- **FORMAT 0e949521 AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exact boot-onlyimage +conditional e0d3/rescue recovery
+  (call_96b979b879ea4ddf95491a3b5eccefa4). Sole previously authorized
+  Nord2 fastboot identity/product/capacity/nonuserspace verified privately.
+  USBcollector starts before reboot. Newstage wifi-capability-format/ios;
+  NEVER rerun after flash.log exists. Hardwarecapability result pending.
+
+
 - **CAPABILITY FORMAT IMAGE VERIFIED; EXACT FLASH APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-capability-format-battery-stop23.img`,
   33353728bytes SHA256
