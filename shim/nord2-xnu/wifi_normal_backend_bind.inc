@@ -44,10 +44,28 @@ static void ncb_report(int result)
   printf("NORD2 WIFI RXQUEUE: n=%u next=%u didx=%u packets=%u rearmed=%u waits=%u segmented=%u dropped=%u raw=%#x/%#x/%#x/%#x\n",
    k,q->next,q->didx,q->packets,q->rearmed,q->wait_ddone,q->segmented,q->dropped,q->raw[0],q->raw[1],q->raw[2],q->raw[3]);
  }
+ for(unsigned n=0;n<2;n++){
+  const struct nrd_snapshot*d=&r->readback[n];
+  printf("NORD2 WIFI RXDMA: n=%u attempted=%u complete=%u error=%u reason=%u valid=%#x cfg=%#x/%#x started=%llu last=%llu\n",
+   n,d->attempted,d->complete,d->error,d->reason,d->valid,d->cfg[0],d->cfg[1],(unsigned long long)d->started,(unsigned long long)d->last);
+  for(unsigned k=0;k<NRD_QUEUES;k++){
+   const struct nrd_queue*q=&d->queue[k];
+   printf("NORD2 WIFI RXDMAQUEUE: n=%u slot=%u q=%u next=%u valid=%#x base=%#x expected=%#llx control=%#x/%#x/%#x/%#x ext_addr=%#x ext=%#x descriptor=%#llx raw=%#x/%#x/%#x/%#x\n",
+    n,k,q->queue,q->next,q->valid,q->base,(unsigned long long)q->expected_descriptors,q->control[0],q->control[1],q->control[2],q->control[3],q->ext_address,q->ext,(unsigned long long)q->descriptor,q->raw[0],q->raw[1],q->raw[2],q->raw[3]);
+  }
+ }
  for(unsigned k=0;k<r->history_count;k++){
   const struct ncr_event*h=&r->history[k];
   printf("NORD2 WIFI RXEVENT: n=%u bytes=%u outer=%#x inner=%#x eid=%#x seq=%u kind=%u status=%u\n",
    k,h->bytes,h->outer,h->inner,h->eid,h->sequence,h->kind,h->status);
+ }
+ if(s->done){
+  const struct nsb_done*d=&s->completion;
+  printf("NORD2 WIFI SCANRF: version=%u pno=%u beacons=%u split=%u/%u sparse=%u/%u/%u channels=%u\n",
+   d->version,d->pno,d->beacons,d->beacons_2g,d->beacons_5g,d->sparse_valid,d->sparse_band,d->sparse_channel,d->channel_count);
+  for(unsigned k=0;k<d->channel_count&&k<64;k++)
+   printf("NORD2 WIFI SCANRFCHANNEL: n=%u channel=%u beacon_probe=%u mdrdy=%u idle_raw=%u scan_time_raw=%u\n",
+    k,d->channels[k],d->beacon_probe_counts[k],d->mdrdy_counts[k],d->idle[k],d->scan_time[k]);
  }
  /* SSIDs/BSSIDs, board MAC and calibration bytes remain in owned memory. */
 }

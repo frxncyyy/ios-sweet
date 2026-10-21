@@ -4,6 +4,26 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **Cohesive scan receive correction promoted; next CI/image not yet run.**
+  Corrected ordinary V2 extended BSSID to zero according to selected Android
+  cfg80211→AIS→SCN source; source oracle257cases matches all1188 scan bytes
+  and12activation bytes. This is a proven source mismatch, not yet a proven
+  cause of empty hardware scan. PassiveSSID/dwell remain source-correct.
+  Added two bounded readonly DMA0 snapshots under actual native lease and
+  captured SCAN_DONE RF counters. No new write/ownership path, no identifiers
+  logged. New wifi_rx_readback TU registered; generated0082 applies cleanly.
+  RX proposal f0584f0f/reviewd026e663; portable fixtures3d11f460 include450
+  native callback faults and restoration/no-write assertions. Root final
+  canonical run PASS (full22/fivequeues +450faults); CAP/BASIC8suites and ARM64 helper,
+  RX/scan/owning sweet_touch compile PASS. Portable source oracle committed.
+  Parser v2 manifest2dfffa98/review1ee12031,11positive582negative PASS:
+  exact new metadata plus unchanged v3 core, completed cursor correlation.
+  Fresh wifi-scan-receive/ios parser copied; CI/image/approval gates FALSE.
+  Current c3ce7dcf remains humanhealthy, no collector/device action. Planned
+  fallback is exact healthyc3ce7dcf; e0d3/RAMrescue retained. No stock boot.
+  Next: commit/push, ONE CI, linked/artifact verification,
+  bounded1GiB image pack and exact boot-only authorization before device action.
+
 - **c3ce7dcf full capture closed and preserved; current image stays installed.**
   Collector180s exit0/stop_reason=deadline/transport_error=null.
   Immutable wifi-normal-scan/ios/backend-full.log244598B SHA256

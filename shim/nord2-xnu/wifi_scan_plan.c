@@ -29,7 +29,8 @@ int ncs_build(const uint8_t*cap,size_t n,uint8_t capseq,const uint8_t mac[6],con
  header(r.scan,1252,3,seq);uint8_t*s=r.scan+64;s[0]=scanseq;s[1]=0;s[2]=0;s[3]=0;s[4]=0;s[5]=0;s[6]=dbdc_disabled?2:0;s[7]=1;
  p16(s+154,dwell);p16(s+828,minimum);s[158]=4;s[159]=(uint8_t)(count>32?32:count);s[826]=(uint8_t)(count>32?count-32:0);
  for(size_t i=0;i<count;i++){size_t o=i<32?160+2*i:830+2*(i-32);s[o]=c[i].band;s[o+1]=c[i].channel;}
- for(unsigned i=0;i<6;i++)s[1112+i]=255;
+ /* Ordinary cfg80211 -> AIS -> SCN V2 copies the zeroed extended BSSID.
+  * AIS's separate legacy broadcast BSSID is not this command's input. */
  r.command[0]=(struct ncs_command){0x11,aseq,1,0,76};r.command[1]=(struct ncs_command){3,seq,1,0,1252};*out=r;return 0;
 }
 int ncs_done(const uint8_t*p,size_t n,uint8_t seq,struct ncs_event*out){

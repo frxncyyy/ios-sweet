@@ -125,6 +125,7 @@ int ncr_pump(void*context,const struct ncd_io*o,void*c,unsigned budget,unsigned*
  if(!s->scan_requested&&request->published){
   if(request->cid!=3||nsb_begin(&s->scan,s->scan_sequence,now,s->scan_timeout))return fail(s,9);
   s->scan_requested=1;
+  if(nrd_capture(o,c,s,&s->readback[0],NRD_BASELINE))return fail(s,22);
  }
  while(*used<budget){
   unsigned progress=0,examined=0,pending=0;
@@ -139,14 +140,15 @@ int ncr_pump(void*context,const struct ncd_io*o,void*c,unsigned budget,unsigned*
    if(pending)break;
    /* Scan-done can precede queued management data. Complete only after a
     * subsequent whole-queue drain; keep owned BSS snapshots until then. */
-   if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;}
+   if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}
    if(s->done_pending&&s->scan.active){
+    if(nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_DONE))return fail(s,22);
     if(nsb_complete(&s->scan,s->done_body,NSB_SCAN_DONE_BYTES,now)<0)return fail(s,10);
     s->drain_passes++;s->phase=NCR_IDLE;s->active=0;return 1;
    }
    break;
   }
  }
- if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;}
+ if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}
  s->phase=NCR_IDLE;s->active=0;return s->scan.done?1:0;
 }

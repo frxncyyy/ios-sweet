@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,35 @@
+@@ -648,3 +666,36 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2720,6 +2720,7 @@
 +
 +bsd/dev/wifi_normal_transport.c			standard
 +bsd/dev/wifi_normal_rx.c			standard
++bsd/dev/wifi_rx_readback.c			standard
 +bsd/dev/wifi_scan_bss.c			standard
 +bsd/dev/wifi_scan_plan.c			standard
 +bsd/dev/wifi_normal_config.c			standard
@@ -11782,6 +11783,83 @@
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_rx_readback.c
+@@ -0,0 +1,50 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_rx_readback.h"
++#include "wifi_normal_rx.h"
++static uint32_t word(const uint8_t*p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
++int nrd_capture(const struct ncd_io*o,void*c,struct ncr_state*r,struct nrd_snapshot*s,unsigned reason)
++{
++ static const unsigned queues[NRD_QUEUES]={0,2,3,4};
++ unsigned old_phase,old_current;uint8_t raw[16];
++ if(!r||!s||s->attempted||o!=&nct_checked_io||!o->bus||!o->now_us||
++    !r->prepared||!r->active||r->halt||!r->session||c!=&r->session->access||
++    r->phase!=NCR_IDLE||reason<NRD_BASELINE||reason>NRD_SCAN_EXPIRED)return -1;
++ s->attempted=1;s->reason=reason;old_phase=r->phase;old_current=r->current;
++ /* Preflight existing exact-slot admission before the first callback. */
++ for(unsigned j=0;j<NRD_QUEUES;j++){
++  const struct ncr_queue*q=&r->queue[queues[j]];r->current=queues[j];r->phase=NCR_DESC_READ;
++  if(!ncr_memory_range(r,q->ring.descriptors+16u*q->next,16,0)){s->error=1;goto out;}
++ }
++ r->phase=old_phase;r->current=old_current;
++ if(o->now_us(c,&s->started)){s->error=2;goto out;}s->last=s->started;
++ for(unsigned d=0;d<2;d++){
++  if(o->bus->reg_read(c,0x18024208u+0x1000u*d,&s->cfg[d])){s->error=3;goto out;}
++  s->valid|=1u<<d;
++ }
++ for(unsigned j=0;j<NRD_QUEUES;j++){
++  unsigned k=queues[j];const struct ncr_queue*q=&r->queue[k];struct nrd_queue*v=&s->queue[j];
++  v->queue=k;v->next=q->next;v->base=q->ring.base;
++  v->expected_descriptors=q->ring.descriptors;v->descriptor=q->ring.descriptors+16u*q->next;
++  /* Final physical DMA0 manual-prefetch registers. ring.ext is the selected
++   * generic helper's transient DMA1 write address, not this final address. */
++  v->ext_address=0x18024680u+4u*j;
++  for(unsigned w=0;w<4;w++){
++   if(o->bus->reg_read(c,v->base+4u*w,&v->control[w])){s->error=4;goto out;}
++   v->valid|=1u<<w;
++  }
++  if(o->bus->reg_read(c,v->ext_address,&v->ext)){s->error=5;goto out;}v->valid|=1u<<4;
++  r->current=k;r->phase=NCR_DESC_READ;
++  if(o->bus->sync(c,v->descriptor,16,2)){s->error=6;goto out;}
++  if(o->bus->mem_read(c,v->descriptor,raw,16)){s->error=7;goto out;}
++  for(unsigned w=0;w<4;w++)v->raw[w]=word(raw+4*w);
++  v->valid|=1u<<5;r->phase=old_phase;r->current=old_current;
++ }
++ if(o->now_us(c,&s->last)){s->error=8;goto out;}
++ if(s->last<s->started){s->error=9;goto out;}
++ s->complete=1;
++out:
++ r->phase=old_phase;r->current=old_current;return s->error?-1:0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_rx_readback.h
+@@ -0,0 +1,21 @@
++#ifndef NORD2_RX_READBACK_H
++#define NORD2_RX_READBACK_H
++#include <stdint.h>
++#include "wifi_capability_dispatcher.h"
++#define NRD_QUEUES 4u
++enum nrd_reason {NRD_BASELINE=1,NRD_SCAN_DONE=2,NRD_SCAN_EXPIRED=3};
++struct nrd_queue {
++ unsigned queue,next,valid;uint32_t base,ext_address,control[4],ext;
++ uint64_t expected_descriptors,descriptor;uint32_t raw[4];
++};
++struct nrd_snapshot {
++ unsigned attempted,complete,error,reason,valid;uint64_t started,last;
++ uint32_t cfg[2];struct nrd_queue queue[NRD_QUEUES];
++};
++struct ncr_state;
++/* Read-only diagnostics, not admission or authority. Caller supplies actual
++ * active RX state + checked IO/access in the same live native worker. All
++ * four descriptors use software-owned current cells, never returned SDP.
++ * One-use output; restore phase/current on every exit. No stack packet array. */
++int nrd_capture(const struct ncd_io *,void *,struct ncr_state *,struct nrd_snapshot *,unsigned);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_normal_transport.c
 @@ -0,0 +1,199 @@
 +#include <arm64/sweet_early.h>
@@ -12039,7 +12117,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_rx.c
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,158 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_normal_rx.h"
@@ -12169,6 +12247,7 @@
 + if(!s->scan_requested&&request->published){
 +  if(request->cid!=3||nsb_begin(&s->scan,s->scan_sequence,now,s->scan_timeout))return fail(s,9);
 +  s->scan_requested=1;
++  if(nrd_capture(o,c,s,&s->readback[0],NRD_BASELINE))return fail(s,22);
 + }
 + while(*used<budget){
 +  unsigned progress=0,examined=0,pending=0;
@@ -12183,26 +12262,28 @@
 +   if(pending)break;
 +   /* Scan-done can precede queued management data. Complete only after a
 +    * subsequent whole-queue drain; keep owned BSS snapshots until then. */
-+   if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;}
++   if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}
 +   if(s->done_pending&&s->scan.active){
++    if(nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_DONE))return fail(s,22);
 +    if(nsb_complete(&s->scan,s->done_body,NSB_SCAN_DONE_BYTES,now)<0)return fail(s,10);
 +    s->drain_passes++;s->phase=NCR_IDLE;s->active=0;return 1;
 +   }
 +   break;
 +  }
 + }
-+ if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;}
++ if(s->scan.active&&now>=s->scan.deadline){nsb_expire(&s->scan,now);s->scan_expired=1;if(!s->readback[1].attempted&&nrd_capture(o,c,s,&s->readback[1],NRD_SCAN_EXPIRED))return fail(s,22);}
 + s->phase=NCR_IDLE;s->active=0;return s->scan.done?1:0;
 +}
 +
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_rx.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +#ifndef NORD2_NORMAL_RX_H
 +#define NORD2_NORMAL_RX_H
 +#include "wifi_normal_transport.h"
 +#include "wifi_scan_bss.h"
++#include "wifi_rx_readback.h"
 +#define NCR_QUEUES 5u
 +#define NCR_HISTORY 64u
 +enum ncr_phase {NCR_IDLE,NCR_DESC_READ,NCR_FRAME_READ,NCR_DESC_WRITE,NCR_PUBLISH};
@@ -12221,6 +12302,7 @@
 + uint8_t scan_sequence;uint64_t scan_timeout,last;
 + struct ncr_queue queue[NCR_QUEUES];
 + struct ncr_event history[NCR_HISTORY];
++ struct nrd_snapshot readback[2];
 + struct nsb_scan scan;uint8_t done_body[NSB_SCAN_DONE_BYTES];
 + uint8_t descriptor[16],frame[3840];uint32_t frame_bytes;
 +};
@@ -12390,7 +12472,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_scan_plan.c
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,43 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_scan_plan.h"
@@ -12424,7 +12506,8 @@
 + header(r.scan,1252,3,seq);uint8_t*s=r.scan+64;s[0]=scanseq;s[1]=0;s[2]=0;s[3]=0;s[4]=0;s[5]=0;s[6]=dbdc_disabled?2:0;s[7]=1;
 + p16(s+154,dwell);p16(s+828,minimum);s[158]=4;s[159]=(uint8_t)(count>32?32:count);s[826]=(uint8_t)(count>32?count-32:0);
 + for(size_t i=0;i<count;i++){size_t o=i<32?160+2*i:830+2*(i-32);s[o]=c[i].band;s[o+1]=c[i].channel;}
-+ for(unsigned i=0;i<6;i++)s[1112+i]=255;
++ /* Ordinary cfg80211 -> AIS -> SCN V2 copies the zeroed extended BSSID.
++  * AIS's separate legacy broadcast BSSID is not this command's input. */
 + r.command[0]=(struct ncs_command){0x11,aseq,1,0,76};r.command[1]=(struct ncs_command){3,seq,1,0,1252};*out=r;return 0;
 +}
 +int ncs_done(const uint8_t*p,size_t n,uint8_t seq,struct ncs_event*out){
@@ -14995,7 +15078,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_backend_bind.inc
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,101 @@
 +/* Include after wifi_capability_bind.inc. All live operations run in the
 + * actual retained CAP/BASIC worker; no service or interface is published. */
 +#include "wifi_normal_backend.h"
@@ -15042,10 +15125,28 @@
 +  printf("NORD2 WIFI RXQUEUE: n=%u next=%u didx=%u packets=%u rearmed=%u waits=%u segmented=%u dropped=%u raw=%#x/%#x/%#x/%#x\n",
 +   k,q->next,q->didx,q->packets,q->rearmed,q->wait_ddone,q->segmented,q->dropped,q->raw[0],q->raw[1],q->raw[2],q->raw[3]);
 + }
++ for(unsigned n=0;n<2;n++){
++  const struct nrd_snapshot*d=&r->readback[n];
++  printf("NORD2 WIFI RXDMA: n=%u attempted=%u complete=%u error=%u reason=%u valid=%#x cfg=%#x/%#x started=%llu last=%llu\n",
++   n,d->attempted,d->complete,d->error,d->reason,d->valid,d->cfg[0],d->cfg[1],(unsigned long long)d->started,(unsigned long long)d->last);
++  for(unsigned k=0;k<NRD_QUEUES;k++){
++   const struct nrd_queue*q=&d->queue[k];
++   printf("NORD2 WIFI RXDMAQUEUE: n=%u slot=%u q=%u next=%u valid=%#x base=%#x expected=%#llx control=%#x/%#x/%#x/%#x ext_addr=%#x ext=%#x descriptor=%#llx raw=%#x/%#x/%#x/%#x\n",
++    n,k,q->queue,q->next,q->valid,q->base,(unsigned long long)q->expected_descriptors,q->control[0],q->control[1],q->control[2],q->control[3],q->ext_address,q->ext,(unsigned long long)q->descriptor,q->raw[0],q->raw[1],q->raw[2],q->raw[3]);
++  }
++ }
 + for(unsigned k=0;k<r->history_count;k++){
 +  const struct ncr_event*h=&r->history[k];
 +  printf("NORD2 WIFI RXEVENT: n=%u bytes=%u outer=%#x inner=%#x eid=%#x seq=%u kind=%u status=%u\n",
 +   k,h->bytes,h->outer,h->inner,h->eid,h->sequence,h->kind,h->status);
++ }
++ if(s->done){
++  const struct nsb_done*d=&s->completion;
++  printf("NORD2 WIFI SCANRF: version=%u pno=%u beacons=%u split=%u/%u sparse=%u/%u/%u channels=%u\n",
++   d->version,d->pno,d->beacons,d->beacons_2g,d->beacons_5g,d->sparse_valid,d->sparse_band,d->sparse_channel,d->channel_count);
++  for(unsigned k=0;k<d->channel_count&&k<64;k++)
++   printf("NORD2 WIFI SCANRFCHANNEL: n=%u channel=%u beacon_probe=%u mdrdy=%u idle_raw=%u scan_time_raw=%u\n",
++    k,d->channels[k],d->beacon_probe_counts[k],d->mdrdy_counts[k],d->idle[k],d->scan_time[k]);
 + }
 + /* SSIDs/BSSIDs, board MAC and calibration bytes remain in owned memory. */
 +}
@@ -17423,7 +17524,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_main_wfdma_bind.inc
-@@ -0,0 +1,531 @@
+@@ -0,0 +1,534 @@
 +/* PRIVATE. Include after pool_bind.inc. No production hook is added here.
 + * All source helpers below use fresh state, not sleeping adapter callbacks. */
 +#include "wifi_main_wfdma_native.h"
@@ -17679,6 +17780,9 @@
 +}
 +static int nwfn_read_allowed(uint32_t p)
 +{
++ /* Read-only selected DMA0 RX prefetch diagnostics under the existing
++  * retained normal lease. No new write or ownership path is admitted. */
++ if(NWFN_RX_ACTIVE(&nwfn_native)&&p>=0x18024680u&&p<=0x1802468cu&&!(p&3))return 1;
 + if(p==0x18060010||p==0x18402120)return 1;
 + for(unsigned d=0;d<2;d++){
 +  uint32_t b=0x18024000+0x1000*d;

@@ -253,6 +253,9 @@ int nwfn_owner(void *c)
 }
 static int nwfn_read_allowed(uint32_t p)
 {
+ /* Read-only selected DMA0 RX prefetch diagnostics under the existing
+  * retained normal lease. No new write or ownership path is admitted. */
+ if(NWFN_RX_ACTIVE(&nwfn_native)&&p>=0x18024680u&&p<=0x1802468cu&&!(p&3))return 1;
  if(p==0x18060010||p==0x18402120)return 1;
  for(unsigned d=0;d<2;d++){
   uint32_t b=0x18024000+0x1000*d;

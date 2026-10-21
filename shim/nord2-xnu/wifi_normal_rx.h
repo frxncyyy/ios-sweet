@@ -2,6 +2,7 @@
 #define NORD2_NORMAL_RX_H
 #include "wifi_normal_transport.h"
 #include "wifi_scan_bss.h"
+#include "wifi_rx_readback.h"
 #define NCR_QUEUES 5u
 #define NCR_HISTORY 64u
 enum ncr_phase {NCR_IDLE,NCR_DESC_READ,NCR_FRAME_READ,NCR_DESC_WRITE,NCR_PUBLISH};
@@ -20,6 +21,7 @@ struct ncr_state {
  uint8_t scan_sequence;uint64_t scan_timeout,last;
  struct ncr_queue queue[NCR_QUEUES];
  struct ncr_event history[NCR_HISTORY];
+ struct nrd_snapshot readback[2];
  struct nsb_scan scan;uint8_t done_body[NSB_SCAN_DONE_BYTES];
  uint8_t descriptor[16],frame[3840];uint32_t frame_bytes;
 };
