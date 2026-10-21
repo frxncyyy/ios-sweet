@@ -4,6 +4,28 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **FORMAT STAGE REVIEW PASS; CI39642478606 BUILDING.**
+  Freshstage wifi-capability-format/ios pin1a70f0a073d79548a5eaebde91300c4d54511b459c33b4ab5b02558d1408c742;
+  parserbdda5dd9bba42c0f667e57eda9747f324301130ee18b9418bd55638768a330ba,
+  independentreview69642a3d and root builder/source reviewPASS. Exact474byte
+  commandline matches executed6ddf; unchanged UFS/display/input parameters.
+  Per-event36B HEADER row correlated with EVENT; inner opaque onlycapability,
+  errors/debug/unknown remain refused. Headermetadata cannot replay TLVbody.
+  Schema gate true; CIidentity/prepared/human stillfalse. Do NOT rerun closed
+  test-stage after gatesopen. No newimage/flash; phonee0d3humanhealthy.
+  Sol privately prepares source-backed regulatory prerequisite for later scan:
+  SINGLE_SKU compiledoption does not establish runtimecapabilitytag3 state.
+
+
+- **CAPABILITY FORMAT FULL CI39642478606 STARTED.**
+  Source5ac2355a3d121984565682aa8486ffc5b1d1cacc; exactB/host/focusedchecks PASS.
+  https://github.com/frxncyyy/ios-sweet/actions/runs/39642478606
+  Freshstage wifi-capability-format/ios pin1a70f0a0; authorclosedchecksPASS,
+  root builder/source review and independent parser review in progress.
+  All CI/schema/prepared/human gates remain closed. No new image/flash.
+  Phone remains recovered e0d3 humanhealthy; UFS/bootspeed unchanged.
+
+
 - **CAPABILITY FORMAT FIX PROMOTED; LOCAL CHECKS PASS, FULL CI NEXT.**
   Exact private B manifestefb352b1, independentreviewe4ac37a7, root source
   parity review: selected Android AXI waiter checks outer380f->3800/EIDec,
