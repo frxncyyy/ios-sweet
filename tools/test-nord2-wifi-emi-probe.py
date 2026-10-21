@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[1]
+CANON=ROOT/"shim/nord2-xnu"
 def main():
  with tempfile.TemporaryDirectory() as directory:
   d=Path(directory)
@@ -23,6 +24,7 @@ static thread_continue_t continuation;
 static uint64_t ticks;
 static char last_log[512];
 static int PE_parse_boot_argn(const char *name,void *value,int size) {
+ if(!strcmp(name,"nord2wifiemilegacy")){*(int *)value=0;return 0;}
  assert(!strcmp(name,"nord2wifiemi") && size==sizeof(int));*(int *)value=arg;return present;
 }
 static void clock_get_uptime(uint64_t *value){*value=++ticks;}
@@ -43,6 +45,8 @@ static int test_printf(const char *format,...) {
 #define nwes_native_call nwep_unused_native
 #include "wifi_emi_snapshot.c"
 #undef nwes_native_call
+#define WIFI_EMI_LEGACY_NO_SMC
+#include "wifi_emi_legacy.c"
 #include "wifi_emi_probe.c"
 int nwes_native_call(void *context,const uint64_t a[8],uint64_t result[4]) {
  assert(!context && calls<8 && a[0]==NWES_SMC_ID && a[1]==2);

@@ -1,5 +1,24 @@
 # Nord 2 Wi-Fi bring-up
 
+## 2026-10-21: legacy MPU observer integrated, awaiting CI and hardware
+
+New `nord2wifiemilegacy=1` requires explicit `nord2wifiemi=0`. It reuses the
+existing post-root thread hook and once-only guards; UFS code is unchanged.
+The native wrapper accepts only SMC32 `0x82000261` and the128 aligned SA, EA
+and two APC-group offsets for regions0–31. Other arguments are zero. It never
+calls a setter, dump function, alternate FID or arbitrary MMIO address.
+
+Each returned x0–x3 is retained. The collector stops at the first transport
+failure, known error sentinel or nonzero upper32 bits; unissued entries are
+explicitly marked. Zero and constant2 remain raw observations. The fixed6168-byte
+buffer avoids a large kernel-stack allocation. Report timing includes logging,
+not only the monitor calls; a stalled EL3 call cannot be interrupted by a
+software deadline. Raw results alone do not establish effective permissions.
+
+Independent source/production review,1280 injected failures, mode/once/thread
+tests, old-observer regressions and full ARM64 compiles pass. No native call
+has yet been executed. The current working phone remains on8ca8ee39.
+
 ## 2026-10-21: common setup and A-die identification pass on hardware
 
 Image `8ca8ee39…3c84cd95` (CI39557231502, source639f6ba) successfully read

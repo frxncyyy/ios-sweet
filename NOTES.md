@@ -4,6 +4,24 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **LEGACY EMI OBSERVER INTEGRATED; READY FOR FULL CI.**
+  Reviewedprivatecore/probe copiedbyteexact: wifi_emi_legacy.{c,h} and modified
+  wifi_emi_probe.c, sharedpostrootstart/onceguard; explicitnew1andold0required.
+  Singlebsdconfbuildentry, mkpatch7972lines exactapply/reproduction. UFSfile
+  stays1ef095f34a95e362b922a486d7ff71eae1a5eb614a22011f8c9e06bb7552b6b4.
+  ProductionreviewPASS, core1280failure/allowlist/raw/NOT_CALLED testsPASS,
+  old8queryregression/new128querybridge/mode/thread/reportboundsPASS, fullBSD
+  ARM64compilesprobe+collectorPASS. NoSMCexecuted. Newimage templates/private
+  parser in research/nord2/wifi-emi-legacy/ios, identityblank; exactcurrent8ca8
+  argsplusnord2wifiemilegacy=1. Current8ca8phoneGUI/inputgood, lastcaptureended.
+  Next: commit/pushCI, pinartifact+linkedreview, pack/reviewimage then ask
+  NEWexactboot-onlyapproval (current8ca8authorizationdoesNOTcovernewimage).
+  Privatepersistentpost-IDcandidate now exists post-id-candidate/retain.c,h;
+  phasesDdie/common/SRAMclear/E3Adie/efuseread/AFE/PLL,8586callbackfaultsPASS.
+  NOTintegrated: missingnativeownership/remap andfinalstatus/voltage/lowpower
+  stages. Noautomaticanalogrollback; retainconfiguredCONN/manualresetonfault.
+
+
 - **WI-FI CHIP_ID HARDWARE SUCCESS; CURRENT IOS HEALTHY.**
   Authorized8ca8ee39 runner EXECUTED; NEVERrerun. Flash/rebootOKAY; USB180s
   exit0,233025B final log SHA256

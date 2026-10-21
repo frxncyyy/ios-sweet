@@ -2665,7 +2665,7 @@
  	if (disableConsoleOutput) {
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,11 @@
+@@ -108,6 +108,12 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
@@ -2673,6 +2673,7 @@
 +bsd/dev/wifi_firmware_probe.c		standard
 +bsd/dev/wifi_emi_snapshot.c		standard
 +bsd/dev/wifi_emi_probe.c			standard
++bsd/dev/wifi_emi_legacy.c			standard
 +bsd/dev/zoom_reset.c			standard
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
@@ -6482,12 +6483,13 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_emi_probe.c
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,108 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Isolated boot bridge. Nothing is activated until the explicit start hook. */
 +#include "wifi_emi_snapshot.h"
 +#include "wifi_emi_probe.h"
++#include "wifi_emi_legacy.h"
 +#ifdef NWEP_HOST_TEST
 +#include "wifi_emi_probe_test_platform.h"
 +#else
@@ -6502,14 +6504,43 @@
 +extern void thread_terminate_self(void);
 +#endif
 +static unsigned int nwep_attempted,nwep_start_attempted;
++static struct wifi_emi_legacy_snapshot wifi_emi_legacy_result;
++/* mode0 refused,1 original observer,2 legacy. Conflict always refuses. */
++static int wifi_emi_legacy_mode(void)
++{
++ int old=0,legacy=0;
++ int old_present=PE_parse_boot_argn("nord2wifiemi",&old,sizeof(old));
++ int new_present=PE_parse_boot_argn("nord2wifiemilegacy",&legacy,sizeof(legacy));
++ if(new_present && legacy==1)return old_present && old==0?2:0;
++ return old_present && old==1?1:0;
++}
++int wifi_emi_legacy_probe(void)
++{
++ if(wifi_emi_legacy_mode()!=2)return EPERM;
++ if(!os_atomic_cmpxchg(&nwep_attempted,0u,1u,relaxed))return EALREADY;
++ uint64_t start,end;clock_get_uptime(&start);
++ printf("NORD2 WIFI EMI LEGACY begin queries_max=128 deadline=none effective=unknown\n");
++ int status=wifi_emi_legacy_collect(wifi_emi_legacy_native_call,NULL,&wifi_emi_legacy_result);
++ for(unsigned i=0;i<128;i++){
++  const struct wifi_emi_legacy_field *f=&wifi_emi_legacy_result.field[i];
++  printf("NORD2 WIFI EMI LEGACY index=%u offset=%#x status=%u error=%d raw=%llx/%llx/%llx/%llx\n",
++   i,f->offset,(unsigned)f->status,f->error,(unsigned long long)f->raw[0],
++   (unsigned long long)f->raw[1],(unsigned long long)f->raw[2],(unsigned long long)f->raw[3]);
++ }
++ clock_get_uptime(&end);
++ printf("NORD2 WIFI EMI LEGACY end collector=%d issued=%u valid=%#x/%#x/%#x/%#x elapsed_ticks=%llu effective=unknown\n",
++  status,wifi_emi_legacy_result.issued,wifi_emi_legacy_result.valid[0],wifi_emi_legacy_result.valid[1],
++  wifi_emi_legacy_result.valid[2],wifi_emi_legacy_result.valid[3],(unsigned long long)(end-start));
++ return status?EIO:0;
++}
 +int nord2_wifi_emi_probe(void)
 +{
-+ int enabled=0,error=0;
++ int error=0;
 + uint64_t start,end;
 + const uint32_t regions[2]={27,31};
 + struct nwes_region result[2]={0};
-+ if(!PE_parse_boot_argn("nord2wifiemi",&enabled,sizeof(enabled)) || enabled!=1)
-+  return EPERM;
++ if(wifi_emi_legacy_mode()==2)return wifi_emi_legacy_probe();
++ if(wifi_emi_legacy_mode()!=1)return EPERM;
 + if(!os_atomic_cmpxchg(&nwep_attempted,0u,1u,relaxed)) return EALREADY;
 + clock_get_uptime(&start);
 + printf("NORD2 WIFI EMI begin queries_max=8 deadline=none observation_only=1\n");
@@ -6550,9 +6581,8 @@
 +}
 +int nord2_wifi_emi_start(void)
 +{
-+ int enabled=0;thread_t thread;
-+ if(!PE_parse_boot_argn("nord2wifiemi",&enabled,sizeof(enabled)) || enabled!=1)
-+  return EPERM;
++ thread_t thread;
++ if(!wifi_emi_legacy_mode())return EPERM;
 + if(!os_atomic_cmpxchg(&nwep_start_attempted,0u,1u,relaxed)) return EALREADY;
 + kern_return_t status=kernel_thread_start(nwep_thread,NULL,&thread);
 + if(status!=KERN_SUCCESS) {
@@ -6564,18 +6594,22 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_emi_probe.h
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,19 @@
 +#ifndef NORD2_WIFI_EMI_PROBE_H
 +#define NORD2_WIFI_EMI_PROBE_H
-+/* Standalone read-only MPU observation. Explicit nord2wifiemi=1 only.
++/* Standalone read-only MPU observation. Original mode: nord2wifiemi=1.
++ * Legacy mode: explicit nord2wifiemilegacy=1 AND nord2wifiemi=0; otherwise
++ * no legacy calls. Both modes share the same once-only attempt/thread guards.
 + * Call start once from a sleepable boot context outside driver/input/console
 + * locks (suggested after root setup unlock, beside firmware_start). It spawns
 + * its own thread; never call the probe from input polling/interrupt context.
-+ * Only eight structured READ queries (regions27/31), no retry, no MMIO/EMI
-+ * mapping or power changes. A secure-monitor call has NO interruptible software
++ * Original mode issues eight structured queries (regions27/31). Legacy mode
++ * issues at most128 allowlisted SA/EA/APC offset reads and stops on first error.
++ * Neither retries, maps MMIO/EMI or changes power. A secure-monitor call has NO interruptible software
 + * deadline: bounded query count does not guarantee bounded execution time.
 + * Decoded values do not establish effective permission, priority or ownership.
-+ * Starts/attempts are once-only even on failure; no blobs/data retained.
++ * Starts/attempts are once-only even on failure; no firmware blobs are loaded.
++ * Legacy raw results remain in its fixed static buffer for the current boot.
 + */
 +int nord2_wifi_emi_probe(void);
 +int nord2_wifi_emi_start(void);
@@ -7847,3 +7881,92 @@
 +  nis_native.clock_raw,nis_native.irq_raw,nis_native.clock_polls);
 + return e; /* enclosing existing common wrapper latches+panics if !r.clean */
 +}
+--- /dev/null
++++ b/bsd/dev/wifi_emi_legacy.c
+@@ -0,0 +1,59 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_emi_legacy.h"
++int wifi_emi_legacy_offset(unsigned index,uint32_t *offset)
++{
++ if(!offset||index>=128)return -1;
++ unsigned region=index/4,field=index%4;
++ *offset=(field+1)*0x100+4*region;return 0;
++}
++int wifi_emi_legacy_args_valid(const uint64_t a[8])
++{
++ if(!a||a[0]!=WIFI_EMI_LEGACY_FID)return 0;
++ for(unsigned j=2;j<8;j++)if(a[j])return 0;
++ for(unsigned i=0;i<128;i++){uint32_t off;wifi_emi_legacy_offset(i,&off);if(a[1]==off)return 1;}
++ return 0;
++}
++int wifi_emi_legacy_native_call(void *context,const uint64_t a[8],uint64_t result[4])
++{
++ (void)context;if(!result||!wifi_emi_legacy_args_valid(a))return -1;
++#if defined(__aarch64__) && !defined(WIFI_EMI_LEGACY_NO_SMC)
++ register uint64_t x0 __asm__("x0")=a[0],x1 __asm__("x1")=a[1];
++ register uint64_t x2 __asm__("x2")=0,x3 __asm__("x3")=0;
++ register uint64_t x4 __asm__("x4")=0,x5 __asm__("x5")=0;
++ register uint64_t x6 __asm__("x6")=0,x7 __asm__("x7")=0;
++ __asm__ volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3),
++ "+r"(x4),"+r"(x5),"+r"(x6),"+r"(x7) : :
++ "x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","cc","memory");
++ result[0]=x0;result[1]=x1;result[2]=x2;result[3]=x3;return 0;
++#else
++ return -1;
++#endif
++}
++int wifi_emi_legacy_collect(wifi_emi_legacy_call_fn call,void *ctx,struct wifi_emi_legacy_snapshot *out)
++{
++ if(!call||!out)return -1;
++ /* Avoid a6KiB temporary aggregate on kernel stack. */
++ for(unsigned j=0;j<4;j++)out->valid[j]=0;
++ out->issued=0;
++ for(unsigned i=0;i<128;i++){
++  struct wifi_emi_legacy_field *f=&out->field[i];
++  for(unsigned j=0;j<4;j++)f->raw[j]=0;
++  wifi_emi_legacy_offset(i,&f->offset);f->status=WIFI_EMI_LEGACY_NOT_CALLED;f->error=0;
++ }
++ for(unsigned i=0;i<128;i++){
++  struct wifi_emi_legacy_field *f=&out->field[i];
++  uint64_t a[8]={WIFI_EMI_LEGACY_FID,f->offset,0,0,0,0,0,0},raw[4]={0};
++  out->issued++;
++  if(call(ctx,a,raw)){f->status=WIFI_EMI_LEGACY_TRANSPORT;return 1;}
++  for(unsigned j=0;j<4;j++)f->raw[j]=raw[j];
++  for(unsigned e=1;e<=4;e++)if(raw[0]==UINT64_MAX-(e-1)||raw[0]==(uint64_t)(0u-e)){
++   f->error=-(int32_t)e;f->status=WIFI_EMI_LEGACY_ERROR;return 1;
++  }
++  if(raw[0]>UINT32_MAX){f->status=WIFI_EMI_LEGACY_INVALID;return 1;}
++  f->status=WIFI_EMI_LEGACY_VALUE;out->valid[i/32]|=UINT32_C(1)<<(i%32);
++ }
++ return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_emi_legacy.h
+@@ -0,0 +1,24 @@
++#ifndef WIFI_EMI_LEGACY_H
++#define WIFI_EMI_LEGACY_H
++#include <stdint.h>
++#include <stddef.h>
++#define WIFI_EMI_LEGACY_COUNT 128u
++#define WIFI_EMI_LEGACY_FID UINT64_C(0x82000261)
++enum wifi_emi_legacy_status { WIFI_EMI_LEGACY_NOT_CALLED=0,
++ WIFI_EMI_LEGACY_VALUE, WIFI_EMI_LEGACY_ERROR,
++ WIFI_EMI_LEGACY_INVALID, WIFI_EMI_LEGACY_TRANSPORT };
++struct wifi_emi_legacy_field { uint64_t raw[4]; uint32_t offset;
++ enum wifi_emi_legacy_status status; int32_t error; };
++struct wifi_emi_legacy_snapshot { struct wifi_emi_legacy_field field[128];
++ uint32_t valid[4]; unsigned issued; };
++typedef int (*wifi_emi_legacy_call_fn)(void *,const uint64_t [8],uint64_t [4]);
++/* Exact128 offsets only. No MMIO, decoding or effective-policy claim. */
++int wifi_emi_legacy_offset(unsigned,uint32_t *);
++int wifi_emi_legacy_args_valid(const uint64_t [8]);
++int wifi_emi_legacy_native_call(void *,const uint64_t [8],uint64_t [4]);
++/* Deterministic region0..31, fieldsSA/EA/APC0/APC1; stop first nonvalue.
++ * All missing entries retain NOT_CALLED, never substitute their zero raw as data.
++ * No software deadline can interrupt a stalled EL3 call. Caller serializes. */
++int wifi_emi_legacy_collect(wifi_emi_legacy_call_fn,void *,struct wifi_emi_legacy_snapshot *);
++int wifi_emi_legacy_probe(void);
++#endif
