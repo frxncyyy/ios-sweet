@@ -20,7 +20,7 @@
   EIDec innerpolicy+headerdiagnostics; no scan/interface/association.
   Ask exactboot-onlyapproval +conditional e0d3/rescue,manualfastbootifneeded.
   Currentphone e0d3restored humanhealthy; no hardware actions afterrestore.
-  Privatefuture regulatory-policy707e8b79 awaitingpeerreview, notpromoted;
+  Privatefuture regulatory-policy707e8b79 peerreview4d9e26e6 PASS pureformat only, notpromoted;
   runtimeTAG3/PHY,regulatoryruleevaluation,conditionalpowerlimitinputs pending.
   UFS/bootspeed closed unchanged; executed stages immutable.
 
