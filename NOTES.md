@@ -3,6 +3,44 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **OWNERDIAG TEST COMPLETE; e0d3 RESTORED AND HUMAN-HEALTHY.**
+  Conditional boot-only restoration/reboot OKAY; USB90s capture223847 bytes,
+  SHA25640c4bf832c7bbfd265b07fee8e098eedb4a8efa1b00642e0bafac247106076b1.
+  Valid1125x2436 frames observed; user confirms lockscreen/touch/buttons OK.
+  Both collectors finished. Preserve all executed wifi-main-ownerdiag/ios
+  evidence; never rerun its flash or restore. Concrete first failure is
+  DMA1 HOST_INT_ENA29 unexpectedly enabled, not a proven pending SW interrupt.
+  Selected source separates ENA29 from STA29. Narrow late-CID41 candidate
+  and review underway; actual pendingSWINT must halt with no W1C/recovery.
+  New image will require fresh approval. UFS/boot speed unchanged.
+
+
+- **OWNERDIAG HARDWARE: DMA1 INTERRUPT ENABLE29 IS THE FIRST STOP.**
+  Authorized e011b66d boot-only flash/reboot OKAY; repeated calibration and
+  all7 main spans, then first GUARD reason5/source2/stage6/error5/valid1:
+  addr18025204 raw20000000 mask7d37ffff expected0. This is DMA1 HOST_INT_ENA
+  MCU-to-host software interrupt enable29, NOT a pending interrupt or proven
+  firmware error. No third ACK/FW_READY. First immutable143601 bytes SHA
+  e06a1bffb38822d425f6a9940b3c36f95655de911d9b64d7146eec6a43f784f3;
+  full154784 bytes SHA70654f3f1c93b035d5e84463f3a0406398e9815cdb3acd127660c2e52717e41d.
+  Failure collector finished; user returned fastboot. Conditional e0d3
+  recovery underway (restore-e0d3-flash/client/live); never rerun executed
+  runner/restoration. Separate ENA versus actual STA29 source review and
+  narrow candidate underway: keep GIC masked/other enables rejected and
+  fail-stop for unhandled actual SW interrupt; no invented ACK or W1C.
+  Audio silent-afe-adapter c47a9444 privately frozen, author checks PASS;
+  independent review pending, no native runtime caller/hardware proof.
+  UFS/boot speed unchanged.
+
+
+- **OWNERDIAG e011b66d AUTHORIZED; ONE-USE RUNNER STARTING.**
+  User approved exact boot-only image/main calibration attempt/conditional
+  e0d3 or tested RAM-rescue recovery. Sole device identity/product/capacity
+  verified privately; USB collector starts before reboot. Do not rerun the
+  wifi-main-ownerdiag/ios runner after flash.log exists. Actual first guard
+  and firmware readiness pending. UFS/boot speed unchanged.
+
+
 - **OWNER DIAGNOSTICS IMAGE VERIFIED; NEW EXACT APPROVAL PENDING.**
   `shim/out/nord2-xnu/nord2-ios-wifi-main-ownerdiag-battery-stop23.img`,
   33347584 bytes, SHA256
