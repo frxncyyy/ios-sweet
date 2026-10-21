@@ -3,6 +3,23 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **PRE-PANIC DRAIN PROMOTED; READY FOR FULL CI.**
+  Private candidate a38018d5 independently reviewed PASS. Actual canonical
+  helper ASan/UBSan passes fixed30s absolute-deadline/one-use/unsafe-context
+  and early-wake bounds. Actual generated sweet_touch ARM64 compiles with
+  prior CI-derived flags, no private bsd/dev include shortcut or forced NORD2.
+  Includes/helper/test/generator/WIFI-MAIN updated together; patch13778 lines
+  applies/reproduces. Only runtime change is scheduler sleep in the already
+  halted, uncertain-radio terminal branch before existing panic. No radio
+  mutation/retry/cleanup or USB ownership changes; capture not guaranteed.
+  Source-backed loss window: panic stops other CPUs before retained-radio
+  cleanup refusal, so USB thread cannot drain final diagnostics thereafter.
+  New 0ce01268 cause remains UNKNOWN. Current e0d3 human-confirmed healthy;
+  no collectors. New private wifi-main-drain stage being prepared with closed
+  gates; needs full CI/artifact checks/image verification and NEW exact flash
+  authorization. UFS/boot speed unchanged, audio4 private.
+
+
 - **0ce01268 RECOVERY COMPLETE; NEW FAILURE CAUSE UNKNOWN.**
   Authorized e0d3 boot-only restore/reboot succeeded 2026-10-21 14:37:12
   Europe/Rome. USB90s capture completed: 223215 bytes, SHA256

@@ -1,3 +1,4 @@
+#include "failure_drain.inc"
 /* PRIVATE coordinator. Include after wfdma_bind.inc; external firmware/PHY
  * implementations are separate TUs. Hook immediately after nppa_after_rom. */
 #include "wifi_main_fw_xnu.h"
@@ -115,5 +116,8 @@ report:
     (nppa_native.probe.state.ap_owned||nppa_native.probe.state.wf_owned||
      nppa_native.probe.state.set_attempted||nppa_native.probe.state.mapped||
      nppa_native.probe.state.zero_attempted))))
+ {
+  nwm_failure_drain();
   panic("NORD2 WIFI MAIN: uncertain retained radio state; manual reset required");
+ }
 }

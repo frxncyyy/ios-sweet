@@ -44,3 +44,19 @@ initializer and transport checks, or add `--only pre-span` for the focused
 native readiness/refusal regression. Full kernel CI, packed-image verification
 and a separately authorized hardware test are still required. UFS and the
 working display/input paths are unchanged.
+
+Uncertain failures now allow a 30-second log-drain interval before the existing
+terminal panic. The failed normal thread sleeps to a fixed absolute deadline
+only when preemption and interrupts are enabled. The shared radio lifetime
+stays halted and retains its DMA memory; there are no new radio or USB accesses,
+retries or cleanup operations. The existing CPU0 USB thread can continue
+servicing the host while this thread sleeps. Unsafe contexts still panic
+immediately. This provides a capture opportunity, not a delivery acknowledgment
+or a remedy for a preceding bus hang. `--only drain` tests the actual helper's
+fixed deadline, early wakeups, one-use and unsafe-context behavior.
+
+The 0ce01268 hardware test also bootlooped. Its initial USB capture ended during
+MAIN ARM2, and its final log did not survive restoration. Its actual failure
+stage, original error and SW_SYNC0 value remain unknown. The phone was restored
+to e0d3 and confirmed healthy; the drain change does not claim to fix that radio
+failure. UFS and boot-speed tuning remain closed and unchanged.

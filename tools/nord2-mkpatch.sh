@@ -57,7 +57,7 @@ cp shim/nord2-xnu/wifi_wake_bind.inc "$BT/bsd/dev/wifi_wake_bind.inc"
 cp shim/nord2-xnu/wifi_wfsys_bind.inc "$BT/bsd/dev/wifi_wfsys_bind.inc"
 cp shim/nord2-xnu/wifi_rom_bind.inc "$BT/bsd/dev/wifi_rom_bind.inc"
 cp shim/nord2-xnu/pool_bind.inc "$BT/bsd/dev/pool_bind.inc"
-for name in wifi_main_wfdma_native.h wifi_main_halt.h wifi_main_wfdma_bind.inc wifi_main_bind.inc; do
+for name in wifi_main_wfdma_native.h wifi_main_halt.h wifi_main_wfdma_bind.inc wifi_main_bind.inc failure_drain.inc; do
     cp "shim/nord2-xnu/$name" "$BT/bsd/dev/$name"
     NEW_FILES="$NEW_FILES bsd/dev/$name"
 done
