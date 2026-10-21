@@ -3,6 +3,35 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **DMA e0d3a50f BOOT HEALTHY; PREFLIGHT REFUSAL RECORDED.**
+  Authorized boot-only flash/reboot OKAY; one-use runner executed, never rerun.
+  Native USB180s exit0, 238276B SHA256
+  a9be4c98ae9e75637567ed9365435e00f09e554566661d20789d1ea36468a3ff.
+  Final strict report complete/no issues, complete_inherited_refusal:
+  ROM again status0/stage16/done1d1e; all27 DMA rings have raw base0/count512/
+  CIDX0/DIDX0; engines disabled/stable. Original strict-zero count predicate
+  refused before any region18 SET, map, zero or DMA enable; votes balanced.
+  Count512 is observed unprogrammed profile, not a documented reset default.
+  Battery likewise refused before any bus write/gauge command: FIFO_STAT840,
+  priorIRQ1/ack_returned0. Selected I3C low5 receive-count convention and
+  matching V2 map support a narrow source-map inference being reviewed;
+  upperbits remain unnamed, not independently proven empty-state flags.
+  Human confirms lockscreen/touch/buttons; phone remains healthy e0d3a50f,
+  collector stopped, no recovery needed. Current USB report/hash and human
+  confirmation saved in research/nord2/wifi-dma/ios. No new flash approval.
+  Next: reviewed count0/observed512 preflight revision; narrow battery FIFO
+  count fix; actual native mainFW/PHY/DMA work continues privately. Original
+  executed parser/evidence stays frozen. UFS/boot speed unchanged and closed.
+
+
+- **DMA + BATTERY e0d3a50f AUTHORIZED; ONE-USE RUNNER STARTING.**
+  Human "Autorizzo, pronto in fastboot" for exacte0d3a50f...31ec65d5.
+  Known Nord2 is sole fastboot device. Private authorization permits boot-only
+  plus conditional tested RAM rescue/current23a9 restoration. Parent will
+  execute runner once/capture180s. Never rerun after flash.log exists.
+  DMA pool and new battery hardware outcomes still pending.
+
+
 - **DMA + BATTERY IMAGE VERIFIED; AWAIT EXACT BOOT-ONLY APPROVAL.**
   shim/out/nord2-xnu/nord2-ios-wifi-dma-battery-stop23.img,33325056B,
   SHA256 e0d3a50f7a706f27a8d9fb19bbd6951c85f016e8b179b47b726c331331ec65d5.
