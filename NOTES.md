@@ -4,6 +4,61 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: 08e6be56 ten-minute capture completed; Claude owns private DHCP fix.**
+  Runner72798 CLOSED0, immutable hardware-review/capture-final.log444012 bytes
+  SHA2c67dd00e7a541e48d0e357d4d21ce9bf07a10e4a464fd67b5f24d15ff161033.
+  Five post-Join readers EXIT0; legacy backend2 only unknown new RX-family
+  records, while exact boot-prefix receipt passes separately. No panic/link
+  cleanup/SCANRETURN observed. User reports169.254, Routerempty; no correlated
+  DHCP reply/lease or Internet success. No competing/remaining USB reader.
+  New GTK path now has actual bounded hardware evidence: authenticated n3
+  INSTALL request, CID7host-DDONE/software replay install, G2 normal local
+  descriptor+token retirement; n4 authenticated no-install response, port1.
+  This does not prove G2 airACK or distinguish exact retry from newer same-GTK.
+  Cap addendum manifest321f4655/report110b0591; initialkeyreportdae00499.
+  Wire TXaudit manifest3f2d5b60/REPORT8b2c5012: rate0 is valid CCK1M for actual
+  2.4GHz/ch1; no new TXD/TXPbit fault proven. STA-only BMC4 vs Android255 is
+  concrete parity candidate; preserve BSS BMC4/GTK WTBL entries.
+  Actual Claude Opus launchedPID549144/wrapper58738, resumed session
+  01e36598-017d-44c6-9f31-18c35b9ccb96, visible desktop3. Private subtree
+  research/nord2/wifi/claude-opus-dhcp-08e6 only; agentformat monitors it.
+  Root must review/test candidate before canonical merge/fullCI/new approval.
+  Wire prepares closed nextstage research/nord2/wifi-ios-dhcp/ios in parallel;
+  no new build/flash/source change. Phone remains08e6be56, oneJoin consumed.
+
+
+- **2026-10-23: datapath08e6be56 boots; WPA2 succeeds but user confirms169.254.**
+  Flash/reboot succeeded; USB collector72798 remains active (600s, root-only).
+  Valid iOS frames and scans; user attempted one WPA2 Join. IP169.254/Router
+  empty confirms link-local fallback, not a usable DHCP lease. Initial frozen
+  dhcp-linklocal.log430416 bytes SHA
+  fbdd5e0f45f91db440cd22facc4b6fb3fa25aabc30285c33cfc6952c752de19a.
+  Connection/WPA/data/extended readers pass: authorized link, local normal TX
+  retirement, BSD RX, but repeated sharedPID127status3/count30, no matched
+  DHCP response or accepted unicast proof. No early fatal guard observed.
+  Initial backend reader lacked local core-receipt; copied byte-identical pinned
+  dependency, same boot-before-join capture then PASS. Full post-Join legacy
+  backend refuses new RXCOUNTS/RXREJECT records; preserve refusal and use exact
+  early startup proof separately, not a hardware failure or weakened parser.
+  User explicitly delegated DHCP fix to actual Claude; agentformat launches
+  Opus via established session in research/nord2/wifi/claude-opus-dhcp-08e6.
+  Wire/cap independent source audits identify STA-command ucBMCWlanIndex4 vs
+  Android unconditional WTBL_RESERVED_ENTRY255; distinct BSS BMC4 is correct.
+  Candidate causal effect unproven. Cap reportdae00499/manifestfa00aab2.
+  No source changes/new build; preserve active connection through lateGTK.
+
+
+- **2026-10-23: exact datapath hardware test authorized; runner72798 active.**
+  Usercall_3bfd17038fe8427ab63e6570632f45bf authorized exact08e6be56 boot-only
+  test plus conditional d9a/rescue recovery, confirming manual fastboot ready.
+  Parent rehashed image33478656 bytes, verified sole known fastboot device,
+  productoplus6893/boot32MiB/non-userspace and no competing USB collector.
+  Gates record this exact consent; one-shot runner72798 started, do not rerun.
+  Collector is owned by runner and configured wait300/read600seconds. Await
+  successful flash/reboot and valid iOS frames before one WPA2 Join, private
+  address disabled and password only on phone. No current IP success claim.
+
+
 - **2026-10-22: combined datapath image PREPARED and independently verified.**
   shim/out/nord2-xnu/nord2-ios-wifi-datapath-stop23.img,33478656 bytes:
   SHA25608e6be56c42f62c0b0e4771132c9865f84a49f4f634c9a235503e595d6403a42.
