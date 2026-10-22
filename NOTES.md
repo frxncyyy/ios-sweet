@@ -4,6 +4,124 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: final combined datapath suite PASS, ready for full CI.**
+  All13 groups in wifi-ios-datapath/ios/local-tests/combined.json pass on final
+  canonical runtime: normal TX, secure GTK, all9 station groups, data diagnostics,
+  join owner, both scan-return paths, native scan service/backend, iOS contract/
+  client, strict connection/WPA/data readers. Final source matches successful
+  fifteen-TU ARM64 compileattempt3, patchb363b17a. Two older fixture failures
+  were migrated to the new GTK representation and authenticated Group1 policy;
+  no runtime acceptance weakened. Exact synthetic modified-Group1 now refuses
+  on MIC failure rather than obsolete unsupported-type gate, with full wipe.
+  New stage all hardware/image/CI gates remain false pending full build/audit.
+  Phone untouched on b8851761, one Join consumed, no usable IP claim.
+
+
+- **2026-10-22: full normal TX and secure group renewal integrated locally.**
+  Runtime now includes source-parity HW0 TXD/TXP with one reserved payload page,
+  checked descriptor completion AND type6 token return before buffer reuse;
+  management remains on its previous ring. Native ledger and scan-return
+  closure account for both rings. Full GTK renewal authenticates MIC/replay/
+  unwrap/KDE, uses per-key WTBL/PN slots and protects G2 with PTK; duplicate
+  messages do not reinstall keys. User data remains gated by controlled port.
+  Two documented merge conflicts resolved retaining root RX diagnostics and
+  both ownership models. Canonical normalTX/GTK tests PASS; old direct-state
+  fixture migration4paths preserves assertions, independent focused passes.
+  Final15 actual generated ARM64 C units PASS, compiled-review/attempt3 receipt
+  a4d9a39a; generated0082 b363b17a. Initial compileattempt1 failed missingnewTU
+  registration due early shell sequencing; fixed before successful attempts2/3.
+  Independent source reviews: normal3e8d2e44, GTK1b468d62, final comment addendum
+  fd669182. Combined final suite running; no CI or new image yet. Limits remain
+  one Join/boot, source2048 token IDs without on-wire generation, bounded32GTK
+  materials/10s rekey. No hardware throughput, new rekey or usable IP claim.
+
+
+- **2026-10-22: scan compatibility promoted; combined datapath stage prepared.**
+  Canonical BSS2 infrastructure/BSS3 any, FAST/passive-compatible scan and exact
+  110ms dwell profile now pass policy/snapshot/actual client/native owner tests.
+  Full client runner v3 PASS after fixing fixture extraction placement; native
+  scan cache remains immutable and only infrastructure result snapshots filter
+  ESS/IBSS. Connection reader182positive/292negative admits appended actions15/16
+  and data phases10..15 only in local-submission format; no air/IP inference.
+  New stage research/nord2/wifi-ios-datapath/ios is prepared with all source,
+  CI, image and human gates FALSE. Intended image nord2-ios-wifi-datapath-stop23.
+  Normal HW0 host TX + secure GTK renewal private candidates are being finalized
+  and reviewed together, including token ownership/cancellation/cleanup. No
+  new CI, image, flash or Join. Phone remains b8851761; open-network test is
+  inapplicable to current WPA2-only decoder despite user confirming availability.
+
+
+- **2026-10-22: final collection closed; recovered scans proven, candidates underway.**
+  Collector87378 CLOSED0; final immutable capture-final.log515020 bytes SHA
+  77d7fd3b389d98f41bcfcc10fcefaad258c71891d285ee04ae3f07173ef50740,
+  all5 readers EXIT0. Later scan tickets4..17 complete with1..13 APs (one
+  capacity-limited partial); initial bss2/FAST/timing profiles were refused,
+  so scan-return works but service policy still delays recovery. No panic.
+  Claude terminal read-only review12d1a0c1 confirms closure before MIC and
+  no proof that broadcast DHCP OFFER/ACK belongs to this phone. Native data
+  transport and full group-key renewal remain private candidates, not tested.
+  Root promoted bounded RX rejection/TXS advanced fields/DHCP request correlation
+  diagnostics with tests. Correlation stores4 XID/client pairs privately, wipes
+  them at terminal summary and logs only match counts; no lease proof. ASan/UBSan
+  baseline719pure/1141actual +extended1105actual/correlation tests pass.
+  Agent format also implements infrastructure/FAST/dwell scan policy privately.
+  No new image or device action; phone remains b8851761 and one Join is consumed.
+
+- **2026-10-22: decisive b8851761 terminal evidence; supersedes prefix findings below.**
+  Immutable postauth/ios/hardware-review/postauth-terminal.log481564 bytes,
+  SHA1571ed543b97037fe3758ff82807130916a4e6d8098feaac2594e86b88a0dbd7;
+  all5 parsers EXIT0; DATA summary complete. At466971ms WPAHDR3 state5,
+  bytes131/info4994(0x1382)/class5/failure4: group-shaped key message rejected
+  on universal pairwise key-length gate BEFORE MIC/unwrap. Actual KeyLength
+  value and authenticity were not logged; this is not authenticated Group1.
+  Cleanup completed without panic, linkdown, SCANRETURN completed118. iOS
+  subsequently asks scans but policy returns-2; no fresh scan results proven.
+  Summary30 outgoing DISCOVER/0REQUEST,0 unicast RX/1307 group RX;7 classified
+  group DHCP frames include1OFFER/1ACK but have no own-client/XID correlation,
+  so neither is proof of our lease. TXS3 management success/9 sharedPID127
+  MPDU_ERROR; per-packet protected-data attribution remains unproven.
+  Claude same-session first hardware review finished7047cdea, terminal update
+  exec32741 running read-only. Cap owns private full secure GTK-rekey candidate,
+  wire private complete normal HW0 TXD/TXP/token-return candidate, root bounded
+  RX/TXS/DHCP-match observations and scan policy review. No canonical runtime
+  changes yet and no repeat Join/reboot. User confirms open network available,
+  but current image is WPA2-only; do not test open with this image.
+
+- **2026-10-22: b8851761 one WPA2 Join reproduces spinner; new DATA evidence saved.**
+  User reports same waiting spinner, no usable IP. Initial reader74334 CLOSED0;
+  immutable hardware-review/capture-initial.log458650 bytes SHA
+  fa60faadcb153fb1ca2789d1099266775cfa7c518c10c8a960076cee1b8bb686.
+  All5 readers EXIT0 (data intentionally valid prefix, no terminal summary).
+  First action snapshot join-spinner.log414371 bytes SHA73824b34...9e45533:
+  local authorization109705ms;10 native broadcast DHCP DISCOVER publications,
+  no classified Offer;9 sharedPID127 TXSstatus3/MPDU_ERROR with tx_count30,
+  advanced flags3/rate0 versus managementPID1/2status0/count1/rate0. PID127
+  cannot identify which packet failed; native RX is not BSD delivery. Group
+  ARP/IP/IPv6 received; no observed late WPA error, scan return or panic yet.
+
+  Root resumed read-only collector87378 for600s at hardware-followup (initial
+  rejected900s invocation made no USB calls; tool maximum is600). New output
+  includes initial capture as exact prefix. Do not run competing collectors.
+  Claude resumed same Opus session via agentformat/exe89580, new folder
+  research/nord2/wifi/claude-opus-postauth-806c/hardware-b8851761, restricted
+  read-only and viewer on desktop3. Wire audits native TX; cap's protocol audit
+  a3a34cf3 says AP-peer/PTK uplink broadcast matches source, not a GTK/noACK fix.
+  Proposed open-network comparison was withdrawn: current decoder only accepts
+  WPA2, so open network would refuse before traffic and is not a valid test.
+  No new source change, build, phone reboot or repeat Join authorized/performed.
+
+
+- **2026-10-22: postauth image b8851761 flashed with exact user authorization.**
+  Usercall_413702708126415b89f7b0874c887b70 authorized this exact boot-only
+  test and conditional d9a/rescue recovery, confirming fastboot ready. Root
+  verified sole known device/productoplus6893/boot32MiB/non-userspace fastboot,
+  rehashed image; runner74334 reverified existing image then flash/reboot OKAY.
+  New stage runner is USED; never rerun it. Collector owned by74334 is active
+  in research/nord2/wifi-ios-postauth/ios/hardware-live,300s read window after
+  connection. Await valid boot/display, then one WPA2 Join with private address
+  disabled and password only on device. Do not start a competing USB collector.
+
+
 - **2026-10-22: combined postauth image PREPARED and independently verified.**
   shim/out/nord2-xnu/nord2-ios-wifi-postauth-stop23.img,33470464 bytes:
   SHA-256 b8851761d3441fc507177b819e17a0c0a3679952122cb1c3e47e7a65966a96ff.

@@ -93,7 +93,7 @@ class NiwlLifecycleClient : public IOUserClient {
  enum Phase {Closed,Open,Allocated,Armed};Phase phase;
  IOBufferMemoryDescriptor *data,*state;
  OSAsyncReference64 reference;bool ownsReference;
- uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned unsupportedLogs,pipeLogs,scanLogs,queueLogs,completionLogs,eventLogs,resultLogs,outputLogs;
+ uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned pendingBss,unsupportedLogs,pipeLogs,scanLogs,queueLogs,completionLogs,eventLogs,resultLogs,outputLogs;
  struct {uint32_t request,operation,count;} controlTrace[40];
  char interfaceName[16];struct nils_state cacheLife;struct nils_ticket cacheTicket;
  struct njs_snapshot *station;uint64_t joinTicket,joinEpoch;unsigned joinLogs;
@@ -123,7 +123,7 @@ public:
 };
 OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
 bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
- station=nullptr;joinTicket=joinEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
+ station=nullptr;joinTicket=joinEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;pendingBss=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
  timingClient=0;timingCalls=timingRequest=timingNormal=timingSlow=0;
  owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
  if(!task||current_task()!=task||type)return false;
@@ -364,7 +364,7 @@ IOReturn NiwlLifecycleClient::scanLocked(const uint8_t*p,size_t n){
  retain();uint64_t ticket=0;int result=nord2_wifi_scan_enqueue(&request,this,scanGeneration,completed,&ticket);
  if(result){nils_finish(&cacheLife,&cacheTicket,nullptr);release();return result==2?kNiwScanBusy:kIOReturnNotReady;}
  if(queueLogs++<64)printf("NORD2 WIFI IOS ENQUEUE: status=%d generation=%llu ticket=%llu t_ms=%llu\n",result,(unsigned long long)scanGeneration,(unsigned long long)ticket,niw_ms());
- pendingTicket=ticket;pendingEpoch=generation;lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
+ pendingTicket=ticket;pendingEpoch=generation;pendingBss=p[4];lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
 }
 void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enum nss_status status){
  NiwlLifecycleClient*c=(NiwlLifecycleClient*)cookie;
@@ -374,6 +374,7 @@ void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enu
   if(status==NSS_COMPLETE&&!nord2_wifi_scan_view(ticket,&view)&&view.client_generation==gen){
    size_t count=0;const niwp_rate_map*map=niwi_rate_map(&count);
    result=nils_prepare(&c->cacheTicket,view.scan,view.captured_us,view.captured_us,map,count,c->snapshot);
+   if(!result)result=niwa_snapshot_bss_filter(c->snapshot,c->pendingBss);
   }
   if(result==0&&nils_finish(&c->cacheLife,&c->cacheTicket,c->snapshot)==0)c->lastScanError=kIOReturnSuccess;
   else{nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);c->lastScanError=kIOReturnNotReady;}

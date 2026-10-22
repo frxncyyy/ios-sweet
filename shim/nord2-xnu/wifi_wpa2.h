@@ -14,6 +14,8 @@ struct nwp_result {unsigned action,bytes,failure;uint64_t ticket;uint8_t frame[2
 struct nwp {
  uint64_t generation,serial,pending,install_ticket;unsigned state,tx_kind,installed,ready_mask;
  uint8_t pmk[32],own[6],peer[6],snonce[32],anonce[32],kck[16],kek[16],tk[16],gtk[16],rsc[8];
+ unsigned group_phase,group_bytes,gtk_history_count;uint64_t group_ticket;
+ uint8_t rx_replay[8],group[NWP_FRAME],gtk_history[32][16];
  unsigned gtk_index;uint8_t rsn[22],ap_rsn[257],m1_replay[8];unsigned ap_rsn_bytes;
  uint8_t ap_rsnxe[257];unsigned ap_rsnxe_bytes;
  uint8_t m3[NWP_FRAME];unsigned m3_bytes;
@@ -40,6 +42,9 @@ int nwp_security_submitted(struct nwp*,uint64_t generation,uint64_t ticket,int s
  * to install_ticket. Partial successes accumulate, duplicate receipts do not
  * authorize twice. A matching terminal failure clears the whole transaction. */
 int nwp_keys_ready(struct nwp*,uint64_t generation,uint64_t install_ticket,unsigned mask,int success);
+/* Authorized-only validated GTK install receipt, before protected Group2.
+ * Replay/duplicate recognition never requests an already-seen key install. */
+int nwp_group_ready(struct nwp*,uint64_t generation,uint64_t ticket,int success,struct nwp_result*);
 void nwp_cancel(struct nwp*);
 /* Validated passphrase8..63 and SSID1..32. Output wiped on refusal. */
 int nwp_pmk(const uint8_t*,size_t,const uint8_t*,size_t,uint8_t out[32]);

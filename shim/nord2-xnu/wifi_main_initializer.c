@@ -37,6 +37,7 @@ int nwi_prepare(struct nwi_state*s,const struct ndp_claim*c,const struct npp_sta
  }
  pos=(pos+4095)&~UINT64_C(4095);
  for(unsigned i=4;i<9;i++){s->rings[i].buffers=i==5?sub.rx_events:pos;if(i!=5)pos+=4096u*s->rings[i].count;}
+ s->data_buffer=pos;pos+=4096;
  if(pos>c->base+c->bytes||pos>UINT32_MAX)return -1;
  s->end=pos;s->prepared=1;return 0;
 }

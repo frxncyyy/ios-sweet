@@ -5,11 +5,12 @@
 #include "wifi_normal_backend.h"
 #include "wifi_station_wire.h"
 #include "wifi_station_data_diag.h"
+#include "wifi_station_tx.h"
 #define NST_MAX_ETHERNET 1514u
 #define NST_RX_BYTES 3840u
 #define NST_FRAME_BYTES 1600u
 /* FRAME_RESULT status0..255 is firmware status. This disjoint local value
- * is negative-only, after proved DDONE; it never means air success/ACK. */
+ * is negative-only for cleanup management after proved DDONE; it never means air success/ACK. */
 #define NST_TX_LOCAL_TIMEOUT 0x100u
 /* Host-only optional TXS can never alias an air-correlated management PID.
  * Source driver PID range is1..127. This first-attempt epoch never reuses a
@@ -21,7 +22,8 @@
 enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,
  NST_STA_ACTIVE,NST_KEY_READY,NST_MANAGEMENT,NST_EAPOL,NST_ETHERNET,NST_PEER_PREPARED,NST_PEER_CONFIGURED,NST_PEER_RETIRED,NST_CHANNEL_RELEASED,NST_LINK_LOST,NST_FATAL,NST_SECURITY_SUBMITTED,NST_DATA_SUBMITTED};
 enum nst_phase {NST_IDLE,NST_TX_READ,NST_TX_WRITE,NST_TX_PUBLISH,NST_TX_WAIT,
- NST_RX_READ,NST_RX_FRAME,NST_RX_WRITE,NST_RX_PUBLISH,NST_HALTED};
+ NST_RX_READ,NST_RX_FRAME,NST_RX_WRITE,NST_RX_PUBLISH,NST_HALTED,
+ NST_DATA_READ,NST_DATA_WRITE,NST_DATA_VERIFY,NST_DATA_PUBLISH,NST_DATA_WAIT,NST_DATA_RETIRE};
 struct nst_event {
  unsigned kind,status;uint64_t generation,ticket;
  uint8_t cid,sequence,pid,wlan,bss,sta,token,band,channel,key_id;
@@ -45,6 +47,9 @@ struct nst {
  uint64_t generation,ticket,last,deadline,operation_deadline;
  struct nst_peer peer;struct sw_txd txd;
  struct ncr_queue queue[NCR_QUEUES];struct nst_replay ptk,gtk;
+ /* GTK slots retain independent replay lanes during source key-index overlap. */
+ struct nst_replay gtk_keys[4];uint8_t gtk_wlan[4],group_spare[3];unsigned gtk_mapped;
+ uint32_t gtk_submission_serial,gtk_replay_serial;unsigned gtk_command_added;
  unsigned controlled_port,sta_active,ptk_ready,ptk_command,ptk_submitted,gtk_submitted;
  unsigned activation_pending,activation_sequence,peer_kind,peer_step,internal_wire;
  uint64_t peer_ticket,grant_deadline;uint8_t channel_token,channel_held;
@@ -56,6 +61,7 @@ struct nst {
  unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
  uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
  uint32_t rx_bytes;struct nst_event deferred;struct nsdd data_diag;
+ struct nstx normal;uint8_t data_verify[NSTX_PAGE_BYTES];
 };
 /* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
  * no guessed capability indices. peer indices must match retained scan profile. */
@@ -66,7 +72,7 @@ int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
 /* Copy complete CID payload or frame into owned storage.0 accepted,1busy,-1bad.
  * CID ticket completion means DMA/source software submission, not firmware ACK.
  * Management waits for actual PID+WLAN EID0f result. SECURITY_SUBMITTED and
- * DATA_SUBMITTED mean only local DDONE/storage retirement, never air success. */
+ * DATA_SUBMITTED mean only local DDONE + matching TX-free token/storage retirement, never air success. */
 int nst_command(struct nst *,uint64_t ticket,uint8_t cid,const uint8_t *,size_t);
 int nst_management(struct nst *,uint64_t ticket,const uint8_t *,size_t);
 int nst_eapol(struct nst *,uint64_t ticket,const uint8_t *ethernet,size_t,unsigned protected_frame);
@@ -86,6 +92,7 @@ int nst_register_write(const struct nst *,uint32_t,uint32_t);
 int nst_replay_install(struct nst *,unsigned pairwise,uint8_t key_id,const uint8_t rsc[8]);
 /* Authorize only after actual STA+PTK ready, GTK replay installed, and no pending
  * key command. No external boolean can supply STA/PTK readiness. */
+int nst_replay_replace_group(struct nst *,uint8_t key_id,const uint8_t rsc[8]);
 int nst_authorize(struct nst *);
 /* Once per attempt, install the owner's fresh <=30s teardown deadline. Existing
  * published-operation and RF grant deadlines remain binding. No IO or retirement

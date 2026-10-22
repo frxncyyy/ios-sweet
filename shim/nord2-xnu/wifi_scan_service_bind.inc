@@ -28,7 +28,7 @@ static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC
 static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
 int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
 int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
- if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS)return -1;
+ if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS||(q->dwell_tu!=0&&q->dwell_tu!=108))return -1;
  if(!nss_available())return 1;IOLockLock(nss_native.lock);
  if(njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
  if(nss_native.failed||nss_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
@@ -75,7 +75,7 @@ static int nss_execute(struct nss_slot*slot){
  const struct ncs_channel*channels=slot->request.count?slot->request.channels:nss_native.info.channels;
  size_t count=slot->request.count?slot->request.count:nss_native.info.count;
  uint8_t sequence=(uint8_t)(nss_native.scan_sequence+1u);
- if(ncs_build(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,nss_native.info.mac,channels,count,1,2,sequence,1,0,0,&nss_native.frames))return 1;
+ if(ncs_build(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,nss_native.info.mac,channels,count,1,2,sequence,1,slot->request.dwell_tu,0,&nss_native.frames))return 1;
  nss_native.previous=*s;nss_native.previous_rx=*r;nss_native.previous_rx.session=&nss_native.previous;
  memset(s,0,sizeof(*s));memset(r,0,sizeof(*r));
  const struct nct_entry entry={NCS_SCAN_BYTES,3,1};const struct nct_recipe recipe={&entry,1,nss_build,&nss_native.frames,UINT64_C(30000000),UINT64_C(15000000)};

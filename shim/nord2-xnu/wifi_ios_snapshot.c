@@ -44,3 +44,20 @@ int niwa_snapshot_prepare(const struct nsb_scan*s,uint64_t generation,const uint
     (size_t)out->count*NIWS_SCAN_RESULT_BYTES,out->count))return -1;
  return 0;
 }
+
+int niwa_snapshot_bss_filter(struct niwa_snapshot*s,unsigned bss){
+ if(!s||(bss!=2&&bss!=3)||!s->entered||s->status!=NIWA_COMPLETE||
+ s->count>NSB_RESULTS||s->cursor.phase!=NIWC_READY||s->cursor.next||
+ s->cursor.generation!=s->generation||s->cursor.count!=s->count||
+ s->cursor.records!=&s->rows[0][0])return -1;
+ if(bss==3)return 0;
+ unsigned kept=0;
+ for(unsigned i=0;i<s->count;i++){
+  unsigned cap=s->rows[i][26]|(unsigned)s->rows[i][27]<<8;
+  if((cap&3u)!=1u){s->omitted++;s->omit_mask|=NIWA_OMIT_BSS;continue;}
+  if(kept!=i)for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[kept][j]=s->rows[i][j];
+  kept++;
+ }
+ for(unsigned i=kept;i<s->count;i++)for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[i][j]=0;
+ s->count=kept;s->cursor.count=kept;return 0;
+}

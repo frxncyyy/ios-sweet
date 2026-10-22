@@ -17,7 +17,7 @@ int main(void){struct nss_info info={.band5=1,.count=4,.channels={{1,1},{1,6},{2
  assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==0);checks++;
  s.type=2;assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==0);checks++;
  const unsigned flags2g[]={0,2,8,10,128,130,136,138},flags5g[]={0,2,16,18,128,130,144,146};
- for(unsigned mode=1;mode<=2;mode++)for(unsigned a=0;a<8;a++)for(unsigned b=0;b<8;b++){s=packet(mode);s.count=2;s.channel[0]=(struct channel){1,44,flags5g[b]};s.channel[1]=(struct channel){1,6,flags2g[a]};assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==2&&out.channels[0].band==2&&out.channels[0].channel==44&&out.channels[1].band==1&&out.channels[1].channel==6);checks++;}
+ for(unsigned mode=1;mode<=3;mode++)for(unsigned a=0;a<8;a++)for(unsigned b=0;b<8;b++){s=packet(mode);s.count=2;s.channel[0]=(struct channel){1,44,flags5g[b]};s.channel[1]=(struct channel){1,6,flags2g[a]};assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==2&&out.channels[0].band==2&&out.channels[0].channel==44&&out.channels[1].band==1&&out.channels[1].channel==6);checks++;}
  s=packet(2);s.count=4;for(unsigned i=0;i<4;i++)s.channel[i]=(struct channel){1,info.channels[i].channel,info.channels[i].band==1?8:16};assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==4);checks++;
  s=packet(2);for(unsigned n=0;n<sizeof s;n++)no(&s,n,&info);no(&s,sizeof s+1,&info);no(0,sizeof s,&info);no(&s,sizeof s,0);
  for(unsigned i=0;i<sizeof s;i++){
@@ -27,7 +27,10 @@ int main(void){struct nss_info info={.band5=1,.count=4,.channels={{1,1},{1,6},{2
   else no(&s,sizeof s,&info);
   ((uint8_t*)&s)[i]^=0x80;
  }
- for(unsigned mode=0;mode<7;mode++)if(mode!=1&&mode!=2){s=packet(mode);no(&s,sizeof s,&info);}
+ for(unsigned mode=0;mode<7;mode++)if(mode!=1&&mode!=2&&mode!=3){s=packet(mode);no(&s,sizeof s,&info);}
+ for(unsigned b=2;b<=3;b++)for(unsigned m=1;m<=3;m++)for(unsigned d=0;d<=110;d+=110){s=packet(m);s.bss=b;s.dwell=d;assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.dwell_tu==(d?108:0));checks++;}
+ for(unsigned b=0;b<6;b++)if(b!=2&&b!=3){s=packet(2);s.bss=b;no(&s,sizeof s,&info);}
+ for(unsigned d=1;d<65536;d++)if(d!=110){s=packet(2);s.dwell=d;no(&s,sizeof s,&info);}
  s=packet(2);s.count=40;no(&s,sizeof s,&info);s.count=1;s.channel[0]=(struct channel){1,165,16};no(&s,sizeof s,&info);s.channel[0].number=6;s.channel[0].flags=16;no(&s,sizeof s,&info);s.channel[0]=(struct channel){0,6,8};no(&s,sizeof s,&info);s.channel[0].version=1;
  const unsigned badflags[]={1,4,12,24,0x40,0x100,0x800,0xffffffff};for(unsigned i=0;i<sizeof badflags/sizeof*badflags;i++){s.channel[0].flags=badflags[i];no(&s,sizeof s,&info);}s.channel[0]=(struct channel){1,6,8};s.count=2;s.channel[1]=s.channel[0];no(&s,sizeof s,&info);s.count=1;s.channel[1]=(struct channel){0};s.type=1;assert(!niwi_scan_admit((uint8_t*)&s,sizeof s,&info,&out)&&out.count==1);checks++;
  s=packet(2);struct nss_info bad=info;bad.count=0;no(&s,sizeof s,&bad);bad=info;bad.count=40;no(&s,sizeof s,&bad);bad=info;bad.channels[3]=bad.channels[0];no(&s,sizeof s,&bad);bad=info;bad.channels[3].band=0;no(&s,sizeof s,&bad);

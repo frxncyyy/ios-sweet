@@ -178,7 +178,7 @@ static int njs_start_owner(uint64_t now_us){
  uint64_t fresh_us=njs_uptime_us();if(fresh_us<now_us||fresh_us>=njs_native.deadline_us){IOLockUnlock(nss_native.lock);njs_early_finish(fresh_us>=njs_native.deadline_us?9:2);return 0;}
  struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=njs_native.deadline_us/1000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
  config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=1,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
- config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
+ memcpy(config.group_spare,nst_native.state.group_spare,sizeof config.group_spare);config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
  config.ap_ies=njs_native.target.record.ies;config.ap_ies_bytes=njs_native.target.record.ie_bytes;
  int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,fresh_us/1000);
  niwj_clear(&config,sizeof config);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;if(result==1)njs_snapshot_locked();IOLockUnlock(nss_native.lock);

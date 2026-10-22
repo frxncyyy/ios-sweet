@@ -1,6 +1,5 @@
-/* Private provider replacement. State machine unchanged from candidate135660fe;
- * all original Redwood arithmetic removed. Existing BearSSL-backed provider
- * supplies SHA1/HMAC/PBKDF2/PRF/AES-CT unwrap, with exact MIT provenance. */
+/* WPA2 pairwise handshake and bounded group-key renewal. The BearSSL-backed
+ * provider supplies SHA1/HMAC/PBKDF2/PRF/AES-CT unwrap with MIT provenance. */
 #include "wifi_wpa2.h"
 #include "wifi_wpa_crypto.h"
 #if defined(KERNEL) || defined(_KERNEL)
@@ -17,7 +16,7 @@ static void prf(const uint8_t*k,unsigned kn,const char*label,const uint8_t*p,uns
  if(kn!=32||n!=76||on!=48||strcmp(label,"Pairwise key expansion")){wipe(out,on);return;}(void)nwpc_ptk(k,p,out);
 }
 static int aes_unwrap(const uint8_t*k,const uint8_t*p,unsigned n,uint8_t*out){size_t used=0;return nwpc_unwrap(k,p,n,out,NWP_FRAME,&used);}
-/* ---- strict first WPA2-PSK/CCMP transaction, no rekey/roam/PMF ---- */
+/* ---- strict WPA2-PSK/CCMP transaction and bounded GTK-only rekey, no PTK rekey/roam/PMF ---- */
 static unsigned be16(const uint8_t*p){return (unsigned)p[0]<<8|p[1];}
 static void put16(uint8_t*p,unsigned v){p[0]=(uint8_t)(v>>8);p[1]=(uint8_t)v;}
 static int equal(const uint8_t*a,const uint8_t*b,size_t n){unsigned d=0;for(size_t i=0;i<n;i++)d|=a[i]^b[i];return !d;}
@@ -100,7 +99,7 @@ static void mic(const struct nwp*w,const uint8_t*p,unsigned n,uint8_t*out){
 static int reply(struct nwp*w,const uint8_t*p,unsigned kind,struct nwp_result*r){
  if(w->serial==UINT64_MAX)return fail(w,r);
  unsigned n=kind==1?121:99;memset(r,0,sizeof(*r));r->frame[0]=p[0];r->frame[1]=3;put16(r->frame+2,n-4);r->frame[4]=2;
- put16(r->frame+5,kind==1?0x010a:0x030a);memcpy(r->frame+9,p+9,8);
+ put16(r->frame+5,kind==1?0x010a:kind==4?0x0302:0x030a);memcpy(r->frame+9,p+9,8);
  if(kind==1){memcpy(r->frame+17,w->snonce,32);put16(r->frame+97,22);memcpy(r->frame+99,w->rsn,22);}
  mic(w,r->frame,n,r->frame+81);r->action=NWP_TX;r->bytes=n;r->ticket=++w->serial;w->pending=r->ticket;w->tx_kind=kind;return NWP_TX;
 }
@@ -125,6 +124,61 @@ static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
  }
  return have_rsn==1&&have_gtk==1&&have_rsnxe==(w->ap_rsnxe_bytes?1u:0u)?0:-1;
 }
+/* RSN group key data does not require M3's RSN/RSNXE repetition. Optional
+ * copies must still equal the authenticated association selection; PMF KDEs
+ * are not admitted. Ignore only bounded non-RSN vendor metadata. */
+static int group_kde(const struct nwp*w,const uint8_t*p,unsigned n,uint8_t key[16],unsigned*index){
+ unsigned at=0,gtk=0,rsn=0,xe=0;
+ while(at<n){
+  if(p[at]==221&&(at+1==n||p[at+1]==0)){for(unsigned j=at+1;j<n;j++)if(p[j])return -1;break;}
+  if(n-at<2||p[at+1]>n-at-2)return -1;
+  unsigned z=p[at+1]+2u;const uint8_t*e=p+at;
+  if(e[0]==48){if(rsn++||z!=w->ap_rsn_bytes||!equal(e,w->ap_rsn,z))return -1;}
+  else if(e[0]==244){if(xe++||z!=w->ap_rsnxe_bytes||!equal(e,w->ap_rsnxe,z))return -1;}
+  else if(e[0]==221&&z>=6&&!(e[2]==0&&e[3]==15&&e[4]==172)){}
+  else if(e[0]==221){if(gtk++||z!=24||!suite(e+2,1)||(e[6]&~7u)||e[7])return -1;*index=e[6]&3;memcpy(key,e+8,16);}
+  else return -1;
+  at+=z;
+ }
+ return gtk==1?0:-1;
+}
+static int group_receive(struct nwp*w,const uint8_t*p,unsigned n,struct nwp_result*r){
+ /* KeyLength is unused for RSN Group1; KDE validates the actual CCMP length.
+  * GNonce is not the original pairwise ANonce. Never compare them. */
+ if(w->state!=NWP_AUTHORIZED||!w->installed||w->ready_mask!=7)return failed(w,r,NWP_F_KEYINFO_STATE);
+ uint8_t sig[16];mic(w,p,n,sig);int valid=equal(sig,p+81,16);wipe(sig,sizeof sig);
+ if(!valid)return failed(w,r,NWP_F_MIC);
+ int replay=memcmp(p+9,w->rx_replay,8);
+ if(replay<0)return failed(w,r,NWP_F_M3_STATE_REPLAY);
+ if(!replay){
+  if(!w->group_bytes||n!=w->group_bytes||!equal(p,w->group,n))return failed(w,r,NWP_F_M3_CONTENT);
+  if(w->pending||w->group_phase)return NWP_BUSY;
+  w->group_phase=2;return reply(w,p,4,r); /* ACK retry, no installation or PN reset. */
+ }
+ if(w->pending||w->group_phase)return NWP_BUSY;
+ unsigned z=be16(p+97),index=0;uint8_t plain[NWP_FRAME],key[16];
+ if(p[71]||p[72]||aes_unwrap(w->kek,p+99,z,plain)){wipe(plain,sizeof plain);return failed(w,r,NWP_F_UNWRAP);}
+ if(group_kde(w,plain,z-8,key,&index)){wipe(key,sizeof key);wipe(plain,sizeof plain);return failed(w,r,NWP_F_KDE);}
+ wipe(plain,sizeof plain);
+ int same=equal(key,w->gtk,16);
+ if(same&&index!=w->gtk_index){wipe(key,sizeof key);return failed(w,r,NWP_F_KDE);}
+ if(!same){
+  for(unsigned k=0;k<w->gtk_history_count;k++)if(equal(key,w->gtk_history[k],16)){wipe(key,sizeof key);return failed(w,r,NWP_F_KDE);}
+  if(w->gtk_history_count>=32||w->serial==UINT64_MAX){wipe(key,sizeof key);return fail(w,r);}
+  memcpy(w->gtk_history[w->gtk_history_count++],key,16);
+ }
+ memcpy(w->rx_replay,p+9,8);memcpy(w->group,p,n);w->group_bytes=n;
+ if(same){wipe(key,sizeof key);w->group_phase=2;return reply(w,p,4,r);}
+ memcpy(w->gtk,key,16);wipe(key,sizeof key);w->gtk_index=index;memcpy(w->rsc,p+65,8);
+ w->group_phase=1;w->group_ticket=++w->serial;w->pending=w->group_ticket;
+ r->ticket=w->group_ticket;r->action=NWP_INSTALL;return NWP_INSTALL;
+}
+int nwp_group_ready(struct nwp*w,uint64_t gen,uint64_t ticket,int success,struct nwp_result*r){
+ if(!r)return NWP_FAIL;memset(r,0,sizeof *r);
+ if(!w||gen!=w->generation||!ticket||ticket!=w->group_ticket||ticket!=w->pending||w->group_phase!=1||w->state!=NWP_AUTHORIZED)return NWP_DROP;
+ if(success!=1)return fail(w,r);w->pending=0;w->group_ticket=0;w->group_phase=2;
+ return reply(w,w->group,4,r);
+}
 int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  if(!r)return NWP_FAIL;
  memset(r,0,sizeof(*r));
@@ -132,7 +186,9 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  if(w->state==NWP_OFF){r->failure=NWP_F_OFF;return NWP_FAIL;}
  if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return failed(w,r,3);
  unsigned info=be16(p+5);
+ if(info==0x1382)return group_receive(w,p,(unsigned)n,r);
  if(be16(p+7)!=16)return failed(w,r,4);
+ if(w->group_bytes)return failed(w,r,NWP_F_KEYINFO_STATE);
  if(info==0x008a){
   if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return failed(w,r,5);
   if(w->state!=NWP_M1){
@@ -155,7 +211,7 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
   if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return failed(w,r,9);
   for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return failed(w,r,10);
   if(w->pending)return NWP_BUSY;
-  memcpy(w->m3,p,n);
+  memcpy(w->m3,p,n);memcpy(w->rx_replay,p+9,8);
   return reply(w,p,3,r);
  }
  if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return failed(w,r,11);
@@ -163,13 +219,14 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  uint8_t plain[NWP_FRAME];unsigned wrapped=be16(p+97);
  if(aes_unwrap(w->kek,p+99,wrapped,plain)){wipe(plain,sizeof plain);return failed(w,r,12);}
  if(kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return failed(w,r,14);}
- wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;w->state=NWP_M4_TX;
+ wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;memcpy(w->rx_replay,p+9,8);memcpy(w->gtk_history[0],w->gtk,16);w->gtk_history_count=1;w->state=NWP_M4_TX;
  return reply(w,p,2,r);
 }
 int nwp_security_submitted(struct nwp*w,uint64_t gen,uint64_t ticket,int success){
  if(!w||!ticket||gen!=w->generation||ticket!=w->pending)return NWP_DROP;
  unsigned kind=w->tx_kind;w->pending=0;w->tx_kind=0;
  if(!success){nwp_cancel(w);return NWP_FAIL;}
+ if(kind==4){if(w->state!=NWP_AUTHORIZED||w->group_phase!=2){nwp_cancel(w);return NWP_FAIL;}w->group_phase=0;return NWP_DROP;}
  if((kind==2||kind==3)&&w->state==NWP_M4_TX&&!w->installed){w->installed=1;w->install_ticket=ticket;w->state=NWP_KEYS;return NWP_INSTALL;}
  return NWP_DROP;
 }

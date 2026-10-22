@@ -118,7 +118,7 @@ def parse(data):
    if len(station_formats)>1:bad('mixed station counter formats in one boot')
    if local_format and any(row[k]for k in ('tx_result','tx_ok','tx_fail')):bad('local data producer cannot claim air results')
    if row['event'] in (15,16) and row['status'] not in (0,1):bad('local submission status domain')
-   if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>14 or row['outcome']>5 or row['native_phase']>9 or row['event']>(16 if local_format else 14) or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
+   if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>(16 if local_format else 14) or row['outcome']>5 or row['native_phase']>(15 if local_format else 9) or row['event']>(16 if local_format else 14) or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
    if any(row[k]>1 for k in ('linked','retired','owner_halt','halt','air_pending','associated','sta','ptk','gtk','port')):bad('station boolean domain')
    if row['rx_raw']!=((row['rx_raw_eapol']+row['rx_raw_drop'])&U32):bad('raw RX counters disagree')
    if row['tx_result']!=((row['tx_ok']+row['tx_fail'])&U32):bad('data result counters disagree')

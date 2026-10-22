@@ -44,6 +44,13 @@ int main(void){static struct nsb_scan scan;static struct niwa_snapshot snap;uint
  for(unsigned i=0;i<3;i++){struct niws_result r;assert(!niws_decode_result(snap.rows[i],sizeof snap.rows[i],&r));
   assert(r.channel==channel[i]&&r.channel_flags==8&&r.ie_bytes==ies[i]&&r.rssi==-60&&r.rate_count==12&&
    r.rates[0]==1&&r.rates[2]==5&&r.rates[4]==6&&r.rates[11]==54);checks++;}
+ /* Filtering is before exposure, keeps only ESS and not IBSS; backend metadata is unchanged. */
+ struct niwa_snapshot saved=snap;
+ snap.rows[1][26]=2;snap.rows[2][26]=3;
+ assert(!niwa_snapshot_bss_filter(&snap,2)&&snap.count==1&&snap.backend_count==6&&snap.omitted==5&&(snap.omit_mask&NIWA_OMIT_BSS));checks++;
+ assert(niwc_take(&snap.cursor,1,out,sizeof out)==1&&!niwc_take(&snap.cursor,1,out,sizeof out));checks++;
+ assert(niwa_snapshot_bss_filter(&snap,2)<0);checks++;
+ snap=saved;snap.cursor.records=&snap.rows[0][0];assert(!niwa_snapshot_bss_filter(&snap,3)&&snap.count==3);checks++;
  for(unsigned i=0;i<3;i++){assert(niwc_take(&snap.cursor,1,out,sizeof out)==1&&!memcmp(out,snap.rows[i],sizeof out));checks++;}
  assert(!niwc_take(&snap.cursor,1,out,sizeof out));checks++;
  /* A completed scan with nothing encodable is a real empty list, not failure. */

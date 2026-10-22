@@ -45,20 +45,21 @@ static void raw_tests(struct test*t){
  C(t->s.rx_untranslated_eapol==accepted);C(t->s.rx_untranslated>=t->s.rx_untranslated_eapol+t->s.rx_untranslated_drop);cleanup(t);
 }
 static void group_tests(struct test*t){
- setup(t);t->s.controlled_port=1;t->s.gtk.installed=t->s.ptk.installed=1;t->s.gtk.key_id=2;unsigned received=0;
+ setup(t);t->s.controlled_port=1;t->s.gtk.installed=t->s.ptk.installed=1;t->s.gtk.key_id=2;/* Direct ready-state seam: seed the authoritative per-index slot too. */
+ t->s.gtk_keys[2]=t->s.gtk;t->s.gtk_wlan[2]=t->s.peer.group_wlan;t->s.gtk_mapped=1u<<2;unsigned received=0;
  for(unsigned k=0;k<12;k++){
   uint8_t p[116]={0};put16(p,sizeof p);put16(p+2,2u<<11);put32(p+4,5u|(9u<<11)|(4u<<16)|(2u<<21));put32(p+8,1u<<13);put32(p+12,6u<<8);put16(p+24,0x4208);memcpy(p+26,t->s.peer.ap,6);p[40]=(uint8_t)(k+1);uint8_t*m=p+56;memset(m,255,6);m[6]=2;m[11]=7;m[12]=8;
   switch(k){case 1:p[4]=4;break;case 2:p[4]=6;break;case 3:memcpy(m,t->s.peer.self,6);p[4]=4;break;case 4:p[26]^=2;break;case 5:p[6]^=0x20;break;case 6:p[40]=2;break;case 7:p[25]&=~0x40;break;case 8:p[7]|=2;break;case 9:p[6]^=1;break;case 10:p[24]|=0x80;p[10]=3;break;case 11:p[24]|=0x80;p[10]=3;break;}
-  uint64_t before=t->s.gtk.pn[16];deliver(t,0,p,sizeof p);step(t);
-  if(k<2||k>=10)received++;else C(t->s.gtk.pn[16]==before);
-  C(t->events[NST_ETHERNET]==received);C(t->s.gtk.installed&&t->s.controlled_port);
+  uint64_t before=t->s.gtk_keys[2].pn[16];deliver(t,0,p,sizeof p);step(t);
+  if(k<2||k>=10)received++;else C(t->s.gtk_keys[2].pn[16]==before);
+  C(t->events[NST_ETHERNET]==received);C(t->s.gtk.installed&&t->s.gtk_keys[2].installed&&t->s.controlled_port);
  }
- C(t->s.gtk.pn[16]==2&&t->s.gtk.pn[3]==12);cleanup(t);
+ C(t->s.gtk_keys[2].pn[16]==2&&t->s.gtk_keys[2].pn[3]==12);C(!memcmp(&t->s.gtk,&t->s.gtk_keys[2],sizeof t->s.gtk));cleanup(t);
 }
 static void actual_data_route(struct test*t){
  setup(t);t->s.controlled_port=1;uint8_t eth[60]={0};memcpy(eth+6,t->s.peer.self,6);memset(eth,255,6);eth[12]=8;
  C(!nst_data(&t->s,77,eth,sizeof eth));t->defer_air=1;step(t);C(t->published==1&&t->s.dma_done&&!t->events[NST_FRAME_RESULT]);
- C(((get32(t->capture)>>23)&3)==2);C((get32(t->capture)>>25)==1);C((get32(t->capture+4)&0x8400)==0x8400);C(!(get32(t->capture+4)&(3u<<16)));C(get32(t->capture+12)&2);C(!memcmp(t->capture+32,eth,sizeof eth));
+ C(((get32(t->capture)>>23)&3)==0);C((get32(t->capture)>>25)==1);C((get32(t->capture+4)&0x8400)==0x8400);C(!(get32(t->capture+4)&(3u<<16)));C(get32(t->capture+12)&2);C(!memcmp(t->capture+32,eth,sizeof eth));
  txdone(t,t->s.wire_pid,t->s.peer.wlan,0);step(t);C(t->events[NST_FRAME_RESULT]==0&&t->events[NST_DATA_SUBMITTED]==1&&!t->last_status);cleanup(t);
 }
 int main(void){struct test*t=calloc(1,sizeof *t);assert(t);scan_admission(t);actual_scan_overflow();raw_tests(t);group_tests(t);actual_data_route(t);free(t);printf("PASS %u focused assertions: overflow-only prepare atomicity, raw EAPOL bounds/ownership, group AP/BMC key/PN and actual data route\n",checks);return 0;}

@@ -11,7 +11,9 @@ static void wiped(const struct nwp*w){struct nwp z={0};assert(!memcmp(w,&z,sizeo
 int main(void){struct nwp w;struct nwp_result r;uint8_t p[sizeof m3];struct nwpd_budget b={0};struct nwpd_record d;
  authorized(&w);assert(nwp_receive(&w,m3,sizeof m3,&r)==NWP_TX&&!r.failure);assert(!nwp_security_submitted(&w,42,r.ticket,1)&&w.state==NWP_AUTHORIZED&&w.installed==1);checks+=2;
  authorized(&w);assert(nwp_receive(&w,m1,sizeof m1,&r)==NWP_FAIL&&r.failure==NWP_F_M1_STATE_REPLAY_NONCE);wiped(&w);checks++;
- authorized(&w);memcpy(p,m3,sizeof p);p[5]=0x13;p[6]=0x82;assert(nwp_receive(&w,p,sizeof p,&r)==NWP_FAIL&&r.failure==NWP_F_KEYINFO_STATE);wiped(&w);checks++;
+ /* Group1 is now supported, but altering a pairwise frame without its MIC
+  * cannot authenticate it or install a group key. */
+ authorized(&w);memcpy(p,m3,sizeof p);p[5]=0x13;p[6]=0x82;assert(nwp_receive(&w,p,sizeof p,&r)==NWP_FAIL&&r.failure==NWP_F_MIC);wiped(&w);checks++;
  authorized(&w);memcpy(p,m3,sizeof p);p[81]^=1;assert(nwp_receive(&w,p,sizeof p,&r)==NWP_FAIL&&r.failure==NWP_F_MIC);wiped(&w);checks++;
  for(unsigned n=0;n<99;n++){authorized(&w);assert(nwp_receive(&w,m3,n,&r)==NWP_FAIL&&r.failure==NWP_F_ENVELOPE);wiped(&w);checks++;}
  /* Early flood and arbitrary external data diagnostics cannot spend late/fail reservations. */

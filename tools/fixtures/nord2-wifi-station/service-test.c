@@ -48,6 +48,8 @@ int nst_management(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n){(void)
 int nst_eapol(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n,unsigned x){(void)t;(void)ticket;(void)p;(void)n;(void)x;return -1;}
 int nst_data(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n){(void)t;(void)ticket;(void)p;(void)n;return -1;}
 int nst_replay_install(struct nst*t,unsigned a,uint8_t b,const uint8_t*r){(void)t;(void)a;(void)b;(void)r;return -1;}
+/* Rekey ownership is exercised by the actual transport suite, not this seam. */
+int nst_replay_replace_group(struct nst*t,uint8_t key,const uint8_t*r){(void)t;(void)key;(void)r;return -1;}
 int nst_authorize(struct nst*t){(void)t;return -1;}
 int nst_cleanup_begin(struct nst*t,uint64_t now,uint64_t deadline){assert(deadline>now);t->deadline=deadline;return 0;}
 void nst_close_port(struct nst*t){t->controlled_port=0;}
@@ -67,6 +69,8 @@ static void seed_ready(uint64_t g){
  njs_native.arbiter=(struct stc_arbiter){.mode=2,.connection_used=1,.generation=g};njs_native.driver=(struct nwn){0};njs_native.driver.transport=&nst_native.state;njs_native.driver.owner.ops=(struct nwo_ops){owner_submit,owner_close};
  struct stc*t=&njs_native.driver.owner.transaction;t->attempted=1;t->generation=g;t->arbiter=&njs_native.arbiter;t->phase=STC_CONNECTED;t->outcome=STC_AUTHORIZED;t->associated=1;t->cleanup_timeout_ms=30000;
  nst_native.state.controlled_port=nst_native.state.sta_active=nst_native.state.ptk_ready=nst_native.state.ptk.installed=nst_native.state.gtk.installed=1;
+ /* Readiness-only seam uses the same per-index representation as native RX. */
+ nst_native.state.gtk.key_id=1;nst_native.state.gtk_keys[1]=nst_native.state.gtk;nst_native.state.gtk_wlan[1]=nst_native.state.peer.group_wlan;nst_native.state.gtk_mapped|=1u<<1;
  njs_native.snapshot=(struct njs_snapshot){.native_generation=g,.client_epoch=7,.ticket=g,.phase=NJS_SECURING};}
 static void*owner_thread(void*x){(void)x;assert(njs_owner_work()==1);return NULL;}
 static void*disconnect_thread(void*x){(void)x;pthread_mutex_lock(&barrier);disconnect_started=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);assert(!nord2_wifi_join_disconnect());pthread_mutex_lock(&barrier);disconnect_done=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);return NULL;}

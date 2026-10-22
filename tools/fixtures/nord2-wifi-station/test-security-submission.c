@@ -13,7 +13,7 @@ static void init_join(struct test*h,struct composed*x,struct stc_arbiter*arb){
 }
 
 
-static void dma_retire(struct test*h){unsigned k=h->s.tx_next;put32(at(h,h->init.transport.tx_ring+16u*k+4,4),0xc0000000);h->didx=h->cidx;h->defer_dma=0;}
+static void dma_retire(struct test*h){if(h->s.normal.published){unsigned slot=h->s.normal.next;uint8_t*d=at(h,h->init.rings[0].descriptors+16u*slot,16);put32(d+4,get32(d+4)|0x80000000);h->data_didx=h->data_cidx;h->defer_dma=0;return;}unsigned k=h->s.tx_next;put32(at(h,h->init.transport.tx_ring+16u*k+4,4),0xc0000000);h->didx=h->cidx;h->defer_dma=0;}
 static void assert_wiped(struct test*h){for(unsigned k=0;k<h->s.wire_bytes;k++){C(!h->s.wire[k]);C(!at(h,h->init.transport.command,h->s.wire_bytes)[k]);}}
 static void m2_retired(struct composed*x){struct test*h=x->h;h->defer_air=1;eapol_rx(x,m1,sizeof m1);advance(x);phase(x,STC_EAPOL);C(h->events[NST_SECURITY_SUBMITTED]==1&&!h->s.air_pending&&!h->s.wire_busy&&h->s.dma_done);C(h->capture_n==46+sizeof m2_oracle&&!memcmp(h->capture+46,m2_oracle,sizeof m2_oracle));C(h->s.wire_pid==NST_PID_HOST);assert_wiped(h);}
 static void finish_keys(struct composed*x){struct test*h=x->h;
@@ -33,7 +33,7 @@ int SUBMISSION_MAIN(void){struct test*h=calloc(1,sizeof *h);assert(h);struct com
  /* Observed failure reproduction: no M2/M4 TXS, real authenticated M3 proceeds. */
  init_join(h,&x,&a);m2_retired(&x);unsigned air=h->events[NST_FRAME_RESULT];h->now=h->s.operation_deadline+1000;advance(&x);C(!h->s.halt&&x.n.owner.transaction.phase==STC_EAPOL);eapol_rx(&x,m3,sizeof m3);advance(&x);finish_keys(&x);C(h->events[NST_FRAME_RESULT]==air);
  /* Valid retry has a new M4 but never reinstalls keys or resets replay PN. */
- h->s.ptk.pn[16]=23;h->s.gtk.pn[16]=29;unsigned key_events=h->events[NST_KEY_READY],pub=h->published,sec=h->events[NST_SECURITY_SUBMITTED];eapol_rx(&x,m3,sizeof m3);advance(&x);phase(&x,STC_CONNECTED);C(h->published==pub+1&&h->events[NST_SECURITY_SUBMITTED]==sec+1&&h->events[NST_KEY_READY]==key_events&&x.n.owner.transaction.wpa.installed==1&&h->s.ptk.pn[16]==23&&h->s.gtk.pn[16]==29&&!h->s.air_pending);C(!(get32(h->capture+12)&2));
+ h->s.ptk.pn[16]=23;h->s.gtk.pn[16]=h->s.gtk_keys[h->s.gtk.key_id].pn[16]=29;unsigned key_events=h->events[NST_KEY_READY],pub=h->published,sec=h->events[NST_SECURITY_SUBMITTED];eapol_rx(&x,m3,sizeof m3);advance(&x);phase(&x,STC_CONNECTED);C(h->published==pub+1&&h->events[NST_SECURITY_SUBMITTED]==sec+1&&h->events[NST_KEY_READY]==key_events&&x.n.owner.transaction.wpa.installed==1&&h->s.ptk.pn[16]==23&&h->s.gtk.pn[16]==29&&h->s.gtk_keys[h->s.gtk.key_id].pn[16]==29&&!h->s.air_pending);C(!(get32(h->capture+12)&2));
  /* >127 ordinary frames cannot wrap back into a management correlation PID. */
  h->now+=60000000;uint8_t eth[60]={0};memcpy(eth+6,h->s.peer.self,6);memset(eth,255,6);eth[12]=8;unsigned next=h->s.next_pid,data=h->events[NST_DATA_SUBMITTED];
  for(unsigned k=0;k<260;k++){C(!nst_data(&h->s,UINT64_MAX,eth,sizeof eth));advance(&x);C(h->events[NST_DATA_SUBMITTED]==data+k+1&&h->s.wire_pid==NST_PID_HOST&&h->s.next_pid==next&&!h->s.air_pending&&!h->s.wire_busy&&!h->s.halt&&h->events[NST_FRAME_RESULT]==air);C(h->s.submitted==h->s.dma_completed);}

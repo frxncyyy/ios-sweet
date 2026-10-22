@@ -11,11 +11,11 @@ static int nst_native_owner_window(const struct nwfn_native*n){
  nst_native.state.previous_rx==&ncb_native.rx&&
  nst_lease_window(&nst_native.state,&nwfn_native.init);
 }
-static int nst_native_rx_active(const struct nwfn_native*n){return nst_native_owner_window(n)&&nst_native.state.rx_current<5&&nst_native.state.phase>=NST_RX_READ&&nst_native.state.phase<=NST_RX_PUBLISH;}
+static int nst_native_rx_active(const struct nwfn_native*n){return nst_native_owner_window(n)&&((nst_native.state.rx_current<5&&nst_native.state.phase>=NST_RX_READ&&nst_native.state.phase<=NST_RX_PUBLISH)||(nst_native.state.phase>=NST_DATA_READ&&nst_native.state.phase<=NST_DATA_RETIRE));}
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t bytes,unsigned write){return nst_native_owner_window(n)&&nst_memory_range(&nst_native.state,a,bytes,write);}
 static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){return nst_native_owner_window(n)&&nst_register_write(&nst_native.state,a,v);}
 static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uint64_t now,uint64_t deadline,struct nst_profile*out){
- if(!t||!out||!generation||nst_native.attempted||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
+ if(!t||!out||!generation||nst_native.attempted||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
  for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)return 1;
  struct ncs_cap cap;if(!ncd_native.diag.events||ncd_native.diag.events>sizeof(ncd_native.diag.history)/sizeof(ncd_native.diag.history[0])||ncs_cap_mac(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,&cap)||cap.bmc!=4||cap.wtbl<7)return -1;
  unsigned allowed=0;for(unsigned k=0;k<nss_native.info.count;k++)if(nss_native.info.channels[k].band==t->band&&nss_native.info.channels[k].channel==t->channel)allowed=1;
@@ -42,5 +42,7 @@ static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uin
   * basic rate chosen from peer rates. Explicit one-stream WF0 path policy. */
  struct sw_txd txd={.wlan=peer.wlan,.own_mac=peer.own_mac,.queue=1,.pid=1,.retry_limit=30,.fixed_rate=rate,.pse_header_len=8,.lifetime_ms=2000,.spe_index=0};
  if(nst_prepare(&nst_native.state,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
- nst_native.attempted=1;nst_native.active=1;*out=profile;return 0;
+ nst_native.attempted=1;nst_native.active=1;*out=profile;
+ printf("NORD2 WIFI TXPROFILE: generation=%llu band=%u channel=%u rates=%u basic=%u fixed=%u own=%u wlan=%u group=%u\n",(unsigned long long)generation,peer.band,peer.channel,all,basic,rate,peer.own_mac,peer.wlan,peer.group_wlan);
+ return 0;
 }

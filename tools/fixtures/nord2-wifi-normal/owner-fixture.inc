@@ -156,7 +156,7 @@ static void ready_fixture(void){completion_custom=0;completion_didx_override=UIN
 }
 static void run_worker(void){ncd_schedule();assert(spawns==1&&scheduled);worker_thread=2;if(!setjmp(parked_exit))scheduled(0,0);}
 
-_Static_assert(sizeof(struct nwfn_native)==7472,"shared native ABI unchanged");
+_Static_assert(sizeof(struct nwfn_native)==7480,"shared native ABI: appended reserved data page");
 _Static_assert(sizeof(struct nwt_state)==1176,"transport ABI unchanged");
-_Static_assert(sizeof(struct nwi_state)==3040,"initializer ABI unchanged");
+_Static_assert(sizeof(struct nwi_state)==3048,"initializer ABI: appended reserved data page");
 _Static_assert(sizeof(struct ncd_state)==5152,"CAP retained layout unchanged");

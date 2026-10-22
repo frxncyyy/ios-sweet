@@ -5,7 +5,7 @@
 #include "wifi_ios_cursor.h"
 #include "wifi_ios_mapping.h"
 enum niwa_status {NIWA_PENDING=1,NIWA_PARTIAL,NIWA_TIMEOUT,NIWA_COMPLETE};
-enum {NIWA_OMIT_RSSI=1u,NIWA_OMIT_CHANNEL=2u,NIWA_OMIT_IES=4u,NIWA_OMIT_RATES=8u,NIWA_OMIT_OTHER=16u};
+enum {NIWA_OMIT_RSSI=1u,NIWA_OMIT_CHANNEL=2u,NIWA_OMIT_IES=4u,NIWA_OMIT_RATES=8u,NIWA_OMIT_OTHER=16u,NIWA_OMIT_BSS=32u};
 struct niwa_snapshot {enum niwa_status status;unsigned entered,count,backend_count,dropped,omitted,omit_mask;
  uint8_t completion_state,completed_channels;uint64_t generation;
  struct niwc_cursor cursor;uint8_t rows[NSB_RESULTS][NIWS_SCAN_RESULT_BYTES];};
@@ -21,4 +21,6 @@ struct niwa_snapshot {enum niwa_status status;unsigned entered,count,backend_cou
  * Channel flags contain only proven band; width/DFS stay unspecified. */
 int niwa_snapshot_prepare(const struct nsb_scan *,uint64_t,
  const uint32_t *,size_t,const struct niwp_rate_map *,size_t,struct niwa_snapshot *);
+/* Before publication only: filter a freshly prepared complete cursor, never a consumed cache. */
+int niwa_snapshot_bss_filter(struct niwa_snapshot *,unsigned);
 #endif

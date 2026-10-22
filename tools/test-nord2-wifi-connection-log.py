@@ -205,6 +205,17 @@ def local_station(**kw):
 def local_parts(d,sample=1):
  fields=[part+(['tx_local']if i==3 else [])for i,part in enumerate(m.STATION_PARTS)]
  return ''.join(row('IOS STATIONPART',dict(sample=sample,part=i+1,**{k:d[k]for k in part}))for i,part in enumerate(fields))
+# Appended secure group-key actions and dual-retirement data phases belong
+# only to the local-submission producer. Metadata alone proves no readiness.
+for action in (15,16):
+ for phase in range(10,16):
+  d=local_station(action=action,native_phase=phase)
+  for text in (row('IOS STATION',d),local_parts(d)):
+   r=yes(text);assert not r['native_authorized_observed'] and not r['data_air_tx_success_observed']
+for key,value in (('action',17),('native_phase',16)):
+ d=local_station(**{key:value});no(row('IOS STATION',d));no(local_parts(d))
+for key,value in (('action',15),('action',16),*[( 'native_phase',v)for v in range(10,16)]):
+ no(row('IOS STATION',station(**{key:value})))
 for event_id in (15,16):
  for status in (0,1):
   d=local_station(event=event_id,status=status,tx_accept=20,tx_local=20)

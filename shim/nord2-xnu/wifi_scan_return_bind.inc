@@ -29,7 +29,7 @@ static int nss_return_scans(void){
   !nct_done_receipt(n->previous)||n->previous->basic!=&nbc_native.state||n->previous->cap!=&ncd_native.diag||n->previous->init!=&nwfn_native.init||n->previous->firmware!=&nfp_native||
   n->base_completed!=n->previous->base_completed+n->previous->count||
   !n->cleanup_started||n->wire_cid!=0x17||n->wire_type||n->wire_sequence!=(uint8_t)(w->next_sequence-1u)||n->peer_step!=3||!n->dma_done||n->wire_busy||n->air_pending||n->peer_kind||n->activation_pending||n->channel_held||n->sta_active||n->ptk_ready||n->controlled_port||n->ptk.installed||n->gtk.installed||
-  !n->submitted||n->submitted!=n->dma_completed||n->base_completed>UINT32_MAX-n->dma_completed||w->completed!=n->base_completed+n->dma_completed||w->completed==UINT32_MAX||w->tx_index!=n->tx_next||w->tx_index>=1024||w->submit_attempted||w->tx_done||w->rx_done||w->halt||nwfn_native.init.halt||
+  !nstx_idle(&n->normal)||!n->submitted||n->submitted!=n->dma_completed||n->base_completed>UINT32_MAX-n->dma_completed||w->completed!=n->base_completed+n->dma_completed-n->normal.dma_completed||w->completed==UINT32_MAX||w->tx_index!=n->tx_next||w->tx_index>=1024||w->submit_attempted||w->tx_done||w->rx_done||w->halt||nwfn_native.init.halt||
   n->credit_reserved||n->credit_available!=n->credit_capacity||n->credit_acquired!=n->credit_released||n->credit_capacity!=n->previous->capacity||n->credit_capacity!=nbc_native.state.plan.pse_cmd-1||
   w->rx_index!=n->queue[1].next){IOLockUnlock(nss_native.lock);return 1;}
  for(unsigned k=0;k<5;k++){
@@ -45,6 +45,10 @@ static int nss_return_scans(void){
  for(unsigned k=0;k<2;k++)if(ncd_io.bus->reg_read(&ncd_native,0x18024200+4096u*k,&v)||(v&0x00300000))goto restore;
  if(ncd_io.bus->reg_read(&ncd_native,0x18025418,&v)||v!=n->tx_next||ncd_io.bus->reg_read(&ncd_native,0x1802541c,&v)||v!=n->tx_next)goto restore;
  uint64_t cell=w->tx_ring+16u*n->tx_next;
+ if(ncd_io.bus->sync(&ncd_native,cell,16,2)||ncd_io.bus->mem_read(&ncd_native,cell,descriptor,16)||!(descriptor[7]&128))goto restore;
+ n->phase=NST_DATA_READ;
+ if(ncd_io.bus->reg_read(&ncd_native,0x18025308,&v)||v!=n->normal.next||ncd_io.bus->reg_read(&ncd_native,0x1802530c,&v)||v!=n->normal.next)goto restore;
+ cell=n->normal.ring+16u*n->normal.next;
  if(ncd_io.bus->sync(&ncd_native,cell,16,2)||ncd_io.bus->mem_read(&ncd_native,cell,descriptor,16)||!(descriptor[7]&128))goto restore;
  result=0;
 restore:

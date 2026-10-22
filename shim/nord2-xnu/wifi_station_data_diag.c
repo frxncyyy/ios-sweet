@@ -5,6 +5,9 @@
 #include <stdio.h>
 #endif
 static uint32_t be16(const uint8_t*p){return (uint32_t)p[0]<<8|p[1];}
+static uint32_t be32(const uint8_t*p){return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3];}
+static uint32_t le32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
+static int eq(const uint8_t*a,const uint8_t*b,unsigned n){unsigned diff=0;for(unsigned i=0;i<n;i++)diff|=a[i]^b[i];return !diff;}
 static uint32_t le16(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8;}
 static void inc(uint32_t*p){if(*p!=UINT32_MAX)(*p)++;}
 static unsigned etype(uint32_t e){return e==0x0800?0:e==0x0806?1:e==0x86dd?2:e==0x888e?3:4;}
@@ -40,6 +43,33 @@ int nsdd_decode_txs(struct nsdd_txs*r,const uint8_t*p,size_t n){
  if(r->advanced){r->sequence=le16(p+2);r->tx_count=p[5];r->rate=le16(p+6);r->tid=p[9];r->flush=p[14];}
  return 0;
 }
+/* Called only after nsdd_classify verified all IPv4/UDP/BOOTP extents. */
+static void correlate(struct nsdd*s,uint64_t g,const uint8_t*p,const struct nsdd_frame*r,unsigned tx){
+ if(!r->dhcp)return;
+ const uint8_t*u=p+14+4u*(p[14]&15u),*b=u+8;
+ uint32_t xid=be32(b+4);
+ if(tx){
+  if(b[0]!=1||be16(u)!=68||be16(u+2)!=67||!eq(b+28,p+6,6))return;
+  for(unsigned k=0;k<s->identities;k++)if(s->identity[k].xid==xid&&eq(s->identity[k].client,b+28,6))return;
+  struct nsdd_identity*v=&s->identity[s->identity_next];v->xid=xid;for(unsigned k=0;k<6;k++)v->client[k]=b[28+k];
+  s->identity_next=(s->identity_next+1u)%4u;if(s->identities<4)s->identities++;
+ }else if(b[0]==2&&be16(u)==67&&be16(u+2)==68){
+  unsigned match=0;for(unsigned k=0;k<s->identities;k++)if(s->identity[k].xid==xid&&eq(s->identity[k].client,b+28,6))match=1;
+  inc(match?&s->reply_match[r->dhcp]:&s->reply_other[r->dhcp]);
+  if(s->match_logs<12){s->match_logs++;printf("NORD2 WIFI DHCPMATCH: g=%llu type=%u matched=%u tracked=%u count=%u\n",(unsigned long long)g,r->dhcp,match,s->identities,match?s->reply_match[r->dhcp]:s->reply_other[r->dhcp]);}
+ }
+}
+void nsdd_reject(struct nsdd*s,uint64_t g,unsigned reason){
+ if(!s||s->summary||!reason||reason>=NSDD_RX_REASON_END)return;
+ inc(&s->rejected[reason]);if(s->reject_logged[reason]>=2)return;s->reject_logged[reason]++;
+ printf("NORD2 WIFI RXREJECT: g=%llu reason=%u count=%u\n",(unsigned long long)g,reason,s->rejected[reason]);
+}
+void nsdd_rx_snapshot(struct nsdd*s,uint64_t g){
+ if(!s||s->summary||s->rx_samples>=5)return;
+ uint64_t count=(uint64_t)s->rx_unicast+s->rx_group;const uint32_t limits[]={1,32,256,1024,4096};
+ if(count<limits[s->rx_samples])return;s->rx_samples++;
+ printf("NORD2 WIFI RXCOUNTS: g=%llu sample=%u uni=%u group=%u error=%u peer=%u key=%u replay=%u plain=%u\n",(unsigned long long)g,s->rx_samples,s->rx_unicast,s->rx_group,s->rejected[NSDD_RX_ERROR],s->rejected[NSDD_RX_PEER],s->rejected[NSDD_RX_KEY],s->rejected[NSDD_RX_REPLAY],s->rejected[NSDD_RX_PLAINTEXT]);
+}
 static void header(struct nsdd*s,uint64_t g,unsigned dir,const struct nsdd_frame*r){
  uint32_t*budget=r->dhcp?(dir==3?&s->dhcp_rx:&s->dhcp_tx):(dir==3?&s->headers_rx:&s->headers_tx);
  if(*budget>=(r->dhcp?12u:4u))return;(*budget)++;s->records++;
@@ -48,11 +78,11 @@ static void header(struct nsdd*s,uint64_t g,unsigned dir,const struct nsdd_frame
 void nsdd_publish(struct nsdd*s,uint64_t g,uint32_t submitted,unsigned type,const uint8_t*p,size_t n){
  if(!s||s->summary||(type!=2&&type!=3))return;struct nsdd_frame r;if(nsdd_classify(&r,p,n))return;
  inc(r.destination?&s->tx_group:&s->tx_unicast);inc(&s->tx_ether[etype(r.ether)]);s->last_kind=type;s->last_pub=submitted;if(type==2)inc(&s->tx_security);else inc(&s->tx_data);
- if(r.dhcp){inc(&s->tx_dhcp);inc(&s->tx_type[r.dhcp]);}header(s,g,type==2?1:2,&r);
+ correlate(s,g,p,&r,1);if(r.dhcp){inc(&s->tx_dhcp);inc(&s->tx_type[r.dhcp]);}header(s,g,type==2?1:2,&r);
 }
 void nsdd_receive(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n){
  if(!s||s->summary)return;struct nsdd_frame r;if(nsdd_classify(&r,p,n))return;
- inc(&s->rx_ether[etype(r.ether)]);inc(r.destination?&s->rx_group:&s->rx_unicast);if(r.dhcp){inc(&s->rx_dhcp);inc(&s->rx_type[r.dhcp]);}header(s,g,3,&r);
+ correlate(s,g,p,&r,0);inc(&s->rx_ether[etype(r.ether)]);inc(r.destination?&s->rx_group:&s->rx_unicast);if(r.dhcp){inc(&s->rx_dhcp);inc(&s->rx_type[r.dhcp]);}header(s,g,3,&r);nsdd_rx_snapshot(s,g);
 }
 void nsdd_event(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n,unsigned authorized){
  if(!s||s->summary||authorized>1)return;struct nsdd_txs r;if(nsdd_decode_txs(&r,p,n))return;
@@ -60,9 +90,13 @@ void nsdd_event(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n,unsigned autho
  uint32_t*budget=authorized?&s->txs_live:&s->txs_early;if(*budget>=(authorized?16u:8u))return;(*budget)++;s->records++;
  printf("NORD2 WIFI DATATXS: n=%u part=1 g=%llu pid=%u wlan=%u status=%u ambiguous=%u last_kind=%u last_pub=%u\n",s->records,(unsigned long long)g,r.pid,r.wlan,r.status,r.pid==127,s->last_kind,s->last_pub);
  printf("NORD2 WIFI DATATXS: n=%u part=2 seq=%u tx_count=%u rate=%u flags=%u adv=%u tid=%u flush=%u\n",s->records,r.sequence,r.tx_count,r.rate,r.flags,r.advanced,r.tid,r.flush);
+ if(r.advanced)printf("NORD2 WIFI TXPHY: g=%llu n=%u pid=%u status=%u response=%u table=%u width=%u power=%u delay=%u applied=%u\n",(unsigned long long)g,s->records,r.pid,r.status,p[10],p[11],p[12],p[13],le32(p+16),le32(p+24));
 }
 void nsdd_summary(struct nsdd*s,uint64_t g){
  if(!s||s->summary)return;s->summary=1;
+ for(unsigned k=1;k<NSDD_RX_REASON_END;k++)if(s->rejected[k])printf("NORD2 WIFI RXTOTAL: g=%llu reason=%u count=%u\n",(unsigned long long)g,k,s->rejected[k]);
+ printf("NORD2 WIFI DHCPTOTAL: g=%llu offer=%u ack=%u nak=%u other_offer=%u other_ack=%u other_nak=%u\n",(unsigned long long)g,s->reply_match[2],s->reply_match[5],s->reply_match[6],s->reply_other[2],s->reply_other[5],s->reply_other[6]);
+ volatile uint8_t*erase=(volatile uint8_t*)s->identity;for(unsigned k=0;k<sizeof s->identity;k++)erase[k]=0;s->identities=s->identity_next=0;
  printf("NORD2 WIFI DATACOUNT: g=%llu tx_sec=%u tx_data=%u rx_uni=%u rx_group=%u tx_dhcp=%u rx_dhcp=%u txs_ok=%u txs_fail=%u ambiguous=%u\n",(unsigned long long)g,s->tx_security,s->tx_data,s->rx_unicast,s->rx_group,s->tx_dhcp,s->rx_dhcp,s->txs_ok,s->txs_fail,s->ambiguous);
  for(unsigned dir=0;dir<2;dir++){const uint32_t*e=dir?s->rx_ether:s->tx_ether;
   printf("NORD2 WIFI DATATYPE: g=%llu dir=%u uni=%u group=%u ipvfour=%u arp=%u ipvsix=%u eapol=%u other=%u\n",(unsigned long long)g,dir+1,dir?s->rx_unicast:s->tx_unicast,dir?s->rx_group:s->tx_group,e[0],e[1],e[2],e[3],e[4]);

@@ -2,9 +2,9 @@
 #include "LifecycleShell.cpp"
 #include <thread>
 static task ownerTask,otherTask;
-static nss_completion callback;static void*cookie;static uint64_t ticket=1,gen;static bool canceled,active;static unsigned releases;static nsb_scan scan;
+static nss_completion callback;static nss_request capturedRequest;static void*cookie;static uint64_t ticket=1,gen;static bool canceled,active;static unsigned releases;static nsb_scan scan;
 extern "C" int nord2_wifi_scan_info(nss_info*out){*out={};out->mac[0]=2;out->count=1;out->channels[0]={1,6};return 0;}
-extern "C" int nord2_wifi_scan_enqueue(const nss_request*r,void*c,uint64_t g,nss_completion f,uint64_t*t){assert(!r->count&&!active);active=true;canceled=false;cookie=c;gen=g;callback=f;*t=++ticket;return 0;}
+extern "C" int nord2_wifi_scan_enqueue(const nss_request*r,void*c,uint64_t g,nss_completion f,uint64_t*t){assert(!r->count&&!active);capturedRequest=*r;active=true;canceled=false;cookie=c;gen=g;callback=f;*t=++ticket;return 0;}
 extern "C" int nord2_wifi_scan_cancel(uint64_t t){assert(t==ticket);canceled=true;return 0;}
 extern "C" int nord2_wifi_scan_view(uint64_t t,nss_view*out){assert(t==ticket);if(canceled)return 1;*out={&scan,400,gen,NSS_COMPLETE};return 0;}
 extern "C" int nord2_wifi_scan_release(uint64_t t){assert(t==ticket);releases++;return 0;}

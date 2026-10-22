@@ -170,6 +170,8 @@ static int nwfn_source(struct nwfn_native *n)
  if(a->rx!=b->rx)return nwfn_guard_failure(n,1,104,0,1,1,0,0);
 
  }
+ if(n->init.data_buffer!=n->expected_rings[8].buffers+4096u*n->expected_rings[8].count)return nwfn_guard_failure(n,1,115,0,1,1,0,0);
+ if(n->init.end!=n->init.data_buffer+4096)return nwfn_guard_failure(n,1,116,0,1,1,0,0);
  if(n->init.initialized){
   const struct nwt_state *t=&n->init.transport;
   if(n->init.phase!=5)return nwfn_guard_failure(n,1,105,0,1,1,0,0);

@@ -22,15 +22,15 @@ static int submit_native(void*ctx,const struct stc_action*a,const struct nwo_ins
  case STC_PREPARE_PEER:case STC_CONFIGURE_PEER:case STC_RETIRE_PEER:
   return s->peer_submit(s->peer_context,a,&s->owner.transaction);
  case STC_CID_CHANNEL:case STC_ABORT_CHANNEL:return nst_command(t,a->ticket,SW_CHANNEL,a->payload,a->bytes);
- case STC_CID_PTK:case STC_CID_GTK:case STC_DELETE_PTK:case STC_DELETE_GTK:{
+ case STC_CID_PTK:case STC_CID_GTK:case STC_REKEY_GTK:case STC_DELETE_PTK:case STC_DELETE_GTK:{
   int r=nst_command(t,a->ticket,SW_KEY,a->payload,a->bytes);
   if(!r){s->install=*m;s->key_pairwise=a->kind==STC_CID_PTK;}
   return r;}
  case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_DEAUTH:return nst_management(t,a->ticket,a->payload,a->bytes);
- case STC_TX_EAPOL:{
+ case STC_TX_EAPOL:case STC_TX_GROUP:{
   uint8_t frame[654];if(a->bytes>640)return -1;
   memcpy(frame,t->peer.ap,6);memcpy(frame+6,t->peer.self,6);frame[12]=0x88;frame[13]=0x8e;memcpy(frame+14,a->payload,a->bytes);
-  int r=nst_eapol(t,a->ticket,frame,a->bytes+14,0);clear(frame,sizeof frame);return r;}
+  int r=nst_eapol(t,a->ticket,frame,a->bytes+14,a->kind==STC_TX_GROUP);clear(frame,sizeof frame);return r;}
  /* Pure readiness is performed by pump outside RX callback, then delivered
   * as an explicit local receipt, not a fabricated firmware acknowledgement. */
  case STC_INSTALL_DATA_PATH:return nst_authorize(t)?-1:0;
@@ -39,6 +39,7 @@ static int submit_native(void*ctx,const struct stc_action*a,const struct nwo_ins
 }
 int nwn_begin(struct nwn*s,struct nst*t,struct stc_arbiter*a,const struct stc_config*c,nwn_peer_submit peer,void*ctx,uint64_t now){
  if(!s||!t||!c||!peer||!t->prepared||t->halt||t->generation!=c->generation||t->peer.bss!=c->channel.bss||t->peer.wlan!=c->sta_wlan||t->peer.group_wlan!=c->group_wlan||memcmp(t->peer.ap,c->assoc.peer.ap,6)||memcmp(t->peer.self,c->assoc.peer.self,6))return -1;
+ for(unsigned k=0;k<3;k++)if(c->group_spare[k]&&c->group_spare[k]!=t->group_spare[k])return -1;
  s->overall_deadline=c->deadline_ms;s->transport=t;s->peer_submit=peer;s->peer_context=ctx;s->now_ms=now;
  const struct nwo_ops ops={submit_native,close_native};return nwo_begin(&s->owner,a,c,&ops,s,now);
 }
@@ -54,11 +55,11 @@ static int event_inner(struct nwn*s,const struct nst_event*e,uint64_t now){
  case NST_COMMAND_DMA:{
   if(e->ticket!=s->owner.in_ticket)return 0;
   unsigned kind=s->owner.in_kind,type=NWO_COMMAND;int ok=e->status==0;
-  if(kind==STC_TX_EAPOL)return -1; /* untyped DMA is not the security receipt */
+  if(kind==STC_TX_EAPOL||kind==STC_TX_GROUP)return -1; /* untyped DMA is not the security receipt */
   if(kind==STC_TX_AUTH||kind==STC_TX_ASSOC||kind==STC_TX_DEAUTH){if(ok)return 0;return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,0,now);} /* DMA success is never air TX */
-  if(kind==STC_CID_GTK)type=NWO_GTK_REPLAY;
+  if(kind==STC_CID_GTK||kind==STC_REKEY_GTK)type=NWO_GTK_REPLAY;
   const struct stc_action *current=stc_next(&s->owner.transaction);
-  if(ok&&current&&current->ticket==e->ticket&&(kind==STC_CID_PTK||kind==STC_CID_GTK))ok=nst_replay_install(s->transport,s->key_pairwise,s->key_pairwise?0:s->install.gtk_index,s->install.rsc)==0;
+  if(ok&&current&&current->ticket==e->ticket&&(kind==STC_CID_PTK||kind==STC_CID_GTK||kind==STC_REKEY_GTK))ok=(kind==STC_REKEY_GTK?nst_replay_replace_group(s->transport,s->install.gtk_index,s->install.rsc):nst_replay_install(s->transport,s->key_pairwise,s->key_pairwise?0:s->install.gtk_index,s->install.rsc))==0;
   int r=nwo_complete(&s->owner,e->generation,e->ticket,type,ok,now);clear(&s->install,sizeof s->install);return r;}
  case NST_SECURITY_SUBMITTED:return nwo_complete(&s->owner,e->generation,e->ticket,NWO_SECURITY_SUBMITTED,e->status==0,now);
  case NST_DATA_SUBMITTED:return 0; /* ordinary egress has no handshake ticket */

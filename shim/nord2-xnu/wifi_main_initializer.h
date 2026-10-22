@@ -9,6 +9,7 @@ struct nwi_state {
  unsigned irq_status_initial_valid,irq_status_final_valid;
  uint32_t irq_initial[2],irq_final[2],irq_status_initial[2],irq_status_final[2];
  struct nwi_ring rings[9];uint64_t command,end;
+ uint64_t data_buffer; /* one reserved4KiB normal TXP payload page */
  const struct npp_state *pool;struct ndp_claim claim;
  struct nwdp_state preflight;struct nwdm_state scheduler;
  struct nwt_state transport;

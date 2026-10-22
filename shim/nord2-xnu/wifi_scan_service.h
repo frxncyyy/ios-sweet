@@ -7,7 +7,7 @@ extern "C" {
 #endif
 #define NSS_SLOTS 4u
 #define NSS_CHANNELS 39u
-struct nss_request {unsigned count;struct ncs_channel channels[NSS_CHANNELS];}; /*0=actual full allowed list; passive only/default timing; no SSID/random*/
+struct nss_request {unsigned count;struct ncs_channel channels[NSS_CHANNELS];uint16_t dwell_tu;}; /*0=actual full allowed list; passive only/default or108TU timing; no SSID/random*/
 struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];unsigned scanning;}; /* running scan transaction, not RF emission */
 enum nss_status {NSS_COMPLETE=0,NSS_PARTIAL=1,NSS_CANCELED=2,NSS_REFUSED=3,NSS_FATAL=4};
 typedef void (*nss_completion)(void *cookie,uint64_t client_generation,uint64_t ticket,enum nss_status);

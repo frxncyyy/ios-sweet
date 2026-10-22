@@ -8,9 +8,9 @@ static void wipe(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
 static unsigned expected(unsigned k){switch(k){
 case STC_PREPARE_PEER:return NWO_PREPARED;
 case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_DEAUTH:return NWO_AIR_TX;
-case STC_TX_EAPOL:return NWO_SECURITY_SUBMITTED;
+case STC_TX_EAPOL:case STC_TX_GROUP:return NWO_SECURITY_SUBMITTED;
 case STC_CONFIGURE_PEER:return NWO_CONFIGURED;
-case STC_CID_GTK:return NWO_GTK_REPLAY;
+case STC_CID_GTK:case STC_REKEY_GTK:return NWO_GTK_REPLAY;
 case STC_INSTALL_DATA_PATH:return NWO_DATA_PATH;
 case STC_RETIRE_PEER:return NWO_RETIRED;
 case STC_CID_CHANNEL:case STC_CID_PTK:case STC_DELETE_PTK:case STC_DELETE_GTK:case STC_ABORT_CHANNEL:return NWO_COMMAND;
@@ -31,9 +31,10 @@ int nwo_pump(struct nwo*s,uint64_t now){
  int r=sync_state(s,stc_tick(&s->transaction,now));if(r<0)return r;
  if(s->in_ticket)return 0;const struct stc_action*a=stc_next(&s->transaction);if(!a)return 0;
  if(!expected(a->kind)){s->halted=1;close_port(s);return -1;}
- struct nwo_install meta={0};if(a->kind==STC_CID_GTK){meta.gtk_index=s->transaction.wpa.gtk_index;memcpy(meta.rsc,s->transaction.wpa.rsc,8);}
+ struct nwo_install meta={0};if(a->kind==STC_CID_GTK||a->kind==STC_REKEY_GTK){meta.gtk_index=s->transaction.wpa.gtk_index;memcpy(meta.rsc,s->transaction.wpa.rsc,8);}
  s->in_generation=a->generation;s->in_ticket=a->ticket;s->in_kind=a->kind;s->issuing=1;
  r=s->ops.submit(s->context,a,&meta);s->issuing=0;wipe(&meta,sizeof meta);
+ if(!r&&stc_submitted(&s->transaction,a->generation,a->ticket)<0){s->halted=1;close_port(s);return -1;}
  if(r==1){s->in_ticket=0;s->in_kind=0;return 0;}
  if(r){uint64_t g=s->in_generation,t=s->in_ticket;s->in_ticket=0;s->in_kind=0;return sync_state(s,stc_receipt(&s->transaction,g,t,0,now));}return 1;
 }

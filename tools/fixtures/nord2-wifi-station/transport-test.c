@@ -8,7 +8,9 @@ static uint8_t mock_frame[1600];static size_t mock_bytes;
 int nst_command(struct nst*t,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n){assert(!t->wire_busy&&!t->air_pending);assert(cid==SW_KEY||cid==SW_CHANNEL);assert(n<sizeof mock_frame);memcpy(mock_frame,p,n);mock_bytes=n;mock_ticket=ticket;t->wire_busy=1;mock_kind=NST_COMMAND_DMA;return 0;}
 int nst_management(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n){assert(n>=24);mock_ticket=ticket;t->wire_busy=t->air_pending=1;mock_kind=NST_FRAME_RESULT;memcpy(mock_frame,p,n);mock_bytes=n;return 0;}
 int nst_eapol(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n,unsigned protect){assert(n>=14&&p[12]==0x88&&p[13]==0x8e);assert(!memcmp(p,t->peer.ap,6)&&!memcmp(p+6,t->peer.self,6));assert(!protect);mock_ticket=ticket;t->wire_busy=1;mock_kind=NST_SECURITY_SUBMITTED;memcpy(mock_frame,p,n);mock_bytes=n;return 0;}
-int nst_replay_install(struct nst*t,unsigned pairwise,uint8_t keyid,const uint8_t rsc[8]){mock_replays++;if(pairwise){assert(!keyid);for(unsigned i=0;i<8;i++)assert(!rsc[i]);t->ptk.installed=1;}else{assert(keyid==1);t->gtk.installed=1;}return 0;}
+int nst_replay_install(struct nst*t,unsigned pairwise,uint8_t keyid,const uint8_t rsc[8]){mock_replays++;if(pairwise){assert(!keyid);for(unsigned i=0;i<8;i++)assert(!rsc[i]);t->ptk.installed=1;}else{assert(keyid==1);t->gtk.installed=1;t->gtk.key_id=keyid;t->gtk_keys[keyid]=t->gtk;t->gtk_wlan[keyid]=t->peer.group_wlan;t->gtk_mapped|=1u<<keyid;}return 0;}
+/* This older connector fixture does not emulate native rekey ownership. */
+int nst_replay_replace_group(struct nst*t,uint8_t keyid,const uint8_t rsc[8]){(void)t;(void)keyid;(void)rsc;return -1;}
 int nst_authorize(struct nst*t){if(!t->ptk_ready||!t->ptk.installed||!t->gtk.installed)return -1;t->controlled_port=1;mock_authorizes++;return 0;}
 int nst_cleanup_begin(struct nst*t,uint64_t now,uint64_t deadline){assert(deadline>now);t->deadline=deadline;return 0;}
 void nst_close_port(struct nst*t){t->controlled_port=0;}

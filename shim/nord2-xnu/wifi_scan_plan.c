@@ -19,8 +19,9 @@ static void header(uint8_t*p,unsigned bytes,uint8_t cid,uint8_t seq){
  p32(p,bytes|(2u<<23));p32(p+4,1u<<16);p16(p+32,(uint16_t)(bytes-32));p[36]=cid;p[37]=0xa0;p[38]=1;p[39]=seq;
 }
 int ncs_build(const uint8_t*cap,size_t n,uint8_t capseq,const uint8_t mac[6],const struct ncs_channel*c,size_t count,uint8_t aseq,uint8_t seq,uint8_t scanseq,unsigned dbdc_disabled,uint16_t dwell,uint16_t minimum,struct ncs_frames*out){
+ /* Source V2 dwell/minimum are TU.108TU is the explicit Apple110ms adapter. */
  struct ncs_frames r={0};unsigned any=0;
- if(!out||!mac||!c||!count||count>64||!aseq||!seq||aseq==seq||dbdc_disabled>1||!((dwell==0&&minimum==0)||(dwell==40&&minimum==20))||ncs_cap_mac(cap,n,capseq,&r.cap))return -1;
+ if(!out||!mac||!c||!count||count>64||!aseq||!seq||aseq==seq||dbdc_disabled>1||!((dwell==0&&minimum==0)||(dwell==40&&minimum==20)||(dwell==108&&minimum==0))||ncs_cap_mac(cap,n,capseq,&r.cap))return -1;
  for(unsigned i=0;i<6;i++)any|=mac[i];if(!any||(mac[0]&1))return -1;
  for(size_t i=0;i<count;i++){if((c[i].band!=1&&c[i].band!=2)||!c[i].channel||(c[i].band==1&&c[i].channel>14)||(c[i].band==2&&c[i].channel<=14))return -1;
   for(size_t j=0;j<i;j++)if(c[i].band==c[j].band&&c[i].channel==c[j].channel)return -1;

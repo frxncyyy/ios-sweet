@@ -10,6 +10,15 @@ static void station_packet(unsigned k,unsigned type,unsigned bytes,unsigned last
  if(type==7){p[28]=0x0f;p[36]=pid;p[40]=wlan;}
  put32(d,(uint32_t)(q->ring.buffers+4096*at));put32(d+4,0x80000000u|(last?0x40000000u:0)|(bytes<<16));put32(d+8,0);put32(d+12,0);hardware_register(q->ring.base+12,(at+1)%q->ring.count);
 }
+static void station_data_completion(unsigned next){
+ struct nst*s=&nst_native.state;uint8_t*d=pool_memory+(s->normal.ring-NDP_POOL_BASE)+16*s->normal.next;
+ uint8_t*page=pool_memory+(s->normal.buffer-NDP_POOL_BASE);
+ assert(station_hardware&&s->wire_busy&&(s->wire_type==2||s->wire_type==3)&&get32(d)==s->normal.buffer&&((get32(d+4)>>16)&0x3fff)==64);
+ assert(get32(page+40)==s->normal.buffer+64&&((get32(page)>>23)&3)==0);station_pubs++;station_frames++;
+ station_packet(3,6,12,1,0,0);struct ncr_queue*q=&s->queue[3];uint8_t*r=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;w16(r+2,(6u<<11)|1);put32(r+4,2u<<16);put32(r+8,s->normal.token);
+ if(defer_data&&s->wire_type==3){deferred_data=1;return;}
+ put32(d+4,get32(d+4)|0x80000000u);hardware_register(0x1802530c,next);
+}
 static void station_completion(unsigned next){
  struct nwt_state*t=&nwfn_native.init.transport;struct nst*s=&nst_native.state;
  uint8_t*d=pool_memory+(t->tx_ring-NDP_POOL_BASE)+16*t->tx_index,*p=pool_memory+(t->command-NDP_POOL_BASE);
@@ -76,7 +85,7 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
  unsigned reads=mmio_reads,writes=mmio_writes;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);
  defer_data=1;assert(njs_owner_work()==1&&deferred_data&&nst_native.state.wire_busy&&nst_native.state.submitted>nst_native.state.dma_completed);
  reads=mmio_reads;writes=mmio_writes;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);
- defer_data=0;uint8_t*pending_data=pool_memory+(nwfn_native.init.transport.tx_ring-NDP_POOL_BASE)+16*nst_native.state.tx_next;put32(pending_data+4,0xffffffffu);hardware_register(0x1802541c,(nst_native.state.tx_next+1)%1024);
+ defer_data=0;uint8_t*pending_data=pool_memory+(nst_native.state.normal.ring-NDP_POOL_BASE)+16*nst_native.state.normal.next;put32(pending_data+4,0xffffffffu);hardware_register(0x1802530c,(nst_native.state.normal.next+1)%1024);
  for(unsigned tries=0;tries<1000&&njs_native.tx_local!=2;tries++)assert(njs_owner_work()==1);
  assert(njs_native.tx_local==2&&njs_native.tx_accepted==2&&!njs_native.tx_count&&!nst_native.state.wire_busy);
  /* All five real RX queues move; a segmented chain persists across return. */
@@ -101,6 +110,10 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
  nst_native.state.channel_held=1;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);nst_native.state.channel_held=0;
  nst_native.state.dma_completed--;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);nst_native.state.dma_completed++;
  nst_native.state.credit_available--;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);nst_native.state.credit_available++;
+
+ nst_native.state.normal.published=1;assert(nss_return_scans()==1&&reads==mmio_reads&&writes==mmio_writes);nst_native.state.normal.published=0;
+ hardware_register(0x1802530c,(nst_native.state.normal.next+1)%1024);assert(nss_return_scans()==-1&&!nss_return.ready&&mmio_writes==writes);nss_return.attempted=0;hardware_register(0x1802530c,nst_native.state.normal.next);
+ uint8_t*nd=pool_memory+(nst_native.state.normal.ring-NDP_POOL_BASE)+16*nst_native.state.normal.next;uint32_t nc=get32(nd+4);put32(nd+4,nc&0x7fffffff);assert(nss_return_scans()==-1&&!nss_return.ready&&mmio_writes==writes);nss_return.attempted=0;put32(nd+4,nc);
  /* Physical preflight failures restore exact phase/active; no writes or
   * return publication. Production caller takes fatal retained-owner path. */
  hardware_register(0x1802541c,(nst_native.state.tx_next+1)%1024);assert(nss_return_scans()==-1&&!nss_return.ready&&nst_native.state.phase==NST_IDLE&&!nst_native.state.active&&mmio_writes==writes);nss_return.attempted=0;hardware_register(0x1802541c,nst_native.state.tx_next);

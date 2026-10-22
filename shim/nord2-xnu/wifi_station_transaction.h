@@ -7,7 +7,7 @@
 /* Pure serialized model, NOT a native lease/adapter. Zero-initialize once.
  * Caller-owned scan arbiter must be shared with the actual scan owner. */
 enum stc_phase {STC_NEW,STC_PREPARE,STC_CHANNEL,STC_GRANT,STC_AUTH_TX,STC_AUTH_RX,STC_ASSOC_TX,STC_ASSOC_RX,STC_CONFIGURE,STC_EAPOL,STC_EAPOL_TX,STC_PTK,STC_PTK_READY,STC_GTK,STC_DATA,STC_CONNECTED,STC_DEAUTH,STC_REMOVE_PTK,STC_REMOVE_GTK,STC_RETIRE,STC_RELEASE,STC_DONE,STC_HALTED};
-enum stc_kind {STC_NONE,STC_PREPARE_PEER,STC_CID_CHANNEL,STC_TX_AUTH,STC_TX_ASSOC,STC_CONFIGURE_PEER,STC_TX_EAPOL,STC_CID_PTK,STC_CID_GTK,STC_INSTALL_DATA_PATH,STC_TX_DEAUTH,STC_DELETE_PTK,STC_DELETE_GTK,STC_RETIRE_PEER,STC_ABORT_CHANNEL};
+enum stc_kind {STC_NONE,STC_PREPARE_PEER,STC_CID_CHANNEL,STC_TX_AUTH,STC_TX_ASSOC,STC_CONFIGURE_PEER,STC_TX_EAPOL,STC_CID_PTK,STC_CID_GTK,STC_INSTALL_DATA_PATH,STC_TX_DEAUTH,STC_DELETE_PTK,STC_DELETE_GTK,STC_RETIRE_PEER,STC_ABORT_CHANNEL,STC_TX_GROUP,STC_REKEY_GTK};
 enum stc_outcome {STC_PENDING,STC_AUTHORIZED,STC_FAILED,STC_CANCELED,STC_TIMEOUT,STC_DISCONNECTED};
 struct stc_arbiter {unsigned mode,connection_used;uint64_t generation;}; /* 0idle,1scan,2connection */
 int stc_scan_acquire(struct stc_arbiter*,uint64_t);
@@ -15,6 +15,7 @@ int stc_scan_release(struct stc_arbiter*,uint64_t);
 struct stc_config {
  uint64_t generation,deadline_ms;uint32_t cleanup_timeout_ms;
  struct sw_assoc assoc;struct sw_channel channel;
+ uint8_t group_spare[3]; /* exact source-owned free WTBL slots,0 disables */
  uint8_t sta_wlan,group_wlan; /* source-owned distinct WTBL allocations */
  const uint8_t *pmk,*station_rsn,*ap_rsn; /*32/22/full AP IE */
  size_t ap_rsn_bytes; /*0 retains legacy22; otherwise exact captured IE extent */
@@ -27,6 +28,8 @@ struct stc {
  unsigned grant_seen,key_event_seen,response_seen,response_bytes;uint16_t aid;uint8_t response[512];
  unsigned cleanup_abort_first,resume_phase,eapol_pending,eapol_bytes;uint8_t queued_eapol[640];
  unsigned auth_attempts,assoc_attempts;uint64_t response_deadline;
+ unsigned group_active,gtk_attempted_mask,gtk_mapped_mask;uint64_t group_deadline;
+ uint8_t group_spare[3],gtk_wlan[4];
  uint64_t generation,serial,last_ms,deadline,cleanup_deadline,wpa_tx_ticket;uint32_t cleanup_timeout_ms;
  struct stc_arbiter *arbiter;struct sw_peer peer;struct sw_channel channel;
  uint8_t sta_wlan,group_wlan,gtk_index,ssid[32],rates[12];
@@ -41,6 +44,7 @@ struct stc {
  * not evidence that these operations exist in the current installed runtime. */
 int stc_begin(struct stc*,struct stc_arbiter*,const struct stc_config*,uint64_t now_ms);
 const struct stc_action*stc_next(const struct stc*);
+int stc_submitted(struct stc*,uint64_t generation,uint64_t ticket);
 int stc_receipt(struct stc*,uint64_t generation,uint64_t ticket,int success,uint64_t now_ms);
 int stc_grant(struct stc*,uint64_t generation,uint8_t bss,uint8_t token,uint8_t band,uint8_t channel,int granted,uint64_t now_ms);
 int stc_management(struct stc*,uint64_t generation,const uint8_t*,size_t,uint64_t now_ms);
