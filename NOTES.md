@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: Claude review integrated as combined discovery fix; CI next.**
+  Exact hardware LOW_LATENCY0x20 now admitted (LOW_PRIORITY0x2 separately),
+  semantic filters still refused with distinct codes; RawSet EBUSY16 proven
+  through selected IO80211 errno path. Snapshot omits/counts individual invalid
+  BSS rows, retains1024B IEs, skips only proven basic-marked selectors123/126/127,
+  preserves coherent on-channel records over adjacent-channel receptions.
+  NORD2 paired IOKit daemon busy-hold/release suppressed without touching other
+  busy counts, deferred matches or resource publication. Same-IPSW configd
+  confirms root IOBusyInterest and240s quiet timer; historical delay attribution
+  remains inference. Client timestamps/root-busy/channel/omission logs added.
+  Reviews at research/nord2/wifi/claude-opus-ios-195a/review-{policy,snapshot,quiesce};
+  source policy/caller/snapshot/scalar ASan suites PASS; actual IOUC/lifetime PASS;
+  repeated scan-service and immutable normal regressions PASS. Eight generated
+  native units plus two whole IOKit sources compile genericARMv8.2.0082 regenerates
+  and applies exactly; diff-check clean excluding nested patch context whitespace.
+  New wifi-ios-discovery/ios staging gates FALSE, runner UNUSED. Phone195a unchanged;
+  no new image/authorization/device action. Need CI, exact artifact verification
+  and packaging before requesting one combined boot-only test. UFS unchanged.
+
 - **2026-10-22:195a7e17 Settings test FAILED; delegated to visible Claude Opus.**
   Human reports several minutes before Wi-Fi Settings opens and still no networks;
   no fresh explicit touch/buttons confirmation. Current phone195a7e17 unchanged,

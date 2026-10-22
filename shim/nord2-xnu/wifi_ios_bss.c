@@ -12,7 +12,12 @@ int niwb_bss_metadata(const struct nsb_record*s,struct niwb_bss*out){
  }
  for(size_t i=0;i<s->ie_bytes;){if(s->ie_bytes-i<2)return -1;unsigned id=s->ies[i++],z=s->ies[i++];if(z>s->ie_bytes-i)return -1;
   if(id==1||id==50){unsigned flag=id==1?1:2;if(rate_ies&flag)return -1;rate_ies|=flag;
-   for(unsigned j=0;j<z;j++){uint8_t x=s->ies[i+j]&127;if(!x)return -1;unsigned k;for(k=0;k<r.rate_count;k++)if(r.ie_rates[k]==x)break;if(k==r.rate_count){if(k==16)return -1;r.ie_rates[r.rate_count++]=x;}}
+   for(unsigned j=0;j<z;j++){uint8_t v=s->ies[i+j],x=v&127;
+    /* Selected gen4m mac.h: HT127, VHT126, H2E-only123 are BSS
+     * membership selectors when basic-marked, not 500kb/s rates.
+     * Keep original IE bytes unchanged; do not classify other values by range. */
+    if((v&128)&&(x==127||x==126||x==123))continue;
+    if(!x)return -1;unsigned k;for(k=0;k<r.rate_count;k++)if(r.ie_rates[k]==x)break;if(k==r.rate_count){if(k==16)return -1;r.ie_rates[r.rate_count++]=x;}}
   }i+=z;
  }
  r.ie_bytes=s->ie_bytes;for(unsigned i=0;i<s->ie_bytes;i++)r.ies[i]=s->ies[i];*out=r;return 0;

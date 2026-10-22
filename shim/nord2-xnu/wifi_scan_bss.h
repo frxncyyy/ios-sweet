@@ -2,7 +2,7 @@
 #define PRIVATE_NORD2_SCAN_BSS_H
 #include <stdint.h>
 #include <stddef.h>
-#define NSB_IE_BYTES 512u
+#define NSB_IE_BYTES 1024u /* Exact maximum IE room of the Apple1164-byte scan result. */
 #define NSB_RESULTS 16u
 #define NSB_SCAN_DONE_BYTES 476u
 struct nsb_record {

@@ -81,7 +81,10 @@ int nsb_add(struct nsb_scan *s,const uint8_t *p,size_t n,uint64_t now)
  s->frames++;
  for(unsigned i=0;i<s->count;i++)if(eq(s->records[i].bssid,r.bssid,6)&&
    s->records[i].ssid_present==r.ssid_present&&s->records[i].ssid_len==r.ssid_len&&eq(s->records[i].ssid,r.ssid,r.ssid_len)){
-  s->records[i]=r;return 0;
+  /* Do not replace a coherent on-channel observation with adjacent-channel
+   * leakage. Preserve that observation's RSSI/IEs/timestamp as one real row. */
+  if(!r.channel_mismatch||s->records[i].channel_mismatch)s->records[i]=r;
+  return 0;
  }
  if(s->count==NSB_RESULTS){s->dropped++;s->partial=1;return 1;}
  s->records[s->count++]=r;return 0;

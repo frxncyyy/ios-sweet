@@ -23,7 +23,8 @@ int main(){IOUserClient*c=make();IOExternalMethodArguments a={};uint8_t one=0;
  envelope(carrier,0x802869c8,10,5456);put(carrier+8,1);put(carrier+12,3);put(carrier+60,1);put(carrier+64,1);a={};a.structureInput=carrier;a.structureInputSize=sizeof carrier;
  carrier[24]=1;assert(call(c,0,a)==kIOReturnUnsupported&&!active);carrier[24]=0; /* nonzero SSID length is directed */
  carrier[100]=1;put(carrier+8+4880,0x80000000u); /* inactive channel storage plus caller RSSI default */
- completeScan();assert(!call(c,0,a)&&active);assert(call(c,0,a)==kIOReturnBusy);finish();assert(state[1]==52&&ring[0]==87&&ring[28]==10&&!ring[48]&&notifications==1&&releases==1);
+ put(carrier+8+4872,0x40);assert(call(c,0,a)==kIOReturnUnsupported&&!active);put(carrier+8+4872,0x20); /* actual interactive LOW_LATENCY */
+ completeScan();assert(!call(c,0,a)&&active);assert(call(c,0,a)==(IOReturn)16);finish();assert(state[1]==52&&ring[0]==87&&ring[28]==10&&!ring[48]&&notifications==1&&releases==1);
  uint8_t row[1164];envelope(carrier,NIW_GET,11,1164);a.structureOutput=row;a.structureOutputSize=sizeof row;assert(call(c,0,a)==(IOReturn)0xe0820446); /* genuine completed empty */
  state[0]=state[1];completeScan();scan.count=scan.frames=1;auto&r=scan.records[0];r.observed_us=150;r.bssid[0]=2;r.subtype=8;r.channel=r.hw_channel=6;r.ssid_present=1;r.interval=100;r.rxv_valid=1;r.group_valid=4;r.rxv[4]=100;r.rxv[5]=90;r.ie_total=r.ie_bytes=3;r.ies[0]=1;r.ies[1]=1;r.ies[2]=2;
  envelope(carrier,0x802869c8,10,5456);put(carrier+8,1);put(carrier+12,3);put(carrier+60,1);put(carrier+64,1);a.structureOutput=nullptr;a.structureOutputSize=0;assert(!call(c,0,a));finish();
