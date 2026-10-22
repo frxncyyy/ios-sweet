@@ -59,6 +59,25 @@ static void correlate(struct nsdd*s,uint64_t g,const uint8_t*p,const struct nsdd
   if(s->match_logs<12){s->match_logs++;printf("NORD2 WIFI DHCPMATCH: g=%llu type=%u matched=%u tracked=%u count=%u\n",(unsigned long long)g,r->dhcp,match,s->identities,match?s->reply_match[r->dhcp]:s->reply_other[r->dhcp]);}
  }
 }
+/* Selected nic_connac2x_rx.h DW1/2/3/4. The masks are exactly the
+ * existing native error gate, not a new admission policy. A1 is fixed RXD
+ * metadata; even errored/nontranslated payload is never dereferenced here. */
+int nsdd_rx_error_take(struct nsdd*s,struct nsdd_rx_error*r,uint64_t g,const uint8_t*p,size_t n){
+ if(!s||!r||!g||s->summary||s->rx_error_logs>=8||!p||n<24||n>3840)return 0;
+ unsigned bytes=le16(p),type=(le16(p+2)>>11)&31;
+ if(bytes<24||bytes>n||(type!=2&&!(type==7&&(le16(p+2)&0x380f)==0x3801)))return 0;
+ uint32_t d1=le32(p+4),d2=le32(p+8),d3=le32(p+12),d4=le32(p+16);
+ struct nsdd_rx_error v={0};v.d1=d1&0x0f800000u;v.d2=d2&0x0b800000u;v.d4=d4&0x1803u;
+ if(!(v.d1||v.d2||v.d4))return 0;
+ v.generation=g;v.n=s->rx_error_logs+1;v.wlan=d1&1023;v.sec=(d1>>16)&31;v.key=(d1>>21)&3;
+ v.ht=(d2>>13)&1;v.groups=(d1>>11)&31;v.type=type;v.a1=(d3>>16)&3;
+ v.dst=!v.a1?0:v.a1==1?1:2;v.tid=(d2>>16)&15;
+ *r=v;s->rx_error_logs++;return 1;
+}
+void nsdd_rx_error(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n){
+ struct nsdd_rx_error r;if(!nsdd_rx_error_take(s,&r,g,p,n))return;
+ printf("NORD2 WIFI RXERROR: g=%llu n=%u d1=%u d2=%u d4=%u wlan=%u sec=%u key=%u ht=%u groups=%u type=%u a1=%u dst=%u tid=%u\n",(unsigned long long)r.generation,r.n,r.d1,r.d2,r.d4,r.wlan,r.sec,r.key,r.ht,r.groups,r.type,r.a1,r.dst,r.tid);
+}
 void nsdd_reject(struct nsdd*s,uint64_t g,unsigned reason){
  if(!s||s->summary||!reason||reason>=NSDD_RX_REASON_END)return;
  inc(&s->rejected[reason]);if(s->reject_logged[reason]>=2)return;s->reject_logged[reason]++;

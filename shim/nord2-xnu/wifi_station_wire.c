@@ -145,7 +145,7 @@ int sw_bss(uint8_t *out,size_t cap,size_t *used,const struct sw_bss *p) {
 int sw_sta(uint8_t *out,size_t cap,size_t *used,const struct sw_sta *p) {
     uint8_t b[SW_SIZE_CMD_UPDATE_STA_RECORD]={0};
     if(!start(used)||!p||!unicast(p->ap)||p->state<1||p->state>3||p->need_response>1||
-       p->sta_type!=65||p->aid>2007||!p->listen_interval||p->wlan==255||p->version>1||
+       p->sta_type!=65||p->aid>2007||!p->listen_interval||p->wlan==255||p->bmc_wlan!=SW_WTBL_RESERVED_ENTRY||p->version>1||
        !rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
     P8(CMD_UPDATE_STA_RECORD,ucStaIndex,p->sta);P8(CMD_UPDATE_STA_RECORD,ucStaType,p->sta_type);
     CP(CMD_UPDATE_STA_RECORD,aucMacAddr,p->ap,6);P16(CMD_UPDATE_STA_RECORD,u2AssocId,p->aid);
@@ -156,7 +156,7 @@ int sw_sta(uint8_t *out,size_t cap,size_t *used,const struct sw_sta *p) {
     P8(CMD_UPDATE_STA_RECORD,ucStaState,p->state);P8(CMD_UPDATE_STA_RECORD,ucRCPI,p->rcpi);
     P8(CMD_UPDATE_STA_RECORD,ucVersion,p->version);
     P8(CMD_UPDATE_STA_RECORD,ucNeedResp,p->need_response);P8(CMD_UPDATE_STA_RECORD,ucWlanIndex,p->wlan);
-    P8(CMD_UPDATE_STA_RECORD,ucBMCWlanIndex,p->bmc_wlan);
+    P8(CMD_UPDATE_STA_RECORD,ucBMCWlanIndex,SW_WTBL_RESERVED_ENTRY);
     P8(CMD_UPDATE_STA_RECORD,ucRtsPolicy,p->rts_policy);
     P16(CMD_UPDATE_STA_RECORD,u2HwDefaultFixedRateCode,p->fixed_rate);
     return finish(out,cap,used,b,sizeof(b));

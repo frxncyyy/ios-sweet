@@ -4,6 +4,29 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: reviewed Claude DHCP candidate integrated; local checks PASS.**
+  Actual Claude Opus initial-freeze0ab8a7c5 and final-freezedaeb579f: source
+  parity fix sets STA-record BMC index to Android WTBL_RESERVED_ENTRY255;
+  BSS BMC4, GTK slots and peer WLAN5 are unchanged. Independent STA review
+  e7de9ba0 and RX review95b0aab4 pass. No proven DHCP causality yet.
+  Added first-eight fixed-RXD error details without rejected payload reads or
+  changes to admission, key/PN, DMA lifetime or receive outcomes. Durable
+  STA fixture and supplemental RX reader/tests are committed with the source.
+  D=research/nord2/wifi-ios-dhcp/ios: canonical station all10 groups PASS,
+  including8882 new STA checks; RX65913/helper+2281 actual+16positive/207negative
+  reader checks PASS. NormalTX, GTK renewal, data diagnostics, join owner and
+  scan return regressions PASS. No old fixture migration was needed.
+  Regenerated0082 SHA71c77cfc866541516d21b86530a15e223343edf421174486aa2e555f83055831;
+  actual16 ARM64 owning units compileattempt1 PASS, wrapper38570 CLOSED0.
+  Source is ready for one full macOS CI; D gates remain closed until actual
+  successful CI/source/ISA/linked/image verification. No new flash authorized.
+  Phone remains08e6be56, oneJoin consumed,169.254/Routerempty. Preserve it.
+  Next: successful fullCI, package/verify nord2-ios-wifi-dhcp-stop23.img,
+  exact boot-only approval, then real lease/router/Safari check. No guarantee
+  of DHCP or Internet from synthetic/model/source-parity checks alone.
+
+
+
 - **2026-10-23: 08e6be56 ten-minute capture completed; Claude owns private DHCP fix.**
   Runner72798 CLOSED0, immutable hardware-review/capture-final.log444012 bytes
   SHA2c67dd00e7a541e48d0e357d4d21ce9bf07a10e4a464fd67b5f24d15ff161033.

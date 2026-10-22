@@ -208,7 +208,7 @@ static int decode(struct nst*s){
  if(type!=2&&!(type==7&&(u16(p+2)&0x380f)==0x3801))return 0;
  size_t bytes=u16(p),off=24,g1=0,g4=0;uint32_t d1=u32(p+4),d2=u32(p+8),d4=u32(p+16);unsigned groups=(d1>>11)&31;
  if(bytes>n||bytes<24){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_EXTENT);return 0;}
- if(d1&0x0f800000u||d2&0x0b800000u||(d4&3)||(d4&(3u<<11))){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_ERROR);return 0;}
+ if(d1&0x0f800000u||d2&0x0b800000u||(d4&3)||(d4&(3u<<11))){nsdd_rx_error(&s->data_diag,s->generation,p,n);nsdd_reject(&s->data_diag,s->generation,NSDD_RX_ERROR);return 0;}
  if(groups&8){g4=off;off+=16;}if(groups&1){g1=off;off+=16;}if(groups&2)off+=8;if(groups&4)off+=8;if(groups&16)off+=72;off+=((d2>>14)&3)*2;if(off>bytes){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_GROUP_EXTENT);return 0;}
  const uint8_t*m=p+off;size_t len=bytes-off;unsigned translated=(d2>>13)&1,sec=(d1>>16)&31,key=(d1>>21)&3,wlan=d1&1023,tid=(d2>>16)&15;
  if(!translated){
@@ -302,7 +302,8 @@ static int peer_progress(struct nst*s,nst_event_fn fn,void*ctx){
  unsigned kind=s->peer_kind,step=s->peer_step;uint8_t payload[200];size_t used=0;uint8_t cid=0;
  struct sw_rlm r={s->peer.bss,s->peer.band,s->peer.channel,s->profile.erp_protect,(uint8_t)!!(s->profile.assoc.capability&32),(uint8_t)!!(s->profile.assoc.capability&1024),1,1};
  struct sw_bss b={.rlm=r,.ssid=s->ssid,.ssid_len=s->profile.assoc.ssid_len,.connected=(uint8_t)(kind==NST_CONFIGURE_PEER),.ap_sta=s->peer.sta,.bmc_wlan=s->peer.group_wlan,.nonht_phy=(uint8_t)(s->peer.band==2?3:(phy(s)==1?0:1)),.phy_set=(uint8_t)phy(s),.dbdc_band=4,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(b.ap,s->peer.ap,6);
- struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=s->peer.group_wlan,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?3:1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
+ /* cnm_mem.c1141-1142: STA-record BMC is WTBL_RESERVED_ENTRY; BSS b above keeps real BMC. */
+ struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=SW_WTBL_RESERVED_ENTRY,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?3:1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
  if(kind==NST_PREPARE_PEER&&step==0){wipe(payload,68);p32(payload,13);return command(s,s->peer_ticket,0x0a,payload,68,1);}
  if(kind==NST_PREPARE_PEER)step--;
  if(kind==NST_RETIRE_PEER){

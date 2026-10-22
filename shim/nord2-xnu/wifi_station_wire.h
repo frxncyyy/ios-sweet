@@ -55,8 +55,12 @@ struct sw_bss {
     uint32_t private_data;
 };
 int sw_bss(uint8_t *, size_t, size_t *, const struct sw_bss *);
+/* Selected cnmStaSendUpdateCmd (cnm_mem.c1141-1142) sends the peer WLAN and
+ * unconditionally WTBL_RESERVED_ENTRY(255) as STA-record ucBMCWlanIndex.
+ * BSS-info ucBMCWlanIndex is a different field and keeps the real BMC slot. */
+#define SW_WTBL_RESERVED_ENTRY 255
 struct sw_sta {
-    uint8_t bss, sta, wlan, bmc_wlan, sta_type, state, need_response;
+    uint8_t bss, sta, wlan, bmc_wlan, sta_type, state, need_response; /* bmc_wlan==SW_WTBL_RESERVED_ENTRY */
     uint8_t ap[6], phy_set, rcpi, rts_policy, version;
     uint16_t aid, listen_interval, rates, basic_rates, fixed_rate;
 };

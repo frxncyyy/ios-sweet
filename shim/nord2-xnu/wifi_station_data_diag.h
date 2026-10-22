@@ -25,8 +25,14 @@ struct nsdd {
  uint32_t rejected[NSDD_RX_REASON_END],reject_logged[NSDD_RX_REASON_END];
  uint32_t identities,identity_next,reply_match[9],reply_other[9],match_logs,rx_samples;
  struct nsdd_identity identity[4];
+ uint32_t rx_error_logs;
  uint32_t headers_tx,headers_rx,dhcp_tx,dhcp_rx,txs_early,txs_live,records,summary;
 };
+/* Fixed RXD metadata only; no rejected payload access. dst:0 unknown,
+ * 1 hardware UC2ME,2 hardware MC/BC. Never an authenticated destination. */
+struct nsdd_rx_error {uint64_t generation;uint32_t n,d1,d2,d4,wlan,sec,key,ht,groups,type,a1,dst,tid;};
+int nsdd_rx_error_take(struct nsdd*,struct nsdd_rx_error*,uint64_t,const uint8_t*,size_t);
+void nsdd_rx_error(struct nsdd*,uint64_t,const uint8_t*,size_t);
 int nsdd_classify(struct nsdd_frame*,const uint8_t*,size_t);
 int nsdd_decode_txs(struct nsdd_txs*,const uint8_t*,size_t);
 /* Serialized native owner only. type2 is security, type3 ordinary data.
