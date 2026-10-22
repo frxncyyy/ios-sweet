@@ -3,6 +3,55 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined WPA2 image VERIFIED; awaiting exact boot-only approval.**
+  nord2-ios-wifi-connect-battery-stop23.img33458176B SHA
+  43fd789b749b57eab3f735086170931e0c21efa308af394d8ad90f97ba80c9b6;
+  CI39776853840 source db14928f50e572b37ea2020ee288d1a23ecb9600.
+  Independent image review48bbc65c/manifest36da9cbd PASS, payload/loader/kernel/
+  ADT/rescue/header exact; spare96256B. Identity/native/prepared gates TRUE;
+  authorization FALSE, runner UNUSED. Phone remains healthy52d4, no USB owner.
+  Pending human approval for only boot, including conditional healthy52d4/RAM
+  rescue recovery. Test first WPA2-PSK/CCMP association+keys+BSD traffic; user
+  enters password on phone and disables Private Wi-Fi Address. One attempt per
+  boot; retry requires reboot, no SAE/mandatory PMF/rejoin/roaming claim.
+  After approved flash collect live USB log, ask Settings responsiveness,
+  network join/address and real browsing. Never infer IP from carrier/counters.
+  No stock Android boot over iOS userdata. UFS/boot-speed remains closed.
+
+- **2026-10-22: combined connection image packaged; independent check pending.**
+  Builder56944 CLOSED0 within1GiB; nord2-ios-wifi-connect-battery-stop23.img
+  33458176B SHA43fd789b749b57eab3f735086170931e0c21efa308af394d8ad90f97ba80c9b6.
+  Payloadbc8077762997fa8b1858c56ee37cb6cf15e276f6b4bbe92f54d79118e8ba0de7;
+  spare96256B. CI/kernel/source unchanged; independent cap existing-image check
+  active. Prepared/authorization gates still FALSE, runner UNUSED. No flash.
+  First attempt per boot, PSK/CCMP only, private MAC/SAE/mandatory PMF/rejoin
+  unsupported. Need concrete exact-image boot-only approval after independent
+  verification; user enters password on phone. Healthy52d4 fallback retained.
+
+- **2026-10-22: combined linked reviews PASS; image packaging active.**
+  ExactCI39776853840/kernel72471a30: client/ifnet report85352550,
+  WPA/provider9c266af4, native transportf17a0e69 all findings[]. Identity/native
+  schema gates TRUE; prepared/authorization still FALSE. Bounded1GiB builder
+  session56944 active, target nord2-ios-wifi-connect-battery-stop23.img.
+  No device action. Need complete image manifest and independent verification
+  before asking concrete boot-only authorization. Healthy52d4 fallback retained.
+
+- **2026-10-22: corrected combined CI SUCCESS; artifact audits PASS.**
+  CI39776853840 attempt1 source db14928f50e572b37ea2020ee288d1a23ecb9600;
+  watch70501 CLOSED0, artifacts downloaded. Kernel17702688B SHA
+  72471a30ac680fc261c0f2a96a3254efb87c844b3c5983522579e36c01434199.
+  Source221 generated files equal;32 actual units generic ARMv8.2; full ISA
+  2270559 instructions no LDAPUR/STLUR PASS (89923/51436 CLOSED0).
+  Bounded linked reviews running: cap client/ifnet, wire MTK transport,
+  format WPA/provider. Identity gate TRUE; native/prepared/approval still FALSE.
+  No image/flash; phone discovery52d4 remains healthy. Next package after reviews.
+
+- **2026-10-22: corrected combined CI running.** Source db14928f50e572b37ea2020ee288d1a23ecb9600
+  committed/pushed; CI39776853840 attempt1, watch70501 owns log/artifact download.
+  Only change after669ab25 is exact C linkage for three BPF functions; registry
+  ARM64 compile and nm check PASS, no station semantics changed. Combined source
+  pins refreshed, all image/approval gates FALSE; phone healthy52d4 unchanged.
+
 - **2026-10-22: combined CI link failure corrected locally.** CI39775642868
   attempt1 failed only on three BPF symbols in registry C++ translation unit:
   selected net/bpf.h does not wrap bpfattach/bpf_tap_in/out in extern C.
