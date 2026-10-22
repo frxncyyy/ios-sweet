@@ -4,6 +4,55 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: Claude DHCP candidate image PREPARED; awaiting exact approval.**
+  shim/out/nord2-xnu/nord2-ios-wifi-dhcp-stop23.img,33480704 bytes:
+  SHA256ecb026c76dab4e378e9449f5fcf5cd626afd54442378b9397379452ccbdb6bdf.
+  Payload14993712 bytes SHA256
+  edc6ed7c650e3546a96b4d86d0da1a43cda8d71fba4ff7e063b8734eb67d063c;
+  boot spare73728. Builder36626 CLOSED0, FAILURES:none. Independent actual
+  image report7062efdc/manifest4f988c34 PASS; root verified all five members,
+  three collector receipt pins, protected stage and recovery hashes. Max
+  verifier RSS474176KiB. Sourceb5a09a2/CI39865241324a1/kernel0d2213bf.
+  Source/CI/schema/prepared gates TRUE; human/RF/recovery remain FALSE and
+  runner UNUSED. No device action. Phone remains08e6be56 with oneJoin consumed.
+  Scope: STA-only reserved BMC255 parity correction from actual Claude Opus;
+  BSS4/GTK mapping preserved; first-eight fixed-header RXERROR observations.
+  All10station groups, selected data/GTK/scan regressions and16ARM64 compiles
+  pass. No hardware DHCP success claimed yet. Next exact boot-only approval,
+  then one WPA2 Join/private-address-off/password-on-phone, collect600s and
+  check real DHCP lease/router/Safari. Recoveryd9a44316 or tested RAMADB only.
+
+
+
+- **2026-10-23: DHCP CI39865241324 PASS; exact kernel verified, image building.**
+  Attempt1/sourceb5a09a265bdd96b34019959aa03e67fb842a6af1. Watcher96598
+  CLOSED0; kernel17787240 bytes SHA
+  0d2213bf2a5ff6ac3ada99417c0427605b1fc349fdfa0cfaba8d463584ac7e47.
+  Root confirms231 generated files byte-equal,37generic ARMv8.2 units and
+  2279236 decoded instructions without LDAPUR/STLUR. Bounded actual six-body
+  linked reviewd14d3b20/manifest8f6afaf4 PASS; root verifies all19 members.
+  D source/CI/schema gates now verified for exact reviewed code. Seventh
+  RXERROR collector reader pinned/wiring-tested without changing the other
+  six readers; collector receipt71039a87. Builder36626 packages new
+  nord2-ios-wifi-dhcp-stop23.img under1GiB address-space cap. Prepared-image
+  and human/RF/recovery gates remain FALSE. Phone remains08e6be56 untouched.
+  Next: completed artifact, independent existing-image verification, exact
+  boot-only test approval. DHCP/Internet still require real hardware proof.
+
+
+
+- **2026-10-23: DHCP candidate committed and full CI dispatched once.**
+  Source b5a09a265bdd96b34019959aa03e67fb842a6af1 pushed to fork branch
+  codex/nord2-bringup. CI39865241324 attempt1 is building; root-only watcher
+  96598 records exact identity and downloads only after success. D pending
+  metadata contains335 freshly verified committed source/test pins. Required
+  identity/schema/prepared/human gates remain closed. Root must finish exact
+  generated-source/generic/ISA and bounded linked review, then image packing
+  and independent verification before asking for a new exact boot-only test.
+  Phone remains08e6be56 without another Join or device action.
+
+
+
 - **2026-10-23: reviewed Claude DHCP candidate integrated; local checks PASS.**
   Actual Claude Opus initial-freeze0ab8a7c5 and final-freezedaeb579f: source
   parity fix sets STA-record BMC index to Android WTBL_RESERVED_ENTRY255;
