@@ -3,6 +3,33 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: 454ac21e test failed to join, but cleanup completed and iOS stayed usable.**
+  User reports the same Unable to Join, then explicitly confirms phone/controls
+  still work. Collector71787 CLOSED0; no USB reader active. Final immutable log
+  hardware-review/postjoin-no-networks.log is390165 bytes, SHA-256
+  2cc735b40e1ae4685621b8167a3bb9bf88d88d52f63135238b567e6e9e74af49.
+  Earlier complete join snapshot368040 bytes, SHA e83cd4e66106cd274cf96ce1370b47504c162c58d4b14464c05772ddbbd3fff7;
+  strict connection parser VALID. Association succeeded. M2 PID3/WLAN5 had
+  verified DDONE but no matching TXS; THREE M3-shaped public headers arrived
+  (155 bytes, KeyInfo0x13ca). These are not yet MIC/nonce/replay validation.
+  Local negative256 at210256ms caused real deauth PID4 TXS, then peer retirement:
+  final submitted16=dma16, retired1, associated0/sta0/port0/halt0. No keys/IP.
+
+  User subsequently reports Wi-Fi enabled but no networks. Source confirms
+  njs_scan_blocked_locked retains used=1 after the first attempt and refuses
+  new scans; the old scan transport cannot simply regain DMA ownership.
+  Cap agent audits a safe scan handoff separately. Do not blindly remove used.
+  The earlier pre-password delay is still12s. Immutable331487-byte snapshot
+  f5b803aa has90 valid timing pairs, no slow sample, max gate0ms/work2ms.
+  Scan batches have uncorrelated idle gaps; no cause or delay fix established.
+
+  Wire/format agents now audit typed local security completion for M2 and M4,
+  separate from optional air receipts. Current mandatory AIR receipt blocks
+  queued M3. Caveat: selected Android's legacy security command branch is
+  unreachable from ordinary packet dispatch; active path is being checked.
+  No new source patch, CI or image authorized. Keep phone on454ac21e; no further
+  join attempts needed. Conditional d9a/rescue recovery remains available.
+
 - **2026-10-22: TXS/timing image 454ac21e flashed with exact user approval.**
   User call_8ea1e36f6e4f48719845807703169259 authorized the identified boot-only
   test and conditional d9a/rescue recovery; confirmed manual fastboot ready.
