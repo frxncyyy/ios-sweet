@@ -1,11 +1,37 @@
 #define NIWI_REGISTRY_HOST_TEST 1
 #include "wifi_ios_registry.cpp"
-extern "C" int nord2_wifi_scan_info(nss_info*out){*out={};out->count=1;out->mac[0]=2;return 0;}
+static uint8_t nativeMac[6]={2,0,0,0,0,0};
+extern "C" int nord2_wifi_scan_info(nss_info*out){*out={};out->count=1;memcpy(out->mac,nativeMac,6);return 0;}
 extern "C" IOReturn niwl_create_client(IOService*,task_t,void*,UInt32,OSDictionary*,IOUserClient**){return 0;}
 static IOService provider;
 static void reset(){
  assert(locks==(nwil_lock?1u:0u));starts=stops=attaches=detaches=failStart=failAttach=0;
  lockCalls=failLockAt=0;registered.clear();failProperty.clear();
+}
+static OSData* gestalt_wifi_address(){
+ auto*entry=IORegistryEntry::fromPath("IODeviceTree:/chosen");if(!entry)return nullptr;
+ auto*object=entry->copyProperty("mac-address-wifi0");entry->release();
+ auto*data=OSDynamicCast(OSData,object);if(object&&!data)object->release();return data;
+}
+static void checkGestalt(){
+ auto*data=gestalt_wifi_address();assert(data&&data->getLength()==6&&!memcmp(data->getBytesNoCopy(),nativeMac,6));data->release();
+}
+static void identityFailures(){
+ auto&chosen=IORegistryEntry::chosen;chosen.properties.removeObject("mac-address-wifi0");
+ assert(!gestalt_wifi_address()); /* old registry never installed this property */
+ auto refuse=[&](unsigned retained=0){reset();unsigned before=allocated,refs=objectRefs;{auto*c=new IO80211Controller;assert(!c->start(&provider));assert(registered.empty()&&allocated==before&&!lastNet);c->release();}assert(objectRefs==refs+retained);};
+ IORegistryEntry::missing=true;refuse();IORegistryEntry::missing=false;
+ for(unsigned kind=0;kind<4;kind++){
+  OSObject*wrong=nullptr;uint8_t other[7]={4,1,2,3,4,5,6};
+  if(kind==0)wrong=new OSString("not data");else wrong=new OSData(other,kind==1?5:kind==2?7:6);
+  chosen.properties.setObject("mac-address-wifi0",wrong);wrong->release();refuse();assert(chosen.properties.getObject("mac-address-wifi0")==wrong);chosen.properties.removeObject("mac-address-wifi0");
+ }
+ failDataAllocation=true;refuse();failDataAllocation=false;
+ IORegistryEntry::failSet=true;refuse();IORegistryEntry::failSet=false;
+ IORegistryEntry::copies=0;IORegistryEntry::failReadback=true;refuse(1);IORegistryEntry::failReadback=false;
+ chosen.properties.removeObject("mac-address-wifi0");
+ for(unsigned kind=0;kind<3;kind++){memset(nativeMac,kind==1?255:0,6);if(kind==2)nativeMac[0]=1;refuse();}
+ nativeMac[0]=2;
 }
 /* Match the selected IOConnectSetCFProperties producer; IDs stay in memory. */
 static OSDictionary* request(uint64_t id,uint64_t command=0,uint64_t unit=0,size_t length=8){
@@ -121,8 +147,9 @@ static void checkIfnet(ifnet_t net){
 int main(){
  static const char compatible[]="nord2,mt6893-wifi";auto*d=new OSData(compatible,sizeof compatible);
  provider.properties.setObject("compatible",d);d->release();
+ identityFailures();
  reset();bootOpt=0;IO80211Controller off;assert(!off.start(&provider)&&!allocated);bootOpt=1;
- reset();attachFailures=1;IO80211Controller controller;assert(controller.start(&provider));
+ reset();attachFailures=1;IO80211Controller controller;assert(controller.start(&provider));checkGestalt();
  assert(registered.size()==3&&!strcmp(controller.className(),"IO80211Controller"));
  IOService*interface=registered[0];assert(dynamic_cast<IO80211Interface*>(interface));
  assert(dynamic_cast<IONetworkInterface*>(interface));
@@ -164,6 +191,7 @@ int main(){
  assert(!noStackStart.start(&provider)&&registered.empty()&&allocated==released&&locks==(nwil_lock?1u:0u));
  reset();failLockAt=1;IO80211Controller noStackLock;
  assert(!noStackLock.start(&provider)&&registered.empty()&&allocated==released&&locks==(nwil_lock?1u:0u));
+ checkGestalt();IORegistryEntry::chosen.properties.removeObject("mac-address-wifi0");
  assert(!nwil.net);IOLockFree(nwil_lock);nwil_lock=nullptr;assert(!locks);
  puts("PASS actual registry/stack/controlled Ethernet/BPF: real ifnet/media/TX refusal, type0/admin/task, exact dictionary/repeat naming, publication rollback and detach-before-client-close ownership");
 }

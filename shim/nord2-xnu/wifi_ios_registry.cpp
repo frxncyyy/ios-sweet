@@ -210,12 +210,41 @@ public:
  IOReturn newUserClient(task_t t,void*s,UInt32 n,OSDictionary*p,IOUserClient**o) override {return niwl_create_client(this,t,s,n,p,o);}
 };
 OSDefineMetaClassAndStructors(IO80211Controller,IOService)
+/* The selected MobileGestalt WifiAddressData provider first reads this exact
+ * IODeviceTree CFData. Publish retained native identity before any interface
+ * notification can instantiate wifid's manager; never synthesize an address.
+ * The sole controller startup owns this publication. Retain the property for
+ * the boot lifetime even if later interface setup fails. */
+static unsigned niwi_publish_factory_address(const uint8_t mac[6]){
+ unsigned nonzero=0,nonff=0;for(unsigned k=0;k<6;k++){nonzero|=mac[k];nonff|=mac[k]^255u;}
+ if((mac[0]&1u)||!nonzero||!nonff)return 1;
+ IORegistryEntry *chosen=IORegistryEntry::fromPath("IODeviceTree:/chosen");
+ if(!chosen)return 2;
+ static const char key[]="mac-address-wifi0";
+ OSObject *existing=chosen->copyProperty(key);
+ if(existing){
+  OSData *value=OSDynamicCast(OSData,existing);
+  bool same=value&&value->getLength()==6&&!memcmp(value->getBytesNoCopy(),mac,6);
+  existing->release();chosen->release();return same?0:3;
+ }
+ OSData *value=OSData::withBytes(mac,6);
+ if(!value){chosen->release();return 4;}
+ bool installed=chosen->setProperty(key,value);value->release();
+ if(!installed){chosen->release();return 5;}
+ OSObject *readback=chosen->copyProperty(key);
+ OSData *observed=OSDynamicCast(OSData,readback);
+ bool same=observed&&observed->getLength()==6&&!memcmp(observed->getBytesNoCopy(),mac,6);
+ if(readback)readback->release();chosen->release();return same?0:6;
+}
 bool IO80211Controller::start(IOService*p){
  net=nullptr;interface=nullptr;stack=nullptr;unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof opt);
  OSData*compatible=OSDynamicCast(OSData,p->getProperty("compatible"));
  static const char expected[]="nord2,mt6893-wifi";
  if(opt!=1||!compatible||compatible->getLength()!=sizeof expected||memcmp(compatible->getBytesNoCopy(),expected,sizeof expected))return false;
  nss_info info={};if(nord2_wifi_scan_info(&info)||!info.count||!IOService::start(p))return false;
+ unsigned identity=niwi_publish_factory_address(info.mac);
+ if(identity){printf("NORD2 WIFI IOS IDENTITY: published=0 failure=%u\n",identity);IOService::stop(p);return false;}
+ printf("NORD2 WIFI IOS IDENTITY: published=1 bytes=6 source=1\n");
  static const uint8_t broadcast[6]={255,255,255,255,255,255};
  ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=nwil_output;params.ioctl=nwil_ioctl;params.demux=ether_demux;params.add_proto=ether_add_proto;params.del_proto=ether_del_proto;params.check_multi=ether_check_multi;params.framer_extended=ether_frameout_extended;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
  /* Let ifnet_attach arbitrate real unit collisions; never rename an existing interface. */

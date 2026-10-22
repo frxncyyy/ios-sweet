@@ -3,6 +3,45 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: broader Wi-Fi metadata audit COMPLETE; cohesive corrections integrated.**
+  Exact selected wifid/embedded WiFiManager:53 direct MobileGestalt calls and15
+  registry/matching calls audited; deployed ADT and latest pinned Topaz/HackiOS
+  compared. No other mandatory Wi-Fi DT addition established. Detailed supported
+  property/type/order table: docs/nord2-wifi-metadata.md. Private manifests under
+  review-device-tree: mobilegestalt e3123a12, upstream db1e5580, consumers fd49ed65.
+  Crucial lifecycle correction: manager can cache MAC before native service
+  readiness. New offline tools/nord2-wifi-identity.py publishes actual board MAC
+  from pinned existing calibration before kernel/userland; later registry checks
+  equality against native owner. Independent actual executed-payload check PASS,
+  sole addition preserves every old ADT byte, real compiled native selector agrees.
+  Registry candidate254e2106 promoted; ASan/UBSan PASS and0082 regenerated/apply
+  verified. NORD2-only AKS0083 exact11595cb1 promoted after independent review;
+  canonical generated-handler tests164628+3+3 PASS, actual ARM64 candidate TU PASS.
+  Upstream public HKwr format is insecure/no SEP or key protection; no reset or
+  foreign-format guessing. This is not proof of connection or live crash repair.
+  Fresh stage wifi-ios-identity/ios being prepared with all gates false; no new
+  CI/image/device action. Phone healthy6e4ce860; no active USB owner. Old stages
+  and executed evidence untouched. UFS/speed closed; audio kmod remains unrelated.
+
+- **2026-10-22: actual wifid nil identity identified; broader metadata audit before CI.**
+  Eight recovered crashes match the selected wifid UUID. Original instructions
+  at 0x1000930e0 insert cached WifiAddressData into PRIVATE_MAC_ADDRESS_VALUE;
+  MobileGestalt reads OSData6 at IODeviceTree:/chosen/mac-address-wifi0, absent
+  from our tree. Private registry candidate publishes native board-derived MAC
+  before interface exposure; host sanitizer tests and actual ARM64 TU compile
+  pass (candidate manifest cad58cf0). Publication timing is being independently
+  checked: exec wifid occurs before native service registration in the log.
+  User requested a broader IODeviceTree/provider/consumer audit to bundle other
+  demonstrated gaps before another build. Three agents cover exact MobileGestalt,
+  wifid consumers, and deployed tree versus pinned Topaz/HackiOS sources under
+  wifi/claude-opus-security-failure/review-device-tree. No speculative identities.
+  Separate AKS10/11 candidate adf79c24 and independent review 1a020f6f pass;
+  upstream HKwr format is explicitly insecure prototype compatibility, not SEP
+  or encrypted key protection. No new canonical runtime changes or CI yet.
+  Claude actual-crash followup87270 CLOSED1 due quota (reset21:30 local), not a
+  completed review. Prior upstream review did complete. Phone remains restored
+  healthy6e4ce860, user confirmed all controls; no active USB reader/new approval.
+
 
 - **2026-10-22: eight actual wifid crashes SAVED; authorized iOS restoration DONE.**
   Human authorized d78bf9fe rescue→same6e4ce860 boot-only roundtrip in
