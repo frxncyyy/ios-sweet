@@ -25,3 +25,12 @@ model. They check pure encoders and admission only. They do not authenticate an
 owner, establish IPC/Settings behavior, prove association, or grant a native
 transport lease. Native callers must supply authoritative retained state and
 serialize lifetime and ownership separately.
+
+The caller-projection fixture follows the selected iOS dictionary builder: it
+zeros the 5456-byte request, sets the standard profile and 13 typed channels,
+and stores INT32_MIN as the default RSSI threshold at byte4880. This nonzero
+sentinel was previously rejected by a zero-byte sweep. Bounds, owner-channel
+intersection and semantic-option refusal are retained; padding and inactive
+array storage are tested independently. The actual IOUC fixture also submits
+this sentinel through dispatch, cache completion and GET11 delivery. These are
+source-derived synthetic tests, not a capture of private Wi-Fi request bodies.

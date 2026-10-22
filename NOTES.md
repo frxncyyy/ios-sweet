@@ -3,6 +3,49 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: complete a199cd0c trace saved; semantic scan-profile fix integrated.**
+  Both collectors41821/14266 CLOSED0. Full365419B log preserved at
+  wifi-ios-compat/ios/backend-full.log, SHA0ba5725b3adf8d7af6752047ae852b21b6690bba5edef24f66a406e3789ea771.
+  Hardware result records event pipe/maps/channel replies succeeded, repeated
+  UI SET10 reached Armed but no enqueue. Human still reports delayed/empty UI.
+  Fresh wifi-ios-profile/ios source admits the same-IPSW dictionary default
+  RSSI INT32_MIN at4880; validates semantics, ignores padding/inactive storage,
+  allows nondirected broadcast BSSID, retains owner channel allowlist and all
+  unsupported active/filter/timing refusals. ON helper ignores inactive state
+  slots but still requires one real ready radio and ON1; OFF remains unsupported.
+  New numeric SCANREQ metadata/ADMISSION/POWERSET reports reveal options/status
+  without SSID/BSSID/credential bytes. No new radio/DMA/association behavior.
+  Private candidate5e4fcae8 and independent review18f04303 PASS. Canonical pure
+  contract/caller projections PASS; actual IOUC sentinel passes enqueue/cache/
+  GET11/event plus fault/lifecycle suites, native2changedTUs compile with exact
+  genericARMv8.2 flags.0082 regenerates and applies exactly. Full CI next.
+  Current phone a199cd0c, new image gates false and runner unused. No new
+  approval/device action. Parallel offline station-wire77ce9b49 and WPA engine
+  135660fe candidates complete privately; integration/security/native completion
+  contracts remain open and are not part of the next scan-profile image.
+
+- **2026-10-22: a199cd0c reaches real iOS scan requests; Settings still empty.**
+  Human reports Wi-Fi page opens after about3minutes, then no networks.
+  Driver boot scan has8AP/8frames; full backend26/UFS/radio parser PASS.
+  Actual registry network_class1,5IOUC opens, event pipe Armed(refs8), map types
+  1/2, OOL channel responses27/254 succeeded. Many SET10 requests5456B arrive
+  Armed, version1/BSS3/scan1/PHY1/defaulttiming/13channels, but no ENQUEUE.
+  GET96/97 are not blockers: live event setup and scans pass them. Static
+  addendum a13cd7b9 proves failed role96 defaults to0 Infrastructure, not AWDL6;
+  current BSD/media/Infrastructure enumeration path does not use Apple whitelist.
+  Concrete policy false refusal found in selected IO80211 scan builder: it
+  unconditionally writes INT32_MIN RSSI at offset4880; current zero-byte sweep
+  refuses it. format_stage preparing semantic-field policy and caller-derived
+  fixtures plus exact SET19 serializer review; do not spoof class names.
+  Boot collector41821 CLOSED0,316443B. Settings read-only collector14266 ACTIVE
+  in wifi-ios-compat/ios/hardware-settings for600s. Immutable boot and first UI
+  snapshots saved; latter356713B and has boot as exact prefix. No new flash,
+  recovery or new approval. Current a199cd0c remains on phone; health is limited
+  to valid framebuffer and user's ability to use Settings, not full button check.
+  wire agent preparing offline MTK station/management/EAPOL/TXD/key candidate;
+  only private research changes. Association/data plan f22cb793 saved; still no
+  association, encryption or packet networking implemented in installed image.
+
 - **2026-10-22: iOS Wi-Fi compatibility a199cd0c FLASHED; collecting, health pending.**
   Exact user approval call_e5de447d21f94dbab2e5330a419574f9, “Autorizzo il test”.
   Boot-only flash/reboot OKAY, current phone is a199cd0c, no fallback performed.

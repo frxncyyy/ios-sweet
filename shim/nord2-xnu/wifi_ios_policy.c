@@ -28,12 +28,15 @@ int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct n
   for(unsigned k=0;k<j;k++)if(info->channels[j].band==info->channels[k].band&&
       info->channels[j].channel==info->channels[k].channel)return -1;
  }
- /* Validate every unused byte including all unused channel slots, SSID/BSSID,
-  * timing, flags, named-network array and short-SSID fields before output. */
- for(unsigned i=0;i<5456;i++){
-  if(i<8||(i>=52&&i<60)||(i>=68&&i<72+12*count))continue;
-  if(p[i])return -1;
- }
+ /* Compare semantic fields, not padding or inactive array storage. The actual
+  * framework dictionary builder initializes RSSI threshold to INT32_MIN.
+  * Zero is retained for the existing null/default request profile. Explicit
+  * thresholds, timing, options, named/short SSIDs are not implemented. */
+ if(u32(p+16)||p[60]||p[61]||u32(p+64)||u32(p+4872)||u32(p+4876)||
+    (u32(p+4880)!=0&&u32(p+4880)!=0x80000000u)||u32(p+4884)||u32(p+5448))return -1;
+ unsigned zero=1,broadcast=1;
+ for(unsigned i=8;i<14;i++){if(p[i])zero=0;if(p[i]!=255)broadcast=0;}
+ if(!zero&&!broadcast)return -1; /* Neither directed peer nor fabricated filter. */
  struct nss_request result={0};
  for(unsigned j=0;j<count;j++){
   const uint8_t*c=p+72+12*j;uint32_t channel=u32(c+4),flags=u32(c+8);unsigned band=0;
@@ -57,3 +60,8 @@ int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct n
  result.count=count;*out=result;return 0;
 }
 const struct niwp_rate_map*niwi_rate_map(size_t*n){return niwr_production_map(n);}
+
+int niwi_power_on_admit(const void *v,size_t n){
+ const uint8_t*p=v;
+ return p&&n==24&&u32(p)==1&&u32(p+4)==1&&u32(p+8)==1?0:-1;
+}

@@ -14,7 +14,7 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cc', default='clang', help='ASan/UBSan-capable C compiler')
-    parser.add_argument('--only', choices=('all', 'policy', 'scalar'), default='all')
+    parser.add_argument('--only', choices=('all', 'policy', 'caller', 'scalar'), default='all')
     parser.add_argument('--report', type=Path, help='Optional JSON hashes and summaries')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -23,6 +23,7 @@ def main():
     suites = {
         'policy': ('wifi_ios_policy.c', 'wifi_ios_rates.c', 'wifi_ios_mapping.c'),
         'scalar': ('wifi_ios_scalar.c',),
+        'caller': ('wifi_ios_policy.c', 'wifi_ios_rates.c', 'wifi_ios_mapping.c'),
     }
     selected = tuple(suites) if args.only == 'all' else (args.only,)
     # Record the complete local include closure used by these canonical TUs.
