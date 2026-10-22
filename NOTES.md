@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined discovery52d4b159 VERIFIED + AUTHORIZED + FLASHED.**
+  Image nord2-ios-wifi-discovery-battery-stop23.img33415168B,
+  SHA52d4b1591b3b8d906214ec37bc93e309d5a3b69d59fd8a013c424d755a504aca;
+  payloadd1906dbb7c6041692d0db42f950899fc07d7e2cfd67c86cc9cb1544520aa9562.
+  Spare139264B. Packaging13636/independentverify43682 CLOSED0; independent report
+  c783f16b and manifestcc44731c. Scan linked reportec35175f/manifest2ab324df PASS.
+  Exact approval call_91391bde95ce483dbd40446c159103a0, human “Autorizzo, pronto
+  in fastboot”. Expected device verified, boot-only flash and reboot OKAY.
+  New discovery runner USED: NEVER rerun. Root4410 ACTIVE with300s read-only USB
+  collection at wifi-ios-discovery/ios/hardware-live. Phone now52d4b159; no recovery.
+  Need actual client/pipe/scan/event/result timing and human Settings/network/health
+  observations; no hardware success assumed. Conditional6a6a/RAM rescue authorized.
+
+- **2026-10-22: discovery CI39760685458 attempt2 SUCCESS; artifact audits PASS.**
+  Watch78857 CLOSED0, artifacts downloaded. Exactee2e6fd kernel17607656B,
+  SHA33fe90d930d0b304f687c84f649a7092fea1cf804a615893c9f57ce40b062c96.
+  Sourceaudit59535/ISA92763 CLOSED0:196generatedfiles equal,23actualunits generic,
+ 2251904decodedinstructions noLDAPUR/STLUR. Quiesce bounded linked review PASS,
+  paired suppression and normal callbacks preserved; report8bafc4b6, manifest5cde08db.
+  Scan linked9function review running in wifi_station_wire; root waits report
+  before promoting schema gate and bounded1GiB packaging. CI identity gate true,
+  schema/prepared/authorization stillfalse; runner UNUSED. Phone195a unchanged.
+
 - **2026-10-22: CI39760685458 attempt1 cancelled before runner; attempt2 queued.**
   Exact GitHub annotation: hosted runner was not acquired after multiple attempts;
   macOS arm64 capacity notices. Zero steps and zero artifacts; no compiler failure.
