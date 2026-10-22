@@ -4,6 +4,49 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: USER PAUSED until tomorrow; DHCP still fails on ecb026c7.**
+  User reports169.254/Routerempty again and asks to save logs, resume tomorrow.
+  Phone remains ecb026c7; no reboot/restore or secondJoin requested. Full saved
+  available capture D/hardware-review/pause-final.log 430714 bytes,
+  SHA111ab77a0b1923c92300f1d283d1efd7e4e6ceee3a86049104db7e8dfdc1eda0. Collector stopped by rootSIGINT for requested pause;
+  runner91843 CLOSED254/client-2 is intentional interruption, NOT a phone
+  failure.600s collection was NOT completed. No active USB reader remains.
+  Immutable startup boot-before-join254778B SHA72469d02... all7readersPASS.
+  Join-initial405729B SHAbd939079 and user-dhcp-linklocal430624B SHAb53b3e67
+  preserve intermediate evidence. Final postJoin backend2 is known newRX-family
+  parsercoverage; other6readersPASS. WPA2 authorized/local data submitted;
+  no DHCP success; sharedPID127status3/count30 persists, acceptedunicast0.
+  New RXERROR reveals d1=d2=0,d4=6144,wlan5/sec4/key0/ht1/groups15/a1UC2ME.
+  Sourceaudit D/hardware-review/rxerror-ofld-analysis manifest683f54b8:
+  DW4bits11..12 are OFLD, not hardware error; value3 explicitly TDLS-class.
+  Native blanket OFLD rejection differs from Android. Do NOT infer that this
+  rejected frame is DHCP or that allowing it solves DHCP; preserve all peer,
+  CCMP, PN and payload-format checks. Key readiness preceded rejection.
+  Actual Claude new read-only session resumed then immediately stopped on user
+  pause: research/nord2/wifi/claude-opus-dhcp-ecb0, session
+  01e36598-017d-44c6-9f31-18c35b9ccb96. Wrapper11656 CLOSED0 but result is
+  interrupted/error_during_execution, NOT completed analysis. stop-manifest
+  6b0a5bea and RESUME.md52a5bda8 preserve restart. No new patch/build aftertest.
+  All agents stopped. Resume ONLY when user returns: inspect frozen final
+  log/OFLD qualified audit, resume Claude on protected data/PTK/WTBL and RX
+  policy discrepancy, formulate source-backed fix then exact new image review.
+  Do not reuse runner or stale approval; current oneJoin/boot was consumed.
+
+
+
+- **2026-10-23: exact DHCP image authorized and flashed; collector91843 active.**
+  Usercall_f5825105c26d4ba78aea96d87026c27c approved exactecb026c7 and
+  confirmed fastboot. Root rehashed image/recoveries, checked sole known
+  oplus6893/boot32MiB/non-userspace and no existing USB collector. Exact
+  human/RF/conditionald9a-or-rescue recovery consent recorded in D.
+  One-use runner91843 flashed onlyboot and rebooted, allOKAY. Do not rerun.
+  USB collection wait300/read600 seconds belongs to runner. Next confirm
+  valid startup/iOS frames and collect immutable pre-Join snapshot, then one
+  WPA2 Join with private address disabled/password on phone, validate IP,
+  Router and Safari. Current new-image DHCP not yet tested.
+
+
+
 - **2026-10-23: Claude DHCP candidate image PREPARED; awaiting exact approval.**
   shim/out/nord2-xnu/nord2-ios-wifi-dhcp-stop23.img,33480704 bytes:
   SHA256ecb026c76dab4e378e9449f5fcf5cd626afd54442378b9397379452ccbdb6bdf.
