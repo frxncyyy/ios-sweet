@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22:195a7e17 Settings test FAILED; delegated to visible Claude Opus.**
+  Human reports several minutes before Wi-Fi Settings opens and still no networks;
+  no fresh explicit touch/buttons confirmation. Current phone195a7e17 unchanged,
+  no recovery or further flash. Both collectors55188/70804 CLOSED0; full log
+  413935B SHA653465fdd90becd0ab42bc5e81701d484e4a424a685fb806179922ff247049fc
+  at research/nord2/wifi-ios-profile/ios/backend-full.log. Backend parser PASS,
+  complete=true/issues=[]/7bootAP. iOS parser shows 26SCANREQ/26ADMISSION-1,
+  flags_lo32/flags_hi0, RSSI INT32_MIN, phaseArmed; zero enqueue/completion/event/
+  results. The prior RSSI fix was incomplete: current policy rejects all flags;
+  flag0x20 semantics and the separate UI delay need source/caller investigation.
+  User explicitly requested Claude and desktop3. Claude Opus5.5/high RUNNING
+  UUID1e2f22fe-044e-432b-b225-92f430064ffd, PID418155, wrapper session58446;
+  research/nord2/wifi/claude-opus-ios-195a/PROMPT.md contains complete handoff,
+  exact413k trace snapshot plus sources/disassembly/references. Read/Grep/Glob
+  only; requested cohesive diagnosis, proposed patch and caller-based fixtures,
+  no canonical/build/device changes. Live foot viewer PID418374, class
+  claude-wifi-ios-195a, verified mapped/visible/focused on workspace3; do not
+  duplicate. session.json tracks progress; wrapper saves REPORT.md/result.json.
+  Snapshot411611B SHAa14fc184b6444041c05acdbb666a456e372bce14175b23f98027fbb444619099
+  stays immutable; collection-complete.json points to the later complete trace.
+  Next read Claude result, review/integrate concrete fixes together before CI;
+  never treat7 bootAPs as iOS Settings delivery. Existing runner USED.
+
 - **2026-10-22:195a7e17 boot capture PASS; human Settings test pending.**
   Root55188 CLOSED0; complete boot log343019B saved at
   wifi-ios-profile/ios/backend-boot.log, SHAe9100838d80d9c2b7d1db42869b5e56c08eab322cc8b883f3e9e51ab0ad729cc.
