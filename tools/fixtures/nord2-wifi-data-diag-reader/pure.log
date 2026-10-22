@@ -1,0 +1,98 @@
+NORD2 WIFI DATAHDR: n=1 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=2 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=3 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=1
+NORD2 WIFI DATATXS: n=3 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=4 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=1
+NORD2 WIFI DATATXS: n=4 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=5 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=6 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=7 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=2
+NORD2 WIFI DATATXS: n=7 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=8 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=2
+NORD2 WIFI DATATXS: n=8 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=9 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=10 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=11 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=3
+NORD2 WIFI DATATXS: n=11 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=12 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=3
+NORD2 WIFI DATATXS: n=12 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=13 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=14 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=15 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=4
+NORD2 WIFI DATATXS: n=15 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=16 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=4
+NORD2 WIFI DATATXS: n=16 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=17 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=18 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=19 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=5
+NORD2 WIFI DATATXS: n=19 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=20 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=5
+NORD2 WIFI DATATXS: n=20 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=21 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=22 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=23 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=6
+NORD2 WIFI DATATXS: n=23 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=24 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=6
+NORD2 WIFI DATATXS: n=24 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=25 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=26 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=27 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=7
+NORD2 WIFI DATATXS: n=27 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=28 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=7
+NORD2 WIFI DATATXS: n=28 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=29 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=30 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=31 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=8
+NORD2 WIFI DATATXS: n=31 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=32 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=8
+NORD2 WIFI DATATXS: n=32 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=33 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=34 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=35 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=9
+NORD2 WIFI DATATXS: n=35 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=36 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=37 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=38 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=10
+NORD2 WIFI DATATXS: n=38 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=39 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=40 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=41 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=11
+NORD2 WIFI DATATXS: n=41 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=42 g=17 dir=2 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATAHDR: n=43 g=17 dir=3 dst=2 eth=2048 bytes=286 dhcp=1 parse=1
+NORD2 WIFI DATATXS: n=44 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=12
+NORD2 WIFI DATATXS: n=44 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=45 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=13
+NORD2 WIFI DATATXS: n=45 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=46 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=14
+NORD2 WIFI DATATXS: n=46 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=47 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=15
+NORD2 WIFI DATATXS: n=47 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATATXS: n=48 part=1 g=17 pid=127 wlan=5 status=3 ambiguous=1 last_kind=3 last_pub=16
+NORD2 WIFI DATATXS: n=48 part=2 seq=0 tx_count=0 rate=0 flags=0 adv=0 tid=0 flush=0
+NORD2 WIFI DATAHDR: n=49 g=17 dir=1 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=50 g=17 dir=3 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=51 g=17 dir=1 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=52 g=17 dir=3 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=53 g=17 dir=1 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=54 g=17 dir=3 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=55 g=17 dir=1 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=56 g=17 dir=3 dst=2 eth=2054 bytes=286 dhcp=0 parse=0
+NORD2 WIFI DATACOUNT: g=17 tx_sec=100 tx_data=1000 rx_uni=0 rx_group=1100 tx_dhcp=1000 rx_dhcp=1000 txs_ok=0 txs_fail=2000 ambiguous=2000
+NORD2 WIFI DATATYPE: g=17 dir=1 uni=0 group=1100 ipvfour=1000 arp=100 ipvsix=0 eapol=0 other=0
+NORD2 WIFI DHCPSTAT: g=17 dir=1 discover=1000 offer=0 request=0 ack=0 nak=0 other=0
+NORD2 WIFI DATATYPE: g=17 dir=2 uni=0 group=1100 ipvfour=1000 arp=100 ipvsix=0 eapol=0 other=0
+NORD2 WIFI DHCPSTAT: g=17 dir=2 discover=1000 offer=0 request=0 ack=0 nak=0 other=0
+NORD2 WIFI DATAHDR: n=1 g=18 dir=2 dst=0 eth=2048 bytes=14 dhcp=0 parse=2
+NORD2 WIFI DATAHDR: n=2 g=18 dir=3 dst=0 eth=2048 bytes=14 dhcp=0 parse=2
+NORD2 WIFI DATAHDR: n=3 g=18 dir=2 dst=1 eth=2054 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=4 g=18 dir=3 dst=1 eth=2054 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=5 g=18 dir=2 dst=0 eth=34525 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=6 g=18 dir=3 dst=0 eth=34525 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=7 g=18 dir=2 dst=1 eth=34958 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATAHDR: n=8 g=18 dir=3 dst=1 eth=34958 bytes=14 dhcp=0 parse=0
+NORD2 WIFI DATACOUNT: g=18446744073709551615 tx_sec=4294967295 tx_data=4294967295 rx_uni=4294967295 rx_group=4294967295 tx_dhcp=4294967295 rx_dhcp=4294967295 txs_ok=4294967295 txs_fail=4294967295 ambiguous=4294967295
+NORD2 WIFI DATATYPE: g=18446744073709551615 dir=1 uni=4294967295 group=4294967295 ipvfour=4294967295 arp=4294967295 ipvsix=4294967295 eapol=4294967295 other=4294967295
+NORD2 WIFI DHCPSTAT: g=18446744073709551615 dir=1 discover=4294967295 offer=4294967295 request=4294967295 ack=4294967295 nak=4294967295 other=4294967295
+NORD2 WIFI DATATYPE: g=18446744073709551615 dir=2 uni=4294967295 group=4294967295 ipvfour=4294967295 arp=4294967295 ipvsix=4294967295 eapol=4294967295 other=4294967295
+NORD2 WIFI DHCPSTAT: g=18446744073709551615 dir=2 discover=4294967295 offer=4294967295 request=4294967295 ack=4294967295 nak=4294967295 other=4294967295

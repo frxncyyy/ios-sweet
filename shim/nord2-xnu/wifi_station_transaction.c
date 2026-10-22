@@ -1,5 +1,6 @@
 /* New private transaction model. No kernel IO, waits, publication or secrets log. */
 #include "wifi_station_transaction.h"
+#include "wifi_wpa_diag.h"
 #if defined(KERNEL) || defined(_KERNEL)
 #include <sys/systm.h>
 #else
@@ -130,12 +131,13 @@ int stc_management(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t n
 }
 int stc_eapol(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
  if(!current(s,gen,now)||s->phase<STC_CONFIGURE||s->phase>=STC_DEAUTH)return 0;
- if(!p||!n||n>640)return stop(s,STC_FAILED);
+ if(!p||!n||n>640){nwpd_gate_observe(gen,s->action.ticket,s->wpa.state,p!=0,n);return stop(s,STC_FAILED);}
  if(s->phase!=STC_EAPOL&&s->phase!=STC_PTK_READY&&s->phase!=STC_CONNECTED){
   if(s->eapol_pending)return s->eapol_bytes==n&&!memcmp(s->queued_eapol,p,n)?0:2;
   memcpy(s->queued_eapol,p,n);s->eapol_bytes=(unsigned)n;s->eapol_pending=1;return 1;
  }
- unsigned resume=s->phase;struct nwp_result r;int result=nwp_receive(&s->wpa,p,n,&r);
+ unsigned resume=s->phase,security_state=s->wpa.state;struct nwp_result r;int result=nwp_receive(&s->wpa,p,n,&r);
+ nwpd_observe(gen,s->action.ticket,security_state,p,n,result,r.failure);
  if(result<0){erase(&r,sizeof r);return stop(s,STC_FAILED);}if(result!=NWP_TX){erase(&r,sizeof r);return 0;}
  if(emit(s,STC_EAPOL_TX,STC_TX_EAPOL)<0){erase(&r,sizeof r);return -1;}s->resume_phase=resume;s->wpa_tx_ticket=r.ticket;memcpy(s->action.payload,r.frame,r.bytes);s->action.bytes=r.bytes;erase(&r,sizeof r);return 1;
 }

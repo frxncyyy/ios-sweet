@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,65 @@
+@@ -648,3 +666,67 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2751,9 +2751,11 @@
 +bsd/dev/wifi_station_wire.c			standard
 +bsd/dev/wifi_station_transport.c			standard
 +bsd/dev/wifi_station_diag.c			standard
++bsd/dev/wifi_station_data_diag.c			standard
 +bsd/dev/wifi_station_transaction.c			standard
 +bsd/dev/wifi_wpa_crypto.c			standard
 +bsd/dev/wifi_wpa2.c			standard
++bsd/dev/wifi_wpa_diag.c			standard
 +bsd/dev/wifi_wpa_owner.c			standard
 +bsd/dev/wifi_wpa_nst.c			standard
 --- a/bsd/kern/bsd_init.c
@@ -12455,7 +12457,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport.c
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,261 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_station_transport.h"
@@ -12469,7 +12471,7 @@
 +static void wipe(void*p,size_t n){volatile uint8_t*q=p;while(n--)*q++=0;}
 +static int mac(const uint8_t*p){unsigned any=0;for(unsigned i=0;i<6;i++)any|=p[i];return any&&!(p[0]&1);}
 +void nst_close_port(struct nst*s){if(s){if(s->controlled_port&&!s->cleanup_started)s->deadline=s->last>UINT64_MAX-UINT64_C(30000000)?UINT64_MAX:s->last+UINT64_C(30000000);s->controlled_port=0;if(s->wire_busy&&s->wire_type==3&&!s->published){wipe(s->wire,sizeof s->wire);s->wire_busy=0;}}}
-+static int fail(struct nst*s,unsigned e){{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
++static int fail(struct nst*s,unsigned e){nsdd_summary(&s->data_diag,s->generation);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
 +static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
 +int nst_lease_window(const struct nst*s,const struct nwi_state*i){
 + if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||!s->active||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
@@ -12558,6 +12560,7 @@
 +  if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
 +  if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
 +  if(s->wire_type==1){s->air_pending=1;s->next_pid++;}
++  nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
 +  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
 +  if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
 +  if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
@@ -12591,6 +12594,7 @@
 + if(type==7&&(u16(p+2)&0x380f)==0x3800&&n>=29&&p[28]==0x0f){struct nstd_record record;nstd_txs(&record,s->generation,s->ticket,p,n,s->air_pending,s->wire_pid,s->wire_wlan,s->air_done);nstd_log(&record);}
 + if(type==7&&(u16(p+2)&0x380f)==0x3800){
 +  if(n<36)return 0;const uint8_t*b=p+36;size_t z=n-36;e->body=b;e->bytes=z;e->sequence=p[29];
++  if(p[28]==0x0f)nsdd_event(&s->data_diag,s->generation,b,z,!!s->controlled_port);
 +  if(p[28]==0x0f&&z>=88&&s->air_pending&&b[0]==s->wire_pid&&b[4]==s->wire_wlan&&!s->air_done){s->air_done=1;s->air_status=b[1];}
 +  else if(p[28]==0x10&&z>=24&&s->channel_held&&b[0]==s->peer.bss&&b[1]==s->channel_token&&b[3]==s->peer.channel&&b[5]==s->peer.band){uint32_t ms=u32(b+12);if(b[2]||!ms||ms>60000||s->last>UINT64_MAX-(uint64_t)ms*1000)return 0;s->grant_deadline=s->last+(uint64_t)ms*1000;e->kind=NST_CHANNEL_GRANT;e->bss=b[0];e->token=b[1];e->status=b[2];e->channel=b[3];e->band=b[5];e->interval_ms=ms;}
 +  else if(p[28]==0x0c&&z>=8&&s->activation_pending&&p[29]==s->activation_sequence&&eq(b,s->peer.ap,6)&&b[6]==s->peer.sta&&b[7]==s->peer.bss){s->sta_active=1;s->activation_pending=0;e->kind=NST_STA_ACTIVE;e->sta=b[6];e->bss=b[7];}
@@ -12645,6 +12649,7 @@
 + s->rx_bytes=(ctl>>16)&0x3fff;unsigned last=!!(ctl&0x40000000),skip=q->segmented||!last||!s->rx_bytes||s->rx_bytes>NST_RX_BYTES;q->segmented=!last;s->deferred=(struct nst_event){0};
 + if(!skip){s->phase=NST_RX_FRAME;if(sy(s,o,c,a,s->rx_bytes,2)||mr(s,o,c,a,s->rx_frame,s->rx_bytes))return -1;nstd_rx(s->generation,s->ticket,k,s->rx_frame,s->rx_bytes);if(decode(s))return fail(s,21);}
 + if(nwt_rx_desc(s->rx_descriptor,a,NST_RX_BYTES))return fail(s,22);s->phase=NST_RX_WRITE;if(mw(s,o,c,d,s->rx_descriptor,16)||sy(s,o,c,d,16,1))return -1;s->phase=NST_RX_PUBLISH;if(rw(s,o,c,q->ring.base+8,q->next))return -1;q->next=(q->next+1)%q->ring.count;if(k==1)s->init->transport.rx_index=q->next;q->rearmed++;s->phase=NST_IDLE;
++ if(s->deferred.kind==NST_ETHERNET)nsdd_receive(&s->data_diag,s->generation,s->deferred.body,s->deferred.bytes);
 + if(s->deferred.kind&&emit(s,fn,ctx,&s->deferred))return -1;return 1;
 +}
 +static int peer_progress(struct nst*,nst_event_fn,void*);
@@ -12701,7 +12706,7 @@
 +  if(step==0){payload[0]=0;payload[1]=s->peer.sta;payload[2]=s->peer.bss;payload[3]=0;used=4;cid=0x14;}
 +  else if(step==1){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,30);cid=0x12;}
 +  else if(step==2){wipe(payload,4);payload[0]=s->peer.bss;used=4;cid=0x17;}
-+  else{s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
++  else{nsdd_summary(&s->data_diag,s->generation);s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
 + }else{
 +  if(step==0){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,31);cid=0x12;}
 +  else if(step==1){if(sw_rlm(payload,sizeof payload,&used,&r))return fail(s,32);cid=0x19;}
@@ -12716,13 +12721,14 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport.h
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +#ifndef NORD2_STATION_TRANSPORT_H
 +#define NORD2_STATION_TRANSPORT_H
 +#include <stddef.h>
 +#include <stdint.h>
 +#include "wifi_normal_backend.h"
 +#include "wifi_station_wire.h"
++#include "wifi_station_data_diag.h"
 +#define NST_MAX_ETHERNET 1514u
 +#define NST_RX_BYTES 3840u
 +#define NST_FRAME_BYTES 1600u
@@ -12773,7 +12779,7 @@
 + unsigned pm_scheduled,pm_connected;
 + unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
 + uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
-+ uint32_t rx_bytes;struct nst_event deferred;
++ uint32_t rx_bytes;struct nst_event deferred;struct nsdd data_diag;
 +};
 +/* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
 + * no guessed capability indices. peer indices must match retained scan profile. */
@@ -12853,12 +12859,123 @@
 +void nstd_log(const struct nstd_record*);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_station_data_diag.c
+@@ -0,0 +1,75 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_station_data_diag.h"
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <stdio.h>
++#endif
++static uint32_t be16(const uint8_t*p){return (uint32_t)p[0]<<8|p[1];}
++static uint32_t le16(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8;}
++static void inc(uint32_t*p){if(*p!=UINT32_MAX)(*p)++;}
++static unsigned etype(uint32_t e){return e==0x0800?0:e==0x0806?1:e==0x86dd?2:e==0x888e?3:4;}
++static uint32_t sum3(uint32_t a,uint32_t b,uint32_t c){uint64_t n=(uint64_t)a+b+c;return n>UINT32_MAX?UINT32_MAX:(uint32_t)n;}
++int nsdd_classify(struct nsdd_frame*r,const uint8_t*p,size_t n){
++ if(!r)return -1;*r=(struct nsdd_frame){0};if(!p||n<14||n>1518)return -1;
++ r->bytes=(uint32_t)n;r->ether=be16(p+12);r->destination=(p[0]&1)?1:0;
++ if(r->destination){unsigned all=1;for(unsigned k=0;k<6;k++)if(p[k]!=255)all=0;if(all)r->destination=2;}
++ if(r->ether!=0x0800)return 0;
++ const uint8_t*ip=p+14;size_t available=n-14;if(available<20){r->parse=NSDD_IP_SHORT;return 0;}
++ size_t ihl=(ip[0]&15u)*4u;if(ip[0]>>4!=4||ihl<20||ihl>available){r->parse=NSDD_IP_HEADER;return 0;}
++ size_t total=be16(ip+2);if(total<ihl||total>available){r->parse=NSDD_IP_EXTENT;return 0;}
++ if(be16(ip+6)&0x3fff){r->parse=NSDD_FRAGMENT;return 0;}if(ip[9]!=17)return 0;
++ if(total-ihl<8){r->parse=NSDD_UDP_EXTENT;return 0;}const uint8_t*u=ip+ihl;size_t un=be16(u+4);
++ if(un<8||un>total-ihl){r->parse=NSDD_UDP_EXTENT;return 0;}
++ unsigned src=be16(u),dst=be16(u+2);if(!((src==67&&dst==68)||(src==68&&dst==67)))return 0;
++ const uint8_t*b=u+8;size_t bn=un-8;if(bn<240){r->parse=NSDD_BOOTP_SHORT;return 0;}
++ if((b[0]!=1&&b[0]!=2)||b[1]!=1||b[2]!=6){r->parse=NSDD_BOOTP_HEADER;return 0;}
++ if(b[236]!=99||b[237]!=130||b[238]!=83||b[239]!=99){r->parse=NSDD_COOKIE;return 0;}
++ unsigned found=0,type=0,steps=0;size_t at=240;
++ while(at<bn){if(++steps>256){r->parse=NSDD_OPTION_LIMIT;return 0;}unsigned tag=b[at++];if(!tag)continue;if(tag==255)break;
++  if(at==bn||b[at]>bn-at-1){r->parse=NSDD_OPTIONS;return 0;}unsigned bytes=b[at++];
++  if(tag==52){r->parse=NSDD_OVERLOAD;return 0;} /* Never inspect file/sname. */
++  if(tag==53){if(found++){r->parse=NSDD_DUP_TYPE;return 0;}if(bytes!=1||!b[at]||b[at]>8){r->parse=NSDD_TYPE;return 0;}type=b[at];}
++  at+=bytes;
++ }
++ if(!found){r->parse=NSDD_NO_TYPE;return 0;}r->dhcp=type;r->parse=NSDD_DHCP;return 0;
++}
++int nsdd_decode_txs(struct nsdd_txs*r,const uint8_t*p,size_t n){
++ if(!r)return -1;*r=(struct nsdd_txs){0};if(!p||n<88||n>4096)return -1;
++ r->bytes=(uint32_t)n;r->pid=p[0];r->status=p[1];r->wlan=p[4];r->flags=p[8];r->advanced=!!(p[8]&1);
++ /* These fields are only authoritative when source TXS_WITH_ADVANCED_INFO. */
++ if(r->advanced){r->sequence=le16(p+2);r->tx_count=p[5];r->rate=le16(p+6);r->tid=p[9];r->flush=p[14];}
++ return 0;
++}
++static void header(struct nsdd*s,uint64_t g,unsigned dir,const struct nsdd_frame*r){
++ uint32_t*budget=r->dhcp?(dir==3?&s->dhcp_rx:&s->dhcp_tx):(dir==3?&s->headers_rx:&s->headers_tx);
++ if(*budget>=(r->dhcp?12u:4u))return;(*budget)++;s->records++;
++ printf("NORD2 WIFI DATAHDR: n=%u g=%llu dir=%u dst=%u eth=%u bytes=%u dhcp=%u parse=%u\n",s->records,(unsigned long long)g,dir,r->destination,r->ether,r->bytes,r->dhcp,r->parse);
++}
++void nsdd_publish(struct nsdd*s,uint64_t g,uint32_t submitted,unsigned type,const uint8_t*p,size_t n){
++ if(!s||s->summary||(type!=2&&type!=3))return;struct nsdd_frame r;if(nsdd_classify(&r,p,n))return;
++ inc(r.destination?&s->tx_group:&s->tx_unicast);inc(&s->tx_ether[etype(r.ether)]);s->last_kind=type;s->last_pub=submitted;if(type==2)inc(&s->tx_security);else inc(&s->tx_data);
++ if(r.dhcp){inc(&s->tx_dhcp);inc(&s->tx_type[r.dhcp]);}header(s,g,type==2?1:2,&r);
++}
++void nsdd_receive(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n){
++ if(!s||s->summary)return;struct nsdd_frame r;if(nsdd_classify(&r,p,n))return;
++ inc(&s->rx_ether[etype(r.ether)]);inc(r.destination?&s->rx_group:&s->rx_unicast);if(r.dhcp){inc(&s->rx_dhcp);inc(&s->rx_type[r.dhcp]);}header(s,g,3,&r);
++}
++void nsdd_event(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n,unsigned authorized){
++ if(!s||s->summary||authorized>1)return;struct nsdd_txs r;if(nsdd_decode_txs(&r,p,n))return;
++ if(r.status)inc(&s->txs_fail);else inc(&s->txs_ok);if(r.pid==127)inc(&s->ambiguous);
++ uint32_t*budget=authorized?&s->txs_live:&s->txs_early;if(*budget>=(authorized?16u:8u))return;(*budget)++;s->records++;
++ printf("NORD2 WIFI DATATXS: n=%u part=1 g=%llu pid=%u wlan=%u status=%u ambiguous=%u last_kind=%u last_pub=%u\n",s->records,(unsigned long long)g,r.pid,r.wlan,r.status,r.pid==127,s->last_kind,s->last_pub);
++ printf("NORD2 WIFI DATATXS: n=%u part=2 seq=%u tx_count=%u rate=%u flags=%u adv=%u tid=%u flush=%u\n",s->records,r.sequence,r.tx_count,r.rate,r.flags,r.advanced,r.tid,r.flush);
++}
++void nsdd_summary(struct nsdd*s,uint64_t g){
++ if(!s||s->summary)return;s->summary=1;
++ printf("NORD2 WIFI DATACOUNT: g=%llu tx_sec=%u tx_data=%u rx_uni=%u rx_group=%u tx_dhcp=%u rx_dhcp=%u txs_ok=%u txs_fail=%u ambiguous=%u\n",(unsigned long long)g,s->tx_security,s->tx_data,s->rx_unicast,s->rx_group,s->tx_dhcp,s->rx_dhcp,s->txs_ok,s->txs_fail,s->ambiguous);
++ for(unsigned dir=0;dir<2;dir++){const uint32_t*e=dir?s->rx_ether:s->tx_ether;
++  printf("NORD2 WIFI DATATYPE: g=%llu dir=%u uni=%u group=%u ipvfour=%u arp=%u ipvsix=%u eapol=%u other=%u\n",(unsigned long long)g,dir+1,dir?s->rx_unicast:s->tx_unicast,dir?s->rx_group:s->tx_group,e[0],e[1],e[2],e[3],e[4]);
++  const uint32_t*v=dir?s->rx_type:s->tx_type;
++  printf("NORD2 WIFI DHCPSTAT: g=%llu dir=%u discover=%u offer=%u request=%u ack=%u nak=%u other=%u\n",(unsigned long long)g,dir+1,v[1],v[2],v[3],v[5],v[6],sum3(v[4],v[7],v[8]));}
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_station_data_diag.h
+@@ -0,0 +1,29 @@
++#ifndef NORD2_WIFI_STATION_DATA_DIAG_H
++#define NORD2_WIFI_STATION_DATA_DIAG_H
++#include <stddef.h>
++#include <stdint.h>
++/* Diagnostic-only public header classification. Never an admission, ACK,
++ * authenticated DHCP exchange, lease, key or networking decision. No pointers,
++ * identities, XIDs, key bytes or packet payload are retained in these objects. */
++enum nsdd_parse {NSDD_OTHER,NSDD_DHCP,NSDD_IP_SHORT,NSDD_IP_HEADER,
++ NSDD_IP_EXTENT,NSDD_FRAGMENT,NSDD_UDP_EXTENT,NSDD_BOOTP_SHORT,
++ NSDD_BOOTP_HEADER,NSDD_COOKIE,NSDD_OPTIONS,NSDD_NO_TYPE,
++ NSDD_DUP_TYPE,NSDD_TYPE,NSDD_OPTION_LIMIT,NSDD_OVERLOAD};
++struct nsdd_frame {uint32_t ether,bytes,destination,dhcp,parse;};
++struct nsdd_txs {uint32_t bytes,pid,wlan,status,sequence,tx_count,rate,flags,advanced,tid,flush;};
++struct nsdd {
++ uint32_t tx_security,tx_data,rx_unicast,rx_group,tx_dhcp,rx_dhcp;
++ uint32_t tx_unicast,tx_group,tx_ether[5],rx_ether[5];
++ uint32_t tx_type[9],rx_type[9],txs_ok,txs_fail,ambiguous,last_kind,last_pub;
++ uint32_t headers_tx,headers_rx,dhcp_tx,dhcp_rx,txs_early,txs_live,records,summary;
++};
++int nsdd_classify(struct nsdd_frame*,const uint8_t*,size_t);
++int nsdd_decode_txs(struct nsdd_txs*,const uint8_t*,size_t);
++/* Serialized native owner only. type2 is security, type3 ordinary data.
++ * TX logs actual publication; RX logs native validated/rearmed Ethernet only.
++ * Last kind/pub is context, NEVER correlation of reused host PID127 TXS. */
++void nsdd_publish(struct nsdd*,uint64_t generation,uint32_t submitted,unsigned type,const uint8_t*,size_t);
++void nsdd_receive(struct nsdd*,uint64_t generation,const uint8_t*,size_t);
++void nsdd_event(struct nsdd*,uint64_t generation,const uint8_t *event_body,size_t,unsigned authorized);
++void nsdd_summary(struct nsdd*,uint64_t generation);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_station_transaction.c
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,156 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* New private transaction model. No kernel IO, waits, publication or secrets log. */
 +#include "wifi_station_transaction.h"
++#include "wifi_wpa_diag.h"
 +#if defined(KERNEL) || defined(_KERNEL)
 +#include <sys/systm.h>
 +#else
@@ -12989,12 +13106,13 @@
 +}
 +int stc_eapol(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
 + if(!current(s,gen,now)||s->phase<STC_CONFIGURE||s->phase>=STC_DEAUTH)return 0;
-+ if(!p||!n||n>640)return stop(s,STC_FAILED);
++ if(!p||!n||n>640){nwpd_gate_observe(gen,s->action.ticket,s->wpa.state,p!=0,n);return stop(s,STC_FAILED);}
 + if(s->phase!=STC_EAPOL&&s->phase!=STC_PTK_READY&&s->phase!=STC_CONNECTED){
 +  if(s->eapol_pending)return s->eapol_bytes==n&&!memcmp(s->queued_eapol,p,n)?0:2;
 +  memcpy(s->queued_eapol,p,n);s->eapol_bytes=(unsigned)n;s->eapol_pending=1;return 1;
 + }
-+ unsigned resume=s->phase;struct nwp_result r;int result=nwp_receive(&s->wpa,p,n,&r);
++ unsigned resume=s->phase,security_state=s->wpa.state;struct nwp_result r;int result=nwp_receive(&s->wpa,p,n,&r);
++ nwpd_observe(gen,s->action.ticket,security_state,p,n,result,r.failure);
 + if(result<0){erase(&r,sizeof r);return stop(s,STC_FAILED);}if(result!=NWP_TX){erase(&r,sizeof r);return 0;}
 + if(emit(s,STC_EAPOL_TX,STC_TX_EAPOL)<0){erase(&r,sizeof r);return -1;}s->resume_phase=resume;s->wpa_tx_ticket=r.ticket;memcpy(s->action.payload,r.frame,r.bytes);s->action.bytes=r.bytes;erase(&r,sizeof r);return 1;
 +}
@@ -13066,6 +13184,64 @@
 +int stc_link_lost(struct stc*,uint64_t generation,uint64_t now_ms);
 +int stc_cancel(struct stc*,uint64_t generation,uint64_t now_ms);
 +int stc_tick(struct stc*,uint64_t now_ms);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_diag.c
+@@ -0,0 +1,34 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wpa_diag.h"
++int nwpd_take(struct nwpd_budget*b,struct nwpd_record*r,uint64_t g,uint64_t t,unsigned state,const uint8_t*p,size_t n,int result,unsigned failure){
++ if(!b||!r||n>640||(!p&&n)||state>5||result< -1||result>4||failure>14||b->serial>=40)return 0;
++ unsigned bucket=result<0?2:state==5?1:0;unsigned*used=bucket==2?&b->failure:bucket==1?&b->late:&b->early;unsigned limit=bucket==1?24:8;if(*used>=limit)return 0;
++ struct nwpd_record v={0};v.generation=g;v.ticket=t;v.n=++b->serial;v.bucket=bucket;v.state=state;v.bytes=(unsigned)n;v.result=(unsigned)(result+1);v.failure=failure;
++ if(n>=4){v.version=p[0];v.type=p[1];v.declared=(unsigned)p[2]<<8|p[3];}
++ if(n>=7&&v.type==3){v.info=(unsigned)p[5]<<8|p[6];v.class_id=v.info==0x008a?1:v.info==0x13ca?3:!(v.info&8)?5:0;}
++ ++*used;*r=v;return 1;
++}
++
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <stdio.h>
++#endif
++void nwpd_observe(uint64_t g,uint64_t t,unsigned state,const uint8_t*p,size_t n,int result,unsigned failure){
++ static struct nwpd_budget budget;struct nwpd_record r;
++ if(nwpd_take(&budget,&r,g,t,state,p,n,result,failure))
++ printf("NORD2 WIFI WPAHDR: n=%u g=%llu t=%llu bucket=%u state=%u bytes=%u version=%u type=%u declared=%u info=%u class=%u result=%u failure=%u\n",r.n,(unsigned long long)r.generation,(unsigned long long)r.ticket,r.bucket,r.state,r.bytes,r.version,r.type,r.declared,r.info,r.class_id,r.result,r.failure);
++}
++
++int nwpd_gate_record(struct nwpd_gate*r,uint64_t g,uint64_t t,unsigned state,unsigned present,size_t n){
++ if(!r||!g||state>5||present>1)return 0;
++ unsigned reason=!present?1:!n?2:n>640?3:0;if(!reason)return 0;
++ *r=(struct nwpd_gate){g,t,(uint64_t)n,state,present,reason};return 1;
++}
++void nwpd_gate_observe(uint64_t g,uint64_t t,unsigned state,unsigned present,size_t n){
++ static unsigned emitted;struct nwpd_gate r;if(emitted||!nwpd_gate_record(&r,g,t,state,present,n))return;emitted=1;
++ printf("NORD2 WIFI WPAGATE: n=1 g=%llu t=%llu state=%u present=%u bytes=%llu reason=%u\n",(unsigned long long)r.generation,(unsigned long long)r.ticket,r.state,r.present,(unsigned long long)r.bytes,r.reason);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_diag.h
+@@ -0,0 +1,18 @@
++#ifndef WIFI_WPA_DIAG_H
++#define WIFI_WPA_DIAG_H
++#include <stddef.h>
++#include <stdint.h>
++/* Single retained worker only; no packet/identity/crypto material retained. */
++struct nwpd_budget {unsigned early,late,failure,serial;};
++struct nwpd_record {uint64_t generation,ticket;unsigned n,bucket,state,bytes,version,type,declared,info,class_id,result,failure;};
++/* Called AFTER actual engine evaluation, with state captured BEFORE evaluation.
++ * Separate8 early /24 authorized /8 failure reservations; data never uses them.
++ * Does not classify an unverified public header as cryptographic success. */
++int nwpd_take(struct nwpd_budget*,struct nwpd_record*,uint64_t,uint64_t,unsigned,const uint8_t*,size_t,int,unsigned);
++void nwpd_observe(uint64_t,uint64_t,unsigned,const uint8_t*,size_t,int,unsigned);
++/* Pre-engine extent rejection. No payload pointer accepted/read. One emitted
++ * row for the boot's single connection epoch, independent of all other budgets. */
++struct nwpd_gate {uint64_t generation,ticket,bytes;unsigned state,present,reason;};
++int nwpd_gate_record(struct nwpd_gate*,uint64_t,uint64_t,unsigned,unsigned,size_t);
++void nwpd_gate_observe(uint64_t,uint64_t,unsigned,unsigned,size_t);
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_wpa_crypto.c
@@ -13156,7 +13332,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_wpa2.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,186 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Private provider replacement. State machine unchanged from candidate135660fe;
@@ -13230,7 +13406,8 @@
 + }return 0;
 +}
 +void nwp_cancel(struct nwp*w){if(w)wipe(w,sizeof(*w));}
-+static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r)wipe(r,sizeof(*r));return NWP_FAIL;}
++static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r){wipe(r,sizeof(*r));r->failure=NWP_F_INTERNAL;}return NWP_FAIL;}
++static int failed(struct nwp*w,struct nwp_result*r,unsigned why){int v=fail(w,r);if(r)r->failure=why;return v;}
 +int nwp_pmk(const uint8_t*p,size_t pn,const uint8_t*s,size_t sn,uint8_t out[32]){
 + if(!out)return -1;
 + if(!p||!s||pn<8||pn>63||sn<1||sn>32){wipe(out,32);return -1;}
@@ -13288,15 +13465,15 @@
 +int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
 + if(!r)return NWP_FAIL;
 + memset(r,0,sizeof(*r));
-+ if(!w)return NWP_FAIL;
-+ if(w->state==NWP_OFF)return NWP_FAIL;
-+ if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return fail(w,r);
++ if(!w){r->failure=NWP_F_INTERNAL;return NWP_FAIL;}
++ if(w->state==NWP_OFF){r->failure=NWP_F_OFF;return NWP_FAIL;}
++ if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return failed(w,r,3);
 + unsigned info=be16(p+5);
-+ if(be16(p+7)!=16)return fail(w,r);
++ if(be16(p+7)!=16)return failed(w,r,4);
 + if(info==0x008a){
-+  if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return fail(w,r);
++  if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return failed(w,r,5);
 +  if(w->state!=NWP_M1){
-+   if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return fail(w,r);
++   if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return failed(w,r,6);
 +   if(w->pending)return NWP_BUSY;
 +   memcpy(w->m1_replay,p+9,8);
 +   return reply(w,p,1,r); /* Same ANonce, same SNonce/PTK; monotonic retransmit counter. */
@@ -13305,22 +13482,24 @@
 +  memcpy(w->anonce,p+17,32);memcpy(w->m1_replay,p+9,8);derive_keys(w);w->state=NWP_M3;
 +  return reply(w,p,1,r);
 + }
-+ if(info!=0x13ca||w->state<NWP_M3)return fail(w,r);
++ if(info!=0x13ca||w->state<NWP_M3)return failed(w,r,7);
 + uint8_t signature[16];mic(w,p,(unsigned)n,signature);int ok=equal(signature,p+81,16);wipe(signature,16);
-+ if(!ok||!equal(p+17,w->anonce,32))return fail(w,r);
++ if(!ok)return failed(w,r,8);
++ if(!equal(p+17,w->anonce,32))return failed(w,r,13);
 + if(w->m3_bytes){
 +  /* AP retries may use a higher replay counter. All authenticated key/RSN/RSC
 +   * contents must remain identical; never reinstall/reset any packet number. */
-+  if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return fail(w,r);
-+  for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return fail(w,r);
++  if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return failed(w,r,9);
++  for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return failed(w,r,10);
 +  if(w->pending)return NWP_BUSY;
 +  memcpy(w->m3,p,n);
 +  return reply(w,p,3,r);
 + }
-+ if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return fail(w,r);
++ if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return failed(w,r,11);
 + if(w->pending)return NWP_BUSY;
 + uint8_t plain[NWP_FRAME];unsigned wrapped=be16(p+97);
-+ if(aes_unwrap(w->kek,p+99,wrapped,plain)||kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return fail(w,r);}
++ if(aes_unwrap(w->kek,p+99,wrapped,plain)){wipe(plain,sizeof plain);return failed(w,r,12);}
++ if(kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return failed(w,r,14);}
 + wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;w->state=NWP_M4_TX;
 + return reply(w,p,2,r);
 +}
@@ -13342,7 +13521,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_wpa2.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,46 @@
 +#ifndef WIFI_WPA2_H
 +#define WIFI_WPA2_H
 +#include <stddef.h>
@@ -13354,7 +13533,8 @@
 + * Any NWP_FAIL requires immediate controlled-port closure by the owner. */
 +enum nwp_state {NWP_OFF,NWP_M1,NWP_M3,NWP_M4_TX,NWP_KEYS,NWP_AUTHORIZED};
 +enum nwp_action {NWP_DROP=0,NWP_TX=1,NWP_INSTALL=2,NWP_AUTH=3,NWP_BUSY=4,NWP_FAIL=-1};
-+struct nwp_result {unsigned action,bytes;uint64_t ticket;uint8_t frame[256];};
++enum nwp_failure { NWP_F_NONE=0,NWP_F_INTERNAL=1,NWP_F_OFF=2,NWP_F_ENVELOPE=3,NWP_F_KEY_LENGTH=4,NWP_F_M1_DATA=5,NWP_F_M1_STATE_REPLAY_NONCE=6,NWP_F_KEYINFO_STATE=7,NWP_F_MIC=8,NWP_F_M3_REPLAY_LENGTH=9,NWP_F_M3_CONTENT=10,NWP_F_M3_STATE_REPLAY=11,NWP_F_UNWRAP=12,NWP_F_ANONCE=13,NWP_F_KDE=14 };
++struct nwp_result {unsigned action,bytes,failure;uint64_t ticket;uint8_t frame[256];};
 +struct nwp {
 + uint64_t generation,serial,pending,install_ticket;unsigned state,tx_kind,installed,ready_mask;
 + uint8_t pmk[32],own[6],peer[6],snonce[32],anonce[32],kck[16],kek[16],tk[16],gtk[16],rsc[8];
@@ -18861,7 +19041,7 @@
 + if(nss_return.attempted||nss_return.ready||nss_native.failed||nct_native.active||
 +  !ncd_native.active||ncd_native.parked||ncd_native.halt||nwfn_native.halt||nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||!nwfn_native.wf_owned||nwfn_native.asleep||
 +  !nfp_native.ready||nfp_native.halt||nfp_native.state.halt||nfp_native.state.error||!nfp_native.finish_done||
-+  !njs_native.used||njs_native.joined||njs_native.queued||njs_native.active||!njs_native.terminal||njs_native.retiring||!njs_native.cookie_retired||njs_native.cookie||njs_native.completion||njs_native.linked||njs_native.tx_admit||njs_native.tx_count||njs_native.rx_count||
++  !njs_native.used||njs_native.queued||njs_native.active||!njs_native.terminal||njs_native.retiring||!njs_native.cookie_retired||njs_native.cookie||njs_native.completion||njs_native.linked||njs_native.tx_admit||njs_native.tx_count||njs_native.rx_count||
 +  njs_native.snapshot.phase!=NJS_FAILED||njs_native.snapshot.data_ready||njs_native.snapshot.associated||njs_native.snapshot.ptk_ready||njs_native.snapshot.gtk_ready||
 +  !njs_native.native_generation||njs_native.driver.transport!=n||t->generation!=njs_native.native_generation||t->phase!=STC_DONE||t->action.kind||o->halted||o->issuing||o->in_ticket||o->in_kind||!o->closed||
 +  t->arbiter!=&njs_native.arbiter||njs_native.arbiter.mode||njs_native.arbiter.generation||!njs_native.arbiter.connection_used||

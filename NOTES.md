@@ -3,6 +3,68 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **2026-10-22: final post-authentication runtime composition verified locally.**
+  Canonical scan-return fix now also admits a previously authorized connection
+  only after complete key/peer/DMA cleanup; one-join policy remains unchanged.
+  Added reserved numeric WPA failure/header and pre-engine gate diagnostics,
+  plus bounded native TXS/EtherType/DHCP-class observations. These do not alter
+  cryptographic acceptance, descriptors, ring ownership or transmission policy.
+  The new diagnostic records contain no addresses, SSIDs, key material or packet
+  bodies. DHCP classification is not a lease; native RX is not BSD delivery;
+  shared PID127 cannot identify which publication received a TX status.
+
+  Both postauthorized/failed-before-authorization scan-return tests, all9 station
+  groups, full normal transport, WPA crypto/transaction/3 input-gate modes and
+  numeric reader tests PASS. Data diagnostics719 pure/1141 actual transport
+  checks PASS. Actual10 translation-unit ARM64 compiles with generic ARMv8.2
+  flags PASS; independent final composition review03004d9d/manifest108b8154
+  confirms228 generated files and207 canonical siblings. Generated0082 SHA
+  1eefac22471533b2982ebc7df2344a0482318e692c9600cf3582e1525d548b82.
+  Evidence: research/nord2/wifi-ios-postauth/ios and local-submit/ios audits.
+  Strict additive DATA reader v2fdf66849 passes11 positive/407 negative cases,
+  including independently found destination/EtherType counterexamples. All new
+  stage build/human gates remain closed. Next: commit, one full CI, artifact/image
+  verification, then request fresh exact boot-only approval. Phone stays806c;
+  no additional Join, flash or recovery was performed. No IP fix claimed.
+
+- **2026-10-22: Claude completed and corrected its initial causal claims.**
+  Initial exec33267 CLOSED0; narrow same-session follow-up99882 CLOSED0.
+  Read research/nord2/wifi/claude-opus-postauth-806c/followup-command-data/REPORT.md
+  as the final verdict. The earlier REPORT overclaimed that COMMAND-format
+  protected data was invalid and that group rekey caused this closure.
+  Source supports conditional protected command data; Linux DPP policy excludes
+  flagged DHCP/ARP and depends on firmware capabilities. That mismatch does not
+  yet prove a firmware rejection or justify a packet-format/ring-only change.
+  Claude now agrees no functional TX change is source-justified on this evidence.
+  Group/PTK rekey support is missing but the late packet remains unidentified.
+  Cap's independent qualified route audit manifest1710b6c6 agrees.
+
+  Native DATAHDR/DATATXS/protocol-counter candidateb87eae44 independently passed
+  reviewa2f0ab7c and is now promoted, including build registration. No acceptance,
+  descriptor, key or ownership policy changes. Parent source compile and final
+  all-sources tests await the pre-engine WPA input-gate diagnostic amendment.
+  Strict data diagnostic reader is being prepared by cap. Wire separately
+  documents a complete normal data-ring/TXP/token path for future work; it is
+  not part of the current candidate. No CI or new phone action yet.
+
+- **2026-10-22: post-authentication candidates integrated, final composition pending.**
+  Canonical postauthorized scan-return predicate/test and nonsecret WPA failure
+  diagnostics are promoted; generator has the new wifi_wpa_diag TU but0082 has
+  NOT yet been regenerated. Scan-return canonical tests and WPA crypto/actual
+  transaction/reader checks pass. Independent diagnostic review0ba24a93 and
+  integration packageb5ceee6d preserve the original cryptographic acceptance.
+  TXS/DHCP-class diagnostic candidate is still being prepared privately.
+  New closed stage research/nord2/wifi-ios-postauth/ios has all source/CI/image/
+  human gates FALSE; no CI dispatch or new image yet. Old executed stage remains
+  immutable. Wait for Claude report and final source composition before building.
+
+  BSD/ifnet audit271b06ca found no justified framing/mbuf/checksum/link fix.
+  Raw captured configd requests a169.254/16 link-local address after link-up,
+  with no observed DHCP private/public en0 ADD. Entry logging precedes completion,
+  so this establishes fallback activity, not a proven installed address.
+  The phone remains806c8d61; do not retry Join or reuse its one-shot runner.
+
 - **2026-10-22: image806c8d61 completed WPA2 locally, but usable IP remains unproven.**
   Collector44878 CLOSED0; no USB reader active. Final445163-byte receipt:
   research/nord2/wifi-ios-local-submit/ios/hardware-review/capture-final.log,

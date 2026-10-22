@@ -9,7 +9,7 @@ static int eq(const void*a,const void*b,size_t n){const uint8_t*x=a,*y=b;while(n
 static void wipe(void*p,size_t n){volatile uint8_t*q=p;while(n--)*q++=0;}
 static int mac(const uint8_t*p){unsigned any=0;for(unsigned i=0;i<6;i++)any|=p[i];return any&&!(p[0]&1);}
 void nst_close_port(struct nst*s){if(s){if(s->controlled_port&&!s->cleanup_started)s->deadline=s->last>UINT64_MAX-UINT64_C(30000000)?UINT64_MAX:s->last+UINT64_C(30000000);s->controlled_port=0;if(s->wire_busy&&s->wire_type==3&&!s->published){wipe(s->wire,sizeof s->wire);s->wire_busy=0;}}}
-static int fail(struct nst*s,unsigned e){{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
+static int fail(struct nst*s,unsigned e){nsdd_summary(&s->data_diag,s->generation);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
 static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
 int nst_lease_window(const struct nst*s,const struct nwi_state*i){
  if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||!s->active||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
@@ -98,6 +98,7 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
   if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
   if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
   if(s->wire_type==1){s->air_pending=1;s->next_pid++;}
+  nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
   {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
   if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
   if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
@@ -131,6 +132,7 @@ static int decode(struct nst*s){
  if(type==7&&(u16(p+2)&0x380f)==0x3800&&n>=29&&p[28]==0x0f){struct nstd_record record;nstd_txs(&record,s->generation,s->ticket,p,n,s->air_pending,s->wire_pid,s->wire_wlan,s->air_done);nstd_log(&record);}
  if(type==7&&(u16(p+2)&0x380f)==0x3800){
   if(n<36)return 0;const uint8_t*b=p+36;size_t z=n-36;e->body=b;e->bytes=z;e->sequence=p[29];
+  if(p[28]==0x0f)nsdd_event(&s->data_diag,s->generation,b,z,!!s->controlled_port);
   if(p[28]==0x0f&&z>=88&&s->air_pending&&b[0]==s->wire_pid&&b[4]==s->wire_wlan&&!s->air_done){s->air_done=1;s->air_status=b[1];}
   else if(p[28]==0x10&&z>=24&&s->channel_held&&b[0]==s->peer.bss&&b[1]==s->channel_token&&b[3]==s->peer.channel&&b[5]==s->peer.band){uint32_t ms=u32(b+12);if(b[2]||!ms||ms>60000||s->last>UINT64_MAX-(uint64_t)ms*1000)return 0;s->grant_deadline=s->last+(uint64_t)ms*1000;e->kind=NST_CHANNEL_GRANT;e->bss=b[0];e->token=b[1];e->status=b[2];e->channel=b[3];e->band=b[5];e->interval_ms=ms;}
   else if(p[28]==0x0c&&z>=8&&s->activation_pending&&p[29]==s->activation_sequence&&eq(b,s->peer.ap,6)&&b[6]==s->peer.sta&&b[7]==s->peer.bss){s->sta_active=1;s->activation_pending=0;e->kind=NST_STA_ACTIVE;e->sta=b[6];e->bss=b[7];}
@@ -185,6 +187,7 @@ static int receive(struct nst*s,const struct ncd_io*o,void*c,unsigned k,nst_even
  s->rx_bytes=(ctl>>16)&0x3fff;unsigned last=!!(ctl&0x40000000),skip=q->segmented||!last||!s->rx_bytes||s->rx_bytes>NST_RX_BYTES;q->segmented=!last;s->deferred=(struct nst_event){0};
  if(!skip){s->phase=NST_RX_FRAME;if(sy(s,o,c,a,s->rx_bytes,2)||mr(s,o,c,a,s->rx_frame,s->rx_bytes))return -1;nstd_rx(s->generation,s->ticket,k,s->rx_frame,s->rx_bytes);if(decode(s))return fail(s,21);}
  if(nwt_rx_desc(s->rx_descriptor,a,NST_RX_BYTES))return fail(s,22);s->phase=NST_RX_WRITE;if(mw(s,o,c,d,s->rx_descriptor,16)||sy(s,o,c,d,16,1))return -1;s->phase=NST_RX_PUBLISH;if(rw(s,o,c,q->ring.base+8,q->next))return -1;q->next=(q->next+1)%q->ring.count;if(k==1)s->init->transport.rx_index=q->next;q->rearmed++;s->phase=NST_IDLE;
+ if(s->deferred.kind==NST_ETHERNET)nsdd_receive(&s->data_diag,s->generation,s->deferred.body,s->deferred.bytes);
  if(s->deferred.kind&&emit(s,fn,ctx,&s->deferred))return -1;return 1;
 }
 static int peer_progress(struct nst*,nst_event_fn,void*);
@@ -241,7 +244,7 @@ static int peer_progress(struct nst*s,nst_event_fn fn,void*ctx){
   if(step==0){payload[0]=0;payload[1]=s->peer.sta;payload[2]=s->peer.bss;payload[3]=0;used=4;cid=0x14;}
   else if(step==1){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,30);cid=0x12;}
   else if(step==2){wipe(payload,4);payload[0]=s->peer.bss;used=4;cid=0x17;}
-  else{s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
+  else{nsdd_summary(&s->data_diag,s->generation);s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
  }else{
   if(step==0){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,31);cid=0x12;}
   else if(step==1){if(sw_rlm(payload,sizeof payload,&used,&r))return fail(s,32);cid=0x19;}

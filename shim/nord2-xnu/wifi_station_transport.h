@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "wifi_normal_backend.h"
 #include "wifi_station_wire.h"
+#include "wifi_station_data_diag.h"
 #define NST_MAX_ETHERNET 1514u
 #define NST_RX_BYTES 3840u
 #define NST_FRAME_BYTES 1600u
@@ -54,7 +55,7 @@ struct nst {
  unsigned pm_scheduled,pm_connected;
  unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
  uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
- uint32_t rx_bytes;struct nst_event deferred;
+ uint32_t rx_bytes;struct nst_event deferred;struct nsdd data_diag;
 };
 /* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
  * no guessed capability indices. peer indices must match retained scan profile. */

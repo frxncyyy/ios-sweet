@@ -1,0 +1,4 @@
+NORD2 WIFI WPAHDR: n=1 g=42 t=0 bucket=0 state=1 bytes=99 version=2 type=3 declared=95 info=138 class=1 result=2 failure=0
+NORD2 WIFI WPAHDR: n=2 g=42 t=0 bucket=0 state=2 bytes=155 version=2 type=3 declared=151 info=5066 class=3 result=2 failure=0
+NORD2 WIFI WPAHDR: n=3 g=42 t=0 bucket=1 state=5 bytes=155 version=2 type=3 declared=151 info=5066 class=3 result=2 failure=0
+NORD2 WIFI WPAHDR: n=4 g=42 t=0 bucket=2 state=5 bytes=99 version=2 type=3 declared=95 info=138 class=1 result=0 failure=6

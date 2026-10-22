@@ -1,0 +1,15 @@
+{
+  "author_manifest_sha256": "b87eae442b4b73dcd60429efee8763d0e8da9d09e9ab282f9ff209cb3956f3c7",
+  "fixtures": {
+    "actual": {
+      "source_path": "research/nord2/wifi-ios-local-submit/ios/review-data-diagnostics/verification/final/actual.log",
+      "source_sha256": "b849d4fe495947e261d14cd98a595c3cf11531daf78c273661c68400bc298b7d",
+      "filtered_sha256": "1a28d053cfe87186d550e40781849ef0ba8236bb27a935729a05c81348c49113"
+    },
+    "pure": {
+      "source_path": "research/nord2/wifi-ios-local-submit/ios/review-data-diagnostics/verification/final-pure/pure.log",
+      "source_sha256": "5febc715fec7b8ca6b61a68da89ab7f485eea26b02af6cf9392161cd8053ac56",
+      "filtered_sha256": "4e114b66a8f4fe0eeb93a6625940ace0384b245c0a32c21d0a11032d7c73ac7a"
+    }
+  }
+}

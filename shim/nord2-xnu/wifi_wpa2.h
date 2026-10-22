@@ -9,7 +9,8 @@
  * Any NWP_FAIL requires immediate controlled-port closure by the owner. */
 enum nwp_state {NWP_OFF,NWP_M1,NWP_M3,NWP_M4_TX,NWP_KEYS,NWP_AUTHORIZED};
 enum nwp_action {NWP_DROP=0,NWP_TX=1,NWP_INSTALL=2,NWP_AUTH=3,NWP_BUSY=4,NWP_FAIL=-1};
-struct nwp_result {unsigned action,bytes;uint64_t ticket;uint8_t frame[256];};
+enum nwp_failure { NWP_F_NONE=0,NWP_F_INTERNAL=1,NWP_F_OFF=2,NWP_F_ENVELOPE=3,NWP_F_KEY_LENGTH=4,NWP_F_M1_DATA=5,NWP_F_M1_STATE_REPLAY_NONCE=6,NWP_F_KEYINFO_STATE=7,NWP_F_MIC=8,NWP_F_M3_REPLAY_LENGTH=9,NWP_F_M3_CONTENT=10,NWP_F_M3_STATE_REPLAY=11,NWP_F_UNWRAP=12,NWP_F_ANONCE=13,NWP_F_KDE=14 };
+struct nwp_result {unsigned action,bytes,failure;uint64_t ticket;uint8_t frame[256];};
 struct nwp {
  uint64_t generation,serial,pending,install_ticket;unsigned state,tx_kind,installed,ready_mask;
  uint8_t pmk[32],own[6],peer[6],snonce[32],anonce[32],kck[16],kek[16],tk[16],gtk[16],rsc[8];

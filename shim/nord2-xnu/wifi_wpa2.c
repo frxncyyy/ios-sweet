@@ -69,7 +69,8 @@ static int m1_data(const uint8_t*p,unsigned n){
  }return 0;
 }
 void nwp_cancel(struct nwp*w){if(w)wipe(w,sizeof(*w));}
-static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r)wipe(r,sizeof(*r));return NWP_FAIL;}
+static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r){wipe(r,sizeof(*r));r->failure=NWP_F_INTERNAL;}return NWP_FAIL;}
+static int failed(struct nwp*w,struct nwp_result*r,unsigned why){int v=fail(w,r);if(r)r->failure=why;return v;}
 int nwp_pmk(const uint8_t*p,size_t pn,const uint8_t*s,size_t sn,uint8_t out[32]){
  if(!out)return -1;
  if(!p||!s||pn<8||pn>63||sn<1||sn>32){wipe(out,32);return -1;}
@@ -127,15 +128,15 @@ static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
 int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  if(!r)return NWP_FAIL;
  memset(r,0,sizeof(*r));
- if(!w)return NWP_FAIL;
- if(w->state==NWP_OFF)return NWP_FAIL;
- if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return fail(w,r);
+ if(!w){r->failure=NWP_F_INTERNAL;return NWP_FAIL;}
+ if(w->state==NWP_OFF){r->failure=NWP_F_OFF;return NWP_FAIL;}
+ if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return failed(w,r,3);
  unsigned info=be16(p+5);
- if(be16(p+7)!=16)return fail(w,r);
+ if(be16(p+7)!=16)return failed(w,r,4);
  if(info==0x008a){
-  if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return fail(w,r);
+  if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return failed(w,r,5);
   if(w->state!=NWP_M1){
-   if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return fail(w,r);
+   if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return failed(w,r,6);
    if(w->pending)return NWP_BUSY;
    memcpy(w->m1_replay,p+9,8);
    return reply(w,p,1,r); /* Same ANonce, same SNonce/PTK; monotonic retransmit counter. */
@@ -144,22 +145,24 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
   memcpy(w->anonce,p+17,32);memcpy(w->m1_replay,p+9,8);derive_keys(w);w->state=NWP_M3;
   return reply(w,p,1,r);
  }
- if(info!=0x13ca||w->state<NWP_M3)return fail(w,r);
+ if(info!=0x13ca||w->state<NWP_M3)return failed(w,r,7);
  uint8_t signature[16];mic(w,p,(unsigned)n,signature);int ok=equal(signature,p+81,16);wipe(signature,16);
- if(!ok||!equal(p+17,w->anonce,32))return fail(w,r);
+ if(!ok)return failed(w,r,8);
+ if(!equal(p+17,w->anonce,32))return failed(w,r,13);
  if(w->m3_bytes){
   /* AP retries may use a higher replay counter. All authenticated key/RSN/RSC
    * contents must remain identical; never reinstall/reset any packet number. */
-  if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return fail(w,r);
-  for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return fail(w,r);
+  if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return failed(w,r,9);
+  for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return failed(w,r,10);
   if(w->pending)return NWP_BUSY;
   memcpy(w->m3,p,n);
   return reply(w,p,3,r);
  }
- if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return fail(w,r);
+ if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return failed(w,r,11);
  if(w->pending)return NWP_BUSY;
  uint8_t plain[NWP_FRAME];unsigned wrapped=be16(p+97);
- if(aes_unwrap(w->kek,p+99,wrapped,plain)||kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return fail(w,r);}
+ if(aes_unwrap(w->kek,p+99,wrapped,plain)){wipe(plain,sizeof plain);return failed(w,r,12);}
+ if(kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return failed(w,r,14);}
  wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;w->state=NWP_M4_TX;
  return reply(w,p,2,r);
 }

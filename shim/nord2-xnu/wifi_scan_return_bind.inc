@@ -21,7 +21,7 @@ static int nss_return_scans(void){
  if(nss_return.attempted||nss_return.ready||nss_native.failed||nct_native.active||
   !ncd_native.active||ncd_native.parked||ncd_native.halt||nwfn_native.halt||nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||!nwfn_native.wf_owned||nwfn_native.asleep||
   !nfp_native.ready||nfp_native.halt||nfp_native.state.halt||nfp_native.state.error||!nfp_native.finish_done||
-  !njs_native.used||njs_native.joined||njs_native.queued||njs_native.active||!njs_native.terminal||njs_native.retiring||!njs_native.cookie_retired||njs_native.cookie||njs_native.completion||njs_native.linked||njs_native.tx_admit||njs_native.tx_count||njs_native.rx_count||
+  !njs_native.used||njs_native.queued||njs_native.active||!njs_native.terminal||njs_native.retiring||!njs_native.cookie_retired||njs_native.cookie||njs_native.completion||njs_native.linked||njs_native.tx_admit||njs_native.tx_count||njs_native.rx_count||
   njs_native.snapshot.phase!=NJS_FAILED||njs_native.snapshot.data_ready||njs_native.snapshot.associated||njs_native.snapshot.ptk_ready||njs_native.snapshot.gtk_ready||
   !njs_native.native_generation||njs_native.driver.transport!=n||t->generation!=njs_native.native_generation||t->phase!=STC_DONE||t->action.kind||o->halted||o->issuing||o->in_ticket||o->in_kind||!o->closed||
   t->arbiter!=&njs_native.arbiter||njs_native.arbiter.mode||njs_native.arbiter.generation||!njs_native.arbiter.connection_used||
