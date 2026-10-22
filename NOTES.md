@@ -3,6 +3,46 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: scan-profile image195a7e17 VERIFIED; exact approval pending.**
+  shim/out/nord2-xnu/nord2-ios-wifi-scan-profile-battery-stop23.img,33415168B,
+  SHA195a7e174c750f1e0b2bd54894c615ce9e008068b8a52e609923246f6a3ed09b;
+  payloadf5a88fb64c03f81ad5cd5b8d51ec9b74f45f45bf2e0f09c469e0ec30d1ce3aff.
+  CI39750474116/source27717ff/kernel01c1922e. Pack71233 and independent
+  existing-image/header/loader/ADT/calibration/kernel/rescue check46492 CLOSED0;
+ 139264B boot spare. Fresh wifi-ios-profile/ios prepared/source gates true,
+  all human authorization flags FALSE and runner UNUSED. Current phone a199cd0c;
+  no new flash, recovery or USB collector. Next exact image boot-only approval
+  and physicalfastboot, then fresh runner and real Settings scan/event/results.
+  Conditional proposed fallback healthy6a6a or tested RAM rescue; never stock
+  Android over iOS userdata. No actual scan delivery/association claimed yet.
+
+- **2026-10-22: scan-profile CI39750474116 PASS; image packaging71233 active.**
+  Exact source27717ff, kernel17607648B SHA01c1922e7518ab7a9d39a408be337cd2f0fb53f346faf85c00602c0b2993eda9.
+  Generated195files equal CI,20affected compile units genericARMv8.2;
+ 2251653 decoded instructions contain no LDAPUR/STLUR. Watch37085,
+  sourceaudit80503,ISA14627 CLOSED0. Four-function linked semantic review
+ 52c5c02b/manifestb785c5f5 PASS; local object bodies differ in code generation,
+  actual linked bounds/constants/call targets reviewed with no finding.
+  wifi-ios-profile/ios CI/schema gates verified; prepared/approval gates false,
+  runner UNUSED. Bounded1GiB pack71233 running. Phone remains a199cd0c.
+  Private parallel followup9a7dbe26 replaces inherited crypto with staged MIT
+  BearSSL,3148checksPASS, and proves EID24 station-ready versus GTK no-response
+  software completion. Private station-transaction2cb49e90 passes1688checks;
+  native actions/data path remain unimplemented, first-attempt latch does not
+  claim a firmware teardown/reconnect barrier. No association changes in CI.
+
+- **2026-10-22: scan-profile source27717ff pushed; CI39750474116 queued.**
+  Exact source27717fffcbbd0221334a4b18df6565551f877ab3; root watcher37085
+  will retain run.json/build.log and download exact success artifacts into
+  research/ci-39750474116. New wifi-ios-profile/ios gates remain false and
+  runner UNUSED. Phone still a199cd0c; no device action or new approval.
+  Final full a199 log365419B independently parses PASS/complete/issues=[];
+  SHA0ba5725b3adf8d7af6752047ae852b21b6690bba5edef24f66a406e3789ea771.
+  wire agent has prepared bounded4-function linked review for new policy,
+  power helper and two client methods; does not repeat unchanged registry/DMA.
+  format agent is resolving native PTK/GTK completion semantics and a private
+  BearSSL provider using already-staged MIT-licensed files. Offline work only.
+
 - **2026-10-22: complete a199cd0c trace saved; semantic scan-profile fix integrated.**
   Both collectors41821/14266 CLOSED0. Full365419B log preserved at
   wifi-ios-compat/ios/backend-full.log, SHA0ba5725b3adf8d7af6752047ae852b21b6690bba5edef24f66a406e3789ea771.
