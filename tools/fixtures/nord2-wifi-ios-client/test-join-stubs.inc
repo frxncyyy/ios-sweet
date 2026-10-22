@@ -6,3 +6,13 @@ extern "C" int nord2_wifi_join_copy_state(njs_snapshot*out){*out=js;return 0;}
 static void joinNotice(njs_notice n){assert(jactive);jcb(jcookie,jepoch,jticket,n);if(n==NJS_RETIRED){jactive=false;niwj_clear(&copiedJoin,sizeof copiedJoin);}}
 
 static void assertNoJoins(){assert(!jenqueues&&!jdisconnects&&!jcanceled&&!jactive);}
+
+/* Actual production metadata-query body injected by runner, not a replacement
+ * declaration supplied by a client. Static gates add no allocated IOLock refs. */
+static IOLock card_gate,card_notice;
+static struct {IOLock*lock;unsigned failed;}nss_native={&card_gate,0};
+static struct {IOLock*notice_lock;}njs_native={&card_notice};
+static unsigned card_available=1;
+[[maybe_unused]] static unsigned card_queries;
+static int nss_available(){card_queries++;return card_available;}
+#include "test-card-inventory.inc"

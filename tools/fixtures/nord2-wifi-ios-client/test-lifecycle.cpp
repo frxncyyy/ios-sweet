@@ -30,7 +30,7 @@ int main(){test_current=&owner_task;
   assert(md->prepares==pre+1&&md->reads==read+(failure!=0)&&md->completes==complete+(failure!=0));
  }
  md->failPrepare=md->failRead=md->failComplete=false;
- w32(carrier+15384,12);w32(carrier+4,13);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a.structureOutputSize=13;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&output[0]==0&&a.structureOutputSize==13&&malloc_count==2);md->release();
+ w32(carrier+15384,12);w32(carrier+4,13);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a.structureOutputSize=13;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&output[0]==8&&output[1]==0x40&&a.structureOutputSize==13&&malloc_count==2);md->release();
  a=args();a.asyncWakePort=7;a.asyncReference=ref;a.asyncReferenceCount=8;rights++;assert(!call(c,2,a)&&rights==1);test_current=&other_task;assert(!c->clientDied()&&rights==0&&buffer_count==0);test_current=&owner_task;assert(!c->clientClose());a=args();assert(call(c,3,a)==kIOReturnNotOpen);c->release();assert(owner_task.refs==1&&locks==0);
  c=client();a=args();assert(!call(c,3,a));std::atomic<unsigned>done{0};std::thread thread([&]{test_current=&owner_task;for(unsigned i=0;i<1000;i++){uint8_t v=0xaa;auto b=args();b.selector=1;b.structureOutput=&v;b.structureOutputSize=1;auto rc=c->externalMethod(1,&b,nullptr,nullptr,nullptr);assert(rc==0||rc==kIOReturnNotOpen);if(!rc)assert(v==1);}done=1;});assert(!c->clientClose());thread.join();assert(done==1&&buffer_count==0);c->release();assert(owner_task.refs==1&&locks==0&&rights==0&&malloc_count==0);checks++;
  /* Close must wait behind the actual gate while an OOL read is prepared. */

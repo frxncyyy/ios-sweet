@@ -39,6 +39,12 @@ int nord2_wifi_join_disconnect(void);
  * matching ticket/client epoch. No pointer into mutable RX/secret state escapes.
  * 0 copied,1 unavailable,-1 invalid. Never returns success from a fake backend. */
 int nord2_wifi_join_copy_state(struct njs_snapshot*);
+/* Installed implementation inventory only, never live association/readiness.
+ * Exact reviewed CCMP128 + RSN-IE path; no WPA1/TKIP/WEP/GCMP/SAE/PMF claim.
+ * Native source owns entries, client cannot provide or widen them. No IO.
+ * 0 copied,1 native service unavailable,-1 invalid; failure leaves out unchanged. */
+struct niwc_manifest;
+int nord2_wifi_join_card_inventory(struct niwc_manifest*);
 #ifdef __cplusplus
 }
 #endif

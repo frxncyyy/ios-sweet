@@ -30,7 +30,7 @@ int main(){IOUserClient*c=make();IOExternalMethodArguments a={};uint8_t one=0;
  envelope(carrier,0x802869c8,10,5456);put(carrier+8,1);put(carrier+12,3);put(carrier+60,1);put(carrier+64,1);a.structureOutput=nullptr;a.structureOutputSize=0;assert(!call(c,0,a));finish();
  envelope(carrier,NIW_GET,11,1164);a.structureOutput=row;a.structureOutputSize=sizeof row;assert(!call(c,0,a));niws_result decoded;assert(!niws_decode_result(row,sizeof row,&decoded)&&decoded.rates[0]==1);a.structureOutputSize=sizeof row;assert(call(c,0,a)==(IOReturn)0xe0820446);
  envelope(carrier,NIW_GET,43,0);memcpy(carrier+15368,"bad",4);a.structureOutputSize=sizeof row;assert(call(c,0,a)!=kIOReturnSuccess); /* identity cannot override interface check */
- envelope(carrier,NIW_GET,12,13);a.structureOutputSize=13;assert(!call(c,0,a));for(unsigned i=0;i<13;i++)assert(!row[i]);
+ envelope(carrier,NIW_GET,12,13);a.structureOutputSize=13;assert(!call(c,0,a));for(unsigned i=0;i<13;i++)assert(row[i]==(i==0?8:i==1?64:0));
  state[0]=state[1];envelope(carrier,0x802869c8,10,5456);put(carrier+8,1);put(carrier+12,3);put(carrier+60,1);put(carrier+64,1);a.structureOutput=nullptr;a.structureOutputSize=0;assert(!call(c,0,a));
  assert(!c->clientClose()&&canceled);c->release();unsigned count=notifications;finish(NSS_CANCELED);assert(notifications==count&&rights==0&&ownerTask.refs==1&&locks==0&&malloc_count==0);d->release();s->release();assert(buffer_count==0);
  /* Notification failure preserves the already published immutable completion

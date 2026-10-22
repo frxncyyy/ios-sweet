@@ -1,6 +1,7 @@
 /* Included after NSS declarations/delivery and authenticated NST native binder.
  * Same actual retained CAP worker, same admission lock. No second worker. */
 #include "wifi_station_service.h"
+#include "wifi_ios_card.h"
 #include "wifi_wpa_nst.h"
 #include "wifi_ifnet_link.h"
 #ifndef NJS_HOST_TEST
@@ -72,6 +73,18 @@ int nord2_wifi_join_disconnect(void){
  IOLockUnlock(nss_native.lock);
  if(!r&&nord2_wifi_ifnet_link(generation,0))r=-1;
  IOLockUnlock(njs_native.notice_lock);if(r!=1)thread_wakeup((event_t)&nss_native);return r;
+}
+/* Compiled native module implements all six operations for this checked
+ * WPA2-PSK/CCMP profile. Bits describe installed handlers, not reached keys,
+ * current carrier, all RSN authentication modes or a hardware-test result. */
+int nord2_wifi_join_card_inventory(struct niwc_manifest*out){
+ if(!out)return -1;
+ if(!nss_available())return 1;
+ IOLockLock(nss_native.lock);
+ if(nss_native.failed||!njs_native.notice_lock){IOLockUnlock(nss_native.lock);return 1;}
+ const struct niwc_manifest installed={2,{
+  {NIWC_CCMP,NIWC_END_TO_END},{NIWC_RSN_IE,NIWC_END_TO_END}}};
+ *out=installed;IOLockUnlock(nss_native.lock);return 0;
 }
 int nord2_wifi_join_copy_state(struct njs_snapshot*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);*out=njs_native.snapshot;IOLockUnlock(nss_native.lock);return 0;}
 int nord2_wifi_link_send(const uint8_t*p,size_t n,uint64_t generation){

@@ -14,7 +14,8 @@ struct niwc_entry {unsigned feature,installed_operations;};
 /* Native-owned reviewed inventory only; never deserialize from IOUC input.
  * Each entry must derive from actual installed association/auth/key/data/
  * disconnect handlers for that feature. Bits do not authenticate their source
- * or establish correct implementations. No current backend supplies entries. */
+ * or establish correct implementations. The installed native station service
+ * supplies its reviewed CCMP/RSN subset; this is not connected-state proof. */
 struct niwc_manifest {unsigned count;struct niwc_entry entry[NIWC_FEATURES];};
 /* Exact bind request12 GET, small carrier, payload13, value0. Writes raw13,
  * no version prefix. A nonnull native-owned empty inventory emits exactly13 zero bytes.

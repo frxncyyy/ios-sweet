@@ -3,6 +3,52 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **2026-10-22: CARD security fix integrated/tested; Claude review BEFORE CI.**
+  Native-owned inventory now supplies only installed CCMP+RSN raw13=08/40/zeros;
+  no keys/carrier prerequisite or broader security support. Candidate31c4fb87,
+  independent reviewdc6f1192; exact4 runtime files integrated. Actual generic
+  ARM64 client/sweet_touch compile PASS. Full canonical client/scan/join/lifetime/
+  CARD suite and actual native service suite ASan/UBSan PASS. Two fixture-only
+  followups: optional query counter warning; old lifecycle expectedzero changed
+  to08/40 preserving allocation checks.0082 regenerated/applies. Evidence in
+  research/nord2/wifi-ios-security/ios; new stage all execution gates FALSE.
+  User now requires Claude comprehensive blocker review BEFORE build. Claude
+  Opus5.5/high read-only RUNNING, UUIDb4585316-9654-4897-b2d0-905116396d3f,
+  PID451700/wrapper89661, research/nord2/wifi/claude-opus-connect-review.
+  Prompt covers selected iOS producer/SET20 through native auth/assoc/WPA2/
+  key receipts and BSD/DHCP. Visible foot viewer desktop3. No CI dispatched;
+  await REPORT.md, independently validate concrete findings and integrate
+  cohesively before one next build. Phone43fd unchanged, USB collector closed.
+
+
+- **2026-10-22: first connection failed BEFORE native join; exact frontend cause found.**
+  Phone remains43fd789b, iOS graphics/scans continue, no panic. Human reports
+  password screen waits then "unable to join network", Private Wi-Fi Address
+  disabled. Both root collectors71002/1712 CLOSED0; no active USB reader.
+  Immutable wifi-ios-connect/ios/connection-attempt-final.log493810B SHA
+  c5b12e263ca1f5623982fcbaea65ac6d16377a713de3210f21aa498fb4578999,
+  through705.402s: zero JOINREQ/JOINCONTROL/native STATION receipts. No radio
+  association or key exchange attempted/observed. Existing GET12 still returns
+  empty CARD manifest from scan-only implementation. Exact same-IPSW producer
+  rejects RSN with missing bit14 (-3900) and CCMP with missing bit3 (-3903)
+  before SET20. cap private native-owned inventory candidate + format independent
+  review in progress: expose only installed CCMP/RSN, no WPA1/SAE/PMF claims.
+  Root preparing fresh wifi-ios-security stage; no new image/approval or device
+  writes. Existing43fd authorization is consumed; healthy52d4 rescue retained.
+  UFS/speed closed. Leave unrelated kmod/audio work intact.
+
+- **2026-10-22: combined WPA2 image43fd789b AUTHORIZED and FLASHED.**
+  User exact approval call_90e2d06cf50f4397b92aa093a1f2fca1: "Autorizzo, pronto
+  in fastboot". Expected physicaldevice/product/boot-size/non-userspace verified;
+  only boot written, transfer/write/reboot OKAY. Image33458176B
+  SHA43fd789b749b57eab3f735086170931e0c21efa308af394d8ad90f97ba80c9b6.
+  Root runner71002 ACTIVE with300s read-only USB capture at wifi-ios-connect/ios/
+  hardware-live. Runner USED, NEVER rerun. Phone now43fd; need boot health,
+  Settings startup responsiveness and first WPA2 join/address/browsing observations.
+  No success assumed. Conditional52d4/RAM rescue recovery authorized if necessary;
+  no stock Android boot over iOS userdata. Password stays on phone.
+
 - **2026-10-22: combined WPA2 image VERIFIED; awaiting exact boot-only approval.**
   nord2-ios-wifi-connect-battery-stop23.img33458176B SHA
   43fd789b749b57eab3f735086170931e0c21efa308af394d8ad90f97ba80c9b6;

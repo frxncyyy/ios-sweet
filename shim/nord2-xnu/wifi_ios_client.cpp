@@ -340,7 +340,15 @@ IOReturn NiwlLifecycleClient::getLocked(const niw_request*q,const void*carrier,s
   if(result)return result==-2?kIOReturnUnsupported:kIOReturnBadArgument;
   a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;
  }
- if(q->request==12){niwc_manifest empty={};size_t used=0;if(niwc_card_reply(carrier,bytes,&empty,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
+ if(q->request==12){
+  if(q->payload_bytes!=NIWC_CARD_BYTES||a->structureOutputSize<NIWC_CARD_BYTES)return kIOReturnBadArgument;
+  niwc_manifest installed={};size_t used=0;
+  if(nord2_wifi_join_card_inventory(&installed))return kIOReturnNotReady;
+  if(niwc_card_reply(carrier,bytes,&installed,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;
+  a->structureOutputSize=(uint32_t)used;
+  if(traceControl(12,0))printf("NORD2 WIFI IOS CARD: bytes=%u features=%u byte0=%#x byte1=%#x\n",(unsigned)used,installed.count,(unsigned)((uint8_t*)a->structureOutput)[0],(unsigned)((uint8_t*)a->structureOutput)[1]);
+  return kIOReturnSuccess;
+ }
  if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
  if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
  if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);

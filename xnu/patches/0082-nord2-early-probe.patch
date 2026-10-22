@@ -13663,7 +13663,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_card.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +#ifndef PRIVATE_NIWC_CARD_H
 +#define PRIVATE_NIWC_CARD_H
 +#include <stddef.h>
@@ -13680,7 +13680,8 @@
 +/* Native-owned reviewed inventory only; never deserialize from IOUC input.
 + * Each entry must derive from actual installed association/auth/key/data/
 + * disconnect handlers for that feature. Bits do not authenticate their source
-+ * or establish correct implementations. No current backend supplies entries. */
++ * or establish correct implementations. The installed native station service
++ * supplies its reviewed CCMP/RSN subset; this is not connected-state proof. */
 +struct niwc_manifest {unsigned count;struct niwc_entry entry[NIWC_FEATURES];};
 +/* Exact bind request12 GET, small carrier, payload13, value0. Writes raw13,
 + * no version prefix. A nonnull native-owned empty inventory emits exactly13 zero bytes.
@@ -17746,7 +17747,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_service.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,51 @@
 +#ifndef WIFI_STATION_SERVICE_H
 +#define WIFI_STATION_SERVICE_H
 +#include "wifi_ios_join.h"
@@ -17788,6 +17789,12 @@
 + * matching ticket/client epoch. No pointer into mutable RX/secret state escapes.
 + * 0 copied,1 unavailable,-1 invalid. Never returns success from a fake backend. */
 +int nord2_wifi_join_copy_state(struct njs_snapshot*);
++/* Installed implementation inventory only, never live association/readiness.
++ * Exact reviewed CCMP128 + RSN-IE path; no WPA1/TKIP/WEP/GCMP/SAE/PMF claim.
++ * Native source owns entries, client cannot provide or widen them. No IO.
++ * 0 copied,1 native service unavailable,-1 invalid; failure leaves out unchanged. */
++struct niwc_manifest;
++int nord2_wifi_join_card_inventory(struct niwc_manifest*);
 +#ifdef __cplusplus
 +}
 +#endif
@@ -17931,10 +17938,11 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_station_service_bind.inc
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,215 @@
 +/* Included after NSS declarations/delivery and authenticated NST native binder.
 + * Same actual retained CAP worker, same admission lock. No second worker. */
 +#include "wifi_station_service.h"
++#include "wifi_ios_card.h"
 +#include "wifi_wpa_nst.h"
 +#include "wifi_ifnet_link.h"
 +#ifndef NJS_HOST_TEST
@@ -18006,6 +18014,18 @@
 + IOLockUnlock(nss_native.lock);
 + if(!r&&nord2_wifi_ifnet_link(generation,0))r=-1;
 + IOLockUnlock(njs_native.notice_lock);if(r!=1)thread_wakeup((event_t)&nss_native);return r;
++}
++/* Compiled native module implements all six operations for this checked
++ * WPA2-PSK/CCMP profile. Bits describe installed handlers, not reached keys,
++ * current carrier, all RSN authentication modes or a hardware-test result. */
++int nord2_wifi_join_card_inventory(struct niwc_manifest*out){
++ if(!out)return -1;
++ if(!nss_available())return 1;
++ IOLockLock(nss_native.lock);
++ if(nss_native.failed||!njs_native.notice_lock){IOLockUnlock(nss_native.lock);return 1;}
++ const struct niwc_manifest installed={2,{
++  {NIWC_CCMP,NIWC_END_TO_END},{NIWC_RSN_IE,NIWC_END_TO_END}}};
++ *out=installed;IOLockUnlock(nss_native.lock);return 0;
 +}
 +int nord2_wifi_join_copy_state(struct njs_snapshot*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);*out=njs_native.snapshot;IOLockUnlock(nss_native.lock);return 0;}
 +int nord2_wifi_link_send(const uint8_t*p,size_t n,uint64_t generation){
@@ -21864,7 +21884,7 @@
 +}
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_client.cpp
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,405 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Native owned IOUC: scan and bounded WPA2 join bridge. Native station owner
@@ -22209,7 +22229,15 @@
 +  if(result)return result==-2?kIOReturnUnsupported:kIOReturnBadArgument;
 +  a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;
 + }
-+ if(q->request==12){niwc_manifest empty={};size_t used=0;if(niwc_card_reply(carrier,bytes,&empty,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
++ if(q->request==12){
++  if(q->payload_bytes!=NIWC_CARD_BYTES||a->structureOutputSize<NIWC_CARD_BYTES)return kIOReturnBadArgument;
++  niwc_manifest installed={};size_t used=0;
++  if(nord2_wifi_join_card_inventory(&installed))return kIOReturnNotReady;
++  if(niwc_card_reply(carrier,bytes,&installed,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;
++  a->structureOutputSize=(uint32_t)used;
++  if(traceControl(12,0))printf("NORD2 WIFI IOS CARD: bytes=%u features=%u byte0=%#x byte1=%#x\n",(unsigned)used,installed.count,(unsigned)((uint8_t*)a->structureOutput)[0],(unsigned)((uint8_t*)a->structureOutput)[1]);
++  return kIOReturnSuccess;
++ }
 + if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
 + if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
 + if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);
