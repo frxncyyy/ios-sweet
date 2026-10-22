@@ -3,6 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: Wi-Fi discovery CONFIRMED in iOS Settings on52d4b159.**
+  Human: page opens after roughly5minutes and finally shows networks; prior
+  health confirmation remains valid. Actual UI scans on2.4/5GHz complete with
+  event10, per-row GET11 and EOF. ui-confirmed.log423414B SHA40809745f449ed4b003073f2c68961b4ee590db1c26327ddde91ecb970a7906b saved privately;
+  final capture23834 still active. No association or networking implemented.
+  Initial event pipe322.619s vs clients26.190s and exact configd Stack300s timer
+  implicate missing IONetworkStack startup service; rootbusy0 alone did not fix.
+  cap_stage validates exact caller; station_wire prepares private real owned
+  interface adapter (existing ifnet, truthful registered state, no duplicate BSD
+  interface); format_stage independently reviews live scan delivery. No new
+  image/flash, phone52d4b159 stays healthy. Fix remaining initialization delay
+  before next proposed boot test; no need to alter proven scan path.
+
+- **2026-10-22: discovery52d4b159 boots healthy; Settings still blocked.**
+  Human confirms lockscreen/touch/buttons okay but Wi-Fi Settings freezes.
+  Root4410 CLOSED0; immutable backend-boot.log350624B, SHAb021928c0607f19936085c05a3d793bf21a1263b714de4bae580e45bd769c785,
+  under research/nord2/wifi-ios-discovery/ios. Backend parser PASS/issues=[];
+  three client opens at26.2s with root_busy0, no armed pipe/scan request yet.
+  Read-only Settings collector23834 ACTIVE for600s; sole USB owner, no new flash.
+  cap_stage found exact configd waits for IONetworkStack service/open separately
+  from root quiet, initial300s timeout; investigating actual caller contract with
+  station_wire in parallel. This is a candidate explanation, not a proven fix.
+  Current phone52d4b159, no recovery; runner USED. Need eventual Settings scan
+  chain and final UI observation; do not claim discovery success.
+
 - **2026-10-22: combined discovery52d4b159 VERIFIED + AUTHORIZED + FLASHED.**
   Image nord2-ios-wifi-discovery-battery-stop23.img33415168B,
   SHA52d4b1591b3b8d906214ec37bc93e309d5a3b69d59fd8a013c424d755a504aca;
