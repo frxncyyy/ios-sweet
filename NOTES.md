@@ -4,6 +4,51 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: cohesive WPA2 image VERIFIED; pending exact boot-only approval.**
+  nord2-ios-wifi-security-battery-stop23.img33462272B SHA
+  6e4ce860cfbd0b27fbace65e61e96edc8d2af8067603652cd67a0939c53331c6.
+  Payload07f369366eea4ad8ec15fb22b457a9408262fa806774bf6427707113bd76b258,
+  spare92160B. CI39790703398 source938cb89, kernel86b44266. Builder1098CLOSED0.
+  Independent existing-image report1f8b9a44/manifest545196ee PASS under1GiB;
+  all loader/kernel/ADT/rescue/header/source/parser/review identities exact.
+  Identity/native/prepared gates TRUE; human/RF/recovery authorization FALSE;
+  fresh runner UNUSED. Private stage:research/nord2/wifi-ios-security/ios.
+  Claude full review90a4e6ae beforeCI yielded cohesive fixes; independent final
+  review also fixed first-pump clock and verified linked behavior. No hardware
+  connection proof. Phone still healthy43fd, noUSBreader. Ask exact newflash
+  approval with conditional52d4/RAMrescue recovery. First test: one WPA2-PSK/CCMP
+  attempt after boot, PrivateWi-FiAddress OFF, password onphoneonly. Observe
+  JOINREQ/nativeassoc/keys/DHCP/IP/Safari separately; no success inferred.
+  Never stockAndroidboot overiOSuserdata. UFS/speed remains closed.
+
+
+- **2026-10-22: CI39790703398 SUCCESS, kernel verified; image building.**
+  Exact source938cb89, kernel17703096B SHA86b44266ff4a20d24ae1bada1eda0533bc7f8a6e75634d940ba5d5453040ea2e.
+  221generatedsources match,32actualgenericARMv8.2 compileunits PASS,
+  2,271,900instruction ISA check PASS. Watcher53752 CLOSED0, all artifacts local.
+  Independent bounded linked reviews PASS: service2886e1cb, WPA79e89147,
+  native4f343335; all manifest/body/kernel hashes verified. Source bundle266files
+  at wifi-ios-security/ios/source-manifest-complete.json preservesinitial261bundle.
+  Identity/native gates TRUE; prepared/human gates FALSE. Builder1098 ACTIVE
+  under1GiB limit, targetnord2-ios-wifi-security-battery-stop23.img. No phoneaction.
+  Next independentexistingimageverification, then exact boot-only authorization.
+  Phone healthy43fd; fallback52d4/RAMrescue verified available. No USBreader.
+
+
+- **2026-10-22: cohesive connection CI39790703398 IN PROGRESS.**
+  Source938cb89b827bf7cd477044714ed23b935d4d6bd0 committed and pushed tofork,
+  preceded by CARD932b489. Runner53752 watches exact attempt1 and downloads only
+  success artifacts toresearch/ci-39790703398. Job waited~14min for macos14;
+  now running. No duplicate dispatch. Native tests/review evidence and full261
+  source manifest at wifi-ios-security/ios; no prepared image or authorization.
+  GitHub announced reducedmacos14 capacity beforeNov2 retirement (official
+  changelog2026-10-01); todayOct22 is not scheduledbrownout. Wire documented
+  future macos15 contingency using exact oldIIG generatedpairs; NOTimplemented,
+  no workflow change, do not commit Apple/generatedbinary artifacts.
+  Next successartifact audit,23bounded linkedcheck, pack/independentimagecheck.
+  Phone remains43fd, noUSBowner. Newflash stillrequires exactimageauthorization.
+
+
 - **2026-10-22: cohesive WPA2 fixes READY for one CI build.**
   Claude full review90a4e6ae incorporated, final independent reviewc4d0bbfb PASS
   after startup clock correction; old source fails the new crossing-ms test,
