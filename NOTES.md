@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: CI39804982005 rerun as attempt2, user requested; QUEUED.**
+  Attempt1 never acquired a hosted runner: GitHub annotation says capacity
+  constraints; build job119915675214 has no steps. It failed/cancelled before
+  compilation. Root watcher26246 CLOSED2; preserved its metadata/log/annotations
+  and watcher under research/ci-39804982005/attempt1. No kernel artifact exists.
+  User requested rerun; gh run rerun accepted, live API confirms attempt2,
+  source unchanged6b3302d1e039ca451b02a8aa2d8773aea269d8e4, queued build job119951733217.
+  New sole watcher10655 ACTIVE runs watch-attempt2.py, checks exactsource/attempt2
+  and downloads artifacts only after success. No duplicate workflow dispatch.
+  Format agent's prior linked review stopped pending/failure; extractor prepared
+  at wifi-ios-identity/ios/linked-review/identity-aks/extract.py, no linked PASS.
+  Next successful artifact checks/image preparation remain as below; all gates
+  closed, phone healthy6e4, no new device access or flash approval.
+
 - **2026-10-22: metadata audit finished; single combined CI39804982005 QUEUED.**
   Runtime/source commit1fd4c4d plus documentation6b3302d1e039ca451b02a8aa2d8773aea269d8e4
   pushed tofork; dispatched exactly once oncodex/nord2-bringup. Root watcher26246
