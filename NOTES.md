@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: iOS Wi-Fi compatibility a199cd0c FLASHED; collecting, health pending.**
+  Exact user approval call_e5de447d21f94dbab2e5330a419574f9, “Autorizzo il test”.
+  Boot-only flash/reboot OKAY, current phone is a199cd0c, no fallback performed.
+  shim/out/nord2-xnu/nord2-ios-wifi-ios-compat-battery-stop23.img,33413120B,
+  SHA a199cd0cda7138ba2ecf39e3bc585cbbd3556e12f3b7169d81894bdccf985562;
+  payload f6c384200da4fdb1998bd75f6ccd341b45987a4bccf8146359955b51eedc0021.
+  CI39744729444/source b7800f8/kernel28a8634f; bounded package30125 and
+  independent existing-image check62942 CLOSED0;141312B spare in boot.
+  Exact header/loader/stock Linux/rescue bytes/ADT/calibration/kernel segments
+  verified. Fresh wifi-ios-compat/ios runner is USED: NEVER rerun.
+  Root collector41821 ACTIVE with300seconds read window. Await actual iOS
+  network enumeration, event pipe, fresh UI scan and result delivery; human
+  Settings list and full health still pending. No association/IP implementation.
+  Conditional recovery healthy6a6a/RAM rescue already authorized; never stock
+  Android over iOS userdata. If hardware fails, save log before manual recovery.
+  Parallel format_stage preparing association/data implementation plan using
+  oosexgang and selected MT6893 Android driver; no device/source mutation there.
+
+- **2026-10-22: iOS compatibility CI39744729444 PASS; image packaging in progress.**
+  Source b7800f8d81a197a490923e6443157a1d740effbe, kernel 17607600B,
+  SHA28a8634f95297a62de1ece6c7d3597d7e56a2ef9ca3a5729f8882d5654c3edac.
+  All195 generated files equal CI;20 actual affected compilation units use
+  generic ARMv8.2;2251459 decoded instructions contain no LDAPUR/STLUR.
+  Exact linked review cb60f9ec/manifest96e7d8c3 PASS verifies metaclass parent
+  chain and init retention, scalar/channel calls and OOL copy/rollback branch.
+  CI watcher37012, source audit92732 and ISA15576 CLOSED0. Image packaging
+  session30125 runs with a1GiB address-space cap at wifi-ios-compat/ios;
+  prepared image/human approval gates remain false, runner UNUSED.
+  User connected Nord2 in fastboot; expected single device detected read-only.
+  No new flash or approval. Next finish package/check-existing and obtain
+  exact image boot-only approval. Healthy6a6a and tested RAM rescue verified.
+
 - **2026-10-22: cohesive iOS Wi-Fi compatibility correction integrated; local checks PASS.**
   New stage research/nord2/wifi-ios-compat/ios, no device action or image approval.
   Current phone remains last58f6 (currently absent USB); healthy6a6a preserved.
