@@ -3,6 +3,30 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22:195a7e17 boot capture PASS; human Settings test pending.**
+  Root55188 CLOSED0; complete boot log343019B saved at
+  wifi-ios-profile/ios/backend-boot.log, SHAe9100838d80d9c2b7d1db42869b5e56c08eab322cc8b883f3e9e51ab0ad729cc.
+  Backend parser complete=true/issues=[];7AP,3client opens, valid iOS frames.
+  No fresh SCANREQ/enqueue/event/result yet: the corrected policy has not been
+  exercised on hardware. Health/Settings question is pending, no result assumed.
+  Settings read-only USB collector70804 ACTIVE for600s at hardware-settings;
+  one owner, no other USB collector. Phone195a7e17; runner USED; no recovery.
+  wire agent investigating private codec flags504 and event9 metadata extent;
+  source/device unchanged. Next read human result, save immutable full trace
+  and parse actual UI chain. Do not confuse7 boot APs with Settings delivery.
+
+- **2026-10-22: scan-profile195a7e17 FLASHED; live test collecting.**
+  Exact approval call_d5571d307bc84e3e8f21aa4fc4828c77, human “Autorizzo,
+  pronto in fastboot”. Boot-only flash/reboot OKAY; current phone195a7e17.
+  wifi-ios-profile/ios runner USED, NEVER rerun. Root55188 ACTIVE with300s
+  read-only USB collection; USB console connected, initial26-command startup
+  and22-channel scan report7AP/7frames/noerrors, retained owner ready1.
+  Fresh UI scan/admission/results and human health still pending; Settings
+  question sent while collecting. No recovery, no association claim. Exact
+  conditional healthy6a6a/RAM rescue approval acquired; never stock Android.
+  wire association codec55a94847 private1294checksPASS; real defaultflags504
+  and metadataevent9 remain unresolved, so no actual caller admission claimed.
+
 - **2026-10-22: scan-profile image195a7e17 VERIFIED; exact approval pending.**
   shim/out/nord2-xnu/nord2-ios-wifi-scan-profile-battery-stop23.img,33415168B,
   SHA195a7e174c750f1e0b2bd54894c615ce9e008068b8a52e609923246f6a3ed09b;
