@@ -4,6 +4,64 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: combined datapath image PREPARED and independently verified.**
+  shim/out/nord2-xnu/nord2-ios-wifi-datapath-stop23.img,33478656 bytes:
+  SHA25608e6be56c42f62c0b0e4771132c9865f84a49f4f634c9a235503e595d6403a42.
+  Payload14993648 bytes SHA256
+  7af08ad87ab0ad6bdc45520d6964691c8c115b025f59616fe0ff79b7ca5ee70f;
+  boot spare75776 bytes. Builder41708 CLOSED0. Independent actual-image report
+  3e4b5b3b/manifest5e158b8d PASS; parent verified all7 members/protected stage
+  pins/image/recoveries. Only independent-checker template adaptations were
+  needed (external pinned receipt wrapper and absent null serial field).
+  Exact source b441429316787f81d62106e7a9892f282b28e174, CI39859151068 attempt1;
+  kernel17787168 bytes SHAbd62a2e8856c040e4d5fb70a401849cc4e1978c0718a4058abc033c96b842888.
+  Source/CI/schema/prepared gates TRUE. Human/RF/conditional recovery FALSE;
+  runner UNUSED. Phone remains b8851761, one Join consumed. No new device action.
+  Next: exact boot-only user approval and manual fastboot; one WPA2 Join with
+  private address disabled/password only on phone, single600s collector to
+  capture DHCP and late GTK renewal. Open-network comparison remains unsupported.
+  This image bundles normal HW0 TXD/TXP/token lifetime, secure GTK renewal,
+  infrastructure/FAST/dwell scans, bounded RX/TXS/own-client DHCP diagnostics.
+  No live data/lease/Internet or new rekey success claimed. Recovery d9a44316
+  or verified RAM ADB only; never stock Android over iOS userdata.
+
+
+- **2026-10-22: exact datapath linked review PASS; image packaging running.**
+  Independent report70351db8/manifest570f3a63 verifies27 bounded linked bodies
+  and14 numeric emitter formats. Parent verified all62 manifest members,
+ 331 source pins, actual kernel markers and exact CI/source identity.
+  Source/schema gates are verified for b441429/CI39859151068. Builder41708
+  packages nord2-ios-wifi-datapath-stop23.img under1GiB address-space limit.
+  Prepared-image and human/RF/recovery authorization gates remain FALSE.
+  New image not yet verified; phone remains b8851761, no device operation.
+  Next: completed image, independent existing-artifact review, exact approval.
+
+
+- **2026-10-22: datapath CI39859151068 succeeded; exact artifact verified.**
+  Attempt1/sourceb441429316787f81d62106e7a9892f282b28e174; watcher96813
+  CLOSED0. Kernel17787168 bytes SHA
+  bd62a2e8856c040e4d5fb70a401849cc4e1978c0718a4058abc033c96b842888.
+  Parent confirms231generated files byte-equal,37genericARMv8.2 compile units,
+  and2279112 decoded instructions without LDAPUR/STLUR. Source/marker pins
+  match; final bounded actual linked review is running before image packaging.
+  Supplemental six-family reader26945cf8 independently passes109positive/
+  760negative cases and is wired into the newstage snapshot collector only.
+  Future collector600s preserves the late rekey window. Phone remainsb8851761;
+  no new image, Join or flash yet; human authorization gates remain false.
+
+
+- **2026-10-22: combined datapath source committed; full CI dispatched once.**
+  Source b441429316787f81d62106e7a9892f282b28e174, fork branch
+  codex/nord2-bringup; CI39859151068 attempt1 compiling on macOS. Watcher96813
+  verifies exact head/attempt and downloads artifacts only after success.
+  All13 local composed groups and15 actual ARM64 C units passed; independent
+  source/merge reviews passed. New supplemental numeric diagnostics reader is
+  being prepared privately while CI waits. New image has not been built and
+  all source-CI/image/human test gates remain closed; phone stillb8851761.
+  Next: successful CI, generated-source/ISA/linked checks, build/verify exact
+  nord2-ios-wifi-datapath-stop23.img, then fresh boot-only user approval.
+
+
 - **2026-10-22: final combined datapath suite PASS, ready for full CI.**
   All13 groups in wifi-ios-datapath/ios/local-tests/combined.json pass on final
   canonical runtime: normal TX, secure GTK, all9 station groups, data diagnostics,
