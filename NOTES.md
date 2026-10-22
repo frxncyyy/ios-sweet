@@ -3,6 +3,53 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: TXS/timing image PREPARED and verified; new flash approval required.**
+  Image shim/out/nord2-xnu/nord2-ios-wifi-txs-timing-stop23.img, 33464320 bytes:
+  SHA-256 454ac21e3bc8f6dd313456f7da01b6a8712e61ca1bff6ae702a1075dc7ccb62e.
+  Payload14943680 bytes, SHA c0e19becd83e85feca46cc2f949458c665ee094e80a70a025a770461dbeb3286;
+  boot spare90112 bytes. Builder43320 CLOSED0. Independent image report a1993f65,
+  manifest72aadc5e PASS; root verified every member and stage pin before opening
+  the prepared gate. Kernel/source/segments/header/loader/rescue checks pass.
+  ADT equals executed d9a; removing only the MAC addition yields executed6e4.
+  CI39830672617/source1a4b1fed identity and linked review are verified.
+
+  Fresh stage research/nord2/wifi-ios-txs/ios has source/native/prepared gates
+  true; human/RF/conditional-recovery authorization remains FALSE. Runner unused,
+  no active USB reader, no new flash. Current phone remains healthy d9a44316.
+  Next: obtain exact new boot-only approval plus conditional d9a/rescue recovery,
+  then verify manual fastboot and use the one-shot runner. Do not carry a73's
+  old approval forward. Test one WPA2-Personal/CCMP join with private address off,
+  capturing pre-password timing separately. Password stays on the phone.
+  This image adds known-DDONE negative cleanup and diagnostic timing; it does
+  not establish a fix for the missing M2 TXS or prove WPA2/IP connectivity.
+
+- **2026-10-22: CI39830672617 succeeded; actual artifacts verified.**
+  Attempt 1, exact source 1a4b1fed3d36622b9697085c55640dbd5f4595eb.
+  Kernel 17720064 bytes, SHA-256
+  88867058bf927b0b4bdd979f41f804b8e1848b65d415721b713f50f3791863fb.
+  Watcher49910 CLOSED0. Root checked 224 generated files against reviewed
+  sources, 34 actual generic ARM64 compile units, and 2272839 instructions
+  without LDAPUR/STLUR. All new diagnostic markers are present.
+  Bounded linked review PASS: report f3aad9ec, manifest 1568791c; root checked
+  all member hashes. Builder43320 is active with a 1 GiB address-space limit.
+  CI identity and native/schema gates are verified; prepared-image and human
+  gates remain closed until final-image review and exact new authorization.
+  Additional selected-Android TXS prerequisite audit eacd3cde found no justified
+  configuration change. Earlier captured frame results show the route worked
+  before M2; the cause of M2's missing receipt remains unresolved. Phone stays
+  on healthy d9a44316, no USB collector or new device action.
+
+- **2026-10-22: combined TXS/timing source committed; full CI running.**
+  Source 1a4b1fed3d36622b9697085c55640dbd5f4595eb pushed to fork.
+  Exactly one workflow dispatched: CI39830672617, attempt 1; macOS Build is
+  in progress. Watcher49910 downloads successful artifacts into
+  research/ci-39830672617. Fresh source bundle 881595e7 pins 291 committed files.
+  Stage-template review 51ba66fb confirms target/recovery/reader consistency;
+  root applied explicit new marker/reader requirements and honest timeout
+  metadata. Source/schema/prepared/human gates remain false pending artifacts.
+  Linked review and independent image checker are prepared, not yet executed.
+  Phone stays on healthy d9a44316, no active USB reader or pending human action.
+
 - **2026-10-22: combined TXS cleanup and request timing integrated; local verification passes.**
   Phone is on restored d9a44316; user confirmed lockscreen and controls work.
   Failed-test collector 8715 and recovery collector 18000 are both CLOSED (exit 0).
