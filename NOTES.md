@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: functional IONetworkStack fix integrated; CI next.**
+  Registry source50e69c6a registers stack/owned type0 client for existing real
+  attached ifnet; adds truthful IOInterfaceState1, exact naming dictionaries,
+  admin/task ownership, bounded open/set timing, balanced deactivation/refs.
+  Scans/radio/UFS unchanged. Candidate manifestec4043df; independent review
+ 891a9601 PASS. Actual generated ARMv8.2 registry compile92626 CLOSED0;
+  canonical registry Werror/ASan/UBSan fixture PASS, retained media/TX tests.
+  Generated0082 applies/reproduces buildtree. Fresh wifi-ios-stack/ios image/CI/
+  approval gates FALSE, runner UNUSED; source-only implementation ready for CI.
+  Current52d4b159 healthy with visible networks after~5minutes; no USB collector.
+  Need exact CI artifact/native checks and packaging before new image approval.
+
+- **2026-10-22: discovery52d4b159 full capture complete.**
+  Both collectors4410/23834 CLOSED0; no USB owner active. Immutable
+  research/nord2/wifi-ios-discovery/ios/backend-full.log459229B,
+  SHA1fd389de3e894208f466c0310b023ceeb76398a8ad45b178e134b0b39e373509.
+  Strict backend PASS/issues=[];33 completed fresh UI scans,33 notifications,
+ 210 encoded rows with EOF; human confirms visible networks after~5minutes.
+  Independent prefix receipt manifest1305e4bf confirms actual GET11 streams;
+  unrelated unsupported request207 explains conservative delivered=null field.
+  Healthy phone52d4b159 stays installed; no recovery or further device action.
+  Missing-stack evidence manifest51700d4d pins configd type0 and setProperties
+  contract; full wifid causal link remains inference. Private stack candidate
+  uses existing real ifnet plus truthful registered state and owned client;
+  independent review underway. New wifi-ios-stack/ios staging all gates FALSE,
+  runner UNUSED; no new CI/image/authorization. Next integrate reviewed registry
+  fix, native compile and CI; do not change validated scan or UFS behavior.
+
 - **2026-10-22: Wi-Fi discovery CONFIRMED in iOS Settings on52d4b159.**
   Human: page opens after roughly5minutes and finally shows networks; prior
   health confirmation remains valid. Actual UI scans on2.4/5GHz complete with

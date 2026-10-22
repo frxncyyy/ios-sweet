@@ -19997,7 +19997,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_registry.cpp
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,286 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Compatible replacement registry classes: IOService ABI only. No proprietary
@@ -20013,6 +20013,9 @@
 +#include <libkern/c++/OSDictionary.h>
 +#include <libkern/c++/OSString.h>
 +#include <libkern/c++/OSData.h>
++#include <libkern/c++/OSNumber.h>
++#include <kern/task.h>
++#include <kern/clock.h>
 +#include <net/kpi_interface.h>
 +#include <sys/kpi_mbuf.h>
 +#include <sys/errno.h>
@@ -20048,9 +20051,150 @@
 + OSDeclareDefaultStructors(IO80211SkywalkInterface)
 +};
 +OSDefineMetaClassAndStructors(IO80211SkywalkInterface,IO80211Interface)
++/* Original bounded adapter for an interface already attached by the BSD KPI.
++ * Contract constants are corroborated by Apple's published IONetworkStack and
++ * the selected configd consumer. This is not a copy of either implementation.
++ * No ifnet is created, renamed, brought up or given a working data path here. */
++static unsigned long long niws_ms(void){
++#ifdef NIWI_REGISTRY_HOST_TEST
++ return 0;
++#else
++ uint64_t now=0,ns=0;clock_get_uptime(&now);absolutetime_to_nanoseconds(now,&ns);return ns/1000000u;
++#endif
++}
++class IONetworkStackUserClient;
++class IONetworkStack : public IOService {
++ OSDeclareDefaultStructors(IONetworkStack)
++ IOLock *gate=nullptr;
++ IOService *ownedInterface=nullptr;
++ ifnet_t ownedNet=nullptr;
++ uint64_t entryID=0;
++ uint32_t unit=0;
++ char bsdName[16]={};
++ bool active=false;unsigned openLogs=0,propertyLogs=0;
++ bool liveLocked(){
++  if(!active||!ownedInterface||ownedInterface->isInactive()||!ownedNet)return false;
++  ifnet_t found=nullptr;
++  errno_t e=ifnet_find_by_name(bsdName,&found);
++  bool same=!e&&found==ownedNet&&ifnet_unit(found)==unit;
++  if(found)ifnet_release(found);
++  return same;
++ }
++public:
++ bool initOwned(IOService *interface,ifnet_t net){
++  if(!interface||!net||!IOService::init())return false;
++  gate=IOLockAlloc();if(!gate)return false;
++  if(interface->isInactive()||strcmp(ifnet_name(net),"en")||ifnet_unit(net)>=32)return false;
++  unit=ifnet_unit(net);snprintf(bsdName,sizeof bsdName,"en%u",unit);
++  ifnet_t found=nullptr;errno_t e=ifnet_find_by_name(bsdName,&found);
++  if(e||found!=net){if(found)ifnet_release(found);return false;}
++  ownedNet=found;ownedInterface=interface;interface->retain();entryID=interface->getRegistryEntryID();
++  return entryID!=0;
++ }
++ bool start(IOService *provider) override {
++  if(!gate||!ownedInterface||!ownedNet||!IOService::start(provider))return false;
++  if(!setProperty("IOUserClientClass","IONetworkStackUserClient")){IOService::stop(provider);return false;}
++  setName("IONetworkStack");active=true;return true;
++ }
++ void deactivate(){if(gate){IOLockLock(gate);active=false;IOLockUnlock(gate);}}
++ void stop(IOService *provider) override {deactivate();IOService::stop(provider);}
++ void free(void) override {
++  if(ownedInterface){ownedInterface->release();ownedInterface=nullptr;}
++  if(ownedNet){ifnet_release(ownedNet);ownedNet=nullptr;}
++  if(gate){IOLockFree(gate);gate=nullptr;}
++  IOService::free();
++ }
++ IOReturn setProperties(OSObject *properties) override {
++  if(IOUserClient::clientHasPrivilege(current_task(),kIOClientPrivilegeAdministrator)!=kIOReturnSuccess)return kIOReturnNotPrivileged;
++  OSDictionary *dict=OSDynamicCast(OSDictionary,properties);
++  if(!dict)return kIOReturnBadArgument;
++  OSNumber *command=OSDynamicCast(OSNumber,dict->getObject("IONetworkStackUserCommand"));
++  if(!command)return kIOReturnBadArgument;
++  uint64_t cmd=command->unsigned64BitValue(),target=0,requested=0;
++  if(cmd>2)return kIOReturnUnsupported;
++  if(cmd==2){
++   /* Global operation, not an individual target. Owned pending set is empty:
++    * the sole owned interface was attached by the BSD KPI before publication. */
++   if(dict->getObject("IORegistryEntryID")||dict->getObject("IOInterfaceUnit"))return kIOReturnBadArgument;
++  }else{
++   OSNumber *requestedUnit=OSDynamicCast(OSNumber,dict->getObject("IOInterfaceUnit"));
++   OSData *id=OSDynamicCast(OSData,dict->getObject("IORegistryEntryID"));
++   /* Selected caller supplies all three. No path fallback/numeric truncation. */
++   if(!requestedUnit||!id||id->getLength()!=sizeof(uint64_t))return kIOReturnBadArgument;
++   requested=requestedUnit->unsigned64BitValue();if(requested>UINT32_MAX)return kIOReturnBadArgument;
++   memcpy(&target,id->getBytesNoCopy(),sizeof target);
++  }
++  if(!gate)return kIOReturnNotReady;
++  IOLockLock(gate);IOReturn result=kIOReturnNotReady;bool live=liveLocked();
++  if(live){
++   if(cmd==2)result=kIOReturnSuccess;
++   else if(target!=entryID)result=kIOReturnNoDevice;
++   /* Already attached interfaces cannot be re-reserved by Apple's state
++    * machine. Preserve NoSpace on repeat; do not claim rename/new attach. */
++   else result=kIOReturnNoSpace;
++  }
++  if(propertyLogs<16){propertyLogs++;printf("NORD2 WIFI IOS STACK SET: command=%u unit=%u live=%u status=%#x t_ms=%llu\n",(unsigned)cmd,(unsigned)requested,(unsigned)live,(unsigned)result,niws_ms());}
++  IOLockUnlock(gate);return result;
++ }
++ IOReturn newUserClient(task_t,void*,UInt32,OSDictionary*,IOUserClient**) override;
++ void opened(){IOLockLock(gate);if(openLogs<8){openLogs++;printf("NORD2 WIFI IOS STACK OPEN: type=0 unit=%u ifstate=1 t_ms=%llu\n",unit,niws_ms());}IOLockUnlock(gate);}
++ bool ready(){if(!gate)return false;IOLockLock(gate);bool r=liveLocked();IOLockUnlock(gate);return r;}
++};
++OSDefineMetaClassAndStructors(IONetworkStack,IOService)
++
++class IONetworkStackUserClient : public IOUserClient {
++ OSDeclareDefaultStructors(IONetworkStackUserClient)
++ IOLock *gate=nullptr;
++ task_t owner=TASK_NULL;
++ IONetworkStack *stack=nullptr;
++ void closeOwned(){
++  if(!gate)return;IOLockLock(gate);IONetworkStack *old=stack;stack=nullptr;
++  task_t task=owner;owner=TASK_NULL;IOLockUnlock(gate);
++  if(old){old->close(this);old->release();}if(task)task_deallocate(task);
++ }
++public:
++ bool initWithTask(task_t task,void *security,UInt32 type,OSDictionary *properties) override {
++  if(!task||current_task()!=task||type||IOUserClient::clientHasPrivilege(security,kIOClientPrivilegeAdministrator)!=kIOReturnSuccess)return false;
++  if(!IOUserClient::initWithTask(task,security,type,properties))return false;
++  gate=IOLockAlloc();if(!gate)return false;task_reference(task);owner=task;return true;
++ }
++ bool start(IOService *provider) override {
++  IONetworkStack *candidate=OSDynamicCast(IONetworkStack,provider);
++  if(!candidate||!candidate->ready()||!IOUserClient::start(provider))return false;
++  if(!candidate->open(this)){IOUserClient::stop(provider);return false;}
++  candidate->retain();stack=candidate;return true;
++ }
++ IOReturn setProperties(OSObject *properties) override {
++  if(!gate)return kIOReturnNotOpen;
++  IOLockLock(gate);IOReturn result=kIOReturnNotOpen;
++  if(stack){
++   if(current_task()!=owner||IOUserClient::clientHasPrivilege(current_task(),kIOClientPrivilegeAdministrator)!=kIOReturnSuccess)result=kIOReturnNotPrivileged;
++   else result=stack->setProperties(properties);
++  }
++  IOLockUnlock(gate);return result;
++ }
++ IOReturn clientClose(void) override {closeOwned();if(!isInactive())terminate();return kIOReturnSuccess;}
++ IOReturn clientDied(void) override {return clientClose();}
++ void stop(IOService *provider) override {closeOwned();IOUserClient::stop(provider);}
++ void free(void) override {closeOwned();if(gate){IOLockFree(gate);gate=nullptr;}IOUserClient::free();}
++};
++OSDefineMetaClassAndStructors(IONetworkStackUserClient,IOUserClient)
++IOReturn IONetworkStack::newUserClient(task_t task,void *security,UInt32 type,OSDictionary *properties,IOUserClient **out){
++ if(!out)return kIOReturnBadArgument;*out=nullptr;
++ if(type)return kIOReturnUnsupported;
++ if(!task||current_task()!=task||IOUserClient::clientHasPrivilege(security,kIOClientPrivilegeAdministrator)!=kIOReturnSuccess)return kIOReturnNotPrivileged;
++ if(!ready())return kIOReturnNotReady;
++ auto *client=new IONetworkStackUserClient;
++ if(!client)return kIOReturnNoMemory;
++ if(!client->initWithTask(task,security,type,properties)){client->release();return kIOReturnNoResources;}
++ if(!client->attach(this)){client->release();return kIOReturnNoResources;}
++ if(!client->start(this)){client->detach(this);client->release();return kIOReturnNotReady;}
++ *out=client;opened();return kIOReturnSuccess;
++}
++
 +class IO80211Controller : public IOService {
 + OSDeclareDefaultStructors(IO80211Controller)
-+ ifnet_t net=nullptr;IO80211SkywalkInterface*interface=nullptr;
++ ifnet_t net=nullptr;IO80211SkywalkInterface*interface=nullptr;IONetworkStack *stack=nullptr;
 + static errno_t output(ifnet_t,mbuf_t p){mbuf_freem(p);return ENETDOWN;}
 + static errno_t demux(ifnet_t,mbuf_t,char*,protocol_family_t*){return EOPNOTSUPP;}
 + static errno_t add(ifnet_t,protocol_family_t,const ifnet_demux_desc*,u_int32_t){return EOPNOTSUPP;}
@@ -20074,7 +20218,7 @@
 +};
 +OSDefineMetaClassAndStructors(IO80211Controller,IOService)
 +bool IO80211Controller::start(IOService*p){
-+ net=nullptr;interface=nullptr;unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof opt);
++ net=nullptr;interface=nullptr;stack=nullptr;unsigned opt=0;PE_parse_boot_argn("nord2wifiios",&opt,sizeof opt);
 + OSData*compatible=OSDynamicCast(OSData,p->getProperty("compatible"));
 + static const char expected[]="nord2,mt6893-wifi";
 + if(opt!=1||!compatible||compatible->getLength()!=sizeof expected||memcmp(compatible->getBytesNoCopy(),expected,sizeof expected))return false;
@@ -20101,12 +20245,28 @@
 + if(!interface||!interface->init()){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=3\n");if(interface)interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
 + if(!interface->attach(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=4\n");interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
 + if(!interface->start(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=5\n");interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
-+ if(!interface->setProperty("IOInterfaceName",name)||!interface->setProperty("BSD Name",name)||!interface->setProperty("IOInterfaceUnit",(uint64_t)ifnet_unit(net),32)||!interface->setProperty("IOInterfaceType",(uint64_t)IFT_ETHER,32)||!interface->setProperty("IO80211InterfaceRole","Infrastructure")||!interface->setProperty("IOInterfaceNamePrefix","en")||!interface->setProperty("IOBuiltin",true)||!interface->setProperty("IOPrimaryInterface",true)){
++ if(!interface->setProperty("IOInterfaceName",name)||!interface->setProperty("BSD Name",name)||!interface->setProperty("IOInterfaceUnit",(uint64_t)ifnet_unit(net),32)||!interface->setProperty("IOInterfaceType",(uint64_t)IFT_ETHER,32)||!interface->setProperty("IO80211InterfaceRole","Infrastructure")||!interface->setProperty("IOInterfaceNamePrefix","en")||!interface->setProperty("IOBuiltin",true)||!interface->setProperty("IOPrimaryInterface",true)||!interface->setProperty("IOInterfaceState",(uint64_t)1,32)){
 +  printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=7\n");interface->stop(this);interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
 + }
-+ interface->registerService();registerService();printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0 network_class=1 builtin=1\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
++ /* Publish only after the existing real ifnet and its interface identity are valid.
++  * The stack owns an additional lookup reference, never another ifnet. */
++ IOService *resources=IOService::getResourceService();stack=new IONetworkStack;
++ bool stackAttached=false,stackStarted=false;
++ if(stack&&resources&&stack->initOwned(interface,net)){
++  stackAttached=stack->attach(resources);if(stackAttached)stackStarted=stack->start(resources);
++ }
++ if(!stackStarted){
++  if(stack){if(stackAttached)stack->detach(resources);stack->release();stack=nullptr;}
++  interface->stop(this);interface->detach(this);interface->release();interface=nullptr;
++  ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
++ }
++ interface->registerService();stack->registerService();registerService();
++ printf("NORD2 WIFI IOS STACK: registered=1 unit=%u ifstate=1 t_ms=%llu\n",ifnet_unit(net),niws_ms());printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0 network_class=1 builtin=1\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
 +}
 +void IO80211Controller::stop(IOService*p){
++ /* Invalidate the stack before removing the identity or detaching BSD. */
++ if(stack){stack->deactivate();stack->terminate();stack->detach(IOService::getResourceService());stack->release();stack=nullptr;}
++ if(interface)interface->removeProperty("IOInterfaceState");
 + if(interface){interface->terminate();interface->detach(this);interface->release();interface=nullptr;}
 + if(net){ifnet_detach(net);net=nullptr;}IOService::stop(p);
 +}
