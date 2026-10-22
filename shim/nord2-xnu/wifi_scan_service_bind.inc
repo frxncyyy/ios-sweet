@@ -11,7 +11,7 @@ struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,ge
 static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
 static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC_ACQUIRE)==1;}
 static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
-int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r)*out=nss_native.info;IOLockUnlock(nss_native.lock);return r;}
+int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
 int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
  if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS)return -1;
  if(!nss_available())return 1;IOLockLock(nss_native.lock);

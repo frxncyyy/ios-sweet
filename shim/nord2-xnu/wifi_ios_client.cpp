@@ -19,14 +19,17 @@ extern "C" {
 #include "../../../bsd/dev/wifi_scan_service.h"
 #include "../../../bsd/dev/wifi_ios_card.h"
 #include "../../../bsd/dev/wifi_ios_policy.h"
+#include "../../../bsd/dev/wifi_ios_scalar.h"
 }
+static uint32_t niw_u32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 class NiwlLifecycleClient : public IOUserClient {
  OSDeclareDefaultStructors(NiwlLifecycleClient)
  task_t owner;IOLock *gate;
  enum Phase {Closed,Open,Allocated,Armed};Phase phase;
  IOBufferMemoryDescriptor *data,*state;
  OSAsyncReference64 reference;bool ownsReference;
- uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned unsupportedLogs,diagnosticLogs;
+ uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned unsupportedLogs,pipeLogs,scanLogs,queueLogs,completionLogs,eventLogs,resultLogs,outputLogs;
+ struct {uint32_t request,operation,count;} controlTrace[40];
  char interfaceName[16];struct nils_state cacheLife;struct nils_ticket cacheTicket;
  struct niwa_snapshot *snapshot;uint32_t producer;IOReturn lastScanError;
  static void completed(void*,uint64_t,uint64_t,enum nss_status);
@@ -37,6 +40,8 @@ class NiwlLifecycleClient : public IOUserClient {
  void discardLocked(void);
  void closeOwned(void);
  IOReturn dispatchLocked(uint32_t,IOExternalMethodArguments *,bool *);
+ bool traceControl(uint32_t,uint32_t);
+ IOReturn outputLocked(uint32_t,IOExternalMethodArguments *,bool *);
 public:
  void bindInterface(const char*);
  bool initWithTask(task_t,void *,UInt32,OSDictionary *) override;
@@ -49,7 +54,7 @@ public:
 };
 OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
 bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
- diagnosticLogs=0;unsupportedLogs=0;snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
+ pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
  owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
  if(!task||current_task()!=task||type)return false;
  OSObject *entitlement=IOUserClient::copyClientEntitlement(task,"com.apple.wifi.manager-access");
@@ -71,6 +76,10 @@ void NiwlLifecycleClient::discardLocked(void){
 void NiwlLifecycleClient::closeOwned(void){
  if(!gate)return;IOLockLock(gate);phase=Closed;if(generation!=UINT64_MAX)generation++;uint64_t ticket=pendingTicket;discardLocked();IOLockUnlock(gate);if(ticket)nord2_wifi_scan_cancel(ticket);
 }
+bool NiwlLifecycleClient::traceControl(uint32_t request,uint32_t operation){
+ for(unsigned i=0;i<40;i++)if(controlTrace[i].count&&controlTrace[i].request==request&&controlTrace[i].operation==operation){if(controlTrace[i].count<8){controlTrace[i].count++;return true;}return false;}
+ for(unsigned i=0;i<40;i++)if(!controlTrace[i].count){controlTrace[i].request=request;controlTrace[i].operation=operation;controlTrace[i].count=1;return true;}return false;
+}
 IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodArguments*a,bool*adopted){
  if(phase==Closed)return kIOReturnNotOpen;
  if(current_task()!=owner)return kIOReturnNotPrivileged;
@@ -91,11 +100,17 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
    carrier=copy;
   }else if(a->structureInputSize!=bytes)return kIOReturnBadArgument;
   struct niw_request q={};IOReturn result=kIOReturnBadArgument;
-  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)IOFree(copy,bytes);return result;}
+  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){if(a->structureOutputSize){if(copy)IOFree(copy,bytes);return kIOReturnBadArgument;}result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)IOFree(copy,bytes);return result;}
 
   uint32_t unsupportedSet=0;
   if(!niwi_set_shape(selector,carrier,bytes,interfaceName,&unsupportedSet)){
-   if(diagnosticLogs++<128)printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
+   const uint8_t*power=(const uint8_t*)carrier+8;size_t tail=selector==0?15368:245768;
+   if(unsupportedSet==19&&!a->structureOutputSize&&niw_u32((const uint8_t*)carrier+4)==24&&!niw_u32((const uint8_t*)carrier+tail+20)&&niw_u32(power)==1&&niw_u32(power+4)==1&&niw_u32(power+8)==1&&!niw_u32(power+12)&&!niw_u32(power+16)&&!niw_u32(power+20)){
+    nss_info info={};result=nord2_wifi_scan_info(&info)?kIOReturnNotReady:kIOReturnSuccess;
+    if(traceControl(19,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=19 operation=0x802869c8 bytes=24 status=%#x\n",selector,(unsigned)result);
+    if(copy)IOFree(copy,bytes);return result; /* already physically retained ON; no event/write */
+   }
+   if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
    if(copy)IOFree(copy,bytes);return kIOReturnUnsupported;
   }
   if(!niw_decode(selector,carrier,bytes,&q)){
@@ -106,7 +121,7 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
     }else result=kIOReturnBadArgument;
    }else result=getLocked(&q,carrier,bytes,a);
   }
-  if(diagnosticLogs++<128)printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=%#x bytes=%u status=%#x\n",selector,q.request,q.operation,q.payload_bytes,(unsigned)result);
+  if(traceControl(q.request,q.operation))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=%#x bytes=%u status=%#x\n",selector,q.request,q.operation,q.payload_bytes,(unsigned)result);
   if(copy)IOFree(copy,bytes);
   /* Unimplemented request IDs are explicitly unsupported; no security or link
    * state is inferred from successful scan operations. */
@@ -139,12 +154,31 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
  if(selector==4){if(scanGeneration!=UINT64_MAX)scanGeneration++;discardLocked();phase=Open;return kIOReturnSuccess;}
  return kIOReturnUnsupported;
 }
+IOReturn NiwlLifecycleClient::outputLocked(uint32_t selector,IOExternalMethodArguments*a,bool*adopted){
+ if(!a||!a->structureOutputDescriptor)return dispatchLocked(selector,a,adopted);
+ if(phase==Closed)return kIOReturnNotOpen;
+ if(current_task()!=owner)return kIOReturnNotPrivileged;
+ IOMemoryDescriptor*md=a->structureOutputDescriptor;size_t capacity=a->structureOutputDescriptorSize;
+ if(a->version!=kIOExternalMethodArgumentsCurrentVersion||a->selector!=selector||a->scalarInputCount||a->scalarOutputCount||a->asyncReferenceCount||a->asyncWakePort)return kIOReturnBadArgument;
+ if((selector!=0&&selector!=6)||a->structureOutputSize||!capacity||capacity>NIW_LARGE_PAYLOAD||md->getLength()!=capacity)return kIOReturnBadArgument;
+ void*buffer=IOMalloc(capacity);if(!buffer)return kIOReturnNoMemory;bzero(buffer,capacity);
+ IOReturn prepared=md->prepare(kIODirectionIn);if(prepared!=kIOReturnSuccess){IOFree(buffer,capacity);return prepared;}
+ IOExternalMethodArguments copy=*a;copy.structureOutputDescriptor=nullptr;copy.structureOutputDescriptorSize=0;copy.structureOutput=buffer;copy.structureOutputSize=capacity;
+ unsigned savedNext=snapshot->cursor.next;
+ IOReturn result=dispatchLocked(selector,&copy,adopted);
+ if(result==kIOReturnSuccess&&(copy.structureOutputSize>capacity||md->writeBytes(0,buffer,copy.structureOutputSize)!=copy.structureOutputSize))result=kIOReturnBadArgument;
+ IOReturn completed=md->complete(kIODirectionIn);if(result==kIOReturnSuccess&&completed!=kIOReturnSuccess)result=completed;
+ if(result!=kIOReturnSuccess)snapshot->cursor.next=savedNext;
+ if(outputLogs++<64)printf("NORD2 WIFI IOS OUTPUT: status=%#x requested=%u used=%u cursor_rollback=%u\n",(unsigned)result,(unsigned)capacity,(unsigned)copy.structureOutputSize,(unsigned)(result!=kIOReturnSuccess));
+ if(result==kIOReturnSuccess)a->structureOutputDescriptorSize=copy.structureOutputSize;
+ IOFree(buffer,capacity);return result;
+}
 IOReturn NiwlLifecycleClient::externalMethod(uint32_t selector,IOExternalMethodArguments*a,IOExternalMethodDispatch*d,OSObject*t,void*r){
  /* XNU passes an owned wake-port send reference on async calls. Balance every
   * rejected/replayed call too, not only the accepted stored registration. */
  OSAsyncReference64 incoming={0};bool incomingRight=a&&a->asyncReference&&a->asyncReferenceCount;
  if(incomingRight)incoming[0]=a->asyncReference[0];bool adopted=false;uint64_t cancel=0;IOReturn result=kIOReturnNotReady;
- if(gate){IOLockLock(gate);if(selector==4)cancel=pendingTicket;result=(d||t||r)?kIOReturnBadArgument:dispatchLocked(selector,a,&adopted);IOLockUnlock(gate);}
+ if(gate){IOLockLock(gate);if(selector==4)cancel=pendingTicket;result=(d||t||r)?kIOReturnBadArgument:outputLocked(selector,a,&adopted);if(selector>=1&&selector<=5&&pipeLogs++<32)printf("NORD2 WIFI IOS PIPE: selector=%u phase=%u status=%#x output=%u refs=%u\n",selector,(unsigned)phase,(unsigned)result,a?(unsigned)a->structureOutputSize:0,a?a->asyncReferenceCount:0);IOLockUnlock(gate);}
  if(cancel&&result==kIOReturnSuccess)nord2_wifi_scan_cancel(cancel);
  if(incomingRight&&!adopted)IOUserClient::releaseAsyncReference64(incoming);return result;
 }
@@ -155,6 +189,7 @@ IOReturn NiwlLifecycleClient::clientMemoryForType(UInt32 type,IOOptionBits*optio
  else if(current_task()!=owner)result=kIOReturnNotPrivileged;
  else if(type!=1&&type!=2)result=kIOReturnBadArgument;
  else if(phase==Allocated||phase==Armed){IOMemoryDescriptor*m=type==1?data:state;m->retain();*memory=m;*options=type==1?kIOMapReadOnly:0;result=kIOReturnSuccess;}
+ if(pipeLogs++<32)printf("NORD2 WIFI IOS MAP: type=%u phase=%u status=%#x bytes=%u\n",type,(unsigned)phase,(unsigned)result,result==kIOReturnSuccess?(unsigned)(*memory)->getLength():0);
  IOLockUnlock(gate);return result;
 }
 IOReturn NiwlLifecycleClient::clientClose(void){closeOwned();terminate();return kIOReturnSuccess;}
@@ -193,6 +228,7 @@ extern "C" IOReturn niwl_create_client(IOService*provider,task_t task,void*secur
  *handler=c;printf("NORD2 WIFI IOS CLIENT: opened=1 type=0\n");return kIOReturnSuccess;
 }
 IOReturn NiwlLifecycleClient::scanLocked(const uint8_t*p,size_t n){
+ if(scanLogs++<64)printf("NORD2 WIFI IOS SCANREQ: bytes=%u phase=%u version=%u bss=%u scan_type=%u phy_mode=%u dwell=%u rest=%u channels=%u\n",(unsigned)n,(unsigned)phase,n>=4?niw_u32(p):0,n>=8?niw_u32(p+4):0,n>=56?niw_u32(p+52):0,n>=60?niw_u32(p+56):0,n>=62?(unsigned)(p[60]|(uint16_t)p[61]<<8):0,n>=68?niw_u32(p+64):0,n>=72?niw_u32(p+68):0);
  if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
  if(pendingTicket||scanGeneration==UINT64_MAX)return kIOReturnBusy;
  nss_info info={};nss_request request={};if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
@@ -201,7 +237,7 @@ IOReturn NiwlLifecycleClient::scanLocked(const uint8_t*p,size_t n){
  if(nils_open(&cacheLife,scanGeneration)||nils_begin(&cacheLife,&cacheTicket,snapshot))return kIOReturnNotReady;
  retain();uint64_t ticket=0;int result=nord2_wifi_scan_enqueue(&request,this,scanGeneration,completed,&ticket);
  if(result){nils_finish(&cacheLife,&cacheTicket,nullptr);release();return result==2?kIOReturnBusy:kIOReturnNotReady;}
- if(diagnosticLogs++<128)printf("NORD2 WIFI IOS ENQUEUE: status=%d generation=%llu ticket=%llu\n",result,(unsigned long long)scanGeneration,(unsigned long long)ticket);
+ if(queueLogs++<64)printf("NORD2 WIFI IOS ENQUEUE: status=%d generation=%llu ticket=%llu\n",result,(unsigned long long)scanGeneration,(unsigned long long)ticket);
  pendingTicket=ticket;pendingEpoch=generation;lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
 }
 void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enum nss_status status){
@@ -217,7 +253,7 @@ void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enu
   else{nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);c->lastScanError=kIOReturnNotReady;}
   if(!c->eventLocked(c->lastScanError==kIOReturnSuccess?0:5)){nils_close(&c->cacheLife);c->lastScanError=kIOReturnNoResources;}
  }else if(c->cacheLife.inflight)nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);
- if(c->diagnosticLogs++<128)printf("NORD2 WIFI IOS COMPLETE: generation=%llu ticket=%llu backend=%u current=%u cache_status=%#x rows=%u\n",(unsigned long long)gen,(unsigned long long)ticket,(unsigned)status,(unsigned)current,(unsigned)c->lastScanError,current?c->snapshot->count:0);
+ if(c->completionLogs++<64)printf("NORD2 WIFI IOS COMPLETE: generation=%llu ticket=%llu backend=%u current=%u cache_status=%#x rows=%u\n",(unsigned long long)gen,(unsigned long long)ticket,(unsigned)status,(unsigned)current,(unsigned)c->lastScanError,current?c->snapshot->count:0);
  if(c->pendingTicket==ticket)c->pendingTicket=0;
  IOLockUnlock(c->gate);
  nord2_wifi_scan_release(ticket); /* backend defers reuse until this callback returns */
@@ -233,13 +269,20 @@ bool NiwlLifecycleClient::eventLocked(uint32_t status){
  for(unsigned i=0;i<52;i++)ring[(space.record_offset+i)%4096]=record[i];
  producer=space.next;__atomic_store_n(indices+1,producer,__ATOMIC_RELEASE);
  IOReturn result=sendAsyncResult64(reference,kIOReturnSuccess,nullptr,0);
- if(diagnosticLogs++<128)printf("NORD2 WIFI IOS EVENT: event=10 published=1 notified=%u status=%#x producer=%u consumer=%u\n",(unsigned)(result==kIOReturnSuccess),(unsigned)result,producer,consumer);
+ if(eventLogs++<128)printf("NORD2 WIFI IOS EVENT: event=10 published=1 notified=%u status=%#x producer=%u consumer=%u\n",(unsigned)(result==kIOReturnSuccess),(unsigned)result,producer,consumer);
  return true; /* immutable event is published; notify failure never retracts its real cache */
 }
 IOReturn NiwlLifecycleClient::getLocked(const niw_request*q,const void*carrier,size_t bytes,IOExternalMethodArguments*a){
  if(memcmp(q->interface_name,interfaceName,16)||q->value)return kIOReturnBadArgument;
+ if(q->request==27||q->request==254){nss_info info={};size_t used=0;if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;if(niws_channels(q,interfaceName,&info,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
+ if(q->request==43||q->request==44){if(q->payload_bytes!=256||a->structureOutputSize<256)return kIOReturnBadArgument;
+  static const char driver[]="Nord2 MT6893 passive scan controller";static const char hardware[]="Nord2 MT6893 Wi-Fi";bzero(a->structureOutput,256);
+  if(q->request==43)memcpy(a->structureOutput,driver,sizeof driver);else memcpy(a->structureOutput,hardware,sizeof hardware);a->structureOutputSize=256;return kIOReturnSuccess;}
+ if(q->request==13||q->request==15){nss_info info={};size_t used=0;if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
+  if(niws_reply(q,interfaceName,info.scanning?NIWS_SCANNING:NIWS_IDLE,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
+ if(q->request==103){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;return (IOReturn)6; /* ENXIO: no association; never a scan-cache alias */}
  if(q->request==12){niwc_manifest empty={};size_t used=0;if(niwc_card_reply(carrier,bytes,&empty,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
- if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(diagnosticLogs++<128)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
+ if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
  if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
  if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);
  return kIOReturnUnsupported;

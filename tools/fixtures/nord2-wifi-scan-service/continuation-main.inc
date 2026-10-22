@@ -1,10 +1,10 @@
 
 static unsigned callbacks,last_status,defer;static uint64_t last_ticket;
-static void completed(void*c,uint64_t gen,uint64_t ticket,enum nss_status status){assert(c==&callbacks&&gen==99);callbacks++;last_status=status;last_ticket=ticket;if(defer)assert(!nord2_wifi_scan_release(ticket));}
+static void completed(void*c,uint64_t gen,uint64_t ticket,enum nss_status status){assert(c==&callbacks&&gen==99);struct nss_info observed;assert(status==NSS_FATAL?nord2_wifi_scan_info(&observed)==1:(!nord2_wifi_scan_info(&observed)&&!observed.scanning));callbacks++;last_status=status;last_ticket=ticket;if(defer)assert(!nord2_wifi_scan_release(ticket));}
 static void drain(void){worker_thread=2;if(!setjmp(parked_exit))nss_owner_loop();}
 int main(int argc,char**argv){assert(argc==2||argc==3);FILE*f=fopen(argv[1],"rb");assert(f&&fread(authenticated_board,1,sizeof authenticated_board,f)==sizeof authenticated_board);fclose(f);
  if(argc==3){ios_flag=0;setup(0);run_worker();assert(!nss_native.ready&&!service_ready_hooks&&ncd_native.parked&&normal_pubs==26);puts("PASS default off: original boot26/park, no service-ready hook or queue");return 0;}
- setup(0);run_worker();assert(nss_native.ready&&!ncd_native.parked&&service_ready_hooks==1&&nct_native.session.completed==26);unsigned base_pubs=normal_pubs;struct nss_info info;assert(!nord2_wifi_scan_info(&info)&&info.count==22);struct nss_request q={0};uint64_t ticket;struct nss_view view;
+ setup(0);run_worker();assert(nss_native.ready&&!ncd_native.parked&&service_ready_hooks==1&&nct_native.session.completed==26);unsigned base_pubs=normal_pubs;struct nss_info info;assert(!nord2_wifi_scan_info(&info)&&info.count==22&&!info.scanning);struct nss_request q={0};uint64_t ticket;struct nss_view view;
  /* Pending DDONE is not quiescence. A stale completed frame may already
   * have been rearmed: preserve that advanced cursor on clean refusal. */
  struct ncr_queue *pending=&ncb_native.rx.queue[2];unsigned before0=ncb_native.rx.queue[0].next;
@@ -15,7 +15,7 @@ int main(int argc,char**argv){assert(argc==2||argc==3);FILE*f=fopen(argv[1],"rb"
  assert(!nord2_wifi_scan_release(ticket));hardware_register(pending->ring.base+12,pending->next);
  callbacks=0;
  unsigned old_data=ncb_native.rx.queue[0].next,old_event=ncb_native.rx.queue[1].next;
- assert(!nord2_wifi_scan_enqueue(&q,&callbacks,99,completed,&ticket));assert(nord2_wifi_scan_view(ticket,&view)==1);delivered=0;drain();assert(callbacks==1&&last_status==NSS_COMPLETE&&normal_pubs==base_pubs+1);assert(nwfn_native.init.transport.completed==32&&nwfn_native.init.transport.next_sequence==33);assert(ncb_native.rx.queue[0].next==(old_data+1)%1024&&ncb_native.rx.queue[1].next==(old_event+1)%16);assert(!nord2_wifi_scan_view(ticket,&view)&&view.scan->sequence==2&&view.scan->count==2);assert(!nord2_wifi_scan_release(ticket));
+ assert(!nord2_wifi_scan_enqueue(&q,&callbacks,99,completed,&ticket));assert(nord2_wifi_scan_view(ticket,&view)==1);assert(!nord2_wifi_scan_info(&info)&&!info.scanning);delivered=0;drain();assert(callbacks==1&&last_status==NSS_COMPLETE&&normal_pubs==base_pubs+1);assert(nwfn_native.init.transport.completed==32&&nwfn_native.init.transport.next_sequence==33);assert(ncb_native.rx.queue[0].next==(old_data+1)%1024&&ncb_native.rx.queue[1].next==(old_event+1)%16);assert(!nord2_wifi_scan_view(ticket,&view)&&view.scan->sequence==2&&view.scan->count==2);assert(!nord2_wifi_scan_release(ticket));
  for(unsigned n=0;n<3;n++){delivered=0;assert(!nord2_wifi_scan_enqueue(&q,&callbacks,99,completed,&ticket));drain();assert(last_status==NSS_COMPLETE&&!nord2_wifi_scan_view(ticket,&view)&&view.scan->sequence==3+n);assert(!nord2_wifi_scan_release(ticket));}
 
  /* Persist cross-descriptor segmented state: last fragment is not a fresh BSS. */

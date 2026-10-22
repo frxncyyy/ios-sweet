@@ -3,6 +3,48 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: cohesive iOS Wi-Fi compatibility correction integrated; local checks PASS.**
+  New stage research/nord2/wifi-ios-compat/ios, no device action or image approval.
+  Current phone remains last58f6 (currently absent USB); healthy6a6a preserved.
+  Root added IONetworkInterface ancestry, actual controller MAC, builtin/prefix/
+  primary properties. Same-IPSW SystemConfiguration matching proves the previous
+  hierarchy was absent from SCNetworkInterfaceCopyAll's enumeration path.
+  User-supplied reference https://github.com/oosexgang/hackios-xnu-kernel at
+  8e61187098f2c26c5daee8f9f72b6416aa64b9ab, RedwoodWLAN.cpp and
+  redwood_apple80211.c, corroborates discovery/layouts. Snapshots/pins private at
+  research/reference/oosexgang. Do not transplant its Qualcomm backend to MTK.
+  GET13/15 raw4B replies now use real retained worker state/STA mode; GET27/254
+  expose actual allowed channels in4824B layout; GET103 returns ENXIO while
+  unassociated; GET43/44 general queries identify our driver/hardware. Exact
+  SET19 already-on is idempotent only while retained owner available; off remains
+  unsupported because physical shutdown is not implemented. No fake carrier,
+  association, security capabilities or IP readiness. GET96/97 and optional
+  SET383/365/25 remain unsupported; their failure is not proven the UI blocker.
+  Scan accepts bounded nondirected/default-timing all/subset channels for modes
+  1/2, translated to this driver's passive discovery policy. ACTIVE permission
+  does not cause probes; directed filters, custom timing, DFS/unknown options
+  still refuse. Retained ownership/DMA continuation remains unchanged.
+  IOUC supports checked OOL output, accepts unused inline pointer with size0,
+  and rolls back GET11 cursor on failed copy/complete so retry loses no row.
+  Setup/scan/event/result logs now have separate budgets from repeated getters.
+  Source review: scan7414ae78/reviewea993996, scalar+channels636508aa,
+  registry0c75021a, transportaf6af1d4/runtimecceb7414. All evidence is static or
+  synthetic; Settings success requires a new hardware test, not inferred here.
+  Portable canonical tools/test-nord2-wifi-ios-{contract,registry,client}.py
+  pass ASan/UBSan; actual owner250+ continuation/default-off tests pass including
+  idle/queued/running/completed state.19 actual generated native compilation
+  units pass generic ARMv8.2 with no private includes; 0082 regenerates/applies
+  cleanly and exactly reproduces the buildtree. CI and image verification next.
+  Preserve unrelated untracked kmod audio work; UFS/boot speed remain closed.
+
+- **2026-10-22: RESUMED by user (“eccomi, riprendiamo”).**
+  Phone last flashed58f62ae6; no new device actions. USB inventory currently
+  does not show the Nord2. Root integrating cohesive iOS consumer compatibility;
+  format_stage owns role/parent/scalar ABI, cap_stage owns scan/status requests,
+  after_id owns IOUC/power/event audit. Full375276B saved trace is authoritative.
+  Do not change UFS/boot speed. Keep private evidence out of git. New image
+  requires verification then exact boot-only approval; old runner stays USED.
+
 - **2026-10-22: PAUSED BY USER after scan-service58f62ae6 hardware collection.**
   Exact approval call_5680d604ecda40a985661be914631868; boot-only flash/reboot
   OKAY. Current phone is58f62ae6, NOT6a6a. No recovery performed, no device

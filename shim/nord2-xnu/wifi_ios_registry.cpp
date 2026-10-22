@@ -29,12 +29,19 @@ extern "C" {
 IOReturn niwl_create_client(IOService*,task_t,void*,UInt32,OSDictionary*,IOUserClient**);
 }
 static_assert(sizeof(ifmediareq)==44&&SIOCGIFMEDIA==0xc02c6938,"selected 64-bit ifmedia ABI");
-class IO80211Interface : public IOService {
+/* SystemConfiguration enumerates IONetworkInterface descendants and classifies
+ * their IO80211Controller parent. A Wi-Fi-only class chain is insufficient for
+ * configd to discover the same BSD interface that wifid already opens. */
+class IONetworkInterface : public IOService {
+ OSDeclareDefaultStructors(IONetworkInterface)
+};
+OSDefineMetaClassAndStructors(IONetworkInterface,IOService)
+class IO80211Interface : public IONetworkInterface {
  OSDeclareDefaultStructors(IO80211Interface)
 public:
  IOReturn newUserClient(task_t t,void*s,UInt32 n,OSDictionary*p,IOUserClient**o) override {return niwl_create_client(this,t,s,n,p,o);}
 };
-OSDefineMetaClassAndStructors(IO80211Interface,IOService)
+OSDefineMetaClassAndStructors(IO80211Interface,IONetworkInterface)
 class IO80211SkywalkInterface : public IO80211Interface {
  OSDeclareDefaultStructors(IO80211SkywalkInterface)
 };
@@ -83,16 +90,19 @@ bool IO80211Controller::start(IOService*p){
  if(ifnet_set_lladdr(net,info.mac,6)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=2\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
  char name[16];snprintf(name,sizeof name,"%s%u",ifnet_name(net),ifnet_unit(net));
  if(ifnet_set_mtu(net,1500)||ifnet_set_flags(net,IFF_BROADCAST|IFF_MULTICAST|IFF_SIMPLEX,IFF_BROADCAST|IFF_MULTICAST|IFF_SIMPLEX|IFF_RUNNING|IFF_UP)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=6\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
+ if(!setProperty("IOMACAddress",info.mac,sizeof info.mac)||!setProperty("IOBuiltin",true)){
+  printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=8\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
+ }
  /* Never signal link up, carrier, association, supported encryption or IP readiness. */
  /* IOInterfaceName is only on actual interface: one bind target. */
  interface=new IO80211SkywalkInterface;
  if(!interface||!interface->init()){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=3\n");if(interface)interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
  if(!interface->attach(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=4\n");interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
  if(!interface->start(this)){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=5\n");interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
- if(!interface->setProperty("IOInterfaceName",name)||!interface->setProperty("BSD Name",name)||!interface->setProperty("IOInterfaceUnit",(uint64_t)ifnet_unit(net),32)||!interface->setProperty("IOInterfaceType",(uint64_t)IFT_ETHER,32)||!interface->setProperty("IO80211InterfaceRole","Infrastructure")){
+ if(!interface->setProperty("IOInterfaceName",name)||!interface->setProperty("BSD Name",name)||!interface->setProperty("IOInterfaceUnit",(uint64_t)ifnet_unit(net),32)||!interface->setProperty("IOInterfaceType",(uint64_t)IFT_ETHER,32)||!interface->setProperty("IO80211InterfaceRole","Infrastructure")||!interface->setProperty("IOInterfaceNamePrefix","en")||!interface->setProperty("IOBuiltin",true)||!interface->setProperty("IOPrimaryInterface",true)){
   printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=7\n");interface->stop(this);interface->detach(this);interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
  }
- interface->registerService();registerService();printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
+ interface->registerService();registerService();printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0 network_class=1 builtin=1\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
 }
 void IO80211Controller::stop(IOService*p){
  if(interface){interface->terminate();interface->detach(this);interface->release();interface=nullptr;}
