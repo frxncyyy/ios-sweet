@@ -1,4 +1,5 @@
 #include "wifi_wpa_nst.h"
+#include "wifi_station_diag.h"
 #if defined(KERNEL) || defined(_KERNEL)
 #include <sys/systm.h>
 #else
@@ -66,6 +67,7 @@ static int event_inner(struct nwn*s,const struct nst_event*e,uint64_t now){
  case NST_MANAGEMENT:return nwo_management(&s->owner,e->generation,e->body,e->bytes,now);
  case NST_EAPOL:{const uint8_t*p=e->body;size_t n=e->bytes;
   if(!p||n<14||p[12]!=0x88||p[13]!=0x8e||memcmp(p,s->transport->peer.self,6)||memcmp(p+6,s->transport->peer.ap,6))return 0;
+  {struct nstd_record record;nstd_eapol(&record,e->generation,s->owner.in_ticket,p+14,n-14);nstd_log(&record);}
   return nwo_eapol(&s->owner,e->generation,p+14,n-14,now);}
  case NST_LINK_LOST:return nwo_link_lost(&s->owner,e->generation,now);
  case NST_FATAL:return nwn_cancel(s,e->generation,now);

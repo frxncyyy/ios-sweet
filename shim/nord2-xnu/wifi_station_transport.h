@@ -7,6 +7,9 @@
 #define NST_MAX_ETHERNET 1514u
 #define NST_RX_BYTES 3840u
 #define NST_FRAME_BYTES 1600u
+/* FRAME_RESULT status0..255 is firmware status. This disjoint local value
+ * is negative-only, after proved DDONE; it never means air success/ACK. */
+#define NST_TX_LOCAL_TIMEOUT 0x100u
 /* Only the actual CAP worker may prepare/run this object. The native binder
  * authenticates exact addresses/thread; these public structs alone grant no IO. */
 enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,

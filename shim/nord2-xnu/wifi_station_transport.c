@@ -1,4 +1,5 @@
 #include "wifi_station_transport.h"
+#include "wifi_station_diag.h"
 static uint16_t u16(const uint8_t*p){return p[0]|(uint16_t)p[1]<<8;}
 static uint32_t u32(const uint8_t*p){return u16(p)|(uint32_t)u16(p+2)<<16;}
 static void p16(uint8_t*p,uint16_t n){p[0]=(uint8_t)n;p[1]=(uint8_t)(n>>8);}
@@ -8,7 +9,7 @@ static int eq(const void*a,const void*b,size_t n){const uint8_t*x=a,*y=b;while(n
 static void wipe(void*p,size_t n){volatile uint8_t*q=p;while(n--)*q++=0;}
 static int mac(const uint8_t*p){unsigned any=0;for(unsigned i=0;i<6;i++)any|=p[i];return any&&!(p[0]&1);}
 void nst_close_port(struct nst*s){if(s){if(s->controlled_port&&!s->cleanup_started)s->deadline=s->last>UINT64_MAX-UINT64_C(30000000)?UINT64_MAX:s->last+UINT64_C(30000000);s->controlled_port=0;if(s->wire_busy&&s->wire_type==3&&!s->published){wipe(s->wire,sizeof s->wire);s->wire_busy=0;}}}
-static int fail(struct nst*s,unsigned e){nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
+static int fail(struct nst*s,unsigned e){{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
 static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
 int nst_lease_window(const struct nst*s,const struct nwi_state*i){
  if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||!s->active||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
@@ -68,7 +69,12 @@ int nst_memory_range(const struct nst*s,uint64_t a,uint32_t n,unsigned write){
  return !write&&s->phase==NST_RX_FRAME&&n==s->rx_bytes&&a==q->ring.buffers+4096u*q->next;
 }
 int nst_register_write(const struct nst*s,uint32_t a,uint32_t v){if(!source(s)||!s->active)return 0;if(a==0x18025418)return s->phase==NST_TX_PUBLISH&&s->wire_busy&&!s->published&&v==(s->tx_next+1)%1024;if(s->rx_current>=5||s->phase!=NST_RX_PUBLISH)return 0;const struct ncr_queue*q=&s->queue[s->rx_current];return a==q->ring.base+8&&v==q->next;}
-static int before(struct nst*s,const struct ncd_io*o,void*c){uint64_t now;if(!nst_lease_window(s,s->init)||o->bus->owner(c)||o->now_us(c,&now)||now<s->last)return fail(s,1);s->last=now;if(!s->controlled_port&&now>=s->deadline)return fail(s,2);if((s->wire_busy||s->air_pending)&&s->published&&now>=s->operation_deadline)return fail(s,3);if(s->channel_held&&s->grant_deadline&&now>=s->grant_deadline&&!s->cleanup_started)return fail(s,4);return 0;}
+/* A missing security/cleanup-deauth TXS after verified DDONE is a negative
+ * frame outcome, not unknown host DMA ownership. It never supplies success.
+ * Cleanup frame() admits only deauth; ordinary management/data remain strict.
+ * Commands, ordinary data and every pre-DDONE timeout remain fail-closed. */
+static int retired_air_failure(const struct nst*s){return (s->wire_type==2||(s->cleanup_started&&s->wire_type==1))&&s->air_pending&&s->dma_done&&!s->wire_busy&&s->submitted==s->dma_completed;}
+static int before(struct nst*s,const struct ncd_io*o,void*c){uint64_t now;if(!nst_lease_window(s,s->init)||o->bus->owner(c)||o->now_us(c,&now)||now<s->last)return fail(s,1);s->last=now;if(!s->controlled_port&&now>=s->deadline)return fail(s,2);if((s->wire_busy||s->air_pending)&&s->published&&now>=s->operation_deadline&&!retired_air_failure(s))return fail(s,3);if(s->channel_held&&s->grant_deadline&&now>=s->grant_deadline&&!s->cleanup_started)return fail(s,4);return 0;}
 static int rr(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t*v){return before(s,o,c)||o->bus->reg_read(c,a,v)?fail(s,5):0;}
 static int rw(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t v){if(before(s,o,c)||!nst_register_write(s,a,v))return fail(s,6);s->mutated=1;return o->bus->reg_write(c,a,v)?fail(s,6):0;}
 static int mr(struct nst*s,const struct ncd_io*o,void*c,uint64_t a,void*p,uint32_t n){return before(s,o,c)||!nst_memory_range(s,a,n,0)||o->bus->mem_read(c,a,p,n)?fail(s,7):0;}
@@ -91,12 +97,14 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
   if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
   if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
   if(s->wire_type)s->air_pending=1;
+  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
   if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
   if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
   if(s->wire_cid==0x1c&&!s->wire[66]){s->channel_token=s->wire[65];s->channel_held=1;}
  }
  s->phase=NST_TX_WAIT;if(rr(s,o,c,0x1802541c,&v))return -1;if(v!=s->tx_next&&v!=(s->tx_next+1)%1024)return fail(s,16);if(v==s->tx_next)return 0;
  s->phase=NST_TX_READ;if(sy(s,o,c,a,16,2)||mr(s,o,c,a,s->descriptor,16))return -1;if(!(u32(s->descriptor+4)&0x80000000))return 0;
+ {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,2);nstd_log(&record);}
  unsigned channel_release=s->wire_cid==0x1c&&s->wire[66]==1;
  if(s->internal_wire==2&&s->wire_cid==0x16)s->pm_connected=1;
  if(s->wire_cid==7){unsigned pair=s->wire[66];if(s->wire[64]){if(pair)s->ptk_submitted=1;else{s->gtk_submitted=1;s->gtk_command_index=s->wire[76];}}}
@@ -112,7 +120,10 @@ int nst_authorize(struct nst*s){if(!source(s)||s->link_lost||s->cleanup_started|
 /* Deferred RX event uses owned rx_frame until descriptor is safely rearmed. */
 static int decode(struct nst*s){
  const uint8_t*p=s->rx_frame;size_t n=s->rx_bytes;struct nst_event*e=&s->deferred;*e=(struct nst_event){0};if(n<24)return 0;
- unsigned type=(u16(p+2)>>11)&31;if(type==7&&(u16(p+2)&0x380f)==0x3800){
+ unsigned type=(u16(p+2)>>11)&31;
+ if(type==0){struct nstd_record record={.generation=s->generation,.ticket=s->ticket,.kind=6,.v={0,(uint32_t)n,u16(p)}};nstd_log(&record);}
+ if(type==7&&(u16(p+2)&0x380f)==0x3800&&n>=29&&p[28]==0x0f){struct nstd_record record;nstd_txs(&record,s->generation,s->ticket,p,n,s->air_pending,s->wire_pid,s->wire_wlan,s->air_done);nstd_log(&record);}
+ if(type==7&&(u16(p+2)&0x380f)==0x3800){
   if(n<36)return 0;const uint8_t*b=p+36;size_t z=n-36;e->body=b;e->bytes=z;e->sequence=p[29];
   if(p[28]==0x0f&&z>=88&&s->air_pending&&b[0]==s->wire_pid&&b[4]==s->wire_wlan&&!s->air_done){s->air_done=1;s->air_status=b[1];}
   else if(p[28]==0x10&&z>=24&&s->channel_held&&b[0]==s->peer.bss&&b[1]==s->channel_token&&b[3]==s->peer.channel&&b[5]==s->peer.band){uint32_t ms=u32(b+12);if(b[2]||!ms||ms>60000||s->last>UINT64_MAX-(uint64_t)ms*1000)return 0;s->grant_deadline=s->last+(uint64_t)ms*1000;e->kind=NST_CHANNEL_GRANT;e->bss=b[0];e->token=b[1];e->status=b[2];e->channel=b[3];e->band=b[5];e->interval_ms=ms;}
@@ -166,7 +177,7 @@ static int receive(struct nst*s,const struct ncd_io*o,void*c,unsigned k,nst_even
  struct ncr_queue*q=&s->queue[k];uint32_t v;s->rx_current=k;s->phase=NST_IDLE;if(rr(s,o,c,q->ring.base+12,&v))return -1;if(v>=q->ring.count)return fail(s,20);if(v==q->next)return 0;
  uint64_t d=q->ring.descriptors+16u*q->next,a=q->ring.buffers+4096u*q->next;s->phase=NST_RX_READ;if(sy(s,o,c,d,16,2)||mr(s,o,c,d,s->rx_descriptor,16))return -1;uint32_t ctl=u32(s->rx_descriptor+4);if(!(ctl&0x80000000))return 0;
  s->rx_bytes=(ctl>>16)&0x3fff;unsigned last=!!(ctl&0x40000000),skip=q->segmented||!last||!s->rx_bytes||s->rx_bytes>NST_RX_BYTES;q->segmented=!last;s->deferred=(struct nst_event){0};
- if(!skip){s->phase=NST_RX_FRAME;if(sy(s,o,c,a,s->rx_bytes,2)||mr(s,o,c,a,s->rx_frame,s->rx_bytes))return -1;if(decode(s))return fail(s,21);}
+ if(!skip){s->phase=NST_RX_FRAME;if(sy(s,o,c,a,s->rx_bytes,2)||mr(s,o,c,a,s->rx_frame,s->rx_bytes))return -1;nstd_rx(s->generation,s->ticket,k,s->rx_frame,s->rx_bytes);if(decode(s))return fail(s,21);}
  if(nwt_rx_desc(s->rx_descriptor,a,NST_RX_BYTES))return fail(s,22);s->phase=NST_RX_WRITE;if(mw(s,o,c,d,s->rx_descriptor,16)||sy(s,o,c,d,16,1))return -1;s->phase=NST_RX_PUBLISH;if(rw(s,o,c,q->ring.base+8,q->next))return -1;q->next=(q->next+1)%q->ring.count;if(k==1)s->init->transport.rx_index=q->next;q->rearmed++;s->phase=NST_IDLE;
  if(s->deferred.kind&&emit(s,fn,ctx,&s->deferred))return -1;return 1;
 }
@@ -175,7 +186,16 @@ int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event
  if(!source(s)||s->active||s->callback_active||!o||!o->bus||!o->now_us||!o->bus->owner||!o->bus->reg_read||!o->bus->reg_write||!o->bus->mem_read||!o->bus->mem_write||!o->bus->sync||!budget||budget>16)return -1;
  s->active=1;s->entered=1;s->phase=NST_IDLE;if(before(s,o,c)||coherent(s,o,c)||transmit(s,o,c,fn,ctx))return -1;
  static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
- if(s->air_pending&&s->air_done&&s->dma_done){struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=s->air_status,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};s->air_pending=0;s->next_pid=s->wire_pid==127?1:s->wire_pid+1;if(emit(s,fn,ctx,&e))return -1;}
+ if(s->air_pending&&s->dma_done&&(s->air_done||(retired_air_failure(s)&&s->last>=s->operation_deadline))){
+  /*0x100 is explicitly local timeout, outside every firmware8-bit status.
+   * Advance the retired PID before callback/cleanup; a late old TXS may not
+   * complete the next deauthentication. No authorization follows failure. */
+  unsigned status=s->air_done?s->air_status:NST_TX_LOCAL_TIMEOUT;
+  struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=status,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};
+  s->air_pending=0;s->next_pid=s->wire_pid==127?1:s->wire_pid+1;
+  if(status==NST_TX_LOCAL_TIMEOUT)nst_close_port(s);
+  if(emit(s,fn,ctx,&e))return -1;
+ }
  if(peer_progress(s,fn,ctx))return -1;s->phase=NST_IDLE;s->active=0;return 0;
 }
 /* Original legacy policy: bit4/5 are unsupported22/33Mbps, not OFDM6/9. */
@@ -215,7 +235,7 @@ static int peer_progress(struct nst*s,nst_event_fn fn,void*ctx){
   if(step==0){payload[0]=0;payload[1]=s->peer.sta;payload[2]=s->peer.bss;payload[3]=0;used=4;cid=0x14;}
   else if(step==1){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,30);cid=0x12;}
   else if(step==2){wipe(payload,4);payload[0]=s->peer.bss;used=4;cid=0x17;}
-  else{s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
+  else{s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
  }else{
   if(step==0){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,31);cid=0x12;}
   else if(step==1){if(sw_rlm(payload,sizeof payload,&used,&r))return fail(s,32);cid=0x19;}

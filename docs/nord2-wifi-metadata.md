@@ -107,7 +107,9 @@ ownership checks. Open networks, SAE, mandatory PMF, changed private addresses
 and reconnect/roaming are outside the implemented first-connection profile.
 The native association-response handoff also accepts the Retry bit already
 accepted by its management parser, while retaining peer/status/AID/rate checks.
-No real AP association response had reached that handoff in the captured test.
+No real AP association response had reached that handoff in the earlier
+identity-only test. The subsequent join-options test did reach association,
+as described below.
 
 Kernel `printf` truncates at 255 bytes. Association diagnostics therefore use
 short correlated numeric records. Native station samples use five bounded
@@ -115,6 +117,53 @@ parts; the receipt parser requires a complete, ordered sample and refuses
 missing, duplicate or mismatched parts. Neither addresses, scope strings nor
 credentials are printed. Successful command submission is never treated as
 association, key installation, DHCP or Internet evidence.
+
+## First association and missing transmission receipt
+
+The join-options image `a73ee086` accepted the actual WPA2 profile, associated
+with the selected AP and submitted handshake message M2. The host DMA counters
+both reached 12, while the matching air-transmission receipt remained pending.
+After three seconds the old transport entered its fatal path. The user observed
+Wi-Fi failure followed by a device crash. USB captured the timeout state, but
+not the final panic text. No keys, authorized port or IP connectivity were
+established. The previous `d9a44316` image was restored and the user confirmed
+that the lockscreen and controls work.
+
+Known DMA completion and successful air transmission are separate facts. A
+missing receipt for a security frame, or for a cleanup deauthentication frame,
+now produces the local negative status `NST_TX_LOCAL_TIMEOUT` (256) only after
+verified DDONE and a final bounded receive pass. The pending PID is retired
+before the callback. Cleanup still deletes keys, retires the peer and releases
+the channel; a failed command retirement remains fatal. Pre-DDONE timeouts,
+ordinary data/management timeouts, owner failures and global deadlines retain
+their existing guards. This change prevents the known-DMA case from being
+mistaken for uncertain memory ownership; it does not fabricate a TX ACK or
+resolve the missing receipt's cause.
+
+`NORD2 WIFI NSTDIAG` records selected descriptor fields, event lengths and
+PID/WLAN/status comparisons, received EAPOL type and receive-queue counts.
+The sole radio worker emits at most 96 rows, reserving one for a summary.
+Rows contain no packet payload, addresses, replay counters, MICs or keys.
+Raw RX packet type 0 is counted only: the selected Android driver drops it,
+so the port does not invent an alternate completion format from it.
+
+## Delay before the password dialog
+
+The user measured about 12 seconds between selecting a network and seeing the
+password dialog, before submitting Join. Three successful scans in that
+interval span 4.365 seconds; this does not explain the whole delay. Association
+timeouts occur later and must not be used to explain this earlier symptom.
+
+`NORD2 WIFI IOS QUERYBEGIN` and `QUERYEND` measure completed selector 0/6 calls:
+entry before the client gate, gate acquisition, and handler completion. Both
+rows print after unlocking, with bounded client/call identifiers. Only existing
+validated request decoding supplies the request number. Each client has 64
+ordinary samples and 16 reserved for calls taking at least 50 ms in the gate
+or handler. Successful per-network result rows are omitted to preserve budget;
+errors and end-of-results remain eligible. Clock rollback invalidates timing.
+Handler time includes pre-existing handler logging, but excludes the new rows.
+The strict readers reject incomplete or inconsistent records. A stuck call has
+no completed pair, and an exhausted budget makes absence inconclusive.
 
 ## Upstream attribution and retained evidence
 

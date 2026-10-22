@@ -3,6 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined TXS cleanup and request timing integrated; local verification passes.**
+  Phone is on restored d9a44316; user confirmed lockscreen and controls work.
+  Failed-test collector 8715 and recovery collector 18000 are both CLOSED (exit 0).
+  No USB reader is active. Recovery yielded no retained final panic message.
+  The a73 hardware result established association and M2 DMA completion, but no
+  matching air-transmission receipt, installed keys, authorized port or IP.
+  The cause of the missing receipt remains unresolved.
+
+  The combined change treats a missing security/cleanup-deauth TXS after known
+  DDONE as local negative status 256, then performs real key/peer cleanup.
+  It never treats DMA completion as an air ACK. Unknown DMA, command retirement,
+  owner, memory and global deadline failures retain the fatal path. Late old-PID
+  receipts cannot complete the next cleanup frame. Bounded numeric diagnostics
+  record descriptor fields, rejected TXS headers, EAPOL type and RX counts,
+  without addresses, replay counters or key material. IOUC timing separates
+  gate wait from handler time and emits after unlocking; budgets are finite,
+  so missing rows are not evidence that no calls occurred.
+
+  Canonical station suites (8 groups), diagnostic decoder/budget/parser,
+  join-owner, client/lifetime, connection parser (149 positive/267 negative),
+  timing/concurrency (9020 checks), and timing parser (13 positive/26 negative)
+  pass. Five actual ARM64 C owning units compile: manifest e41674d5 under
+  research/nord2/wifi-ios-txs/ios/compiled-review. Client ARM64 compilation and
+  independent timing review also passed. Generated 0082 applies and matches.
+  Private reviewed candidates remain under wifi-ios-join-options/ios; runtime
+  transport is 4105df3b, client 771a00ee, generated patch 3e4d06fa.
+
+  Fresh stage research/nord2/wifi-ios-txs/ios remains closed. Next: commit/push,
+  one full macOS CI, actual-artifact and independent image verification, then
+  request approval for the exact new boot image. No new image is authorized.
+  Target: nord2-ios-wifi-txs-timing-stop23.img. Primary recovery is d9a44316,
+  secondary 6e4ce860, RAM rescue d78bf9fe. Never boot Android over iOS userdata.
+
 
 - **2026-10-22: a73 join reaches association then FAILS; d9a restored, user confirms healthy.**
   FirstactualWPA2 profile acceptedreason0 flags4000/scope36, SET22/SET20 status0.
@@ -18,7 +51,7 @@
   must be distinguished from uncertainDMA without inventing successfulTX.
   Manualfastboot ready call_69475b517edb41be95bcb9d86127dc3f; conditionalrecovery
   underoriginal call_f0646fc alreadyapproved. Exactd9a boot restored/rebootOKAY;
-  recoverycollector18000 ownssoleUSB. User call_21fdce0b8eb742ca95e2938d0de34ef8
+  recoverycollector18000 subsequently CLOSED0. User call_21fdce0b8eb742ca95e2938d0de34ef8
   confirms tutto ok. Restorelog contains no retainedpriorpanic (no previousmarker).
   User also measured12s beforepassword, beforeJoin. Immutable306780B snapshot
   b5859b4d:3successfulscans span4.365s, cannotalone explain12s; untimedpriorGETs.

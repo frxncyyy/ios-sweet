@@ -28,7 +28,11 @@ static uint32_t niw_u32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t
 /* Monotonic time is diagnostic only, never scan freshness or a timeout. */
 static unsigned long long niw_ms(void){
 #ifdef NIWL_HOST_TEST
+#ifdef NIWL_TIMING_TEST_NOW
+ return NIWL_TIMING_TEST_NOW();
+#else
  return 0;
+#endif
 #else
  uint64_t now=0,ns=0;clock_get_uptime(&now);absolutetime_to_nanoseconds(now,&ns);return ns/1000000u;
 #endif
@@ -55,10 +59,37 @@ static uint64_t niwj_trace_id(void){
  }
  return 0;
 }
+/* Read-only timing identities, never native authority. Bounded relaxed CAS
+ * never wraps; saturation/contention disables only diagnostics. */
+static uint64_t niwt_client_sequence;
+static uint64_t niwt_client_id(void){
+ uint64_t current=__atomic_load_n(&niwt_client_sequence,__ATOMIC_RELAXED);
+ for(unsigned retry=0;retry<16;retry++){
+  if(current==UINT64_MAX)return 0;uint64_t next=current+1;
+  if(__atomic_compare_exchange_n(&niwt_client_sequence,&current,next,false,__ATOMIC_RELAXED,__ATOMIC_RELAXED))return next;
+ }return 0;
+}
+static uint32_t niwt_call_id(uint32_t*counter){
+ uint32_t current=__atomic_load_n(counter,__ATOMIC_RELAXED);
+ for(unsigned retry=0;retry<16;retry++){
+  if(current==UINT32_MAX)return 0;uint32_t next=current+1;
+  if(__atomic_compare_exchange_n(counter,&current,next,false,__ATOMIC_RELAXED,__ATOMIC_RELAXED))return next;
+ }return 0;
+}
+static bool niwt_relevant(uint32_t request,IOReturn result){
+ /* GET11 successful rows are repetitive: retain EOF/errors, not each BSS.
+  * All errors remain observable, including request0 when decode was unsafe. */
+ if(result!=kIOReturnSuccess)return true;
+ switch(request){case 1:case 2:case 4:case 5:case 6:case 8:case 9:case 10:
+  case 12:case 13:case 14:case 15:case 16:case 17:case 18:case 19:
+  case 27:case 43:case 51:case 57:case 96:case 97:case 103:case 106:
+  case 115:case 207:return true;default:return false;}
+}
 static void niwj_free(void*p,size_t n){if(p){niwj_clear(p,n);IOFree(p,n);}}
 class NiwlLifecycleClient : public IOUserClient {
  OSDeclareDefaultStructors(NiwlLifecycleClient)
  task_t owner;IOLock *gate;
+ uint64_t timingClient;uint32_t timingCalls,timingRequest,timingNormal,timingSlow;
  enum Phase {Closed,Open,Allocated,Armed};Phase phase;
  IOBufferMemoryDescriptor *data,*state;
  OSAsyncReference64 reference;bool ownsReference;
@@ -93,6 +124,7 @@ public:
 OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
 bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
  station=nullptr;joinTicket=joinEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
+ timingClient=0;timingCalls=timingRequest=timingNormal=timingSlow=0;
  owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
  if(!task||current_task()!=task||type)return false;
  OSObject *entitlement=IOUserClient::copyClientEntitlement(task,"com.apple.wifi.manager-access");
@@ -102,7 +134,7 @@ bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OS
  gate=IOLockAlloc();if(!gate)return false;
  snapshot=(niwa_snapshot*)IOMalloc(sizeof(*snapshot));if(!snapshot)return false;bzero(snapshot,sizeof(*snapshot));
  station=(njs_snapshot*)IOMalloc(sizeof(*station));if(!station)return false;bzero(station,sizeof(*station));
- task_reference(task);owner=task;generation=1;phase=Open;return true;
+ task_reference(task);owner=task;generation=1;phase=Open;timingClient=niwt_client_id();return true;
 }
 void NiwlLifecycleClient::discardLocked(void){
  /* All cache/event publication and reference sending is under gate. Close
@@ -139,10 +171,10 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
    carrier=copy;
   }else if(a->structureInputSize!=bytes)return kIOReturnBadArgument;
   struct niw_request q={};IOReturn result=kIOReturnBadArgument;
-  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){if(a->structureOutputSize){if(copy)niwj_free(copy,bytes);return kIOReturnBadArgument;}result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)niwj_free(copy,bytes);return result;}
+  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){timingRequest=10;if(a->structureOutputSize){if(copy)niwj_free(copy,bytes);return kIOReturnBadArgument;}result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)niwj_free(copy,bytes);return result;}
 
   uint32_t unsupportedSet=0;
-  if(!niwi_set_shape(selector,carrier,bytes,interfaceName,&unsupportedSet)){
+  if(!niwi_set_shape(selector,carrier,bytes,interfaceName,&unsupportedSet)){timingRequest=unsupportedSet;
    const uint8_t*power=(const uint8_t*)carrier+8;size_t tail=selector==0?15368:245768;
    if(unsupportedSet==20||unsupportedSet==22){
     uint32_t extent=niw_u32((const uint8_t*)carrier+4),value=niw_u32((const uint8_t*)carrier+tail+20);
@@ -167,7 +199,7 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
    if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
    if(copy)niwj_free(copy,bytes);return kIOReturnUnsupported;
   }
-  if(!niw_decode(selector,carrier,bytes,&q)){
+  if(!niw_decode(selector,carrier,bytes,&q)){timingRequest=q.request;
    if(selector==0&&q.request==43&&q.value==0&&q.payload_bytes==0&&!memcmp(q.interface_name,interfaceName,16)){
     static const char identity[]="Nord2 MT6893 passive scan controller";size_t used=0;
     if(!niwb_driver_version(carrier,bytes,identity,sizeof identity,a->structureOutput,a->structureOutputSize,&used)){
@@ -232,7 +264,33 @@ IOReturn NiwlLifecycleClient::externalMethod(uint32_t selector,IOExternalMethodA
   * rejected/replayed call too, not only the accepted stored registration. */
  OSAsyncReference64 incoming={0};bool incomingRight=a&&a->asyncReference&&a->asyncReferenceCount;
  if(incomingRight)incoming[0]=a->asyncReference[0];bool adopted=false;uint64_t cancel=0,cancelJoin=0;IOReturn result=kIOReturnNotReady;
- if(gate){IOLockLock(gate);if(selector==4){cancel=pendingTicket;cancelJoin=joinTicket;}result=(d||t||r)?kIOReturnBadArgument:outputLocked(selector,a,&adopted);if(selector>=1&&selector<=5&&pipeLogs++<32)printf("NORD2 WIFI IOS PIPE: selector=%u phase=%u status=%#x output=%u refs=%u t_ms=%llu\n",selector,(unsigned)phase,(unsigned)result,a?(unsigned)a->structureOutputSize:0,a?a->asyncReferenceCount:0,niw_ms());IOLockUnlock(gate);}
+ /* Capture only monotonic time before locking. No request/user buffer is
+  * inspected here; timingRequest is assigned by existing bounded decode. */
+ uint64_t timing_client=timingClient,entered=0,locked=0,done=0,wait_ms=0,work_ms=0;
+ uint32_t timing_call=timing_client&&(selector==0||selector==6)?niwt_call_id(&timingCalls):0,request=0,clock_ok=0,sample=0;
+ if(gate){
+  if(timing_call)entered=niw_ms();
+  IOLockLock(gate);if(timing_call)locked=niw_ms();timingRequest=0;
+  if(selector==4){cancel=pendingTicket;cancelJoin=joinTicket;}
+  result=(d||t||r)?kIOReturnBadArgument:outputLocked(selector,a,&adopted);
+  if(timing_call){
+   done=niw_ms();request=timingRequest;clock_ok=entered<=locked&&locked<=done;
+   if(clock_ok){wait_ms=locked-entered;work_ms=done-locked;}
+   /* Slow reserve cannot be spent by normal boot polling. Sampling is under
+    * this same gate; the per-client budgets are64 normal +16 slow pairs. */
+   if(clock_ok&&(wait_ms>=50||work_ms>=50)){if(timingSlow<16){timingSlow++;sample=2;}}
+   else if(niwt_relevant(request,result)&&timingNormal<64){timingNormal++;sample=1;}
+  }
+  if(selector>=1&&selector<=5&&pipeLogs++<32)printf("NORD2 WIFI IOS PIPE: selector=%u phase=%u status=%#x output=%u refs=%u t_ms=%llu\n",selector,(unsigned)phase,(unsigned)result,a?(unsigned)a->structureOutputSize:0,a?a->asyncReferenceCount:0,niw_ms());
+  IOLockUnlock(gate);
+ }
+ /* Emit after unlocking: printf is excluded from both measured intervals,
+  * and no client lock is held across logging or later cancel callbacks.
+  * This measures completed calls only; a stuck call has no timing pair yet. */
+ if(sample){
+  printf("NORD2 WIFI IOS QUERYBEGIN: client=%llu call=%u selector=%u entered_ms=%llu locked_ms=%llu\n",(unsigned long long)timing_client,timing_call,selector,(unsigned long long)entered,(unsigned long long)locked);
+  printf("NORD2 WIFI IOS QUERYEND: client=%llu call=%u request=%u status=%#x done_ms=%llu wait_ms=%llu work_ms=%llu clock_ok=%u sample=%u\n",(unsigned long long)timing_client,timing_call,request,(unsigned)result,(unsigned long long)done,(unsigned long long)wait_ms,(unsigned long long)work_ms,clock_ok,sample);
+ }
  if(cancel&&result==kIOReturnSuccess)nord2_wifi_scan_cancel(cancel);
  if(cancelJoin&&result==kIOReturnSuccess)nord2_wifi_join_cancel(cancelJoin);
  if(incomingRight&&!adopted)IOUserClient::releaseAsyncReference64(incoming);return result;

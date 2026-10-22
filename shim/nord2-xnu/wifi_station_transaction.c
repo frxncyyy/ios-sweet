@@ -93,7 +93,11 @@ static int consume_eapol(struct stc*s,uint64_t now){
 int stc_receipt(struct stc*s,uint64_t gen,uint64_t ticket,int success,uint64_t now){
  if(!current(s,gen,now)||!ticket||ticket!=s->action.ticket||!s->action.kind)return 0;
  unsigned phase=s->phase;erase(&s->action,sizeof s->action);
- if(success!=1){if(phase>=STC_DEAUTH)return halt(s);return stop(s,STC_FAILED);}
+ /* Deauthentication is best-effort over air, not a firmware retirement
+  * barrier. A negative air result must still run actual key/peer cleanup.
+  * Failed command deletion/retirement remains fatal. Native unknown-DMA
+  * failures never deliver an air receipt and keep their retained halt. */
+ if(success!=1){if(phase==STC_DEAUTH)return cleanup_next(s);if(phase>=STC_DEAUTH)return halt(s);return stop(s,STC_FAILED);}
  size_t n=0;
  switch(phase){
  case STC_PREPARE:s->channel_held=1;if(emit(s,STC_CHANNEL,STC_CID_CHANNEL)<0)return -1;if(sw_channel(s->action.payload,sizeof s->action.payload,&n,&s->channel))return stop(s,STC_FAILED);s->action.bytes=(unsigned)n;return 1;
