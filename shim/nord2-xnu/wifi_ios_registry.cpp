@@ -22,7 +22,10 @@
 #include <net/if_types.h>
 #include <net/if_media.h>
 #include <net/if_ether.h>
+/* Selected bpf.h exposes kernel symbols without C++ linkage guards. */
+extern "C" {
 #include <net/bpf.h>
+}
 #include <sys/kern_event.h>
 #include <sys/sockio.h>
 #include <sys/systm.h>

@@ -22264,7 +22264,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_registry.cpp
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,289 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Compatible replacement registry classes: IOService ABI only. No proprietary
@@ -22291,7 +22291,10 @@
 +#include <net/if_types.h>
 +#include <net/if_media.h>
 +#include <net/if_ether.h>
++/* Selected bpf.h exposes kernel symbols without C++ linkage guards. */
++extern "C" {
 +#include <net/bpf.h>
++}
 +#include <sys/kern_event.h>
 +#include <sys/sockio.h>
 +#include <sys/systm.h>

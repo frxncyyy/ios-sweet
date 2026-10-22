@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined CI link failure corrected locally.** CI39775642868
+  attempt1 failed only on three BPF symbols in registry C++ translation unit:
+  selected net/bpf.h does not wrap bpfattach/bpf_tap_in/out in extern C.
+  Root wraps that include only; regenerated0082 and actual ARM64 object check
+  confirm all three references now use exact C symbols. No runtime behavior
+  or station/crypto change. First CI source669ab25 retained with log/annotations;
+  watch20095 CLOSED2, no image or device action. Next commit/fresh combined CI.
+
+- **2026-10-22: combined connection CI running.** Source669ab2537777fa4caee553554feac67e8accfa32
+  committed/pushed; CI39775642868 attempt1 in progress. Root watch20095 owns
+  download/log capture. Canonical station/client/contracts/registry/NSS tests
+  and all12 generated native compiles PASS. New source manifest contains261 pins,
+  identity/native/prepared/approval gates still FALSE. No phone action.
+
 - **2026-10-22: combined first WPA2 connection implemented; native checks PASS.**
   Canonical integration includes bridge v3 dc18f399, MTK transport v4 fe23e167,
   WPA/owner/service 5000d7cf and real existing-ifnet adapter 3feabf25. Independent
