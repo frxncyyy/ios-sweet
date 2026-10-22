@@ -4,6 +4,23 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22 19:53 local: join-options a73ee086 FLASHED; live test running.**
+  Human exactboot/RF/conditionald9a/rescue approval call_f0646fc645ca4d96abc9cfccfc4bf655,
+  readyfastboot. Single knownNord2 product/bootcapacity/nonuserspace checks PASS;
+  flash/reboot OKAY. Runner8715 ACTIVE owns soleUSBreader at newstage hardware-live.
+  Firmware MAINstatus0stage9ready1; identitypublished1bytes6; one execwifid.
+  First valid GUI at796168380/13MHz=61.24s fromkernel timer; humanUI pending.
+  At19:55 local user asked to select one WPA2 network and STOP at password dialog,
+  before Join submission, to bracket pre-password delay independently. Question
+  host timestamp is NOT actual tap time; stored hardware-review/prepassword-question.json.
+  Cap pre-password auditmanifest2cb24748/report145bbe15 checkedallpins: selected
+  WiFiKit has real async scan-preparation path but execution/10s attribution
+  unproven; oldd9a log lacks scans precedingfirst5 WPA2 pairs, nooldGET97/PIPEchain.
+  No additional fix justified. Newimage still has no actual association/key/IP
+  proof. Await password-open reply, snapshot log, then ask one WPA2 submit with
+  Private Wi-Fi Address OFF, password onlyphone. No reboot/retry unless needed.
+
+
 - **2026-10-22: combined join-options image a73ee086 PREPARED/VERIFIED, not authorized.**
   CI39823157589 attempt1/source1134851 SUCCESS. Builder28170 CLOSED0; independent
   image review PASS report9ff898d9/manifest a0603159, all filepins checked by root.
