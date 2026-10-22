@@ -3,6 +3,43 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined WPA2 submission/scan-return image PREPARED and verified.**
+  shim/out/nord2-xnu/nord2-ios-wifi-submit-scan-stop23.img,33468416 bytes:
+  SHA-256806c8d61f58dd625dc0bd68b42941e05ed4abb186c29e6687c30d0fffddc6522.
+  Payload14960192 bytes SHAb0bfabb34d74da6ab23476490fa6a15b466bd7fcf5f2af48e22237e3fd510bec;
+  boot spare86016 bytes. Builder67204 CLOSED0 under1GiB address-space limit.
+  Independent existing-image reportd12d975b/manifest3544b84b PASS; root verified
+  every member and protected stage pin. Exact CI39841085457/source38b3e67e,
+  loader/rescue/header/segments and calibrated identity ADT all verified.
+  Prepared gate is TRUE; human/RF/conditional-recovery gates remain FALSE and
+  one-shot runner is UNUSED. Exact new flash approval is required next.
+  Phone remains454ac21e, stable after failed join but scans blocked; no active
+  USB reader or new phone action. Conditional next-test recovery is d9a44316
+  or verified RAM ADB rescue, never stock Android over the iOS userdata.
+  Test remains one WPA2 join with private address disabled. Typed local receipt
+  does not prove air ACK/keys/IP; scan-return is source/model verified only.
+  Pre-password12s delay remains unexplained. No new hardware success claimed.
+
+- **2026-10-22: CI39841085457 and actual linked review passed; image building.**
+  Exact source38b3e67e4fd9b53b415bf8142ce1c687c58c81d2, attempt1 success;
+  watcher56147 CLOSED0. Kernel17720648 bytes SHA-256
+  e930f02f95e60046d14dfa357733df436dfdc9d46560d697ac41ab60634825d0.
+  Root verified225 generated files,34 generic ARMv8.2 units and2274123 decoded
+  instructions without LDAPUR/STLUR. Bounded linked reported7eccfb and manifest
+  aa27dcf8 PASS; all32 members checked. Source/CI/schema gates are verified.
+  Builder67204 active with1GiB address-space limit for
+  shim/out/nord2-xnu/nord2-ios-wifi-submit-scan-stop23.img.
+  Prepared-image and human flash gates remain FALSE pending independent final
+  image checks and exact new approval. Currentphone454ac21e remains untouched.
+
+- **2026-10-22: one full build dispatched for combined submission/scan fix.**
+  Commit38b3e67e4fd9b53b415bf8142ce1c687c58c81d2 pushed to fork;
+  CI39841085457 attempt1 in progress, watcher56147 owns artifact collection in
+  research/ci-39841085457. Do not redispatch or reuse old artifacts.
+  Final independent source/8TU review5002aee9 PASS; source bundle contains298
+  committed files, source-proposals SHA0c7caa76. Separate actual linked/image
+  review remains pending. No new flash or join; phone remains454ac21e.
+
 - **2026-10-22: combined local submission and scan-return correction merged.**
   Typed SECURITY_SUBMITTED/DATA_SUBMITTED receipts follow verified DMA retirement;
   they never imply an air ACK or installed keys. Real management receipts,
