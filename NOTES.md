@@ -4,6 +4,24 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: WPA2 image6e4ce860 flashed; user still reports unable to join.**
+  Exact authorization call_b9b8a74fd0f646979e5d8b153f5203bc consumed; sole boot
+  write/reboot succeeded. Source938cb89, CI39790703398, image33462272B SHA
+  6e4ce860cfbd0b27fbace65e61e96edc8d2af8067603652cd67a0939c53331c6.
+  USB live and valid iOS frames observed. Root runner79059 CLOSED0, USED,
+  never rerun. Continued read-only USB collector3397 CLOSED0 in
+  wifi-ios-security/ios/hardware-after-attempt; no active USB owner.
+  User: network selection takes~10s to password sheet, then unable to join;
+  Private Wi-Fi Address OFF. Current snapshot has CARD08/40 executing but no
+  native JOINREQ/JOINCONTROL/STATION receipt. No connection/IP proof or panic.
+  Fresh immutable snapshot/parsers in wifi/claude-opus-security-failure.
+  Claude Opus5.5/high running, wrapper19134, resumed sessionb4585316;
+  live viewer on desktop3. User requested read-only analysis of
+  remaining pre-SET20 gates before another build. No new image/flash approval.
+  Phone remains6e4ce860; conditional52d4/RAM rescue authorized if necessary.
+  Never stock Android boot over iOS userdata; UFS/speed closed.
+
+
 - **2026-10-22: cohesive WPA2 image VERIFIED; pending exact boot-only approval.**
   nord2-ios-wifi-security-battery-stop23.img33462272B SHA
   6e4ce860cfbd0b27fbace65e61e96edc8d2af8067603652cd67a0939c53331c6.
