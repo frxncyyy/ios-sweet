@@ -15,22 +15,41 @@ static int station_rsn_ok(const uint8_t*p,unsigned n){
  return n==24||(!p[24]&&p[25]==15&&p[26]==172&&(p[27]==6||p[27]==11||p[27]==12||p[27]==13));
 }
 static int refuse(struct niwj_diagnostic*d,int reason){if(d)d->reason=(uint32_t)-reason;return reason;}
-int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
+int niwj_decode_identity(const void*v,size_t n,const uint8_t owner_mac[6],struct niwj_request*out,struct niwj_diagnostic*d){
  const uint8_t*p=v;if(d)niwj_clear(d,sizeof(*d));if(out)niwj_clear(out,sizeof(*out));
  if(!out||!p||n!=NIWJ_ASSOC_BYTES)return refuse(d,NIWJ_SHAPE);
  if(d){d->mode=j16(p+4);d->auth_lower=j16(p+6);d->auth_upper=j16(p+8);d->rsn_bytes=j16(p+204);d->key_kind=j32(p+64);d->key_bytes=j32(p+60);d->native_flags=j32(p+504);d->association_flags=j16(p+463);d->association_reason=p[465];
-  d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);}
+  d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);
+  d->private_address_present=(p[464]&8u)!=0;
+  d->owner_address_valid=owner_mac&&nz(owner_mac,6)&&!(owner_mac[0]&1u);
+  d->private_address_matches=d->private_address_present&&d->owner_address_valid&&same(p+508,owner_mac,6);}
  if(j32(p)!=1||!j32(p+12)||j32(p+12)>32||(nz(p+48,6)&&(p[48]&1)))return refuse(d,NIWJ_SHAPE);
  if(j16(p+4)!=2||j16(p+6)!=1||j16(p+8)!=8)return refuse(d,NIWJ_PROFILE);
  if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
  if(!station_rsn_ok(p+206,j16(p+204)))return refuse(d,NIWJ_SECURITY);
  /* Port policy: producer's PMK6 WPA2 profile flags0/4 are handled by our
   * host WPA2 engine. No claim of undocumented vendor offload semantics. */
- if((p[463]&~0x20u)||p[464]||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
-    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+536)||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
+ /* Exact producer copies a valid LAA to508 and sets bit08; it is not a
+  * permission to ignore a different requested self address. Existing native
+  * BSS/TX/ifnet identity is immutable, so require actual retained equality. */
+ if((p[463]&~0x20u)||(p[464]&~0x48u)||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
+    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
+ if((p[464]&8u)&&(!owner_mac||!nz(owner_mac,6)||(owner_mac[0]&1u)||
+    !nz(p+508,6)||(p[508]&3u)!=2u||!same(p+508,owner_mac,6)))return refuse(d,NIWJ_OPTIONS);
+ /* Producer CFStringGetCString(...,37,UTF8), strlen, then stores length536.
+  * Match the first terminator exactly; unused bytes after it are inactive.
+  * Absence of bit40 leaves this storage inactive but length must be zero. */
+ unsigned scope=j32(p+536);
+ if(p[464]&0x40u){
+  if(!scope||scope>36||p[540+scope])return refuse(d,NIWJ_OPTIONS);
+  for(unsigned i=0;i<scope;i++)if(!p[540+i])return refuse(d,NIWJ_OPTIONS);
+ }else if(scope)return refuse(d,NIWJ_OPTIONS);
  out->ssid_length=(uint8_t)j32(p+12);copy(out->ssid,p+16,out->ssid_length);
  out->has_target=(uint8_t)nz(p+48,6);copy(out->target,p+48,6);copy(out->pmk,p+72,32);
  copy(out->station_rsn,station_rsn,22);out->association_reason=p[465];out->security=NIWJ_WPA2_PSK_CCMP;out->native_flags=j32(p+504);return 0;
+}
+int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
+ return niwj_decode_identity(v,n,0,out,d);
 }
 /* AP offer may contain SAE in addition to PSK. We negotiate PSK/CCMP only,
  * never SAE/PMF. Unknown optional suites do not become our capabilities. */

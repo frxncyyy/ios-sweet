@@ -43,6 +43,18 @@ static int niw_root_busy(void){
 /* Same-IPSW RawSet preserves IOReturn in errno; ScanAsync returns that errno.
  * wifid retries raw EBUSY16, not Mach kIOReturnBusy (0xe00002d5). */
 static const IOReturn kNiwScanBusy=16;
+/* Numeric diagnostic identity only. Never a pointer, native ticket or grant.
+ * Bounded contention/saturation suppresses a trace, never changes admission. */
+static uint64_t niwj_trace_sequence;
+static uint64_t niwj_trace_id(void){
+ uint64_t current=__atomic_load_n(&niwj_trace_sequence,__ATOMIC_RELAXED);
+ for(unsigned retry=0;retry<16;retry++){
+  if(current==UINT64_MAX)return 0;
+  uint64_t next=current+1;
+  if(__atomic_compare_exchange_n(&niwj_trace_sequence,&current,next,false,__ATOMIC_RELAXED,__ATOMIC_RELAXED))return next;
+ }
+ return 0;
+}
 static void niwj_free(void*p,size_t n){if(p){niwj_clear(p,n);IOFree(p,n);}}
 class NiwlLifecycleClient : public IOUserClient {
  OSDeclareDefaultStructors(NiwlLifecycleClient)
@@ -136,9 +148,14 @@ IOReturn NiwlLifecycleClient::dispatchLocked(uint32_t selector,IOExternalMethodA
     uint32_t extent=niw_u32((const uint8_t*)carrier+4),value=niw_u32((const uint8_t*)carrier+tail+20);
     if(a->structureOutputSize||value)result=kIOReturnBadArgument;
     else if(unsupportedSet==20)result=joinLocked((const uint8_t*)carrier+8,extent);
-    else if(extent)result=kIOReturnUnsupported;
+    /* Selected DisassociateExt supplies8 bytes: opaque firstword and
+     * signed32 DISASSOC_REASON at+4. Basic Disassociate supplies0. */
+    else if(extent!=0&&extent!=8)result=kIOReturnUnsupported;
     else{int x=nord2_wifi_join_disconnect();result=!x?kIOReturnSuccess:x==2?kNiwScanBusy:kIOReturnNotReady;}
-    if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS JOINCONTROL: request=%u bytes=%u status=%#x t_ms=%llu\n",unsupportedSet,extent,(unsigned)result,niw_ms());
+    if(traceControl(unsupportedSet,0x802869c8)){
+     if(unsupportedSet==22&&(extent==0||extent==8))printf("NORD2 WIFI IOS DISASSOC: bytes=%u reason=%d status=%#x\n",extent,extent==8?(int32_t)niw_u32((const uint8_t*)carrier+12):0,(unsigned)result);
+     printf("NORD2 WIFI IOS JOINCONTROL: request=%u bytes=%u status=%#x t_ms=%llu\n",unsupportedSet,extent,(unsigned)result,niw_ms());
+    }
     if(copy)niwj_free(copy,bytes);return result;
    }
    if(unsupportedSet==19&&niw_u32((const uint8_t*)carrier+4)==24&&traceControl(19,0))printf("NORD2 WIFI IOS POWERSET: version=%u radios=%u state=%u\n",niw_u32(power),niw_u32(power+4),niw_u32(power+8));
@@ -359,8 +376,13 @@ IOReturn NiwlLifecycleClient::joinLocked(const uint8_t*p,size_t bytes){
  if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
  if(joinTicket)return kNiwScanBusy;
  niwj_request*request=(niwj_request*)IOMalloc(sizeof(*request));if(!request)return kIOReturnNoMemory;
- niwj_diagnostic diag={};int decoded=niwj_decode(p,bytes,request,&diag);
- if(joinLogs++<32)printf("NORD2 WIFI IOS JOINREQ: bytes=%u reason=%u mode=%u auth_lower=%u auth_upper=%u rsn_bytes=%u key_kind=%u key_bytes=%u native_flags=%#x assoc_flags=%#x assoc_reason=%u cached_pmk_bytes=%u blacklist_count=%u scope_id=%u conditional_option=%u transition_disable=%#x band_preference=%u t_ms=%llu\n",(unsigned)bytes,diag.reason,diag.mode,diag.auth_lower,diag.auth_upper,diag.rsn_bytes,diag.key_kind,diag.key_bytes,diag.native_flags,diag.association_flags,diag.association_reason,diag.cached_pmk_bytes,diag.blacklist_count,diag.scope_id,diag.conditional_option,diag.transition_disable,diag.band_preference,niw_ms());
+ nss_info actual={};if(nord2_wifi_scan_info(&actual)){if(joinLogs++<32){uint64_t trace=niwj_trace_id();if(trace)printf("NORD2 WIFI IOS JOINOWNER: trace=%llu ready=0 status=%#x\n",(unsigned long long)trace,(unsigned)kIOReturnNotReady);}niwj_free(request,sizeof(*request));return kIOReturnNotReady;}
+ niwj_diagnostic diag={};int decoded=niwj_decode_identity(p,bytes,actual.mac,request,&diag);
+ if(joinLogs++<32){uint64_t trace=niwj_trace_id();if(trace){
+  printf("NORD2 WIFI IOS JOINREQ: trace=%llu bytes=%u reason=%u mode=%u auth_lower=%u auth_upper=%u rsn_bytes=%u key_kind=%u key_bytes=%u t_ms=%llu\n",(unsigned long long)trace,(unsigned)bytes,diag.reason,diag.mode,diag.auth_lower,diag.auth_upper,diag.rsn_bytes,diag.key_kind,diag.key_bytes,niw_ms());
+  printf("NORD2 WIFI IOS JOINOPTS: trace=%llu native_flags=%#x assoc_flags=%#x assoc_reason=%u cached_pmk_bytes=%u blacklist_count=%u scope_bytes=%u conditional_option=%u\n",(unsigned long long)trace,diag.native_flags,diag.association_flags,diag.association_reason,diag.cached_pmk_bytes,diag.blacklist_count,diag.scope_id,diag.conditional_option);
+  printf("NORD2 WIFI IOS JOINIDENT: trace=%llu private_present=%u owner_valid=%u same_identity=%u transition_disable=%#x band_preference=%u\n",(unsigned long long)trace,diag.private_address_present,diag.owner_address_valid,diag.private_address_matches,diag.transition_disable,diag.band_preference);
+ }}
  if(decoded){niwj_free(request,sizeof(*request));return decoded==NIWJ_SHAPE?kIOReturnBadArgument:kIOReturnUnsupported;}
  retain();uint64_t ticket=0;int result=nord2_wifi_join_enqueue(request,this,generation,joinCompleted,&ticket);
  niwj_free(request,sizeof(*request));

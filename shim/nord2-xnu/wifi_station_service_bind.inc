@@ -39,7 +39,7 @@ static struct {
  uint8_t tx[NJS_TX_SLOTS][NWIL_ETHERNET_MAX];unsigned tx_bytes[NJS_TX_SLOTS];
  uint8_t rx[NJS_RX_SLOTS][NWIL_ETHERNET_MAX];unsigned rx_bytes[NJS_RX_SLOTS];
 } njs_native;
-/* At most112 aggregate rows for this first transaction, never packet/secret
+/* At most112 samples (five short state parts each), never packet/secret
  * bytes. State rows only on phase/action/outcome/error/readiness transitions. */
 static void njs_trace_locked(unsigned force){
  struct stc*t=&njs_native.driver.owner.transaction;struct nst*n=&nst_native.state;
@@ -47,7 +47,13 @@ static void njs_trace_locked(unsigned force){
  if(njs_native.logs>=110)return;
  if(!force&&njs_native.last_phase==t->phase&&njs_native.last_kind==t->action.kind&&njs_native.last_outcome==t->outcome&&njs_native.last_error==n->error&&njs_native.last_halt==n->halt&&njs_native.last_ready==ready&&njs_native.last_service==njs_native.snapshot.phase&&njs_native.last_linked==njs_native.linked&&njs_native.last_result==njs_native.snapshot.result)return;
  njs_native.logs++;njs_native.last_phase=t->phase;njs_native.last_kind=t->action.kind;njs_native.last_outcome=t->outcome;njs_native.last_error=n->error;njs_native.last_halt=n->halt;njs_native.last_ready=ready;njs_native.last_service=njs_native.snapshot.phase;njs_native.last_linked=njs_native.linked;njs_native.last_result=njs_native.snapshot.result;
- printf("NORD2 WIFI IOS STATION: generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
+ /* Kernel printf stages only256 bytes. Every part is <=230 bytes even at
+  * maximal integer widths; the boot-global sample binds one locked snapshot. */
+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=1 generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u\n",njs_native.logs,(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase);
+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=2 action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u\n",njs_native.logs,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step);
+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=3 cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u\n",njs_native.logs,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port);
+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=4 event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u\n",njs_native.logs,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop);
+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=5 rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",njs_native.logs,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
 }
 static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
 static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
@@ -78,13 +84,17 @@ static void njs_drop_tx_locked(void);
 int nord2_wifi_join_disconnect(void){
  if(!nss_available()||!njs_native.notice_lock)return 1;
  IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
- int r=1;uint64_t generation=0;
- if(njs_native.queued||njs_native.active){njs_native.leave=1;generation=njs_native.native_generation;
+ int r=1;unsigned changed=0;uint64_t generation=0;
+ if(njs_native.queued||njs_native.active){changed=1;njs_native.leave=1;generation=njs_native.native_generation;
   if(njs_native.active)nst_close_port(&nst_native.state);
   njs_drop_tx_locked();njs_native.linked=njs_native.tx_admit=0;njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=njs_native.snapshot.data_ready=0;njs_native.snapshot.phase=NJS_LEAVING;r=0;}
+ /* A pre-join leave on an initialized, healthy, untouched service is
+  * already satisfied. Do not claim native work, change generation/used,
+  * notify ifnet with generation0, or consume the single native attempt. */
+ else if(!nss_native.failed&&njs_native.snapshot.phase==NJS_IDLE&&!njs_native.used&&!nst_native.attempted&&!nst_native.active&&!njs_native.retiring&&!njs_native.completion&&!njs_native.cookie&&!njs_native.linked&&!njs_native.tx_admit)r=0;
  IOLockUnlock(nss_native.lock);
- if(!r&&nord2_wifi_ifnet_link(generation,0))r=-1;
- IOLockUnlock(njs_native.notice_lock);if(r!=1)thread_wakeup((event_t)&nss_native);return r;
+ if(changed&&nord2_wifi_ifnet_link(generation,0))r=-1;
+ IOLockUnlock(njs_native.notice_lock);if(changed)thread_wakeup((event_t)&nss_native);return r;
 }
 /* Compiled native module implements all six operations for this checked
  * WPA2-PSK/CCMP profile. Bits describe installed handlers, not reached keys,

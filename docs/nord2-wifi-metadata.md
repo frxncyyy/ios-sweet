@@ -62,6 +62,12 @@ WPA2 association, DHCP or Internet access.
 
 ## Separate keychain prerequisite
 
+The combined identity/keychain image was tested on 22 October 2026. The user
+now sees the Wi-Fi address in Settings. The collected boot contains one wifid
+execution, 73 successful AKS operations, and actual association requests reaching
+the driver. Association still failed before native radio admission; these
+observations establish neither a completed WPA2 handshake nor IP connectivity.
+
 The executed log also contains 157 unsupported `securityd` wrap-key requests.
 Patch `0083-nord2-keystore-compat.patch` implements NORD2-only operations 10/11
 with the existing upstream `HKwr` format. This is a separate demonstrated API
@@ -73,6 +79,42 @@ persistent-format compatibility; it does not erase/reset the keychain, invent a
 per-boot secret or guess foreign blob formats. A future secure implementation
 will need an explicit migration policy. Tests cover the actual patched handler,
 known upstream vector, descriptor failures, bounds and non-NORD2 regression.
+
+## Association metadata after identity repair
+
+The selected iOS producer sends a 592-byte association record. The first real
+WPA2 request with Private Wi-Fi Address disabled carried flags `0x4000` and
+the value 36 at offset 536. That value is the **byte length of a string**, not
+a numeric channel or scope identifier. The earlier zero-only option policy
+rejected this normal request before any native association command.
+
+- Flag `0x4000` accompanies `COLOCATED_NETWORK_SCOPE_ID`: length at 536,
+  UTF-8 bytes at 540, and a terminator. Accept a bounded length of 1–36 with
+  its first terminator at that length. This is opaque grouping metadata; it
+  does not authorize a different SSID/BSSID or enable roaming.
+- Flag `0x0800` accompanies a requested locally administered, unicast station
+  address at 508. The native BSS and interface still use the retained factory
+  address. Accept this flag only when the supplied address equals that actual
+  address; changing or rotating the station address remains unsupported.
+- Request 22 has two selected producer forms: zero bytes, or eight bytes with
+  a signed reason at offset four. The first word in the latter is inactive
+  compiler fill, not a version field. A pre-join leave on a healthy, untouched
+  idle service is already satisfied; it must not consume the first attempt,
+  change the generation, signal carrier, or issue a native command.
+
+The correction retains PMK32, WPA2-Personal/CCMP, RSN, target, channel and native
+ownership checks. Open networks, SAE, mandatory PMF, changed private addresses
+and reconnect/roaming are outside the implemented first-connection profile.
+The native association-response handoff also accepts the Retry bit already
+accepted by its management parser, while retaining peer/status/AID/rate checks.
+No real AP association response had reached that handoff in the captured test.
+
+Kernel `printf` truncates at 255 bytes. Association diagnostics therefore use
+short correlated numeric records. Native station samples use five bounded
+parts; the receipt parser requires a complete, ordered sample and refuses
+missing, duplicate or mismatched parts. Neither addresses, scope strings nor
+credentials are printed. Successful command submission is never treated as
+association, key installation, DHCP or Internet evidence.
 
 ## Upstream attribution and retained evidence
 

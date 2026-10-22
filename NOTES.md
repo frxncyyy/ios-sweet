@@ -4,6 +4,28 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: cohesive join-options correction integrated; local checks PASS, CI next.**
+  Exact producer correction: scope4000 is bounded1..36-byte string metadata;
+  private0800 requires actual retained factoryidentity equality, no MAC change.
+  SelectedSET22 accepts0/8bytes; initialized healthy untouchedidle is success
+  withoutnative/ifnet/attempt mutation. NativeAssocResp Retrybit now agrees
+  withmanagementparser; allotherpeer/status/AID/rate constraints preserved.
+  JOIN diagnostics have atomic bounded nonwrappingtraceIDs and three short
+  records; STATION has five correlatedparts. All10 source printf formats<=234B.
+  New canonical receiptparser supports exactshortschemas,149positive/269negative
+  tests; invalidreceipts suppress aggregate AND nestedsuccessclaims. Oldactual
+  truncatedlogs remainINVALID. AllIOUC,profile134777+,disconnect104,station7groups
+  includingRetry411/owner2271/native1088/actual2730 PASS underASan/UBSan.
+  Generated0082 applies/matches; four actual ARM64 owningunits compile (client,
+  join,stationtransport,sweet_touch; localAppletypedmetadata macro limitation).
+  Private candidates under wifi-ios-identity/ios: joinv2a0deda4c,disconnect5b03206c,
+  retry1d943511. Fresh closedstage wifi-ios-join-options/ios prepared; no newCI,
+  image or flash yet. Oldphone d9a44316 stillUIusable, no activeUSBcollector.
+  Primarynextfallbackd9a44316, secondary6e4ce860/RAMrescue. User approval for
+  a future image remains required; no further device action authorized yet.
+
+
+
 - **2026-10-22: identity/AKS hardware test complete; actual join-profile blockers isolated.**
   User sees Wi-Fi address now; selecting network still takes~10s and WPA2 Join
   fails immediately. Extra OPEN attempt unsupported by existing WPA2-only path.

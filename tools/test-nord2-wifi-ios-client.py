@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess,tempfile,argparse
 R=next(x for x in Path(__file__).resolve().parents if(x/'AGENTS.md').exists());P=Path(__file__).resolve().parent/'fixtures/nord2-wifi-ios-client';B=P;S=R/'shim/nord2-xnu'
-ap=argparse.ArgumentParser();ap.add_argument('--log',type=Path);ap.add_argument('--candidate',type=Path,help='Optional reviewed private source overlay; default tests canonical runtime');ap.add_argument('--only',choices=('all','card'),default='all');args=ap.parse_args()
+ap=argparse.ArgumentParser();ap.add_argument('--log',type=Path);ap.add_argument('--candidate',type=Path,help='Optional reviewed private source overlay; default tests canonical runtime');ap.add_argument('--only',choices=('all','card','disconnect'),default='all');args=ap.parse_args()
 names=('join','station_view','binding','control','event','lifecycle','card','policy','rates','mapping','age','snapshot','bss','scan_contract','cursor','scalar')
 with tempfile.TemporaryDirectory(prefix='niwl-compat-') as t:
  d=Path(t);dev=d/'xnu/bsd/dev';arm=d/'xnu/iokit/Kernel/arm';dev.mkdir(parents=True);arm.mkdir(parents=True)
@@ -27,6 +27,13 @@ with tempfile.TemporaryDirectory(prefix='niwl-compat-') as t:
  for name in names:
   f=dev/('wifi_ios_'+name+'.c');o=d/(name+'.o');subprocess.run(['clang','-std=c11',*flags,'-c',str(f),'-o',str(o)],check=True);objs.append(str(o))
  logs=[]
+ if args.only=='disconnect':
+  disconnect_source=source[:source.index(legacy_extra)]+(P/'test-disconnect.inc').read_text()
+  (d/'disconnect.cpp').write_text(disconnect_source)
+  subprocess.run(['clang++','-std=c++17',*flags,'-Wno-unused-function','-pthread',str(d/'disconnect.cpp'),*objs,'-o',str(d/'disconnect')],check=True)
+  disconnected=subprocess.run([str(d/'disconnect')],text=True,capture_output=True);print(disconnected.stdout);print(disconnected.stderr)
+  if args.log:args.log.write_text(disconnected.stdout+disconnected.stderr)
+  disconnected.check_returncode();raise SystemExit(0)
  if args.only=='all':
   subprocess.run(['clang++','-std=c++17',*flags,'-Wno-unused-function','-pthread',str(d/'test.cpp'),*objs,'-o',str(d/'test')],check=True)
   result=subprocess.run([str(d/'test')],text=True,capture_output=True);print(result.stdout);print(result.stderr);result.check_returncode()

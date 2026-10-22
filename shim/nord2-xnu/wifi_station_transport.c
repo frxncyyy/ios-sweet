@@ -190,7 +190,7 @@ int nst_peer_begin(struct nst*s,uint64_t ticket,unsigned kind,const struct nst_p
   if(!p||!p->assoc.ssid||!p->assoc.ssid_len||p->assoc.ssid_len>32||!p->assoc.rates||!p->assoc.rates_len||p->assoc.rates_len>12||p->sta_version>1||!p->assoc.listen_interval||!p->beacon_interval||!eq(p->assoc.peer.self,s->peer.self,6)||!eq(p->assoc.peer.ap,s->peer.ap,6)||rate_sets(p->assoc.rates,p->assoc.rates_len,&s->negotiated_rates,&s->basic_rates))return -1;
   s->profile=*p;cp(s->ssid,p->assoc.ssid,p->assoc.ssid_len);cp(s->rates,p->assoc.rates,p->assoc.rates_len);s->profile.assoc.ssid=s->ssid;s->profile.assoc.rates=s->rates;s->txd.fixed_rate=lowest(s->basic_rates);
  }else if(kind==NST_CONFIGURE_PEER){
-  if(!response||n<30||n>512||u16(response)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
+  if(!response||n<30||n>512||(u16(response)&~0x0800u)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
   uint16_t aid=u16(response+28)&0x3fff;if(!aid||aid>2007)return -1;uint8_t rates[12];size_t count=0;unsigned seen1=0,seen50=0;
   for(size_t off=30;off<n;){if(n-off<2||response[off+1]>n-off-2)return -1;unsigned id=response[off],bytes=response[off+1];off+=2;if(id==1||id==50){if(!bytes||(id==1&&(seen1++||bytes>8))||(id==50&&seen50++)||bytes>12-count)return -1;cp(rates+count,response+off,bytes);count+=bytes;}off+=bytes;}
   uint16_t all=0,basic=0;if(!seen1||rate_sets(rates,count,&all,&basic)||basic&~s->negotiated_rates)return -1;

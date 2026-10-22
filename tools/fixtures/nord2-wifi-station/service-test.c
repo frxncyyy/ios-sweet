@@ -71,6 +71,19 @@ static void seed_ready(uint64_t g){
 static void*owner_thread(void*x){(void)x;assert(njs_owner_work()==1);return NULL;}
 static void*disconnect_thread(void*x){(void)x;pthread_mutex_lock(&barrier);disconnect_started=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);assert(!nord2_wifi_join_disconnect());pthread_mutex_lock(&barrier);disconnect_done=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);return NULL;}
 int main(void){nss_native.lock=IOLockAlloc();njs_initialize_locked();assert(njs_native.notice_lock);struct niwj_request q=request();uint64_t ticket=0;
+/* Exact actual binder: successful repeated idle leave is pure, including
+ * untouched first-attempt ledger and no ifnet callback or native prepare. */
+static unsigned char idle_service[sizeof njs_native],idle_native[sizeof nst_native];
+memcpy(idle_service,&njs_native,sizeof njs_native);memcpy(idle_native,&nst_native,sizeof nst_native);
+for(unsigned k=0;k<256;k++){assert(!nord2_wifi_join_disconnect());assert(!memcmp(idle_service,&njs_native,sizeof njs_native)&&!memcmp(idle_native,&nst_native,sizeof nst_native));assert(!ifnet_down&&!prepared_calls);}
+source_ready=0;assert(nord2_wifi_join_disconnect()==1);source_ready=1;
+nss_native.failed=1;assert(nord2_wifi_join_disconnect()==1);nss_native.failed=0;
+njs_native.used=1;assert(nord2_wifi_join_disconnect()==1);njs_native.used=0;
+nst_native.attempted=1;assert(nord2_wifi_join_disconnect()==1);nst_native.attempted=0;
+nst_native.active=1;assert(nord2_wifi_join_disconnect()==1);nst_native.active=0;
+njs_native.snapshot.phase=NJS_FAILED;assert(nord2_wifi_join_disconnect()==1);njs_native.snapshot.phase=NJS_IDLE;
+assert(!memcmp(idle_service,&njs_native,sizeof njs_native)&&!memcmp(idle_native,&nst_native,sizeof nst_native));
+printf("PASS256 idle disconnects: byteidentical service/native ledger; unavailable/failed/used/nonidle refused; no ifnet/MMIO/prepare\n");
 /* Same production binder and admissionlock: old scans never make SET20 EBUSY.
  * Native prepare remains a refusal-only seam; actual DMA proof is separate. */
  for(unsigned state=NSS_QUEUED;state<=NSS_RUNNING;state++){

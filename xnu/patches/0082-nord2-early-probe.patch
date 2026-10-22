@@ -11875,7 +11875,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_join.c
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,113 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_join.h"
@@ -11895,22 +11895,41 @@
 + return n==24||(!p[24]&&p[25]==15&&p[26]==172&&(p[27]==6||p[27]==11||p[27]==12||p[27]==13));
 +}
 +static int refuse(struct niwj_diagnostic*d,int reason){if(d)d->reason=(uint32_t)-reason;return reason;}
-+int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
++int niwj_decode_identity(const void*v,size_t n,const uint8_t owner_mac[6],struct niwj_request*out,struct niwj_diagnostic*d){
 + const uint8_t*p=v;if(d)niwj_clear(d,sizeof(*d));if(out)niwj_clear(out,sizeof(*out));
 + if(!out||!p||n!=NIWJ_ASSOC_BYTES)return refuse(d,NIWJ_SHAPE);
 + if(d){d->mode=j16(p+4);d->auth_lower=j16(p+6);d->auth_upper=j16(p+8);d->rsn_bytes=j16(p+204);d->key_kind=j32(p+64);d->key_bytes=j32(p+60);d->native_flags=j32(p+504);d->association_flags=j16(p+463);d->association_reason=p[465];
-+  d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);}
++  d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);
++  d->private_address_present=(p[464]&8u)!=0;
++  d->owner_address_valid=owner_mac&&nz(owner_mac,6)&&!(owner_mac[0]&1u);
++  d->private_address_matches=d->private_address_present&&d->owner_address_valid&&same(p+508,owner_mac,6);}
 + if(j32(p)!=1||!j32(p+12)||j32(p+12)>32||(nz(p+48,6)&&(p[48]&1)))return refuse(d,NIWJ_SHAPE);
 + if(j16(p+4)!=2||j16(p+6)!=1||j16(p+8)!=8)return refuse(d,NIWJ_PROFILE);
 + if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
 + if(!station_rsn_ok(p+206,j16(p+204)))return refuse(d,NIWJ_SECURITY);
 + /* Port policy: producer's PMK6 WPA2 profile flags0/4 are handled by our
 +  * host WPA2 engine. No claim of undocumented vendor offload semantics. */
-+ if((p[463]&~0x20u)||p[464]||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
-+    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+536)||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
++ /* Exact producer copies a valid LAA to508 and sets bit08; it is not a
++  * permission to ignore a different requested self address. Existing native
++  * BSS/TX/ifnet identity is immutable, so require actual retained equality. */
++ if((p[463]&~0x20u)||(p[464]&~0x48u)||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
++    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
++ if((p[464]&8u)&&(!owner_mac||!nz(owner_mac,6)||(owner_mac[0]&1u)||
++    !nz(p+508,6)||(p[508]&3u)!=2u||!same(p+508,owner_mac,6)))return refuse(d,NIWJ_OPTIONS);
++ /* Producer CFStringGetCString(...,37,UTF8), strlen, then stores length536.
++  * Match the first terminator exactly; unused bytes after it are inactive.
++  * Absence of bit40 leaves this storage inactive but length must be zero. */
++ unsigned scope=j32(p+536);
++ if(p[464]&0x40u){
++  if(!scope||scope>36||p[540+scope])return refuse(d,NIWJ_OPTIONS);
++  for(unsigned i=0;i<scope;i++)if(!p[540+i])return refuse(d,NIWJ_OPTIONS);
++ }else if(scope)return refuse(d,NIWJ_OPTIONS);
 + out->ssid_length=(uint8_t)j32(p+12);copy(out->ssid,p+16,out->ssid_length);
 + out->has_target=(uint8_t)nz(p+48,6);copy(out->target,p+48,6);copy(out->pmk,p+72,32);
 + copy(out->station_rsn,station_rsn,22);out->association_reason=p[465];out->security=NIWJ_WPA2_PSK_CCMP;out->native_flags=j32(p+504);return 0;
++}
++int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
++ return niwj_decode_identity(v,n,0,out,d);
 +}
 +/* AP offer may contain SAE in addition to PSK. We negotiate PSK/CCMP only,
 + * never SAE/PMF. Unknown optional suites do not become our capabilities. */
@@ -11972,7 +11991,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_join.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,66 @@
 +#ifndef WIFI_IOS_JOIN_H
 +#define WIFI_IOS_JOIN_H
 +#include <stddef.h>
@@ -11997,11 +12016,19 @@
 +struct niwj_diagnostic {
 + uint32_t mode,auth_lower,auth_upper,rsn_bytes;
 + uint32_t reason,key_kind,key_bytes,native_flags,association_flags,association_reason;
-+ uint32_t cached_pmk_bytes,blacklist_count,scope_id,conditional_option,transition_disable,band_preference;
++ uint32_t cached_pmk_bytes,blacklist_count,scope_id,conditional_option,transition_disable,band_preference; /* scope_id is wire byte length, not a numeric ID. */
++ uint32_t private_address_present,owner_address_valid,private_address_matches;
 +};
 +/* Secret output cleared before refusal; no full-record zero sweep. Disjoint
 + * buffers required. Diagnostic contains numeric metadata only, never secrets. */
 +int niwj_decode(const void*,size_t,struct niwj_request*,struct niwj_diagnostic*);
++/* actual_owner_mac must come from the retained native info accessor, not from
++ * this user request. An address-bearing request may only confirm that exact
++ * identity; changing station identity/private rotation remains unsupported.
++ * COLOCATED_NETWORK_SCOPE_ID is bounded opaque caller metadata for this first
++ * full association, not a channel, RF permission or scoped-roaming grant. */
++int niwj_decode_identity(const void*,size_t,const uint8_t actual_owner_mac[6],
++ struct niwj_request*,struct niwj_diagnostic*);
 +void niwj_clear(void*,size_t);
 +struct niwj_target {
 + struct nsb_record record;
@@ -12622,7 +12649,7 @@
 +  if(!p||!p->assoc.ssid||!p->assoc.ssid_len||p->assoc.ssid_len>32||!p->assoc.rates||!p->assoc.rates_len||p->assoc.rates_len>12||p->sta_version>1||!p->assoc.listen_interval||!p->beacon_interval||!eq(p->assoc.peer.self,s->peer.self,6)||!eq(p->assoc.peer.ap,s->peer.ap,6)||rate_sets(p->assoc.rates,p->assoc.rates_len,&s->negotiated_rates,&s->basic_rates))return -1;
 +  s->profile=*p;cp(s->ssid,p->assoc.ssid,p->assoc.ssid_len);cp(s->rates,p->assoc.rates,p->assoc.rates_len);s->profile.assoc.ssid=s->ssid;s->profile.assoc.rates=s->rates;s->txd.fixed_rate=lowest(s->basic_rates);
 + }else if(kind==NST_CONFIGURE_PEER){
-+  if(!response||n<30||n>512||u16(response)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
++  if(!response||n<30||n>512||(u16(response)&~0x0800u)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
 +  uint16_t aid=u16(response+28)&0x3fff;if(!aid||aid>2007)return -1;uint8_t rates[12];size_t count=0;unsigned seen1=0,seen50=0;
 +  for(size_t off=30;off<n;){if(n-off<2||response[off+1]>n-off-2)return -1;unsigned id=response[off],bytes=response[off+1];off+=2;if(id==1||id==50){if(!bytes||(id==1&&(seen1++||bytes>8))||(id==50&&seen50++)||bytes>12-count)return -1;cp(rates+count,response+off,bytes);count+=bytes;}off+=bytes;}
 +  uint16_t all=0,basic=0;if(!seen1||rate_sets(rates,count,&all,&basic)||basic&~s->negotiated_rates)return -1;
@@ -18020,7 +18047,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_station_service_bind.inc
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,251 @@
 +/* Included after NSS declarations/delivery and authenticated NST native binder.
 + * Same actual retained CAP worker, same admission lock. No second worker. */
 +#include "wifi_station_service.h"
@@ -18062,7 +18089,7 @@
 + uint8_t tx[NJS_TX_SLOTS][NWIL_ETHERNET_MAX];unsigned tx_bytes[NJS_TX_SLOTS];
 + uint8_t rx[NJS_RX_SLOTS][NWIL_ETHERNET_MAX];unsigned rx_bytes[NJS_RX_SLOTS];
 +} njs_native;
-+/* At most112 aggregate rows for this first transaction, never packet/secret
++/* At most112 samples (five short state parts each), never packet/secret
 + * bytes. State rows only on phase/action/outcome/error/readiness transitions. */
 +static void njs_trace_locked(unsigned force){
 + struct stc*t=&njs_native.driver.owner.transaction;struct nst*n=&nst_native.state;
@@ -18070,7 +18097,13 @@
 + if(njs_native.logs>=110)return;
 + if(!force&&njs_native.last_phase==t->phase&&njs_native.last_kind==t->action.kind&&njs_native.last_outcome==t->outcome&&njs_native.last_error==n->error&&njs_native.last_halt==n->halt&&njs_native.last_ready==ready&&njs_native.last_service==njs_native.snapshot.phase&&njs_native.last_linked==njs_native.linked&&njs_native.last_result==njs_native.snapshot.result)return;
 + njs_native.logs++;njs_native.last_phase=t->phase;njs_native.last_kind=t->action.kind;njs_native.last_outcome=t->outcome;njs_native.last_error=n->error;njs_native.last_halt=n->halt;njs_native.last_ready=ready;njs_native.last_service=njs_native.snapshot.phase;njs_native.last_linked=njs_native.linked;njs_native.last_result=njs_native.snapshot.result;
-+ printf("NORD2 WIFI IOS STATION: generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
++ /* Kernel printf stages only256 bytes. Every part is <=230 bytes even at
++  * maximal integer widths; the boot-global sample binds one locked snapshot. */
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=1 generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u\n",njs_native.logs,(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase);
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=2 action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u\n",njs_native.logs,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step);
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=3 cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u\n",njs_native.logs,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port);
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=4 event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u\n",njs_native.logs,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop);
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=5 rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",njs_native.logs,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
 +}
 +static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
 +static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
@@ -18101,13 +18134,17 @@
 +int nord2_wifi_join_disconnect(void){
 + if(!nss_available()||!njs_native.notice_lock)return 1;
 + IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
-+ int r=1;uint64_t generation=0;
-+ if(njs_native.queued||njs_native.active){njs_native.leave=1;generation=njs_native.native_generation;
++ int r=1;unsigned changed=0;uint64_t generation=0;
++ if(njs_native.queued||njs_native.active){changed=1;njs_native.leave=1;generation=njs_native.native_generation;
 +  if(njs_native.active)nst_close_port(&nst_native.state);
 +  njs_drop_tx_locked();njs_native.linked=njs_native.tx_admit=0;njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=njs_native.snapshot.data_ready=0;njs_native.snapshot.phase=NJS_LEAVING;r=0;}
++ /* A pre-join leave on an initialized, healthy, untouched service is
++  * already satisfied. Do not claim native work, change generation/used,
++  * notify ifnet with generation0, or consume the single native attempt. */
++ else if(!nss_native.failed&&njs_native.snapshot.phase==NJS_IDLE&&!njs_native.used&&!nst_native.attempted&&!nst_native.active&&!njs_native.retiring&&!njs_native.completion&&!njs_native.cookie&&!njs_native.linked&&!njs_native.tx_admit)r=0;
 + IOLockUnlock(nss_native.lock);
-+ if(!r&&nord2_wifi_ifnet_link(generation,0))r=-1;
-+ IOLockUnlock(njs_native.notice_lock);if(r!=1)thread_wakeup((event_t)&nss_native);return r;
++ if(changed&&nord2_wifi_ifnet_link(generation,0))r=-1;
++ IOLockUnlock(njs_native.notice_lock);if(changed)thread_wakeup((event_t)&nss_native);return r;
 +}
 +/* Compiled native module implements all six operations for this checked
 + * WPA2-PSK/CCMP profile. Bits describe installed handlers, not reached keys,
@@ -21994,7 +22031,7 @@
 +}
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_client.cpp
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,427 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Native owned IOUC: scan and bounded WPA2 join bridge. Native station owner
@@ -22042,6 +22079,18 @@
 +/* Same-IPSW RawSet preserves IOReturn in errno; ScanAsync returns that errno.
 + * wifid retries raw EBUSY16, not Mach kIOReturnBusy (0xe00002d5). */
 +static const IOReturn kNiwScanBusy=16;
++/* Numeric diagnostic identity only. Never a pointer, native ticket or grant.
++ * Bounded contention/saturation suppresses a trace, never changes admission. */
++static uint64_t niwj_trace_sequence;
++static uint64_t niwj_trace_id(void){
++ uint64_t current=__atomic_load_n(&niwj_trace_sequence,__ATOMIC_RELAXED);
++ for(unsigned retry=0;retry<16;retry++){
++  if(current==UINT64_MAX)return 0;
++  uint64_t next=current+1;
++  if(__atomic_compare_exchange_n(&niwj_trace_sequence,&current,next,false,__ATOMIC_RELAXED,__ATOMIC_RELAXED))return next;
++ }
++ return 0;
++}
 +static void niwj_free(void*p,size_t n){if(p){niwj_clear(p,n);IOFree(p,n);}}
 +class NiwlLifecycleClient : public IOUserClient {
 + OSDeclareDefaultStructors(NiwlLifecycleClient)
@@ -22135,9 +22184,14 @@
 +    uint32_t extent=niw_u32((const uint8_t*)carrier+4),value=niw_u32((const uint8_t*)carrier+tail+20);
 +    if(a->structureOutputSize||value)result=kIOReturnBadArgument;
 +    else if(unsupportedSet==20)result=joinLocked((const uint8_t*)carrier+8,extent);
-+    else if(extent)result=kIOReturnUnsupported;
++    /* Selected DisassociateExt supplies8 bytes: opaque firstword and
++     * signed32 DISASSOC_REASON at+4. Basic Disassociate supplies0. */
++    else if(extent!=0&&extent!=8)result=kIOReturnUnsupported;
 +    else{int x=nord2_wifi_join_disconnect();result=!x?kIOReturnSuccess:x==2?kNiwScanBusy:kIOReturnNotReady;}
-+    if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS JOINCONTROL: request=%u bytes=%u status=%#x t_ms=%llu\n",unsupportedSet,extent,(unsigned)result,niw_ms());
++    if(traceControl(unsupportedSet,0x802869c8)){
++     if(unsupportedSet==22&&(extent==0||extent==8))printf("NORD2 WIFI IOS DISASSOC: bytes=%u reason=%d status=%#x\n",extent,extent==8?(int32_t)niw_u32((const uint8_t*)carrier+12):0,(unsigned)result);
++     printf("NORD2 WIFI IOS JOINCONTROL: request=%u bytes=%u status=%#x t_ms=%llu\n",unsupportedSet,extent,(unsigned)result,niw_ms());
++    }
 +    if(copy)niwj_free(copy,bytes);return result;
 +   }
 +   if(unsupportedSet==19&&niw_u32((const uint8_t*)carrier+4)==24&&traceControl(19,0))printf("NORD2 WIFI IOS POWERSET: version=%u radios=%u state=%u\n",niw_u32(power),niw_u32(power+4),niw_u32(power+8));
@@ -22358,8 +22412,13 @@
 + if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
 + if(joinTicket)return kNiwScanBusy;
 + niwj_request*request=(niwj_request*)IOMalloc(sizeof(*request));if(!request)return kIOReturnNoMemory;
-+ niwj_diagnostic diag={};int decoded=niwj_decode(p,bytes,request,&diag);
-+ if(joinLogs++<32)printf("NORD2 WIFI IOS JOINREQ: bytes=%u reason=%u mode=%u auth_lower=%u auth_upper=%u rsn_bytes=%u key_kind=%u key_bytes=%u native_flags=%#x assoc_flags=%#x assoc_reason=%u cached_pmk_bytes=%u blacklist_count=%u scope_id=%u conditional_option=%u transition_disable=%#x band_preference=%u t_ms=%llu\n",(unsigned)bytes,diag.reason,diag.mode,diag.auth_lower,diag.auth_upper,diag.rsn_bytes,diag.key_kind,diag.key_bytes,diag.native_flags,diag.association_flags,diag.association_reason,diag.cached_pmk_bytes,diag.blacklist_count,diag.scope_id,diag.conditional_option,diag.transition_disable,diag.band_preference,niw_ms());
++ nss_info actual={};if(nord2_wifi_scan_info(&actual)){if(joinLogs++<32){uint64_t trace=niwj_trace_id();if(trace)printf("NORD2 WIFI IOS JOINOWNER: trace=%llu ready=0 status=%#x\n",(unsigned long long)trace,(unsigned)kIOReturnNotReady);}niwj_free(request,sizeof(*request));return kIOReturnNotReady;}
++ niwj_diagnostic diag={};int decoded=niwj_decode_identity(p,bytes,actual.mac,request,&diag);
++ if(joinLogs++<32){uint64_t trace=niwj_trace_id();if(trace){
++  printf("NORD2 WIFI IOS JOINREQ: trace=%llu bytes=%u reason=%u mode=%u auth_lower=%u auth_upper=%u rsn_bytes=%u key_kind=%u key_bytes=%u t_ms=%llu\n",(unsigned long long)trace,(unsigned)bytes,diag.reason,diag.mode,diag.auth_lower,diag.auth_upper,diag.rsn_bytes,diag.key_kind,diag.key_bytes,niw_ms());
++  printf("NORD2 WIFI IOS JOINOPTS: trace=%llu native_flags=%#x assoc_flags=%#x assoc_reason=%u cached_pmk_bytes=%u blacklist_count=%u scope_bytes=%u conditional_option=%u\n",(unsigned long long)trace,diag.native_flags,diag.association_flags,diag.association_reason,diag.cached_pmk_bytes,diag.blacklist_count,diag.scope_id,diag.conditional_option);
++  printf("NORD2 WIFI IOS JOINIDENT: trace=%llu private_present=%u owner_valid=%u same_identity=%u transition_disable=%#x band_preference=%u\n",(unsigned long long)trace,diag.private_address_present,diag.owner_address_valid,diag.private_address_matches,diag.transition_disable,diag.band_preference);
++ }}
 + if(decoded){niwj_free(request,sizeof(*request));return decoded==NIWJ_SHAPE?kIOReturnBadArgument:kIOReturnUnsupported;}
 + retain();uint64_t ticket=0;int result=nord2_wifi_join_enqueue(request,this,generation,joinCompleted,&ticket);
 + niwj_free(request,sizeof(*request));

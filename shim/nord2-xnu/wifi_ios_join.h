@@ -22,11 +22,19 @@ enum niwj_refusal {NIWJ_OK=0,NIWJ_SHAPE=-1,NIWJ_PROFILE=-2,
 struct niwj_diagnostic {
  uint32_t mode,auth_lower,auth_upper,rsn_bytes;
  uint32_t reason,key_kind,key_bytes,native_flags,association_flags,association_reason;
- uint32_t cached_pmk_bytes,blacklist_count,scope_id,conditional_option,transition_disable,band_preference;
+ uint32_t cached_pmk_bytes,blacklist_count,scope_id,conditional_option,transition_disable,band_preference; /* scope_id is wire byte length, not a numeric ID. */
+ uint32_t private_address_present,owner_address_valid,private_address_matches;
 };
 /* Secret output cleared before refusal; no full-record zero sweep. Disjoint
  * buffers required. Diagnostic contains numeric metadata only, never secrets. */
 int niwj_decode(const void*,size_t,struct niwj_request*,struct niwj_diagnostic*);
+/* actual_owner_mac must come from the retained native info accessor, not from
+ * this user request. An address-bearing request may only confirm that exact
+ * identity; changing station identity/private rotation remains unsupported.
+ * COLOCATED_NETWORK_SCOPE_ID is bounded opaque caller metadata for this first
+ * full association, not a channel, RF permission or scoped-roaming grant. */
+int niwj_decode_identity(const void*,size_t,const uint8_t actual_owner_mac[6],
+ struct niwj_request*,struct niwj_diagnostic*);
 void niwj_clear(void*,size_t);
 struct niwj_target {
  struct nsb_record record;
