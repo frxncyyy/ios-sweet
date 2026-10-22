@@ -3,6 +3,28 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: metadata audit finished; single combined CI39804982005 QUEUED.**
+  Runtime/source commit1fd4c4d plus documentation6b3302d1e039ca451b02a8aa2d8773aea269d8e4
+  pushed tofork; dispatched exactly once oncodex/nord2-bringup. Root watcher26246
+  ACTIVE checks exactsource/attempt1 and downloads successful artifacts to
+  research/ci-39804982005. No duplicate build. Format agent awaits artifacts for
+  bounded linked registry/AKS verification; no phone reader or device action.
+  Fresh stage research/nord2/wifi-ios-identity/ios pins272 committed source files,
+  same539B bootargs, and sole chosen MAC addition. Recovery metadata corrected
+  to current healthy6e4ce860; RAMrescue unchanged. Independent stage review5a5e50ab
+  passed ADT checks; source/schema/linked/prepared/human gates remain FALSE until
+  actual successful CI and image verification. No new image or flash approval.
+  BuildVersion provider confirmed system-version dictionary, not DT. Diagnostics
+  query checks presence of boot-ios-diagnostics: never add even a zero placeholder.
+  MAC getter's alternate path is ReleaseType=Restore; normal selected iOS profile
+  does not take it. No persisted-nil cache evidence or cache reset needed.
+  Next: inspect watcher status; on success run audit-artifact.py plus existing
+  ISA check, finish bounded linked review, fill exact CI/kernel/schema pins,
+  build and independently verify nord2-ios-wifi-identity-keychain-stop23.img,
+  then request exact boot-only approval with conditional6e4/RAMrescue recovery.
+  Existing phone remains6e4, lockscreen/touch/buttons confirmed. No connection
+  or keychain success claim. Public audit docs/nord2-wifi-metadata.md records scope.
+
 - **2026-10-22: broader Wi-Fi metadata audit COMPLETE; cohesive corrections integrated.**
   Exact selected wifid/embedded WiFiManager:53 direct MobileGestalt calls and15
   registry/matching calls audited; deployed ADT and latest pinned Topaz/HackiOS
