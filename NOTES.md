@@ -3,6 +3,17 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: CI39760685458 attempt1 cancelled before runner; attempt2 queued.**
+  Exact GitHub annotation: hosted runner was not acquired after multiple attempts;
+  macOS arm64 capacity notices. Zero steps and zero artifacts; no compiler failure.
+  Evidence preserved at research/ci-39760685458/attempt-1/{run,job,annotations}.json.
+  Watcher21893 CLOSED1 because attempt1 had no downloadable log. Reran same
+  CI39760685458/sourceee2e6fd; attempt2 job119770821706 queued. New root watcher78857
+  requires attempt2, captures annotations on failure and downloads exact success
+  artifacts. All221 source pins unchanged, all image/approval gates still false.
+  Phone195a unchanged, no USB/device action. Continue with verified CI artifact
+  audit/link review/package as below; do not use attempt1 as build evidence.
+
 - **2026-10-22: discovery local work complete; external macOS runner still queued.**
   CI39760685458 has no runner steps yet; root watcher21893 remains active and
   downloads exact artifacts on success. No duplicate workflow or new flash.
