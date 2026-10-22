@@ -3,6 +3,32 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: discovery local work complete; external macOS runner still queued.**
+  CI39760685458 has no runner steps yet; root watcher21893 remains active and
+  downloads exact artifacts on success. No duplicate workflow or new flash.
+  Additional actual-IOUC composition ASan test PASS: explicit13-channel caller
+  reaches exact requested subset;7 synthetic rows yield3valid/4omitted(mask0xf),
+  event10 and GET11/EOF succeed; native owner/IOKit primitives remain mocked.
+  Receipt research/nord2/wifi-ios-discovery/ios/composition-review.json, private
+  composition manifest32a7de3724ca6ec1e83b7fb5b85cc489e7213241a8e2e0e11a3ebdccdccf7764.
+ 221 source pins unchanged; healthy6a6a and RAM rescue hashes rechecked.
+  Next: resume watcher21893 / inspect research/ci-39760685458/run.json; only after
+  success run audit-artifact.py and whole-kernel nord2-check-rcpc2.py. Notify
+  wifi_station_wire and wifi_cap_stage with verified artifact path/size/hash to
+  finish bounded linked checks (scripts already prepared). Promote new staging
+  source/CI gates only from verified evidence, then bounded-memory build-image.sh,
+  independent verify-image.py and concrete exact-image approval. Current phone195a,
+  no active USB collector, new discovery runner UNUSED; no new approval acquired.
+
+- **2026-10-22: combined discovery sourceee2e6fd pushed; CI39760685458 queued.**
+  Exact sourceee2e6fd9516b5eb7a5c41cabf1a077c93e53ccc7 on fork/codex/nord2-bringup.
+  Root watcher21893 will retain run.json/build.log and download success artifacts
+  under research/ci-39760685458. Eight focused source compiles PASS, contract
+ 325snapshot/11071policy/15365scalar/5407caller checks PASS. Private native schema
+  includes221 source pins; gates FALSE, no image or approval. Linked-review
+ 9function extractor prepared at wifi-ios-discovery/ios/linked-review, awaiting
+  artifact (no inherited verdict). Phone195a unchanged, no active USB collector.
+
 - **2026-10-22: Claude review integrated as combined discovery fix; CI next.**
   Exact hardware LOW_LATENCY0x20 now admitted (LOW_PRIORITY0x2 separately),
   semantic filters still refused with distinct codes; RawSet EBUSY16 proven
