@@ -3,6 +3,59 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **2026-10-22: identity/AKS hardware test complete; actual join-profile blockers isolated.**
+  User sees Wi-Fi address now; selecting network still takes~10s and WPA2 Join
+  fails immediately. Extra OPEN attempt unsupported by existing WPA2-only path.
+  d9a44316 image remains running, UI usable; sole readers72648 and33384 CLOSED0.
+  Immutable427075B attempt-final.log under wifi-ios-identity/ios/hardware-review;
+  one exec wifid,73 AKS10/11 operations allstatus0,10 JOINREQ rows,zero native
+  station rows. This establishes corrected identity+keychain and request arrival,
+  NOT association/keys/IP. PrivateOFF profile actuallyobservedflags0x4000;
+  initialPrivateON0x4800; selectedproducer scope536 is STRING LENGTH36, notID.
+  Current zero-only options reject both. Exact8B SET22 also wronglyunsupported.
+  Root/agents preparing one cohesive source change: bounded scope normalization,
+  privateaddress equality-only with retainedactualMAC, exactSET22 idle no-op,
+  Retrybit-consistent assocresponse validation, and <=255B numeric diagnostics.
+  No canonical runtime changes, new CI or further flash yet. User asked no more
+  retries while analysis proceeds. Currentimage recovery remains6e4ce860/rescue.
+
+
+
+- **2026-10-22 19:08 local: combined identity/AKS image d9a44316 FLASHED; live test in progress.**
+  CI39804982005 attempt2 succeeded; builder51870 and independent verifier97444
+  CLOSED0. Image33462272B SHA d9a44316f6b257221a948a32483a6778b33cdf5057a3f79ffecfceebf0318de3;
+  independent manifest4a866675, identity/readback/source/rescue checks PASS.
+  Human explicitly authorized boot-only test plus conditional6e4/RAMrescue recovery
+  in call_04cab33a24294ca4a6e302b39530557d, ready in fastboot. Runner72648 ACTIVE,
+  flash/write/reboot all OKAY; sole USB owner under wifi-ios-identity/ios.
+  New boot identity published=1 bytes=6 source=1; AKS10/11 operations status0;
+  one exec wifid in current log. First GUI at552164476/13000000=42.47s;
+  native and iOS scans find real APs. Human UI/one WPA2 attempt requested.
+  First actual JOINREQ now reaches driver, rejected reason5: assoc_flags0x4800,
+  scope_id36, otherwise observed WPA2 pair2/1/8 RSN22 PMK32. No native station
+  admission, carrier, IP or connection proof. JOINREQ row truncates/interleaves.
+  Format agent audits exact userland metadata; wire audits normalization and
+  downstream blockers read-only. Snapshot hardware-review/boot-first-join.log.
+  Do not run another USB reader or re-execute used runner. No new build/flash.
+  Current authorized fallback6e4ce860; no stock Android boot over iOS userdata.
+
+
+- **2026-10-22: CI39804982005 attempt2 SUCCESS; combined image BUILDING.**
+  User suspected another retry was needed; live GitHub confirmed success at
+  16:48:37UTC (18:48local). No third retry dispatched. Watcher10655 CLOSED0,
+  artifacts downloaded. Exact source6b3302d1; kernel17703208B SHA
+  7f363c332d1c8773d0141339154dc99abd2054615f74319c2f6c04fbe6b3ce14.
+  Source audit222 generated files equal,33 actual genericARMv8.2 compile units;
+  no LDAPUR/STLUR in2272432 decoded instructions. Bounded linked registry/AKS
+  review2ffcffab, manifest7ece921e PASS (1223instructions, actual72-byte wipe).
+  Fresh stage wifi-ios-identity/ios CI/native gates nowTRUE; prepared/humanFALSE.
+  Builder51870 ACTIVE under1GiB, targetnord2-ios-wifi-identity-keychain-stop23.img.
+  Wire agent will independently check completed image; no device operations.
+  Root must confirm builder success and independent review, record exact hash,
+  then request new boot-only approval with current6e4/RAMrescue fallback.
+  Phone remains healthy6e4; no new flash or userland connection success claim.
+
 - **2026-10-22: CI39804982005 rerun as attempt2, user requested; QUEUED.**
   Attempt1 never acquired a hosted runner: GitHub annotation says capacity
   constraints; build job119915675214 has no steps. It failed/cancelled before
