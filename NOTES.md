@@ -3,6 +3,45 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: image806c8d61 completed WPA2 locally, but usable IP remains unproven.**
+  Collector44878 CLOSED0; no USB reader active. Final445163-byte receipt:
+  research/nord2/wifi-ios-local-submit/ios/hardware-review/capture-final.log,
+  SHA-256 bcd722dca6cefc34fe321895070b2868c3f14fc030726dd6853312bca0ac7f9d.
+  Real M3 integrity/PTK/GTK/controlled-port and ifnet-up at168497ms; iOS consumed
+  the connection notification. User saw the network name, but a spinner and no
+  confirmed IP or Safari. Six status3 MPDU_ERROR reports cannot be attributed
+  to M4 or DHCP because hostPID127 is shared. At215338ms, a late EAPOL event
+  caused clean key/peer retirement; final submitted56=dma56, halt0, retired1.
+  The user did NOT toggle Wi-Fi. Earlier POWERSET/DISASSOC records PRECEDE Join
+  and do not explain the closure. No new panic or working IP claim.
+
+  Historical joined=1 blocks return to scans even after complete cleanup.
+  Private candidate hardware-review/postauthorized-scan-candidate/manifest.json
+  SHA349d042385e39a9cd1faacdeaf2d0456e81e0e7d1494023fa03fe8c689350e27
+  removes only that exclusion, retaining one-join policy and physical guards;
+  independent review9ceb4534 PASS. Late EAPOL exact failure remains unknown:
+  old diagnostics filled earlier. Candidate review-late-eapol manifest8c7f8a93
+  adds reserved public-header/failure diagnostics without widening acceptance;
+  independent review pending. Native descriptor audit manifest6fc996b9 found
+  no justified descriptor/key/rate fix. Wire now prepares bounded TXS/DHCP-class
+  diagnostics; no canonical runtime promotion or new CI yet.
+
+  User requested Claude review. Opus session01e36598-017d-44c6-9f31-18c35b9ccb96
+  is running read-only via exec33267, folder
+  research/nord2/wifi/claude-opus-postauth-806c; live viewer on desktop3.
+  Do not duplicate it. Await its report before the next combined build.
+  Phone stays806c8d61; no further Join or new flash authorized. Conditional
+  recovery remains verified d9a44316 or RAM ADB rescue, never stock Android.
+
+- **2026-10-22: combined image806c8d61 flashed with exact user approval.**
+  Usercall_cbf67d246b7044d5a9968afa4d172787 authorized the named boot-only
+  image, conditional d9a/rescue recovery and confirmed manual fastboot ready.
+  Root verified the sole known device, productoplus6893, boot0x2000000 and
+  non-userspace fastboot. Exact image reverified; flash/reboot returnedOKAY.
+  Runner44878 (now CLOSED0; see newest result above) owned the collector at
+  research/nord2/wifi-ios-local-submit/ios/hardware-live. One-shot runner USED;
+  never rerun it. The authorized one-Join hardware result is recorded above.
+
 - **2026-10-22: combined WPA2 submission/scan-return image PREPARED and verified.**
   shim/out/nord2-xnu/nord2-ios-wifi-submit-scan-stop23.img,33468416 bytes:
   SHA-256806c8d61f58dd625dc0bd68b42941e05ed4abb186c29e6687c30d0fffddc6522.
