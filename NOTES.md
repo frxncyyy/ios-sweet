@@ -3,6 +3,16 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: TXS/timing image 454ac21e flashed with exact user approval.**
+  User call_8ea1e36f6e4f48719845807703169259 authorized the identified boot-only
+  test and conditional d9a/rescue recovery; confirmed manual fastboot ready.
+  Exact image hash, sole known device, product oplus6893, boot size 0x2000000
+  and non-userspace fastboot verified. Flash and reboot returned OKAY.
+  Runner71787 ACTIVE owns the sole USB collector in wifi-ios-txs/ios/hardware-live.
+  Do not launch a second USB reader or re-execute the one-shot runner.
+  Await native console and GUI, then bracket password opening before one WPA2
+  Join attempt. No new association/key/IP outcome has been observed yet.
+
 - **2026-10-22: TXS/timing image PREPARED and verified; new flash approval required.**
   Image shim/out/nord2-xnu/nord2-ios-wifi-txs-timing-stop23.img, 33464320 bytes:
   SHA-256 454ac21e3bc8f6dd313456f7da01b6a8712e61ca1bff6ae702a1075dc7ccb62e.
