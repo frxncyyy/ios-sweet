@@ -4,6 +4,55 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: combined postauth image PREPARED and independently verified.**
+  shim/out/nord2-xnu/nord2-ios-wifi-postauth-stop23.img,33470464 bytes:
+  SHA-256 b8851761d3441fc507177b819e17a0c0a3679952122cb1c3e47e7a65966a96ff.
+  Payload14976896 bytes SHA-256
+  220b81e28ae398b9e1909d0078a9d01ac4557e44d30232aa1cad1fe698b0b4fc.
+  Boot spare83968 bytes. Builder98597 CLOSED0 under1GiB; independent existing
+  image reportdfa4e210/manifest8851fbc2 PASS, members/protected pins rechecked.
+  Exact source aecd95ca388b6b7c6d61712ae22e8eb24ddfe3a6, CI39850764280 attempt1.
+  Kernel17770200 bytes SHA9f6f2d31e64d6ee0ce09c4f3e11c69e81f923087ceb34852db851d385286b5b5.
+  All source/CI/schema/prepared gates TRUE; human/RF/conditional-recovery gates
+  remain FALSE and one-shot runner UNUSED. Fresh exact boot-only approval and
+  manual fastboot are required next. Phone still806c8d61; no device action.
+
+  Combined candidate fixes postauthorized terminal scan-return exclusion and
+  logs bounded WPA header/rejection/pre-engine extent plus DHCP/TXS/protocol
+  observations. No crypto acceptance, data descriptor/ring or key policy change;
+  no usable IP, new hardware scan-return or rekey success is claimed. One WPA2
+  Join with private address disabled is the intended capture, then inspect all
+  reserved diagnostics together. Conditional recovery: d9a44316 or RAM ADB,
+  never stock Android over iOS userdata. Claude's final corrected verdict is
+  research/nord2/wifi/claude-opus-postauth-806c/followup-command-data/REPORT.md.
+
+- **2026-10-22: actual postauth linked review PASS; image packaging running.**
+  Report367f94de/manifest3cdfee67:17 bounded linked bodies,8 exact emitter
+  literals, all39 review members verified by root. Source/schema/CI gates now
+  verified for aecd95ca/CI39850764280. Builder98597 runs with1GiB address-space
+  limit for shim/out/nord2-xnu/nord2-ios-wifi-postauth-stop23.img.
+  Prepared-image/human/RF/recovery gates remain FALSE pending final independent
+  image verification and exact approval. Phone stays806c8d61; no device action.
+
+- **2026-10-22: CI39850764280 attempt1 succeeded; downloaded kernel verified.**
+  Exact source aecd95ca388b6b7c6d61712ae22e8eb24ddfe3a6; watcher65059
+  CLOSED0. Kernel17770200 bytes SHA-256
+  9f6f2d31e64d6ee0ce09c4f3e11c69e81f923087ceb34852db851d385286b5b5.
+  Root audit229 generated files byte-equal,36 generic ARMv8.2 compile units,
+  2275095 decoded instructions with no LDAPUR/STLUR. Artifact/ISA checks EXIT0.
+  Actual bounded linked review underway in postauth/ios/linked-review; image
+  not built and all human gates remain FALSE. Phone still806c8d61 untouched.
+
+- **2026-10-22: combined post-authentication source committed and CI dispatched.**
+  Source aecd95ca388b6b7c6d61712ae22e8eb24ddfe3a6, full CI39850764280
+  attempt1 (one dispatch). Watcher research/ci-39850764280/watch.py verifies
+  exact source/attempt and downloads artifacts only on success. Additive reader
+  v2 independent verdict a0cef12c PASS; canonical11+/407- PASS. Source manifest
+  postauth/ios/source-proposals.json96f60131 pins320 files and13 local reviews.
+  New identity/schema/image/human gates remain closed. Phone still806c8d61.
+  Await full CI, source/ISA/linked audit and verified image before new approval.
+
+
 - **2026-10-22: final post-authentication runtime composition verified locally.**
   Canonical scan-return fix now also admits a previously authorized connection
   only after complete key/peer/DMA cleanup; one-join policy remains unchanged.
