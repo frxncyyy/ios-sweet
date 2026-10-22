@@ -4,6 +4,22 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: combined join-options CI39823157589 RUNNING.**
+  Runtime/source1134851bf309c06c613b0383842e70a895e46473 committed/pushed tofork;
+  exactlyone workflow dispatched. Watcher11139 ACTIVE downloads only successful
+  exactsource attempt1 into research/ci-39823157589. No retry/secondCI yet.
+  Four actual owningTU reviewmanifest8031e4b3 PASS; parser review6f997b72 PASS,
+  canonical/stageparser386acf06 byteequal. Newstage279sourcepins equal committed
+  sourcebytes. Closedtemplate48checks/12negativeADT checks PASS. CI identity,
+  linked/image/prepared/human gates remainfalse, no new testimage or deviceIO.
+  Format agent prepares boundedlinked extractor; wire prepares independentimage
+  checker, both awaiting actualartifacts. Rootownsartifactaudit/build/approval.
+  Phone remainsd9a44316 withuserreportedfailedjoins; bothUSBreadersclosed. Next:
+  inspectwatcher, audit222files/ISA, finishlinkedreview, buildnewjoin-optionsimage,
+  independentimagecheck, then askexactboot-onlyapproval. Donotflash withoutit.
+
+
+
 - **2026-10-22: cohesive join-options correction integrated; local checks PASS, CI next.**
   Exact producer correction: scope4000 is bounded1..36-byte string metadata;
   private0800 requires actual retained factoryidentity equality, no MAC change.
