@@ -4,7 +4,7 @@
 /* Serialized retained-radio-worker API. No client-thread calls or inline
  * callbacks from submit. Not an installed native transport by itself. */
 enum nwo_receipt { NWO_PREPARED=1,NWO_COMMAND,NWO_AIR_TX,NWO_CONFIGURED,
- NWO_GTK_REPLAY,NWO_DATA_PATH,NWO_RETIRED };
+ NWO_GTK_REPLAY,NWO_DATA_PATH,NWO_RETIRED,NWO_SECURITY_SUBMITTED };
 struct nwo_install { uint8_t gtk_index,rsc[8]; };
 struct nwo_ops {
  /* Must COPY action and metadata before returning0. Return1 BUSY without mutation or callbacks; -1 is a
@@ -20,8 +20,9 @@ struct nwo {
 };
 int nwo_begin(struct nwo*,struct stc_arbiter*,const struct stc_config*,const struct nwo_ops*,void*,uint64_t);
 int nwo_pump(struct nwo*,uint64_t);
-/* Typed completion: DMA DDONE has deliberately no receipt type. Exactly one
- * completion retires each submitted ticket. Failed receipt always closes port. */
+/* Typed completion: SECURITY_SUBMITTED is local host-buffer retirement, never
+ * air success or key readiness. Only native verified DDONE+wipe may supply it.
+ * Exactly one completion retires each ticket. Failure always closes port. */
 int nwo_complete(struct nwo*,uint64_t,uint64_t,unsigned receipt,int success,uint64_t);
 int nwo_eapol(struct nwo*,uint64_t,const uint8_t*,size_t,uint64_t);
 int nwo_management(struct nwo*,uint64_t,const uint8_t*,size_t,uint64_t);

@@ -34,6 +34,13 @@ int ncr_continue_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_sessio
  for(unsigned k=0;k<NCR_QUEUES;k++){s->queue[k].next=p->queue[k].next;s->queue[k].didx=p->queue[k].didx;s->queue[k].segmented=p->queue[k].segmented;}
  return source(s)?0:-1;
 }
+int ncr_scan_return_prepare(struct ncr_state*s,struct nwi_state*i,struct nct_session*t,const struct ncr_queue*q,uint8_t sequence,uint64_t timeout){
+ if(!q||!i||!t||t->continuation!=2||!t->scan_return||!t->scan_return->sealed||t->init!=i)return -1;
+ for(unsigned k=0;k<NCR_QUEUES;k++)if(!same_ring(&q[k].ring,&i->rings[k+4])||q[k].next>=q[k].ring.count||q[k].segmented>1)return -1;
+ if(q[1].next!=i->transport.rx_index||prepare(s,i,t,0,sequence,timeout,t->base_completed))return -1;
+ for(unsigned k=0;k<NCR_QUEUES;k++){s->queue[k]=q[k];/* Refresh DIDX/raw only through next checked pump. */s->queue[k].didx=0;for(unsigned j=0;j<4;j++)s->queue[k].raw[j]=0;}
+ return source(s)?0:-1;
+}
 int ncr_memory_range(const struct ncr_state*s,uint64_t p,uint32_t n,unsigned write){
  if(!source(s)||!s->active||s->current>=5||!n)return 0;
  const struct ncr_queue*q=&s->queue[s->current];

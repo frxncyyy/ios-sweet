@@ -66,9 +66,14 @@ static int terminal(const struct nct_session*p){
 }
 int nct_done_receipt(const struct nct_session*p){return terminal(p);}
 static int anchor(const struct nct_session*s){
- if(!s->continuation)return !s->previous&&s->base_completed==5;
+ if(!s->continuation)return !s->previous&&!s->scan_return&&s->base_completed==5;
+ if(s->continuation==2){const struct nct_scan_return*p=s->scan_return;
+  return !s->previous&&p&&p->sealed==1&&p->generation&&p->basic==s->basic&&p->cap==s->cap&&p->init==s->init&&p->firmware==s->firmware&&
+   s->count==1&&s->entry[0].cid==3&&s->entry[0].bytes==1252&&s->entry[0].set_query==1&&
+   s->base_completed==p->completed&&s->first_tx==p->tx_index&&s->first_sequence==p->next_sequence&&s->pse_total==p->pse_total&&s->capacity==p->capacity;
+ }
  const struct nct_session*p=s->previous;
- return s->continuation==1&&p!=s&&terminal(p)&&s->count==1&&s->entry[0].cid==3&&s->entry[0].bytes==1252&&s->entry[0].set_query==1&&
+ return s->continuation==1&&p!=s&&terminal(p)&&s->scan_return==p->scan_return&&s->count==1&&s->entry[0].cid==3&&s->entry[0].bytes==1252&&s->entry[0].set_query==1&&
  p->basic==s->basic&&p->cap==s->cap&&p->init==s->init&&p->firmware==s->firmware&&
  s->base_completed==p->base_completed+p->count&&s->first_tx==(p->first_tx+p->count)%1024&&s->first_sequence==(uint8_t)(p->first_sequence+p->count)&&s->pse_total==p->pse_total;
 }
@@ -79,7 +84,15 @@ int nct_continue_prepare(const struct nbc_state*b,const struct nct_session*p,con
  struct nwt_state*t=&s->init->transport;
  if(p->base_completed+p->count==UINT32_MAX||t->completed!=p->base_completed+p->count||t->tx_index!=(p->first_tx+p->count)%1024||t->next_sequence!=(uint8_t)(p->first_sequence+p->count)||t->submit_attempted||t->tx_done||t->rx_done||t->rx_index>=16)return refuse(s,111);
  if(!r||!r->entry||!r->build||r->count!=1||r->entry[0].cid!=3||r->entry[0].bytes!=1252||r->entry[0].set_query!=1||!r->batch_us||r->batch_us>NCT_BATCH_MAX_US||!r->service_us||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us||p->pse_total!=b->plan.pse_cmd||p->capacity!=p->pse_total-1)return refuse(s,112);
- s->continuation=1;s->previous=p;return seal(s,r,p->pse_total);
+ s->continuation=1;s->previous=p;s->scan_return=p->scan_return;return seal(s,r,p->pse_total);
+}
+int nct_scan_return_prepare(const struct nbc_state*b,const struct nct_scan_return*p,const struct nct_recipe*r,struct nct_session*s){
+ if(!s||s->attempted)return -1;s->attempted=1;s->basic=b;
+ if(basic_receipt(b)||!p||p->sealed!=1||!p->generation||p->basic!=b||p->cap!=b->cap||p->init!=b->init||p->firmware!=b->firmware||p->completed<5||p->completed==UINT32_MAX||p->tx_index>=1024||p->pse_total!=b->plan.pse_cmd||p->capacity!=p->pse_total-1)return refuse(s,113);
+ s->cap=b->cap;s->init=b->init;s->firmware=b->firmware;const struct nwt_state*t=&s->init->transport;
+ if(t->completed!=p->completed||t->tx_index!=p->tx_index||t->next_sequence!=p->next_sequence||t->submit_attempted||t->tx_done||t->rx_done||t->rx_index>=16)return refuse(s,114);
+ if(!r||!r->entry||!r->build||r->count!=1||r->entry[0].cid!=3||r->entry[0].bytes!=1252||r->entry[0].set_query!=1||!r->batch_us||r->batch_us>NCT_BATCH_MAX_US||!r->service_us||r->service_us>NCT_SERVICE_MAX_US||r->service_us>=r->batch_us)return refuse(s,115);
+ s->continuation=2;s->scan_return=p;return seal(s,r,p->pse_total);
 }
 int nct_lease_window(const struct nct_session*s,const struct nbc_state*b,const struct ncd_state*c,const struct nwi_state*i,const struct nfp_native*f){
  if(!s||!s->attempted||!s->prepared||!s->entered||s->halt||s->error||s->refusal||
@@ -94,7 +107,7 @@ int nct_lease_window(const struct nct_session*s,const struct nbc_state*b,const s
  unsigned in_flight=s->phase==NCT_SUBMITTED;
  if(in_flight&&s->cursor>=s->count)return 0;
  if(s->acquired!=s->cursor+in_flight||s->released!=s->cursor+(in_flight&&s->record[s->cursor].published))return 0;
- if(s->phase==NCT_DRAIN)return s->continuation==1&&!s->cursor&&!s->reserved&&!i->transport.submit_attempted;
+ if(s->phase==NCT_DRAIN)return (s->continuation==1||s->continuation==2)&&!s->cursor&&!s->reserved&&!i->transport.submit_attempted;
  if(s->phase==NCT_SERVICE)return s->cursor==s->count&&!s->reserved&&!i->transport.submit_attempted;
  if((s->phase!=NCT_COMMAND&&s->phase!=NCT_WRITING&&s->phase!=NCT_SUBMITTED)||s->cursor>=s->count)return 0;
  const struct nct_record*q=&s->record[s->cursor];const struct nct_entry*e=&s->entry[s->cursor];

@@ -163,7 +163,7 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;w->state=NWP_M4_TX;
  return reply(w,p,2,r);
 }
-int nwp_tx_done(struct nwp*w,uint64_t gen,uint64_t ticket,int success){
+int nwp_security_submitted(struct nwp*w,uint64_t gen,uint64_t ticket,int success){
  if(!w||!ticket||gen!=w->generation||ticket!=w->pending)return NWP_DROP;
  unsigned kind=w->tx_kind;w->pending=0;w->tx_kind=0;
  if(!success){nwp_cancel(w);return NWP_FAIL;}

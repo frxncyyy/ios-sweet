@@ -2,12 +2,16 @@
  * Root coordinator supplies the immutable reviewed config+scan recipe/hooks;
  * no flag, caller receipt clone or pure plan grants this native authority. */
 #include "wifi_normal_transport.h"
+#ifndef NCT_SCAN_RETURN_VALID
+#define NCT_SCAN_RETURN_VALID(s) (!(s)->scan_return)
+#endif
 static struct {struct nct_session session;unsigned attempted,active;}nct_native;
 static int nct_native_owner_window(const struct nwfn_native*n)
 {
  return n==&nwfn_native&&nct_native.attempted==1&&nct_native.active==1&&
   ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&
   ncd_native.worker==current_thread()&&
+  NCT_SCAN_RETURN_VALID(&nct_native.session)&&
   nct_native.session.access.session==&nct_native.session&&
   nct_native.session.access.context==&ncd_native&&nct_native.session.access.hardware==&ncd_io&&
   nct_lease_window(&nct_native.session,&nbc_native.state,&ncd_native.diag,&nwfn_native.init,&nfp_native);

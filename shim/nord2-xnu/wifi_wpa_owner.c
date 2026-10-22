@@ -7,7 +7,8 @@
 static void wipe(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
 static unsigned expected(unsigned k){switch(k){
 case STC_PREPARE_PEER:return NWO_PREPARED;
-case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_EAPOL:case STC_TX_DEAUTH:return NWO_AIR_TX;
+case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_DEAUTH:return NWO_AIR_TX;
+case STC_TX_EAPOL:return NWO_SECURITY_SUBMITTED;
 case STC_CONFIGURE_PEER:return NWO_CONFIGURED;
 case STC_CID_GTK:return NWO_GTK_REPLAY;
 case STC_INSTALL_DATA_PATH:return NWO_DATA_PATH;

@@ -10,10 +10,15 @@
 /* FRAME_RESULT status0..255 is firmware status. This disjoint local value
  * is negative-only, after proved DDONE; it never means air success/ACK. */
 #define NST_TX_LOCAL_TIMEOUT 0x100u
+/* Host-only optional TXS can never alias an air-correlated management PID.
+ * Source driver PID range is1..127. This first-attempt epoch never reuses a
+ * management PID; exhaustion refuses publication without touching DMA. */
+#define NST_PID_HOST 127u
+#define NST_PID_MANAGEMENT_MAX 126u
 /* Only the actual CAP worker may prepare/run this object. The native binder
  * authenticates exact addresses/thread; these public structs alone grant no IO. */
 enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,
- NST_STA_ACTIVE,NST_KEY_READY,NST_MANAGEMENT,NST_EAPOL,NST_ETHERNET,NST_PEER_PREPARED,NST_PEER_CONFIGURED,NST_PEER_RETIRED,NST_CHANNEL_RELEASED,NST_LINK_LOST,NST_FATAL};
+ NST_STA_ACTIVE,NST_KEY_READY,NST_MANAGEMENT,NST_EAPOL,NST_ETHERNET,NST_PEER_PREPARED,NST_PEER_CONFIGURED,NST_PEER_RETIRED,NST_CHANNEL_RELEASED,NST_LINK_LOST,NST_FATAL,NST_SECURITY_SUBMITTED,NST_DATA_SUBMITTED};
 enum nst_phase {NST_IDLE,NST_TX_READ,NST_TX_WRITE,NST_TX_PUBLISH,NST_TX_WAIT,
  NST_RX_READ,NST_RX_FRAME,NST_RX_WRITE,NST_RX_PUBLISH,NST_HALTED};
 struct nst_event {
@@ -59,7 +64,8 @@ int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
  const struct sw_txd *,uint64_t generation,uint64_t now_us,uint64_t deadline_us);
 /* Copy complete CID payload or frame into owned storage.0 accepted,1busy,-1bad.
  * CID ticket completion means DMA/source software submission, not firmware ACK.
- * Frames wait separately for actual PID+WLAN EID0f result. */
+ * Management waits for actual PID+WLAN EID0f result. SECURITY_SUBMITTED and
+ * DATA_SUBMITTED mean only local DDONE/storage retirement, never air success. */
 int nst_command(struct nst *,uint64_t ticket,uint8_t cid,const uint8_t *,size_t);
 int nst_management(struct nst *,uint64_t ticket,const uint8_t *,size_t);
 int nst_eapol(struct nst *,uint64_t ticket,const uint8_t *ethernet,size_t,unsigned protected_frame);

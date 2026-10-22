@@ -29,9 +29,9 @@ def yes(text,claim=None,value=True):
 def no(text):
  global negative
  r=m.parse(text.encode()if isinstance(text,str)else text);assert not r['valid'],r
- for k in ('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','bsd_input_success_observed','ip_acquisition_proven'):assert not r[k],r
+ for k in ('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','data_local_submission_observed','bsd_input_success_observed','ip_acquisition_proven'):assert not r[k],r
  for attempt in r['attempts']:
-  for k in ('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','bsd_input_success_observed','ifnet_up_observed','join_snapshot_observed'):assert not attempt[k],r
+  for k in ('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','data_local_submission_observed','bsd_input_success_observed','ifnet_up_observed','join_snapshot_observed'):assert not attempt[k],r
  negative+=1
 r=yes('');assert r['status']=='NO_NATIVE_JOIN_RECEIPT'
 yes(row('IOS STATION',station()),'association_observed');yes(row('IOS STATION',station()),'native_authorized_observed',False)
@@ -199,6 +199,33 @@ no(''.join(z[:2])+''.join(station_parts(sample=2))+''.join(z[2:]))
 # Missing/wrong join correlation poisons all authorization claims, even if the
 # independent native rows would otherwise look complete.
 for omitted in range(3):no(completed_parts()+''.join(x[:omitted]+x[omitted+1:]))
+# Local submission has its own counter and never proves air TX, keys or IP.
+def local_station(**kw):
+ d=station(**kw);return {k:d.get(k,0)for k in m.STATION_LOCAL}
+def local_parts(d,sample=1):
+ fields=[part+(['tx_local']if i==3 else [])for i,part in enumerate(m.STATION_PARTS)]
+ return ''.join(row('IOS STATIONPART',dict(sample=sample,part=i+1,**{k:d[k]for k in part}))for i,part in enumerate(fields))
+for event_id in (15,16):
+ for status in (0,1):
+  d=local_station(event=event_id,status=status,tx_accept=20,tx_local=20)
+  for text in (row('IOS STATION',d),local_parts(d)):
+   r=yes(text,'data_local_submission_observed');assert not r['data_air_tx_success_observed']and not r['native_authorized_observed']
+for event_id,status in ((17,0),(15,2),(16,256)):
+ no(row('IOS STATION',local_station(event=event_id,status=status)))
+no(row('IOS STATION',local_station(tx_accept=20,tx_local=10)))
+no(row('IOS STATION',local_station(tx_accept=1,tx_local=2)))
+no(row('IOS STATION',local_station(tx_local=m.U32+1)))
+no(row('IOS STATION',local_station())+row('IOS STATION',station(t_ms=200)))
+no(local_parts(local_station())+''.join(station_parts(sample=2)))
+q=local_station(tx_accept=0,tx_local=m.U32,queued_drop=1)
+yes(local_parts(q),'data_local_submission_observed')
+q=local_station(tx_accept=1,tx_result=1,tx_ok=1)
+no(local_parts(q))
+no(local_parts(local_station(tx_accept=1,tx_result=1,tx_fail=1)))
+q=local_station(tx_accept=1,tx_local=1)
+no(local_parts(q).replace(' tx_local=1',' tx_local=1 tx_local=1'))
+no(local_parts(q).replace(' tx_local=1',' tx_local=-1'))
+no(local_parts(q).replace(' tx_local=1',' local_tx=1'))
 # Source-literal format strings, compiled with actual C printf at maximal
 # declared integer widths, reproduce kernel formatting without private data.
 formats=[];source_pins={}

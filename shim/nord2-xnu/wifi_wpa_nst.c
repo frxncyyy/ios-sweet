@@ -54,11 +54,14 @@ static int event_inner(struct nwn*s,const struct nst_event*e,uint64_t now){
  case NST_COMMAND_DMA:{
   if(e->ticket!=s->owner.in_ticket)return 0;
   unsigned kind=s->owner.in_kind,type=NWO_COMMAND;int ok=e->status==0;
-  if(kind==STC_TX_AUTH||kind==STC_TX_ASSOC||kind==STC_TX_EAPOL||kind==STC_TX_DEAUTH){if(ok)return 0;return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,0,now);} /* DMA success is never air TX */
+  if(kind==STC_TX_EAPOL)return -1; /* untyped DMA is not the security receipt */
+  if(kind==STC_TX_AUTH||kind==STC_TX_ASSOC||kind==STC_TX_DEAUTH){if(ok)return 0;return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,0,now);} /* DMA success is never air TX */
   if(kind==STC_CID_GTK)type=NWO_GTK_REPLAY;
   const struct stc_action *current=stc_next(&s->owner.transaction);
   if(ok&&current&&current->ticket==e->ticket&&(kind==STC_CID_PTK||kind==STC_CID_GTK))ok=nst_replay_install(s->transport,s->key_pairwise,s->key_pairwise?0:s->install.gtk_index,s->install.rsc)==0;
   int r=nwo_complete(&s->owner,e->generation,e->ticket,type,ok,now);clear(&s->install,sizeof s->install);return r;}
+ case NST_SECURITY_SUBMITTED:return nwo_complete(&s->owner,e->generation,e->ticket,NWO_SECURITY_SUBMITTED,e->status==0,now);
+ case NST_DATA_SUBMITTED:return 0; /* ordinary egress has no handshake ticket */
  case NST_FRAME_RESULT:return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,e->status==0,now);
  case NST_CHANNEL_GRANT:{int r=nwo_grant(&s->owner,e->generation,e->bss,e->token,e->band,e->channel,e->status==0,now);
   if(r>0){uint64_t interval=e->interval_ms>10?e->interval_ms-10:0;if(now>UINT64_MAX-interval)return nwo_link_lost(&s->owner,e->generation,now);uint64_t limit=now+interval;if(limit<s->owner.transaction.deadline)s->owner.transaction.deadline=limit;}return r;}

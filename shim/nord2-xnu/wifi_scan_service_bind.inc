@@ -18,6 +18,7 @@ static void njs_cache_scan_locked(const struct nsb_scan*s){(void)s;}
 static void njs_initialize_locked(void){}
 static int njs_owner_work(void){return 0;}
 #else
+static int nss_return_scans(void);
 static int njs_scan_blocked_locked(void);
 static int njs_pending_locked(void);
 static void njs_cache_scan_locked(const struct nsb_scan*);
@@ -67,6 +68,7 @@ static int nss_start(void){
  printf("NORD2 WIFI IOS OWNER: active=1 retained=1 boot_complete=1 ready=1\n");
  nord2_wifi_ios_backend_ready();return 0;
 }
+static struct {struct nct_scan_return origin;struct ncr_queue queue[5];unsigned attempted,ready,consumed;}nss_return;
 static int nss_execute(struct nss_slot*slot){
  struct nct_session*s=&nct_native.session;struct ncr_state*r=&ncb_native.rx;
  if(ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.halt||nct_native.active||s->phase!=NCT_DONE||s->halt||r->active||r->halt)return 1;
@@ -77,13 +79,18 @@ static int nss_execute(struct nss_slot*slot){
  nss_native.previous=*s;nss_native.previous_rx=*r;nss_native.previous_rx.session=&nss_native.previous;
  memset(s,0,sizeof(*s));memset(r,0,sizeof(*r));
  const struct nct_entry entry={NCS_SCAN_BYTES,3,1};const struct nct_recipe recipe={&entry,1,nss_build,&nss_native.frames,UINT64_C(30000000),UINT64_C(15000000)};
- if(nct_continue_prepare(&nbc_native.state,&nss_native.previous,&recipe,s)||ncr_continue_prepare(r,&nwfn_native.init,s,&nss_native.previous_rx,sequence,UINT64_C(14000000))){*s=nss_native.previous;*r=nss_native.previous_rx;r->session=s;return 1;}
+ unsigned returning=nss_return.ready&&!nss_return.consumed;
+ int preparation=returning?nct_scan_return_prepare(&nbc_native.state,&nss_return.origin,&recipe,s):nct_continue_prepare(&nbc_native.state,&nss_native.previous,&recipe,s);
+ if(!preparation)preparation=returning?ncr_scan_return_prepare(r,&nwfn_native.init,s,nss_return.queue,sequence,UINT64_C(14000000)):ncr_continue_prepare(r,&nwfn_native.init,s,&nss_native.previous_rx,sequence,UINT64_C(14000000));
+ if(preparation){*s=nss_native.previous;*r=nss_native.previous_rx;r->session=s;return 1;}
  nct_native.active=1;NVC_PHASE(5);
  const struct nct_hooks hooks={ncr_pump,r,ncb_sleep,&ncb_native};
  int result=nct_run(&ncd_io,&ncd_native,&hooks,s);nct_native.active=0;
  if(result==1&&s->drain_refused){/* RX may already have rearmed stale frames: preserve its current cursors. */
+  if(returning)for(unsigned k=0;k<5;k++)nss_return.queue[k]=r->queue[k];
   *s=nss_native.previous;r->session=s;r->phase=NCR_IDLE;r->active=0;return 1;
  }
+ if(returning)nss_return.consumed=1;
  nss_native.scan_sequence=sequence;
  if(result<0){slot->scan=r->scan;slot->captured=r->scan.last;ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;return -1;}
  if(!r->scan.done&&r->scan_requested){r->scan.active=0;r->scan.partial=1;if(s->service_timed_out)r->scan.timed_out=1;}
@@ -100,8 +107,11 @@ static void nss_deliver(struct nss_slot*s,enum nss_status status){
 }
 #ifndef NSS_STATION_TEST_DISABLED
 #include "wifi_station_transport_bind.inc"
+#define NJS_RETURN_SCANS() nss_return_scans()
 #include "wifi_station_service_bind.inc"
+#include "wifi_scan_return_bind.inc"
 #else
+static int nss_scan_return_origin_valid(const struct nct_session*s){return !s->scan_return;}
 static int nst_native_owner_window(const struct nwfn_native*n){(void)n;return 0;}
 static int nst_native_rx_active(const struct nwfn_native*n){(void)n;return 0;}
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t b,unsigned w){(void)n;(void)a;(void)b;(void)w;return 0;}

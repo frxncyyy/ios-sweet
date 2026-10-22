@@ -1,4 +1,7 @@
 #include "wifi_station_transport_forward.inc"
+struct nct_session;
+static int nss_scan_return_origin_valid(const struct nct_session *);
+#define NCT_SCAN_RETURN_VALID(s) nss_scan_return_origin_valid(s)
 static int ncb_after_basic(void);
 static int ncb_rx_active(const struct nwfn_native *);
 static int ncb_rx_memory(const struct nwfn_native *,uint64_t,uint32_t,unsigned);

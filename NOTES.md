@@ -3,6 +3,50 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined local submission and scan-return correction merged.**
+  Typed SECURITY_SUBMITTED/DATA_SUBMITTED receipts follow verified DMA retirement;
+  they never imply an air ACK or installed keys. Real management receipts,
+  M3 integrity checks, PTK/GTK readiness and the controlled port remain required.
+  Host and management PID domains are disjoint. After terminal cleanup, a sealed
+  same-worker handoff can resume scans without permitting a second join epoch.
+  Actual callback retirement precedes this handoff; all five RX cursors persist.
+
+  Canonical host suite passed all nine groups, including 10524 submission,
+  1524 cleanup, 2723 actual-transport and 2272 owner assertions. New actual-owner
+  scan-return fixture completed two subsequent scans; its terminal-metadata
+  seam is explicit and is not hardware evidence. Normal full regression passed
+  after removing one unused disabled-host-test stub. Strict connection parser
+  passed 158 positive/280 negative cases and preserves old log compatibility.
+  All eight actual ARM64 owning units compiled with selected CI flags:
+  research/nord2/wifi-ios-local-submit/ios/compiled-review/attempt1/report.json.
+  Regenerated0082 SHA bce45b92c03ff337b6a72b5d2dcef909818df03bbd70a22d8bb0bb602c169242.
+  Independent canonical composition review32ed09d9 confirms exact merge.
+  Next: one full CI, actual artifact/image verification and new exact flash
+  approval. No new flash authorized; phone remains454ac21e and usable.
+  The pre-password12s delay remains unexplained, not claimed fixed.
+
+- **2026-10-22: active Android path confirms local completion is distinct from air TXS.**
+  Selected driver has a literal disabled legacy security-command dispatch.
+  Ordinary EAPOL follows wlanEnqueueTxPacket/QM; its TX status callback does not
+  gate STA supplicant progress. Our typed local completion candidate therefore
+  retains proven DDONE ownership while removing mandatory AIR receipt for
+  M2/M4 and ordinary data. Management still requires real matched TXS; keys and
+  controlled-port checks remain mandatory. Host-only and management PID domains
+  must be disjoint so late events cannot complete another frame.
+  Source design review-security-submission manifest0a9fdb1e; independent active
+  path qualification review-handshake-progress/v2 manifest10b0af01. Public M3
+  headers are not yet a verified MIC or proof of installed keys.
+
+  Wire is implementing the private completion candidate; cap is implementing a
+  private closed-NST-to-scan ownership handoff (design manifest06785851), keeping
+  first-connection-used flags. Format independently reviews both semantics and
+  the new strict parser. Root's parser adds distinct local-retired counts;
+  159positive/278negative tests and all three immutable current logs pass.
+  Fresh closed stage research/nord2/wifi-ios-local-submit/ios targets
+  nord2-ios-wifi-submit-scan-stop23.img; all CI/image/authorization gates false.
+  No new CI or flash. Phone stays on454ac21e; no USB reader or further join needed.
+  Pre-password12s remains unexplained; measured completed driver calls <=2ms.
+
 - **2026-10-22: 454ac21e test failed to join, but cleanup completed and iOS stayed usable.**
   User reports the same Unable to Join, then explicitly confirms phone/controls
   still work. Collector71787 CLOSED0; no USB reader active. Final immutable log

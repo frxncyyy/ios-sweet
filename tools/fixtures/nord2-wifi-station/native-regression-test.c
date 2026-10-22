@@ -59,6 +59,6 @@ static void actual_data_route(struct test*t){
  setup(t);t->s.controlled_port=1;uint8_t eth[60]={0};memcpy(eth+6,t->s.peer.self,6);memset(eth,255,6);eth[12]=8;
  C(!nst_data(&t->s,77,eth,sizeof eth));t->defer_air=1;step(t);C(t->published==1&&t->s.dma_done&&!t->events[NST_FRAME_RESULT]);
  C(((get32(t->capture)>>23)&3)==2);C((get32(t->capture)>>25)==1);C((get32(t->capture+4)&0x8400)==0x8400);C(!(get32(t->capture+4)&(3u<<16)));C(get32(t->capture+12)&2);C(!memcmp(t->capture+32,eth,sizeof eth));
- txdone(t,t->s.wire_pid,t->s.peer.wlan,0);step(t);C(t->events[NST_FRAME_RESULT]==1&&!t->last_status);cleanup(t);
+ txdone(t,t->s.wire_pid,t->s.peer.wlan,0);step(t);C(t->events[NST_FRAME_RESULT]==0&&t->events[NST_DATA_SUBMITTED]==1&&!t->last_status);cleanup(t);
 }
 int main(void){struct test*t=calloc(1,sizeof *t);assert(t);scan_admission(t);actual_scan_overflow();raw_tests(t);group_tests(t);actual_data_route(t);free(t);printf("PASS %u focused assertions: overflow-only prepare atomicity, raw EAPOL bounds/ownership, group AP/BMC key/PN and actual data route\n",checks);return 0;}

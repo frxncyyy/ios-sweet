@@ -26,9 +26,10 @@ int nwp_copy_ap_rsnxe(struct nwp*,const uint8_t*,size_t);
 int nwp_ap_rsn(const uint8_t*,size_t);
 int nwp_begin(struct nwp*,uint64_t,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t ap_rsn[22],nwp_rng,void*);
 int nwp_receive(struct nwp*,const uint8_t*,size_t,struct nwp_result*);
-/* Real frame TX completion, NOT command/DMA DDONE. M4 completion requests
- * exactly one install operation; engine never delays or assumes firmware ACK. */
-int nwp_tx_done(struct nwp*,uint64_t generation,uint64_t ticket,int success);
+/* Typed local security submission/storage-retirement receipt, NOT air ACK.
+ * Native must prove DDONE and retire its copy before this call. M4 requests
+ * exactly one install sequence; actual key/data gates remain independent. */
+int nwp_security_submitted(struct nwp*,uint64_t generation,uint64_t ticket,int success);
 /* Native owner correlation boundary: only after actual PTK AND GTK readiness
  * and controlled data-path installation. GTK readiness here means actual source
  * no-response submission plus installed host replay state, not a firmware ACK.

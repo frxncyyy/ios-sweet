@@ -1,0 +1,57 @@
+/* Actual production transport+owner+crypto composition; synthetic DMA/AP only. */
+#define main historical_composition_main
+#include "actual-transport-test.c"
+#undef main
+static void init_join(struct test*h,struct composed*x,struct stc_arbiter*arb){
+ setup(h);memset(x,0,sizeof *x);x->h=h;
+ static const uint8_t rates[]={0x82,0x84,0x8b,0x96,96,108},name[]={1,2,3};
+ x->profile=(struct nst_profile){.assoc={.ssid=name,.ssid_len=3,.rates=rates,.rates_len=6,.capability=0x431,.listen_interval=10},.beacon_interval=100,.rcpi=100,.sta_version=1};memcpy(&x->profile.assoc.peer,&h->s.peer,12);
+ struct stc_config c={.generation=17,.deadline_ms=30000,.cleanup_timeout_ms=30000,.assoc=x->profile.assoc,.channel={0,1,0,1,6,4,4000},.sta_wlan=5,.group_wlan=4,.pmk=pmk_vector,.station_rsn=rsn,.ap_rsn=rsn,.rng=entropy};
+ C(nwn_begin(&x->n,&h->s,arb,&c,native_peer,x,1)==1);phase(x,STC_AUTH_RX);
+ uint8_t response[38]={0};put16(response,0xb0);memcpy(response+4,own,6);memcpy(response+10,peer,6);memcpy(response+16,peer,6);put16(response+26,2);management(x,response,30);phase(x,STC_ASSOC_RX);
+ association(response,h);management(x,response,38);phase(x,STC_EAPOL);C(h->s.sta_active&&!h->s.channel_held&&!h->s.ptk_ready&&!h->s.controlled_port);
+}
+
+
+static void dma_retire(struct test*h){unsigned k=h->s.tx_next;put32(at(h,h->init.transport.tx_ring+16u*k+4,4),0xc0000000);h->didx=h->cidx;h->defer_dma=0;}
+static void assert_wiped(struct test*h){for(unsigned k=0;k<h->s.wire_bytes;k++){C(!h->s.wire[k]);C(!at(h,h->init.transport.command,h->s.wire_bytes)[k]);}}
+static void m2_retired(struct composed*x){struct test*h=x->h;h->defer_air=1;eapol_rx(x,m1,sizeof m1);advance(x);phase(x,STC_EAPOL);C(h->events[NST_SECURITY_SUBMITTED]==1&&!h->s.air_pending&&!h->s.wire_busy&&h->s.dma_done);C(h->capture_n==46+sizeof m2_oracle&&!memcmp(h->capture+46,m2_oracle,sizeof m2_oracle));C(h->s.wire_pid==NST_PID_HOST);assert_wiped(h);}
+static void finish_keys(struct composed*x){struct test*h=x->h;
+ /* M4 is locally submitted without TXS; actual PTK readiness is still absent. */
+ phase(x,STC_PTK);C(h->events[NST_SECURITY_SUBMITTED]==2&&!h->s.air_pending&&!h->s.ptk.installed&&!h->s.ptk_ready&&!nwo_authorized(&x->n.owner));C(h->capture_n==46+sizeof m4_oracle&&!memcmp(h->capture+46,m4_oracle,sizeof m4_oracle));C(!(get32(h->capture+12)&2));assert_wiped(h);
+ h->defer_key=1;phase(x,STC_PTK_READY);C(h->s.ptk.installed&&!h->s.ptk_ready&&!h->s.gtk.installed&&!h->s.controlled_port&&!nwo_authorized(&x->n.owner));
+ uint8_t key[8]={0};memcpy(key+2,h->s.peer.ap,6);key[0]=1;event(h,36,0,key,sizeof key);advance(x);C(!h->s.ptk_ready&&x->n.owner.transaction.phase==STC_PTK_READY);key[0]=0;key[2]^=2;event(h,36,0,key,sizeof key);advance(x);C(!h->s.ptk_ready);key[2]^=2;
+ event(h,36,0,key,sizeof key);advance(x);C(x->n.owner.transaction.phase==STC_GTK&&h->s.ptk_ready&&!h->s.gtk.installed&&!h->s.controlled_port);
+ h->defer_dma=1;advance(x);C(h->s.wire_busy&&!h->s.dma_done&&!h->s.gtk.installed&&!nwo_authorized(&x->n.owner));dma_retire(h);advance(x);C(x->n.owner.transaction.phase==STC_DATA&&h->s.gtk.installed&&!h->s.controlled_port&&!nwo_authorized(&x->n.owner));
+ phase(x,STC_CONNECTED);C(nwo_authorized(&x->n.owner)&&h->s.controlled_port&&h->s.ptk_ready&&h->s.ptk.installed&&h->s.gtk.installed&&h->events[NST_KEY_READY]==1);
+}
+static void cancel_done(struct composed*x){struct test*h=x->h;C(nwn_cancel(&x->n,17,h->now/1000)>=0&&!h->s.controlled_port);h->defer_air=0;phase(x,STC_DONE);C(!h->s.halt&&!h->init.transport.dirty&&!h->s.sta_active&&!h->s.ptk.installed&&!h->s.gtk.installed&&h->s.submitted==h->s.dma_completed);struct nwp zero={0};C(!memcmp(&x->n.owner.transaction.wpa,&zero,sizeof zero));}
+#ifndef SUBMISSION_MAIN
+#define SUBMISSION_MAIN main
+#endif
+int SUBMISSION_MAIN(void){struct test*h=calloc(1,sizeof *h);assert(h);struct composed x;struct stc_arbiter a={0};
+ /* Observed failure reproduction: no M2/M4 TXS, real authenticated M3 proceeds. */
+ init_join(h,&x,&a);m2_retired(&x);unsigned air=h->events[NST_FRAME_RESULT];h->now=h->s.operation_deadline+1000;advance(&x);C(!h->s.halt&&x.n.owner.transaction.phase==STC_EAPOL);eapol_rx(&x,m3,sizeof m3);advance(&x);finish_keys(&x);C(h->events[NST_FRAME_RESULT]==air);
+ /* Valid retry has a new M4 but never reinstalls keys or resets replay PN. */
+ h->s.ptk.pn[16]=23;h->s.gtk.pn[16]=29;unsigned key_events=h->events[NST_KEY_READY],pub=h->published,sec=h->events[NST_SECURITY_SUBMITTED];eapol_rx(&x,m3,sizeof m3);advance(&x);phase(&x,STC_CONNECTED);C(h->published==pub+1&&h->events[NST_SECURITY_SUBMITTED]==sec+1&&h->events[NST_KEY_READY]==key_events&&x.n.owner.transaction.wpa.installed==1&&h->s.ptk.pn[16]==23&&h->s.gtk.pn[16]==29&&!h->s.air_pending);C(!(get32(h->capture+12)&2));
+ /* >127 ordinary frames cannot wrap back into a management correlation PID. */
+ h->now+=60000000;uint8_t eth[60]={0};memcpy(eth+6,h->s.peer.self,6);memset(eth,255,6);eth[12]=8;unsigned next=h->s.next_pid,data=h->events[NST_DATA_SUBMITTED];
+ for(unsigned k=0;k<260;k++){C(!nst_data(&h->s,UINT64_MAX,eth,sizeof eth));advance(&x);C(h->events[NST_DATA_SUBMITTED]==data+k+1&&h->s.wire_pid==NST_PID_HOST&&h->s.next_pid==next&&!h->s.air_pending&&!h->s.wire_busy&&!h->s.halt&&h->events[NST_FRAME_RESULT]==air);C(h->s.submitted==h->s.dma_completed);}
+ C(nwn_cancel(&x.n,17,h->now/1000)>=0);advance(&x);C(x.n.owner.in_kind==STC_TX_DEAUTH&&h->s.air_pending&&h->s.wire_pid==next&&h->s.wire_pid!=NST_PID_HOST);unsigned pid=h->s.wire_pid;txdone(h,NST_PID_HOST,h->s.peer.wlan,0);txdone(h,1,h->s.peer.wlan,0);txdone(h,pid,h->s.peer.wlan^1,0);advance(&x);C(h->s.air_pending&&x.n.owner.in_kind==STC_TX_DEAUTH&&h->events[NST_FRAME_RESULT]==air);txdone(h,pid,h->s.peer.wlan,0);h->defer_air=0;phase(&x,STC_DONE);C(!h->s.halt&&!h->s.sta_active&&!h->s.controlled_port);cleanup(h);
+ /* M3 may precede M2 DDONE, but crypto/key progress cannot retire DMA early. */
+ memset(&a,0,sizeof a);init_join(h,&x,&a);h->defer_air=h->defer_dma=1;eapol_rx(&x,m1,sizeof m1);advance(&x);advance(&x);C(h->s.wire_busy&&!h->s.dma_done&&!h->s.air_pending&&x.n.owner.in_kind==STC_TX_EAPOL);uint64_t old=x.n.owner.in_ticket;eapol_rx(&x,m3,sizeof m3);advance(&x);C(x.n.owner.transaction.eapol_pending&&x.n.owner.in_ticket==old&&!h->events[NST_SECURITY_SUBMITTED]&&!h->s.ptk_submitted&&!h->s.controlled_port);txdone(h,NST_PID_HOST,h->s.peer.wlan,0);advance(&x);C(x.n.owner.in_ticket==old&&h->s.wire_busy&&!h->s.air_done);dma_retire(h);advance(&x);C(!x.n.owner.transaction.eapol_pending&&x.n.owner.transaction.phase==STC_EAPOL_TX&&x.n.owner.transaction.action.ticket!=old&&!h->s.wire_busy&&h->events[NST_SECURITY_SUBMITTED]==1);finish_keys(&x);cancel_done(&x);cleanup(h);
+ /* Invalid MIC is not legitimized by public M3 shape or M2 host completion. */
+ memset(&a,0,sizeof a);init_join(h,&x,&a);m2_retired(&x);uint8_t bad[sizeof m3];memcpy(bad,m3,sizeof bad);bad[81]^=1;eapol_rx(&x,bad,sizeof bad);advance(&x);C(x.n.owner.transaction.outcome==STC_FAILED&&!h->s.ptk_submitted&&!h->s.ptk_ready&&!h->s.gtk.installed&&!h->s.controlled_port);h->defer_air=0;phase(&x,STC_DONE);struct nwp zero={0};C(!h->s.halt&&!memcmp(&x.n.owner.transaction.wpa,&zero,sizeof zero));cleanup(h);
+ /* Cancel M2 or M4 while DMA owns storage: wait for real DDONE, then clean up. */
+ for(unsigned m4=0;m4<2;m4++){memset(&a,0,sizeof a);init_join(h,&x,&a);if(m4)m2_retired(&x);h->defer_air=h->defer_dma=1;eapol_rx(&x,m4?m3:m1,m4?sizeof m3:sizeof m1);advance(&x);advance(&x);old=x.n.owner.in_ticket;C(old&&h->s.wire_busy&&!h->s.dma_done);C(nwn_cancel(&x.n,17,h->now/1000)>=0);uint64_t cleanup_ticket=x.n.owner.transaction.action.ticket;advance(&x);C(x.n.owner.in_ticket==old&&h->s.wire_busy&&!h->s.ptk_submitted&&!h->s.controlled_port);dma_retire(h);advance(&x);C(!x.n.owner.in_ticket&&x.n.owner.transaction.action.ticket==cleanup_ticket&&x.n.owner.transaction.outcome==STC_CANCELED&&!h->s.ptk_submitted&&!h->s.gtk.installed);h->defer_air=0;phase(&x,STC_DONE);C(!h->s.halt&&!h->s.sta_active&&!h->s.controlled_port);cleanup(h);}
+ /* Local-only routes do not weaken preDDONE lifetime failure. */
+ for(unsigned data_route=0;data_route<2;data_route++){setup(h);h->defer_air=h->defer_dma=1;uint8_t eap[18]={0};memcpy(eap,h->s.peer.ap,6);memcpy(eap+6,h->s.peer.self,6);eap[12]=0x88;eap[13]=0x8e;h->s.controlled_port=data_route;C(!(data_route?nst_data(&h->s,1,eth,sizeof eth):nst_eapol(&h->s,1,eap,sizeof eap,0)));step(h);C(h->s.wire_busy&&!h->s.dma_done&&!h->s.air_pending);h->now=h->s.operation_deadline;C(nst_step(&h->s,&io,h,16,callback,h)<0);C(h->s.error==3&&h->s.halt&&h->init.transport.dirty&&h->s.wire_busy&&!h->s.dma_done&&!h->events[NST_SECURITY_SUBMITTED]&&!h->events[NST_DATA_SUBMITTED]);cleanup(h);}
+ /* Every security publication/retirement hardware failure preserves ownership.
+  * The typed event can exist only if actual DDONE+wipe completed first. */
+ setup(h);uint8_t packet[18]={0};memcpy(packet,h->s.peer.ap,6);memcpy(packet+6,h->s.peer.self,6);packet[12]=0x88;packet[13]=0x8e;h->defer_air=1;C(!nst_eapol(&h->s,51,packet,sizeof packet,0));step(h);unsigned boundaries=h->calls;cleanup(h);
+ for(unsigned f=1;f<=boundaries;f++){setup(h);h->defer_air=1;C(!nst_eapol(&h->s,51,packet,sizeof packet,0));h->fail_at=f;C(nst_step(&h->s,&io,h,16,callback,h)<0);C(h->s.halt&&!h->s.controlled_port);C(h->s.credit_available+h->s.credit_reserved==h->s.credit_capacity&&h->s.credit_acquired-h->s.credit_released==h->s.credit_reserved);if(h->events[NST_SECURITY_SUBMITTED]){C(h->s.dma_done&&!h->s.wire_busy&&h->s.submitted==h->s.dma_completed);assert_wiped(h);}cleanup(h);}
+ /* A canceled not-yet-published M2 yields a typed negative without publication. */
+ memset(&a,0,sizeof a);init_join(h,&x,&a);eapol_rx(&x,m1,sizeof m1);advance(&x);C(nwn_pump(&x.n,h->now/1000)==1&&h->s.wire_busy&&!h->s.published);unsigned published=h->published;C(nwn_cancel(&x.n,17,h->now/1000)>=0);advance(&x);C(h->published==published&&h->events[NST_SECURITY_SUBMITTED]==1&&!h->s.wire_busy&&!h->s.air_pending&&!x.n.owner.in_ticket&&x.n.owner.transaction.outcome==STC_CANCELED);h->defer_air=0;phase(&x,STC_DONE);C(!h->s.halt&&!h->s.sta_active);cleanup(h);
+ /* Published management PID exhaustion refuses atomically, never wraps127→1. */
+ setup(h);struct sw_peer peer_copy;memcpy(&peer_copy,&h->s.peer,12);uint8_t auth[30];size_t used;C(!sw_auth(auth,sizeof auth,&used,&peer_copy));h->s.next_pid=NST_PID_MANAGEMENT_MAX;h->defer_air=1;C(!nst_management(&h->s,1,auth,used));step(h);C(h->s.wire_pid==126&&h->s.next_pid==127&&h->s.air_pending);txdone(h,126,h->s.peer.wlan,0);step(h);struct nst snapshot=h->s;unsigned calls=h->calls;C(nst_management(&h->s,2,auth,used)<0);C(!memcmp(&snapshot,&h->s,sizeof snapshot)&&calls==h->calls);cleanup(h);
+ free(h);printf("PASS %u assertions: actual source M2/M4 local submission, early authenticated M3, real key gates, no reinstall/PN reset, 260data/noTXS, late PID isolation, cancellation and hard preDDONE failure; synthetic firmware only\n",checks);return 0;}

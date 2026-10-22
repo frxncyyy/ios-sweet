@@ -7,6 +7,7 @@ MAX_ROWS=8192
 U32=(1<<32)-1
 U64=(1<<64)-1
 STATION='generation ticket service result linked retired transaction action outcome owner_halt native_phase error halt peer_step cid sequence submitted dma air_pending associated sta ptk gtk port event status events tx_accept tx_result tx_ok tx_fail queued_drop rx_delivered rx_raw rx_raw_eapol rx_raw_drop t_ms'.split()
+STATION_LOCAL=STATION[:32]+['tx_local']+STATION[32:]
 STATION_PARTS=[STATION[:7],STATION[7:14],STATION[14:24],STATION[24:32],STATION[32:]]
 def expand_station_parts(text):
  """Only a complete, ordered, boot-unique five-part snapshot can be evidence."""
@@ -27,7 +28,9 @@ def expand_station_parts(text):
    key,value=m[1],int(m[2]);maximum=U64 if key in ('generation','ticket','t_ms') else U32
    if value>maximum:valid=False;break
    pairs.append((key,value))
-  if not valid or [k for k,v in pairs]!=STATION_PARTS[part-1] or not 1<=sample<=112:
+  schemas=[STATION_PARTS[part-1]]
+  if part==4:schemas.append(STATION_PARTS[3]+['tx_local'])
+  if not valid or [k for k,v in pairs] not in schemas or not 1<=sample<=112:
    issues.append('invalid station part schema');continue
   if part==1:
    if pending is not None or sample<=last_sample:issues.append('duplicate or incomplete station sample')
@@ -51,7 +54,7 @@ EVENT='event published notified status producer consumer t_ms'.split()
 # Scan EVENT retains its old shape; station EVENT carries actual callback identity.
 EVENT_BOUND='event published notified status producer consumer generation ticket epoch t_ms'.split()
 SCHEMAS={
- 'IOS STATION':[STATION],
+ 'IOS STATION':[STATION,STATION_LOCAL],
  'IOS STATIONGUARD':['reason source stage error valid addr raw mask expected'.split()],
  'IOS LINK':['generation up error'.split()],
  'IFNET LINK':['generation authorized changed error'.split()],
@@ -73,7 +76,7 @@ def parse(data):
  def bad(message):
   if len(issues)<64:issues.append(message)
  def result_empty(message):
-  return dict(valid=False,issues=[message],status='INVALID',association_observed=False,native_authorized_observed=False,authorized_link_observed=False,current_authorized_link_observed=False,join_notification_observed=False,data_air_tx_success_observed=False,bsd_input_success_observed=False,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,fatal_native_guard_observed=False,attempts=[])
+  return dict(valid=False,issues=[message],status='INVALID',association_observed=False,native_authorized_observed=False,authorized_link_observed=False,current_authorized_link_observed=False,join_notification_observed=False,data_air_tx_success_observed=False,data_local_submission_observed=False,bsd_input_success_observed=False,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,fatal_native_guard_observed=False,attempts=[])
  if not isinstance(data,bytes)or len(data)>LIMIT:return result_empty('invalid or oversized log')
  try:text=data.decode('utf8')
  except UnicodeDecodeError:return result_empty('non-UTF8 log')
@@ -107,17 +110,21 @@ def parse(data):
   numeric.update(_kind=kind,_line=index);rows.append(numeric);counts[kind]=counts.get(kind,0)+1
  if sum(counts.get(k,0)for k in ('IOS STATION','IOS STATIONGUARD','IOS LINK'))>112:bad('native trace budget exceeded')
  if counts.get('IFNET LINK',0)>32:bad('ifnet trace budget exceeded')
- attempts={};notices=[];events=[];links=[];join_groups={};join_owner=set();legacy_join=False
+ attempts={};notices=[];events=[];links=[];join_groups={};join_owner=set();legacy_join=False;station_formats=set()
  for row in rows:
   kind=row['_kind']
   if kind=='IOS STATION':
-   if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>14 or row['outcome']>5 or row['native_phase']>9 or row['event']>14 or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
+   local_format='tx_local' in row;station_formats.add(local_format)
+   if len(station_formats)>1:bad('mixed station counter formats in one boot')
+   if local_format and any(row[k]for k in ('tx_result','tx_ok','tx_fail')):bad('local data producer cannot claim air results')
+   if row['event'] in (15,16) and row['status'] not in (0,1):bad('local submission status domain')
+   if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>14 or row['outcome']>5 or row['native_phase']>9 or row['event']>(16 if local_format else 14) or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
    if any(row[k]>1 for k in ('linked','retired','owner_halt','halt','air_pending','associated','sta','ptk','gtk','port')):bad('station boolean domain')
    if row['rx_raw']!=((row['rx_raw_eapol']+row['rx_raw_drop'])&U32):bad('raw RX counters disagree')
    if row['tx_result']!=((row['tx_ok']+row['tx_fail'])&U32):bad('data result counters disagree')
    # Bounded residual, not exact outstanding: port closure can discard an
    # already-dequeued unpublished frame without a FRAME_RESULT.
-   if ((row['tx_accept']-row['tx_result']-row['queued_drop'])&U32)>9:bad('data queue/residual bound')
+   if ((row['tx_accept']-row['tx_result']-row.get('tx_local',0)-row['queued_drop'])&U32)>9:bad('data queue/residual bound')
    # Fatal closure logs before service snapshot is refreshed: service6/linked0
    # is legitimate transitional metadata, and never an authorization proof.
    if row['service']==6 and row['linked']and not authorized(row):bad('contradictory authorized station snapshot')
@@ -195,14 +202,14 @@ def parse(data):
   link_errors=[x for x in rows if x['_kind']=='IOS LINK'and x['generation']==g and x['error']!=0]
   failed_after_ready=bool(link_errors and(max(x['_line']for x in link_errors)>=last['_line']))
   notified=[x for x in a['events']if x['event']==9 and x['published']==1 and x['notified']==1 and x['status']==0]
-  summaries.append(dict(generation=g,ticket=t,callback_epoch=epoch.get((g,t)),station_rows=len(r),last_service=last['service'],last_transaction=last['transaction'],last_result=last['result'],last_outcome=last['outcome'],last_native_error=last['error'],last_owner_halt=last['owner_halt'],last_native_halt=last['halt'],cookie_retired=bool(last['retired']),association_observed=any(x['associated']==1 for x in r),native_authorized_observed=bool(ready_rows),ifnet_up_observed=bool(ups),join_snapshot_observed=bool(joined),join_notification_observed=bool(ready_rows and ups and joined and notified),authorized_link_observed=bool(ready_rows and ups and joined),current_authorized_link_observed=bool(authorized(last) and latestlink and latestlink['authorized']==1 and latestlink['error']==0 and joined and notice_ready and not failed_after_ready and not counts.get('IOS STATIONGUARD',0)),data_air_tx_success_observed=any(x['tx_ok']for x in r),data_air_tx_failure_observed=any(x['tx_fail']for x in r),bsd_input_success_observed=any(x['rx_delivered']for x in r),latest_counters={k:last[k]for k in ('submitted','dma','events','tx_accept','tx_result','tx_ok','tx_fail','queued_drop','rx_delivered')}))
+  summaries.append(dict(generation=g,ticket=t,callback_epoch=epoch.get((g,t)),station_rows=len(r),last_service=last['service'],last_transaction=last['transaction'],last_result=last['result'],last_outcome=last['outcome'],last_native_error=last['error'],last_owner_halt=last['owner_halt'],last_native_halt=last['halt'],cookie_retired=bool(last['retired']),association_observed=any(x['associated']==1 for x in r),native_authorized_observed=bool(ready_rows),ifnet_up_observed=bool(ups),join_snapshot_observed=bool(joined),join_notification_observed=bool(ready_rows and ups and joined and notified),authorized_link_observed=bool(ready_rows and ups and joined),current_authorized_link_observed=bool(authorized(last) and latestlink and latestlink['authorized']==1 and latestlink['error']==0 and joined and notice_ready and not failed_after_ready and not counts.get('IOS STATIONGUARD',0)),data_air_tx_success_observed=any(x['tx_ok']for x in r),data_air_tx_failure_observed=any(x['tx_fail']for x in r),data_local_submission_observed=any(x.get('tx_local',0)for x in r),bsd_input_success_observed=any(x['rx_delivered']for x in r),latest_counters={k:last.get(k,0)for k in ('submitted','dma','events','tx_accept','tx_result','tx_ok','tx_fail','tx_local','queued_drop','rx_delivered')}))
  valid=not issues
- claims=('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','bsd_input_success_observed')
+ claims=('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','data_local_submission_observed','bsd_input_success_observed')
  if not valid:
   for summary in summaries:
    for key in claims+('ifnet_up_observed','join_snapshot_observed','data_air_tx_failure_observed'):summary[key]=False
  totals={k:valid and any(s[k]for s in summaries)for k in claims}
  status='INVALID'if not valid else 'AUTHORIZED_LINK_OBSERVED'if totals['current_authorized_link_observed']else 'REVOKED_OR_TERMINAL'if summaries and summaries[-1]['last_service']in(7,8)else 'IN_PROGRESS'if summaries else 'NO_NATIVE_JOIN_RECEIPT'
- return dict(valid=valid,issues=issues,status=status,**totals,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,attempts=summaries,row_counts=counts,join_profile_groups=join_profiles,join_owner_unavailable=len(join_owner),uncorrelated_station_events=sum(x['event']in(2,3,4,9)and'generation'not in x for x in events),stale_callback_notices=sum(not x['current']for x in notices),fatal_native_guard_observed=bool(counts.get('IOS STATIONGUARD',0)),scope='Numeric source-bound driver observations. STATION association/key flags and current IOUC snapshot/ifnet generation are separate proofs. tx_ok is a real ordinary-data TX result, rx_delivered is accepted BSD input; neither identifies DHCP, IP configuration or connectivity. Cookie retirement alone does not close an authorized native connection. Strict startup receipt must be checked independently.')
+ return dict(valid=valid,issues=issues,status=status,**totals,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,attempts=summaries,row_counts=counts,join_profile_groups=join_profiles,join_owner_unavailable=len(join_owner),uncorrelated_station_events=sum(x['event']in(2,3,4,9)and'generation'not in x for x in events),stale_callback_notices=sum(not x['current']for x in notices),fatal_native_guard_observed=bool(counts.get('IOS STATIONGUARD',0)),scope='Numeric source-bound driver observations. STATION association/key flags and current IOUC snapshot/ifnet generation are separate proofs. tx_ok is a real ordinary-data TX result; tx_local is local buffer retirement after verified DMA only and is never an air ACK, peer receipt or key readiness. rx_delivered is accepted BSD input. None identifies DHCP, IP configuration or connectivity. Cookie retirement alone does not close an authorized native connection. Strict startup receipt must be checked independently.')
 if __name__=='__main__':
  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('log',type=Path);a=ap.parse_args();print(json.dumps(parse(a.log.read_bytes()),indent=2))

@@ -50,7 +50,8 @@ int nst_command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t 
 static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned type,unsigned protect){
  if(!acceptable(s)||!ticket||!p||n<2||n>NST_FRAME_BYTES-32)return -1;if(busy(s))return 1;
  if(s->cleanup_started&&(type!=1||u16(p)!=0xc0))return -1;
- struct sw_txd d=s->txd;if(type==1&&(u16(p)==0xb0||u16(p)==0))d.queue=16;d.pid=(uint8_t)s->next_pid;d.protected_frame=(uint8_t)protect;size_t used=0;uint8_t txd[32];int e;
+ if(type==1&&(!s->next_pid||s->next_pid>NST_PID_MANAGEMENT_MAX))return -1;
+ struct sw_txd d=s->txd;if(type==1&&(u16(p)==0xb0||u16(p)==0))d.queue=16;d.pid=(uint8_t)(type==1?s->next_pid:NST_PID_HOST);d.protected_frame=(uint8_t)protect;size_t used=0;uint8_t txd[32];int e;
  if(type==1)e=sw_management_txd(txd,sizeof txd,&used,&d,p,n);else if(type==2)e=sw_security_txd(txd,sizeof txd,&used,&d,p,n);else e=sw_data_txd(txd,sizeof txd,&used,&d,p,n);
  if(e||used!=32)return -1;
  if(type==1){if(n<24||!eq(p+4,s->peer.ap,6)||!eq(p+10,s->peer.self,6)||!eq(p+16,s->peer.ap,6))return -1;}
@@ -69,11 +70,11 @@ int nst_memory_range(const struct nst*s,uint64_t a,uint32_t n,unsigned write){
  return !write&&s->phase==NST_RX_FRAME&&n==s->rx_bytes&&a==q->ring.buffers+4096u*q->next;
 }
 int nst_register_write(const struct nst*s,uint32_t a,uint32_t v){if(!source(s)||!s->active)return 0;if(a==0x18025418)return s->phase==NST_TX_PUBLISH&&s->wire_busy&&!s->published&&v==(s->tx_next+1)%1024;if(s->rx_current>=5||s->phase!=NST_RX_PUBLISH)return 0;const struct ncr_queue*q=&s->queue[s->rx_current];return a==q->ring.base+8&&v==q->next;}
-/* A missing security/cleanup-deauth TXS after verified DDONE is a negative
- * frame outcome, not unknown host DMA ownership. It never supplies success.
- * Cleanup frame() admits only deauth; ordinary management/data remain strict.
- * Commands, ordinary data and every pre-DDONE timeout remain fail-closed. */
-static int retired_air_failure(const struct nst*s){return (s->wire_type==2||(s->cleanup_started&&s->wire_type==1))&&s->air_pending&&s->dma_done&&!s->wire_busy&&s->submitted==s->dma_completed;}
+/* After cleanup deauth DDONE, absent TXS is a bounded negative outcome,
+ * not unknown DMA ownership. Security/data instead have typed local receipts
+ * and never enter this air wait. Ordinary management, commands and every
+ * pre-DDONE timeout retain the strict failure path. */
+static int retired_air_failure(const struct nst*s){return s->cleanup_started&&s->wire_type==1&&s->air_pending&&s->dma_done&&!s->wire_busy&&s->submitted==s->dma_completed;}
 static int before(struct nst*s,const struct ncd_io*o,void*c){uint64_t now;if(!nst_lease_window(s,s->init)||o->bus->owner(c)||o->now_us(c,&now)||now<s->last)return fail(s,1);s->last=now;if(!s->controlled_port&&now>=s->deadline)return fail(s,2);if((s->wire_busy||s->air_pending)&&s->published&&now>=s->operation_deadline&&!retired_air_failure(s))return fail(s,3);if(s->channel_held&&s->grant_deadline&&now>=s->grant_deadline&&!s->cleanup_started)return fail(s,4);return 0;}
 static int rr(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t*v){return before(s,o,c)||o->bus->reg_read(c,a,v)?fail(s,5):0;}
 static int rw(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t v){if(before(s,o,c)||!nst_register_write(s,a,v))return fail(s,6);s->mutated=1;return o->bus->reg_write(c,a,v)?fail(s,6):0;}
@@ -85,7 +86,7 @@ static int coherent(struct nst*s,const struct ncd_io*o,void*c){uint32_t v;for(un
 static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,void*ctx){
  if(!s->wire_busy||(s->wire_type==3&&s->bss_absent&&!s->published))return 0;
  if(s->cleanup_started&&!s->published&&s->wire_type&&!(s->wire_type==1&&u16(s->wire+32)==0xc0)){
-  wipe(s->wire,sizeof s->wire);s->wire_busy=0;struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=1};return emit(s,fn,ctx,&e);
+  wipe(s->wire,sizeof s->wire);s->wire_busy=0;struct nst_event e={.kind=s->wire_type==2?NST_SECURITY_SUBMITTED:s->wire_type==3?NST_DATA_SUBMITTED:NST_FRAME_RESULT,.ticket=s->ticket,.status=1};return emit(s,fn,ctx,&e);
  }
  uint32_t v;uint64_t a=s->init->transport.tx_ring+16u*s->tx_next;
  if(!s->published){
@@ -96,7 +97,7 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
   s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,s->wire_bytes)||sy(s,o,c,s->init->transport.command,s->wire_bytes,1)||mw(s,o,c,a,s->descriptor,16)||sy(s,o,c,a,16,1))return -1;
   if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
   if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
-  if(s->wire_type)s->air_pending=1;
+  if(s->wire_type==1){s->air_pending=1;s->next_pid++;}
   {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
   if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
   if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
@@ -112,6 +113,11 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
  unsigned bytes=s->wire_bytes;wipe(s->wire,sizeof s->wire);s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,bytes)||sy(s,o,c,s->init->transport.command,bytes,1))return -1;
  s->init->transport.tx_index=(s->tx_next+1)%1024;s->tx_next=s->init->transport.tx_index;s->init->transport.completed++;if(!s->wire_type)s->init->transport.next_sequence++;s->init->transport.submit_attempted=0;s->dma_completed++;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
  if(channel_release){s->channel_held=0;s->grant_deadline=0;struct nst_event released={.kind=NST_CHANNEL_RELEASED,.ticket=s->ticket,.token=s->channel_token};if(emit(s,fn,ctx,&released))return -1;}
+ if(s->wire_type==2||s->wire_type==3){
+  /* Local submission receipt only after proved DDONE and DMA wipe/sync.
+   * Optional host-domain TXS is diagnostic and cannot complete management. */
+  struct nst_event e={.kind=s->wire_type==2?NST_SECURITY_SUBMITTED:NST_DATA_SUBMITTED,.ticket=s->ticket,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};return emit(s,fn,ctx,&e);
+ }
  if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;return 0;}struct nst_event e={.kind=NST_COMMAND_DMA,.ticket=s->ticket,.cid=(uint8_t)s->wire_cid,.sequence=(uint8_t)s->wire_sequence};return emit(s,fn,ctx,&e);}return 0;
 }
 static uint64_t pn48(const uint8_t*p){uint64_t n=0;for(unsigned k=0;k<6;k++)n|=(uint64_t)p[k]<<(8*k);return n;}
@@ -188,11 +194,11 @@ int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event
  static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
  if(s->air_pending&&s->dma_done&&(s->air_done||(retired_air_failure(s)&&s->last>=s->operation_deadline))){
   /*0x100 is explicitly local timeout, outside every firmware8-bit status.
-   * Advance the retired PID before callback/cleanup; a late old TXS may not
-   * complete the next deauthentication. No authorization follows failure. */
+   * Management PID was consumed at publication and is never reused here; a
+   * late old TXS cannot complete cleanup. No authorization follows failure. */
   unsigned status=s->air_done?s->air_status:NST_TX_LOCAL_TIMEOUT;
   struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=status,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};
-  s->air_pending=0;s->next_pid=s->wire_pid==127?1:s->wire_pid+1;
+  s->air_pending=0;
   if(status==NST_TX_LOCAL_TIMEOUT)nst_close_port(s);
   if(emit(s,fn,ctx,&e))return -1;
  }

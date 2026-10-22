@@ -3,16 +3,16 @@
 #undef main
 #include "review-vectors.h"
 static void start(struct nwp*w){assert(!nwp_begin(w,42,pmk_vector,own,peer,rsn,rsn,rng,0));}
-static int first3(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){assert(nwp_receive(w,m1,sizeof m1,r)==NWP_TX);assert(!nwp_tx_done(w,42,r->ticket,1));return nwp_receive(w,p,n,r);}
+static int first3(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){assert(nwp_receive(w,m1,sizeof m1,r)==NWP_TX);assert(!nwp_security_submitted(w,42,r->ticket,1));return nwp_receive(w,p,n,r);}
 int main(void){
  struct nwp w;struct nwp_result r,base;start(&w);assert(nwp_receive(&w,m1,sizeof m1,&base)==NWP_TX);
  uint8_t p[160];memcpy(p,m1,sizeof m1);p[2]=0;p[3]=117;p[97]=0;p[98]=22;p[99]=221;p[100]=20;p[101]=0;p[102]=15;p[103]=172;p[104]=4;for(unsigned i=105;i<121;i++)p[i]=(uint8_t)i;
- start(&w);assert(nwp_receive(&w,p,121,&r)==NWP_TX&&r.bytes==base.bytes&&!memcmp(r.frame,base.frame,r.bytes));assert(!nwp_tx_done(&w,42,r.ticket,1));assert(nwp_receive(&w,p,121,&r)==NWP_TX);nwp_cancel(&w);checks+=3;
+ start(&w);assert(nwp_receive(&w,p,121,&r)==NWP_TX&&r.bytes==base.bytes&&!memcmp(r.frame,base.frame,r.bytes));assert(!nwp_security_submitted(&w,42,r.ticket,1));assert(nwp_receive(&w,p,121,&r)==NWP_TX);nwp_cancel(&w);checks+=3;
  for(unsigned n=2;n<22;n++){start(&w);p[3]=(uint8_t)(95+n);p[98]=(uint8_t)n;assert(nwp_receive(&w,p,99+n,&r)==NWP_FAIL&&!w.state);checks++;}p[3]=117;p[98]=22;
  for(unsigned off=100;off<=104;off++){start(&w);p[off]^=1;assert(nwp_receive(&w,p,121,&r)==NWP_FAIL);p[off]^=1;checks++;}
  start(&w);p[121]=221;p[122]=0;p[123]=0;p[3]=120;p[98]=25;assert(nwp_receive(&w,p,124,&r)==NWP_TX);start(&w);p[123]=1;assert(nwp_receive(&w,p,124,&r)==NWP_FAIL);checks+=2;
  start(&w);memcpy(p+121,p+99,22);p[3]=139;p[98]=44;assert(nwp_receive(&w,p,143,&r)==NWP_FAIL);checks++;
- start(&w);assert(!nwp_copy_ap_rsnxe(&w,rxse,sizeof rxse));assert(first3(&w,good_rxse,sizeof good_rxse,&r)==NWP_TX);uint64_t ticket=r.ticket;assert(nwp_tx_done(&w,42,ticket,1)==NWP_INSTALL);assert(nwp_receive(&w,good_rxse,sizeof good_rxse,&r)==NWP_TX);assert(!nwp_tx_done(&w,42,r.ticket,1)&&w.installed==1);checks+=5;
+ start(&w);assert(!nwp_copy_ap_rsnxe(&w,rxse,sizeof rxse));assert(first3(&w,good_rxse,sizeof good_rxse,&r)==NWP_TX);uint64_t ticket=r.ticket;assert(nwp_security_submitted(&w,42,ticket,1)==NWP_INSTALL);assert(nwp_receive(&w,good_rxse,sizeof good_rxse,&r)==NWP_TX);assert(!nwp_security_submitted(&w,42,r.ticket,1)&&w.installed==1);checks+=5;
  const uint8_t*bad[]={bad_rxse,duplicate_rxse,unknown_rsn_kde};const size_t lens[]={sizeof bad_rxse,sizeof duplicate_rxse,sizeof unknown_rsn_kde};for(unsigned i=0;i<3;i++){start(&w);assert(!nwp_copy_ap_rsnxe(&w,rxse,sizeof rxse));assert(first3(&w,bad[i],lens[i],&r)==NWP_FAIL&&!w.state);checks++;}
  start(&w);assert(first3(&w,good_rxse,sizeof good_rxse,&r)==NWP_FAIL);start(&w);assert(!nwp_copy_ap_rsnxe(&w,rxse,sizeof rxse));assert(first3(&w,m3,sizeof m3,&r)==NWP_FAIL);start(&w);assert(first3(&w,vendor_m3,sizeof vendor_m3,&r)==NWP_TX);checks+=3;
  for(unsigned z=0;z<sizeof rxse;z++){start(&w);assert(nwp_copy_ap_rsnxe(&w,rxse,z)<0||z==0);checks++;}uint8_t dup[6];memcpy(dup,rxse,3);memcpy(dup+3,rxse,3);start(&w);assert(nwp_copy_ap_rsnxe(&w,dup,6)<0);checks++;

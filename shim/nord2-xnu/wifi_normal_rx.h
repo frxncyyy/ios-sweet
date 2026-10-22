@@ -29,6 +29,7 @@ struct ncr_state {
  * this object and its owning command session alive through the bounded batch. */
 int ncr_prepare(struct ncr_state *,struct nwi_state *,struct nct_session *,unsigned,uint8_t,uint64_t);
 int ncr_continue_prepare(struct ncr_state *,struct nwi_state *,struct nct_session *,const struct ncr_state *,uint8_t,uint64_t);
+int ncr_scan_return_prepare(struct ncr_state *,struct nwi_state *,struct nct_session *,const struct ncr_queue *,uint8_t,uint64_t);
 int ncr_pump(void *,const struct ncd_io *,void *,unsigned,unsigned *);
 /* Native admission adds these exact per-operation slots to the existing
  * command-only allowlist; it also checks the current native worker/session. */
