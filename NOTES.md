@@ -4,6 +4,57 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: eight actual wifid crashes SAVED; authorized iOS restoration DONE.**
+  Human authorized d78bf9fe rescue→same6e4ce860 boot-only roundtrip in
+  call_1de0c6baa5ff4ad89c0847eb38acd924. Rescue flash76773 CLOSED0; collector78107
+  CLOSED0:8reports,475136physicalbytes,0writes0mounts,dirtyobservation/nojournal.
+  Private live-wifid-reports/result.json maps reportbytes+hashes. All8 wifid
+  EXC_CRASH/SIGABRT, ObjectiveC lastExceptionBacktrace __NSDictionaryM setObject.
+  Faulting wifid offsets0x930e4/0xf11a0/0x130a88/0x134ed4, UUIDf0919f06…5292.
+  Contents nowestablish realdaemoncrashes; AKS10unsupported remainsconcretegap
+  but causationnotyetproved. Needexactnilvaluefromproducer, notanchoringonAKS.
+  User physicalfastboot call_0f5a721803534e29a2ca8bf090e9bece; restore6e4ce860
+  flash/reboot OKAY. Root69012 CLOSED0 read-onlyUSBcollector restore-live;
+  no activeUSBowner. User confirmed lockscreen/touch/buttons healthy in
+  call_7fe903163053412a93a01063db37e5d8. No userdata changes/no stockAndroidboot.
+  Claude upstream review88500 CLOSED0; actualcrash followup87270 ACTIVE,
+  resumed sameOpus5.5 sessionb4585316, visible desktop3. Format preparingexact
+  byteverifiedcrashproducer; no canonicalchanges/CI/newtestimage yet.
+
+
+- **2026-10-22: user confirms wifid crash reports; fresh upstream reveals AKS gap.**
+  Human sees several wifid-1969-12-31-16xxxxx in AnalyticsData. Contents not yet
+  collected; RTC names are not reliable event chronology. Fresh Topaz e4772911
+  adds0900 Apple80211/WLAN glue missing from old89451b8 reference. Its AKS10/11
+  handlers (from HackiOS) are absent locally; exact log has157 securityd wrap10
+  failures. Upstream comparison report91ccccfe/manifest7847eb56 preserved
+  under wifi/claude-opus-security-failure/review-upstream. Important limitation:
+  upstreamHKwr/XOR is prototype compatibility, not encrypted key protection;
+  persistentUFS/keychain behavior needs explicit review before reuse.
+  Claude resumed on new upstream+exacterror, wrapper88500 ACTIVE, sessionb4585316,
+  live viewer desktop3. No new build. GET51 causal theory independently not
+  corroborated (producer review654bf468), do not add speculative replies.
+  Bounded read-only HFSX wifid-report reader under review-log-access being frozen.
+  Roundtrip plan saved; images d78bf9fe rescue and6e4ce860 restore verified;
+  new boot-only diagnostic roundtrip NOT YET AUTHORIZED. Phone remains6e4ce860,
+  no activeUSBreader, no device actions since successful authorized test.
+
+
+- **2026-10-22: Claude failure diagnosis COMPLETE; no speculative next build.**
+  Wrapper19134 CLOSED0, resumed Opus5.5/high sessionb4585316, desktop3 viewer
+  retained. REPORT.md at wifi/claude-opus-security-failure. Final hardware log
+  attempt-final.log434903B SHA3624e56ea8b63bbc7a7684824fde28227218b4b753e6a7e56104adb6103f0226.
+  Backend PASS; 13 fresh scans, no JOINREQ/JOINCONTROL/STATION receipts. No
+  association/key/IP evidence. Claude observes recurring client initialization
+  ~15s and new GET51country query; daemon restart is HYPOTHESIS, not crash proof.
+  No task/PID/close/death diagnostics currently identify the restarting client.
+  Root asked user to inspect existing iOS AnalyticsData for relevant crash names
+  without reboot. cap independently checking trace/source; format tracing exact
+  producer GET51; wire preparing bounded read-only userland-log access if needed.
+  Native USB only exposes kernel log/status, NOT arbitrary filesystem. Current
+  iOS6e4ce860 remains installed; no active USB reader. No new CI or flash.
+
+
 - **2026-10-22: WPA2 image6e4ce860 flashed; user still reports unable to join.**
   Exact authorization call_b9b8a74fd0f646979e5d8b153f5203bc consumed; sole boot
   write/reboot succeeded. Source938cb89, CI39790703398, image33462272B SHA
