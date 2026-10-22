@@ -31,7 +31,7 @@ when the controller starts does not establish correct ordering.
 | `/options` and Apple NVRAM proxy | Absent; the selected kernel explicitly handles missing options. | No fake NVRAM backend or calibration-as-Apple-NVRAM substitution. |
 | Android Wi-Fi calibration | Existing pinned private 6146-byte chosen property. | Remains native calibration; source of the factory address, not Apple NVRAM. |
 | BuildVersion | Its provider reads `ProductBuildVersion` through `_CFCopySystemVersionDictionary`; the selected SystemVersion.plist supplies it. | No DeviceTree lookup on this path. |
-| Diagnostics boot policy | A separate Boolean checks chosen `osenvironment="diagnostics"`, otherwise product `boot-ios-diagnostics`. | Absence/false retains ordinary first-unlock policy; do not fabricate a diagnostics bypass to hide an unlock problem. |
+| Diagnostics boot policy | A separate query checks chosen `osenvironment="diagnostics"`, otherwise **presence** of product `boot-ios-diagnostics`. | Keep the latter absent: even a zero/empty placeholder would enable the diagnostics bypass. Do not use this to hide an unlock problem. |
 
 ## Boot packaging and runtime contract
 
