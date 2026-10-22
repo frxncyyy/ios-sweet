@@ -50,12 +50,13 @@ static bool nwil_active(ifnet_t net) {
 }
 
 static int nwil_event(ifnet_t net,bool up) {
- /* Same public DL event layout consumed by configd; payload describes the
-  * actual attached interface. The callback runs without the admission gate. */
+ /* ifnet_event posts from event_data, not sizeof(kern_event_msg): the public
+  * header includes the first payload word. The callback runs without our gate. */
  struct link_data { uint32_t family,unit; char name[IFNAMSIZ]; };
- alignas(struct kern_event_msg) uint8_t bytes[sizeof(struct kern_event_msg)+sizeof(link_data)]={};
+ alignas(struct kern_event_msg) uint8_t bytes[KEV_MSG_HEADER_SIZE+sizeof(link_data)]={};
+ static_assert(sizeof(bytes)>=sizeof(struct kern_event_msg),"complete event header");
  auto *header=(struct kern_event_msg *)(void *)bytes;
- auto *data=(link_data *)(void *)(header+1);
+ auto *data=(link_data *)(void *)(bytes+KEV_MSG_HEADER_SIZE);
  header->total_size=sizeof(bytes);
  header->vendor_code=KEV_VENDOR_APPLE;
  header->kev_class=KEV_NETWORK_CLASS;

@@ -2,17 +2,17 @@
 """Offline actual-source WPA2/station tests. No network, device or firmware IO."""
 from pathlib import Path
 import argparse,tempfile,subprocess,json,hashlib
-R=next(p for p in Path(__file__).resolve().parents if (p/'shim/nord2-xnu').exists())
-a=argparse.ArgumentParser();a.add_argument('--candidate',type=Path,help='Private wpa2-native-candidate overlay');a.add_argument('--bearssl',type=Path);a.add_argument('--only',choices=['owner','connector','actual','service']);a.add_argument('--log-dir',type=Path);args=a.parse_args()
+R=next(p for p in Path(__file__).resolve().parents if (p/'AGENTS.md').exists())
+a=argparse.ArgumentParser();a.add_argument('--candidate',type=Path,help='Private wpa2-native-candidate overlay');a.add_argument('--native-candidate',type=Path,help='Optional concurrently reviewed native transport delta');a.add_argument('--bearssl',type=Path);a.add_argument('--only',choices=['owner','connector','actual','service','review','native']);a.add_argument('--log-dir',type=Path);args=a.parse_args()
 S=R/'shim/nord2-xnu';P=Path(__file__).resolve().parent/'fixtures/nord2-wifi-station';B=args.bearssl or R/'research/ci-39158169212/buildtree/xnu/libkern/crypto/sweet_bearssl'
 base=['wifi_station_transaction','wifi_station_wire','wifi_wpa2','wifi_wpa_owner','wifi_wpa_crypto']
-plan={'owner':('test.c',[]),'connector':('transport-test.c',['wifi_wpa_nst']),'actual':('actual-transport-test.c',['wifi_wpa_nst','wifi_station_transport','wifi_normal_transport','wifi_capability','wifi_main_transport','wifi_main_command']),'service':('service-test.c',['wifi_wpa_nst','wifi_ios_join'])};report=[]
+plan={'native':('native-regression-test.c',['wifi_station_transport','wifi_normal_transport','wifi_capability','wifi_main_transport','wifi_main_command','wifi_scan_bss']),'review':('test-review.c',[]),'owner':('test.c',[]),'connector':('transport-test.c',['wifi_wpa_nst']),'actual':('actual-transport-test.c',['wifi_wpa_nst','wifi_station_transport','wifi_normal_transport','wifi_capability','wifi_main_transport','wifi_main_command']),'service':('service-test.c',['wifi_wpa_nst','wifi_ios_join'])};report=[]
 with tempfile.TemporaryDirectory(prefix='wifi-station-') as td:
  d=Path(td)
  for f in S.iterdir():
   if f.suffix in ('.c','.h','.inc'):(d/f.name).write_bytes(f.read_bytes())
  if args.candidate:
-  for folder in [args.candidate.parent/'connection-bridge/v3/proposed/shim/nord2-xnu',args.candidate.parent/'station-transport-live-candidate',args.candidate,args.candidate.parent/'ifnet-native-candidate']:
+  for folder in [args.candidate]+([args.native_candidate] if args.native_candidate else []):
    for f in folder.iterdir():
     if f.suffix in ('.c','.h','.inc'):(d/f.name).write_bytes(f.read_bytes())
  for name,(fixture,extra) in plan.items():

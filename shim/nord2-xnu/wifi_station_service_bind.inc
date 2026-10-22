@@ -6,7 +6,18 @@
 #include "wifi_ifnet_link.h"
 #ifndef NJS_HOST_TEST
 #include <sys/random.h>
+#include <kern/clock.h>
 #endif
+/* Same clock_get_uptime conversion as ncd_native_now, usable from IOUC:
+ * reading monotonic time does not borrow worker authority or access MMIO. */
+static uint64_t njs_uptime_us(void){
+#ifdef NJS_HOST_TEST
+ return njs_test_uptime_us();
+#else
+ uint64_t absolute,ns;clock_get_uptime(&absolute);absolutetime_to_nanoseconds(absolute,&ns);return ns/1000;
+#endif
+}
+#define NJS_JOIN_BUDGET_US UINT64_C(8000000)
 #define NJS_TX_SLOTS 8u
 #define NJS_CACHE_SLOTS 4u
 #define NJS_RX_SLOTS 16u
@@ -15,6 +26,7 @@ static struct {
  unsigned queued,active,canceled,leave,detach,used,joined,terminal,retiring,cache_next;
  unsigned linked,tx_admit,tx_head,tx_count,rx_count;
  unsigned logs,last_phase,last_kind,last_outcome,last_error,last_halt,last_ready,last_event,last_status,event_count,tx_accepted,tx_results,tx_ok,tx_fail,queued_drop,rx_delivered,data_logs,cookie_retired,last_service,last_linked,last_result;
+ uint64_t admitted_us,deadline_us;
  uint64_t serial,ticket,epoch,native_generation,rx_generation[NJS_RX_SLOTS];
  void*cookie;njs_completion completion;
  struct niwj_request request;
@@ -35,13 +47,13 @@ static void njs_trace_locked(unsigned force){
  if(njs_native.logs>=110)return;
  if(!force&&njs_native.last_phase==t->phase&&njs_native.last_kind==t->action.kind&&njs_native.last_outcome==t->outcome&&njs_native.last_error==n->error&&njs_native.last_halt==n->halt&&njs_native.last_ready==ready&&njs_native.last_service==njs_native.snapshot.phase&&njs_native.last_linked==njs_native.linked&&njs_native.last_result==njs_native.snapshot.result)return;
  njs_native.logs++;njs_native.last_phase=t->phase;njs_native.last_kind=t->action.kind;njs_native.last_outcome=t->outcome;njs_native.last_error=n->error;njs_native.last_halt=n->halt;njs_native.last_ready=ready;njs_native.last_service=njs_native.snapshot.phase;njs_native.last_linked=njs_native.linked;njs_native.last_result=njs_native.snapshot.result;
- printf("NORD2 WIFI IOS STATION: generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u rx_delivered=%u t_ms=%llu\n",(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.rx_delivered,(unsigned long long)njs_native.driver.now_ms);
+ printf("NORD2 WIFI IOS STATION: generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
 }
 static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
 static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
 static int njs_scan_blocked_locked(void){return njs_native.queued||njs_native.active||njs_native.used;}
 static void njs_cache_scan_locked(const struct nsb_scan*s){
- if(!s||!s->entered||!s->done||s->active||s->partial||s->timed_out||s->dropped||s->completion.state!=7)return;
+ if(!niwj_scan_usable(s))return;
  njs_native.cache[njs_native.cache_next++%NJS_CACHE_SLOTS]=*s;
 }
 static void njs_initialize_locked(void){njs_native.notice_lock=IOLockAlloc();njs_cache_scan_locked(&ncb_native.rx.scan);njs_native.snapshot.phase=NJS_IDLE;}
@@ -51,11 +63,11 @@ static int njs_request_ok(const struct niwj_request*q){
 }
 int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
  if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
- if(!nss_available())return 1;IOLockLock(nss_native.lock);
+ if(!nss_available())return 1;uint64_t now_us=njs_uptime_us();if(now_us>UINT64_MAX-NJS_JOIN_BUDGET_US)return 1;IOLockLock(nss_native.lock);
  if(!njs_native.notice_lock||nss_native.failed||njs_native.used||njs_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
  unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
- for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)busy=1;
  if(busy){IOLockUnlock(nss_native.lock);return 2;}
+ njs_native.admitted_us=now_us;njs_native.deadline_us=(now_us/1000+8000)*1000;
  njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=++njs_native.serial;njs_native.native_generation=njs_native.ticket;
  njs_native.epoch=epoch;njs_native.cookie=cookie;njs_native.completion=completion;njs_native.queued=1;njs_native.canceled=njs_native.leave=njs_native.detach=njs_native.terminal=njs_native.joined=njs_native.retiring=0;
  njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED};
@@ -134,24 +146,29 @@ static int njs_event(void*ctx,const struct nst_event*e){
  if(e->kind==NST_MANAGEMENT&&njs_native.driver.owner.transaction.outcome==STC_DISCONNECTED&&e->body&&e->bytes>=26){njs_native.snapshot.involuntary=1;njs_native.snapshot.reason=e->body[24]|(uint32_t)e->body[25]<<8;}
  return result<0?-1:0;
 }
-static void njs_early_finish(void){
- IOLockLock(nss_native.lock);njs_native.queued=njs_native.active=0;njs_native.retiring=1;njs_native.snapshot.phase=NJS_FAILED;njs_native.snapshot.result=2;niwj_clear(&njs_native.request,sizeof njs_native.request);IOLockUnlock(nss_native.lock);
+static void njs_early_finish(unsigned result){
+ IOLockLock(nss_native.lock);njs_native.queued=njs_native.active=0;njs_native.retiring=1;njs_native.snapshot.phase=NJS_FAILED;njs_native.snapshot.result=result;niwj_clear(&njs_native.request,sizeof njs_native.request);IOLockUnlock(nss_native.lock);
  njs_notice(NJS_JOIN_FAILED);njs_notice(NJS_RETIRED);
 }
 static int njs_start_owner(uint64_t now_us){
  int found=0;IOLockLock(nss_native.lock);
- if(njs_native.canceled||njs_native.leave){IOLockUnlock(nss_native.lock);njs_early_finish();return 0;}
+ if(njs_native.canceled||njs_native.leave||now_us<njs_native.admitted_us||now_us>=njs_native.deadline_us){
+  unsigned result=!njs_native.canceled&&!njs_native.leave&&now_us>=njs_native.deadline_us?9:2;
+  IOLockUnlock(nss_native.lock);njs_early_finish(result);return 0;}
  for(unsigned k=0;k<NJS_CACHE_SLOTS;k++)if(!niwj_select(&njs_native.request,&njs_native.cache[k],&nss_native.info,now_us,&njs_native.candidate)&&(!found||njs_native.candidate.rssi_dbm>njs_native.target.rssi_dbm)){njs_native.target=njs_native.candidate;found=1;}
- IOLockUnlock(nss_native.lock);
- if(!found||now_us>UINT64_MAX-UINT64_C(30000000)||nst_native_prepare(&njs_native.target,njs_native.native_generation,now_us,now_us+UINT64_C(30000000),&njs_native.profile)){njs_early_finish();return 0;}
- struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=now_us/1000+30000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
+ /* Holding admission lock across these pure constructors serializes cancel
+  * with first-attempt ownership. No native publish or callback occurs here. */
+ if(!found||nst_native_prepare(&njs_native.target,njs_native.native_generation,now_us,njs_native.deadline_us,&njs_native.profile)){
+  IOLockUnlock(nss_native.lock);njs_early_finish(2);return 0;}
+ njs_native.used=1;
+ uint64_t fresh_us=njs_uptime_us();if(fresh_us<now_us||fresh_us>=njs_native.deadline_us){IOLockUnlock(nss_native.lock);njs_early_finish(fresh_us>=njs_native.deadline_us?9:2);return 0;}
+ struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=njs_native.deadline_us/1000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
  config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=1,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
  config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
- IOLockLock(nss_native.lock);njs_native.used=1;IOLockUnlock(nss_native.lock);
- int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,now_us/1000);
- niwj_clear(&config,sizeof config);
- IOLockLock(nss_native.lock);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;if(result==1)njs_snapshot_locked();IOLockUnlock(nss_native.lock);
- if(result!=1){njs_early_finish();return nst_native.state.mutated||nst_native.state.submitted?-1:0;}
+ config.ap_ies=njs_native.target.record.ies;config.ap_ies_bytes=njs_native.target.record.ie_bytes;
+ int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,fresh_us/1000);
+ niwj_clear(&config,sizeof config);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;if(result==1)njs_snapshot_locked();IOLockUnlock(nss_native.lock);
+ if(result!=1){njs_early_finish(2);return nst_native.state.mutated||nst_native.state.submitted?-1:0;}
  IOLockLock(nss_native.lock);njs_trace_locked(1);IOLockUnlock(nss_native.lock);return 1;
 }
 static int njs_fatal_owner(void){
@@ -168,10 +185,19 @@ static int njs_fatal_owner(void){
 /* Returns1 when the actual NSS worker remains occupied by connection;0 idle;
  * -1 uncertain native DMA/lease failure requiring inherited retained drain. */
 static int njs_owner_work(void){
- IOLockLock(nss_native.lock);unsigned queued=njs_native.queued,active=njs_native.active;IOLockUnlock(nss_native.lock);
+ IOLockLock(nss_native.lock);unsigned queued=njs_native.queued,active=njs_native.active,scans=0,canceled=njs_native.canceled||njs_native.leave;
+ if(queued&&!active)for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)scans=1;
+ uint64_t admitted=njs_native.admitted_us,deadline=njs_native.deadline_us;IOLockUnlock(nss_native.lock);
  if(!queued&&!active)return 0;
+ if(queued){uint64_t observed=njs_uptime_us();if(canceled||observed<admitted||observed>=deadline){njs_early_finish(!canceled&&observed>=deadline?9:2);return 1;}
+  if(scans)return 0; /* Drain only scans admitted before this first join. */
+ }
  uint64_t now_us;if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner();
- if(queued){int r=njs_start_owner(now_us);if(r<0)return -1;IOLockLock(nss_native.lock);active=njs_native.active;IOLockUnlock(nss_native.lock);if(!active)return 1;}
+ if(queued){int r=njs_start_owner(now_us);if(r<0)return -1;IOLockLock(nss_native.lock);active=njs_native.active;IOLockUnlock(nss_native.lock);if(!active)return 1;
+  /* Pure prepare/RNG may advance beyond the constructor's fresh timestamp.
+   * Never feed the pre-constructor sample back into the monotonic engine. */
+  if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner();
+ }
  unsigned notify_join=0,notify_terminal=0,retire=0,detach=0,link_up=0,link_down=0;
  IOLockLock(nss_native.lock);
  if(njs_native.detach){njs_native.detach=0;detach=1;}

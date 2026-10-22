@@ -4,6 +4,58 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: cohesive WPA2 fixes READY for one CI build.**
+  Claude full review90a4e6ae incorporated, final independent reviewc4d0bbfb PASS
+  after startup clock correction; old source fails the new crossing-ms test,
+  corrected source passes. No additional concrete blockers. Combined canonical
+  suites PASS; subsequent targeted service regression PASS; all12 actual generic
+  ARMv8.2 TUs compile (58706 CLOSED0), regenerated0082 applies and matches.
+  Frozen stage planf62f04ef, clock addendum1b7cd0ea, schema13d34ace; all execution
+  gates FALSE pending exact successful CI/link/image. Runtime binder4f39afd8.
+  Four queued full scans can theoretically exhaust8s; observed logs show pending
+  peak1 and0.88–2.14s scans, so no speculative scan-cancellation rewrite.
+  Remaining first-test limits: one native attempt/boot, PSK/CCMP, no SAE/mandatory
+  PMF/AKM6/private MAC/rekey/roam; raw encrypted untranslated data counted/refused.
+  These static/synthetic results are not association/DHCP/IP proof. Phone43fd
+  remains untouched; no USB reader. Next exact commit/push/CI, artifact+image
+  verification, then request new exact boot-only approval. UFS/speed closed.
+
+
+- **2026-10-22: cohesive connection fixes integrated; final review caught clock regression.**
+  Frozen cap b8ede1a1/runtime09a8da6a, WPA de2837d0, native v22355472e
+  promoted after hash/baseline verification; root corrected BSD link event.
+  Full combined canonical contracts/client/station/join-owner/registry suites
+  PASS unchanged (runner53879 CLOSED0), evidence wifi-ios-security/ios/combined.
+  Fresh parser ac1ed268 promoted to this new stage only; all image/device gates
+  remain FALSE. Claude full review90a4e6ae complete and incorporated. Attempted
+  focused final resume27591 CLOSED1: usage limit until16:20 local, no review
+  produced. Independent format review found old now_us reused after constructor
+  fresh_us, potentially backward clock at first pump; targeted fix/regression
+  in progress (format owns service binder + service-test only). Cap refreshing
+  stage pins/linked verification plan after final source freeze. No CI yet,
+  no new image and no device writes. Phone healthy43fd, no active USB reader.
+
+
+- **2026-10-22: Claude full connection review COMPLETE; cohesive fixes underway.**
+  Claude wrapper89661 CLOSED0, sessionb4585316; REPORT.md under
+  research/nord2/wifi/claude-opus-connect-review, desktop3 viewer retained.
+  GET12 security inventory commit932b489 complete; no CI/push yet by explicit
+  user requirement to review before build. Claude identified11 candidate issues.
+  Root confirmed/fixed actual kern_event_msg payload offset: XNU posts offset24,
+  old producer usedsizeof28; corrected48B DL event, real-layout fixture PASS;
+  old implementation now rejected by samefixture. Note Ethernetfamily2, not6
+  as report says; fixture ON13/OFF12 corrected too. Root owns these3files.
+  cap owns exact iOS RSN22/24/28 normalization, numericdiagnostics, scan/join
+  deferral/cache; format owns PMKID/RSNXE/vendor parsing, ExtendedKeyID,
+  authtrailers and boundedresponse retry; wire owns overflow-only nativeprepare,
+  groupWLAN RX and rawEAPOL decoding/counters. All candidates private until
+  integrated and tested. U2 ordinary-data COMMAND route confirmed valid in
+  original Android; no speculative ring rewrite. No hardware join proof.
+  Phone43fd unchanged, no activeUSBreader. Next integrate validated candidates,
+  focused final review, canonicaltests/nativecompile, one CI/image. No flash
+  without exactnewimage approval. UFS/speed remains closed.
+
+
 - **2026-10-22: CARD security fix integrated/tested; Claude review BEFORE CI.**
   Native-owned inventory now supplies only installed CCMP+RSN raw13=08/40/zeros;
   no keys/carrier prerequisite or broader security support. Candidate31c4fb87,

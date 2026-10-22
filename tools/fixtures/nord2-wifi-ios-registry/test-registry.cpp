@@ -95,7 +95,7 @@ static void checkIfnet(ifnet_t net){
  eventHook=[&]{assert(!nwil_output(net,packet(arp,9)));};
  assert(!nord2_wifi_ifnet_link(10,1));eventHook=nullptr;
  assert(sentCalls==before+1&&sentGeneration==10&&sentFrame==arp&&(net->flags&IFF_RUNNING)&&(net->flags&IFF_UP));
- assert(linkEvents.size()==1&&linkEvents.back().header.event_code==KEV_DL_LINK_ON&&linkEvents.back().unit==net->params.unit&&std::string(linkEvents.back().name)=="en");
+ assert(linkEvents.size()==1&&linkEvents.back().header.event_code==KEV_DL_LINK_ON&&linkEvents.back().family==IFNET_FAMILY_ETHERNET&&linkEvents.back().unit==net->params.unit&&std::string(linkEvents.back().name)=="en");
  assert(!nord2_wifi_ifnet_link(10,1)&&linkEvents.size()==1);
  assert(nord2_wifi_ifnet_link(9,0)==ESTALE&&nord2_wifi_ifnet_link(11,1)==EBUSY);
  ifmediareq media={};assert(!nwil_ioctl(net,SIOCGIFMEDIA,&media)&&media.ifm_status==(IFM_AVALID|IFM_ACTIVE));
@@ -112,7 +112,7 @@ static void checkIfnet(ifnet_t net){
  assert(nord2_wifi_ifnet_receive(9,ip.data(),ip.size())==ENETDOWN);
  eventHook=[&]{assert(nwil_output(net,packet(ip))==ENETDOWN);};
  assert(!nord2_wifi_ifnet_link(10,0));eventHook=nullptr;
- assert(linkEvents.back().header.event_code==KEV_DL_LINK_OFF&&!(net->flags&IFF_RUNNING)&&(net->flags&IFF_UP));
+ assert(linkEvents.back().header.event_code==KEV_DL_LINK_OFF&&linkEvents.back().family==IFNET_FAMILY_ETHERNET&&linkEvents.back().unit==net->params.unit&&std::string(linkEvents.back().name)=="en"&&!(net->flags&IFF_RUNNING)&&(net->flags&IFF_UP));
  assert(nord2_wifi_ifnet_receive(10,ip.data(),ip.size())==ENETDOWN);
  eventError=EIO;assert(nord2_wifi_ifnet_link(11,1)==EIO&&!(net->flags&IFF_RUNNING)&&!nwil_active(net));eventError=0;assert(!nord2_wifi_ifnet_link(11,0));
  assert(!nwil_ioctl(net,SIOCGIFMEDIA,&media)&&media.ifm_status==IFM_AVALID);

@@ -41,6 +41,8 @@ struct nst {
  uint64_t peer_ticket,grant_deadline;uint8_t channel_token,channel_held;
  struct nst_profile profile;uint8_t ssid[32],rates[12];uint16_t aid,negotiated_rates,basic_rates;
  unsigned link_lost;
+ /* Numeric only; raw-data seen/accepted EAPOL/unsupported-or-invalid. */
+ unsigned rx_untranslated,rx_untranslated_eapol,rx_untranslated_drop;
  unsigned pm_scheduled,pm_connected;
  unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
  uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
@@ -48,6 +50,7 @@ struct nst {
 };
 /* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
  * no guessed capability indices. peer indices must match retained scan profile. */
+int nst_scan_admissible(const struct nsb_scan *);
 int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
  const struct ncr_state *,const struct ncs_cap *,const struct nst_peer *,
  const struct sw_txd *,uint64_t generation,uint64_t now_us,uint64_t deadline_us);

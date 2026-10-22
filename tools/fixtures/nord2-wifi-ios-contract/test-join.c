@@ -10,6 +10,20 @@ static void put32(uint8_t*p,unsigned n){put16(p,n);put16(p+2,n>>16);}
 static void wire(uint8_t*p){memset(p,0,592);put32(p,1);put16(p+4,2);put16(p+6,1);put16(p+8,8);put32(p+12,4);memcpy(p+16,"test",4);put32(p+56,1);put32(p+60,32);put32(p+64,6);for(unsigned i=0;i<32;i++)p[72+i]=i;put16(p+204,22);memcpy(p+206,rsn,22);put32(p+504,4);}
 static void record(struct nsb_record*r,unsigned suffix,unsigned rcpi){memset(r,0,sizeof(*r));r->bssid[0]=2;r->bssid[5]=suffix;r->ssid_len=4;r->ssid_present=1;memcpy(r->ssid,"test",4);r->subtype=8;r->channel=r->hw_channel=1;r->privacy=r->rsn_present=1;r->capability=0x11;r->observed_us=100;r->rxv_valid=1;r->group_valid=4;r->rxv[4]=rcpi;r->rxv[5]=255;r->ies[0]=1;r->ies[1]=4;r->ies[2]=0x82;r->ies[3]=0x84;r->ies[4]=11;r->ies[5]=22;memcpy(r->ies+6,rsn,22);r->ie_bytes=r->ie_total=28;}
 static void absent(const struct niwj_request*q,const struct nsb_scan*s,const struct nss_info*i){struct niwj_target out,old;memset(&out,0xa5,sizeof out);old=out;C(niwj_select(q,s,i,200,&out)!=0);C(!memcmp(&out,&old,sizeof out));}
+static void trailer_tests(void){
+ uint8_t p[592];struct niwj_request q,expected,z={0};struct niwj_diagnostic d;
+ wire(p);C(!niwj_decode(p,sizeof p,&expected,&d));
+ unsigned lengths[]={22,24,28};unsigned suites[]={6,11,12,13};
+ for(unsigned k=0;k<3;k++)for(unsigned t=0;t<(k==2?4u:1u);t++){
+  wire(p);unsigned n=lengths[k];put16(p+204,n);p[207]=(uint8_t)(n-2);if(n==28){p[230]=0;p[231]=15;p[232]=172;p[233]=(uint8_t)suites[t];}
+  memset(p+234,0xa5,463-234);C(!niwj_decode(p,sizeof p,&q,&d));C(!memcmp(&q,&expected,sizeof q));C(d.mode==2&&d.auth_lower==1&&d.auth_upper==8&&d.rsn_bytes==n);
+  if(n>22){for(unsigned i=208;i<206+n;i++){uint8_t old=p[i];p[i]^=128;C(niwj_decode(p,sizeof p,&q,&d)==NIWJ_SECURITY);C(!memcmp(&q,&z,sizeof q));p[i]=old;}}
+ }
+ for(unsigned n=0;n<387;n++){wire(p);put16(p+204,n);if(n==22)continue;C(niwj_decode(p,sizeof p,&q,&d)==NIWJ_SECURITY);C(d.rsn_bytes==n);}
+ for(unsigned caps=0;caps<65536;caps++){wire(p);put16(p+204,24);p[207]=22;put16(p+226,caps);C((niwj_decode(p,sizeof p,&q,&d)==0)==!caps);if(caps)C(!memcmp(&q,&z,sizeof q));}
+ for(unsigned type=0;type<256;type++){wire(p);put16(p+204,28);p[207]=26;p[230]=0;p[231]=15;p[232]=172;p[233]=(uint8_t)type;C((niwj_decode(p,sizeof p,&q,&d)==0)==(type==6||type==11||type==12||type==13));}
+ wire(p);put16(p+8,1024);C(niwj_decode(p,sizeof p,&q,&d)==NIWJ_PROFILE&&d.auth_upper==1024); /* AKM6 remains distinct. */
+}
 int main(void){uint8_t p[593];struct niwj_request q;struct niwj_diagnostic d;wire(p);C(!niwj_decode(p,592,&q,&d));C(q.native_flags==4&&q.security==1&&q.ssid_length==4&&!memcmp(q.pmk,p+72,32));
  put32(p+504,0);C(!niwj_decode(p,592,&q,&d));
  for(unsigned n=0;n<592;n++){memset(&q,0xa5,sizeof q);C(niwj_decode(p,n,&q,&d)!=0);struct niwj_request z={0};C(!memcmp(&q,&z,sizeof q));}C(niwj_decode(p,593,&q,&d)!=0);C(niwj_decode(NULL,592,&q,&d)!=0);C(niwj_decode(p,592,NULL,&d)!=0);
@@ -30,4 +44,10 @@ int main(void){uint8_t p[593];struct niwj_request q;struct niwj_diagnostic d;wir
  for(unsigned n=0;n<28;n++){s.records[0]=baseline;s.records[0].ie_bytes=s.records[0].ie_total=n;absent(&q,&s,&info);}
  s.records[0]=baseline;s.active=1;absent(&q,&s,&info);s.active=0;s.partial=1;absent(&q,&s,&info);s.partial=0;s.timed_out=1;absent(&q,&s,&info);s.timed_out=0;s.completion.state=6;absent(&q,&s,&info);s.completion.state=7;
  s.records[0].observed_us=201;absent(&q,&s,&info);s.records[0]=baseline;s.records[0].ies_truncated=1;absent(&q,&s,&info);s.records[0]=baseline;s.records[0].channel_mismatch=1;absent(&q,&s,&info);s.records[0]=baseline;s.records[0].rxv[4]=255;absent(&q,&s,&info);s.records[0]=baseline;info.channels[0].channel=2;absent(&q,&s,&info);info.channels[0].channel=1;info.count=2;info.channels[1]=info.channels[0];absent(&q,&s,&info);
+ /* Terminal state7 overflow preserves source-owned records, never unfinished scans. */
+ info.count=1;info.channels[0].band=info.channels[0].channel=1;s=(struct nsb_scan){0};s.entered=s.done=1;s.completion.state=7;s.started=1;s.last=101;s.deadline=1000;s.count=NSB_RESULTS;s.frames=NSB_RESULTS+1;s.partial=s.dropped=1;record(&s.records[0],1,80);
+ C(niwj_scan_usable(&s));C(!niwj_select(&q,&s,&info,200,&out));
+ s.records[0].ies[27]=32;C(!niwj_select(&q,&s,&info,200,&out));C(out.ap_rsn[21]==32&&out.ap_rsn_bytes==22); /* AP optionalExtendedKeyID; station remainscaps0. */
+ s.dropped=0;absent(&q,&s,&info);s.dropped=1;s.count=15;absent(&q,&s,&info);s.count=16;s.timed_out=1;absent(&q,&s,&info);s.timed_out=0;s.active=1;absent(&q,&s,&info);s.active=0;s.done=0;absent(&q,&s,&info);s.done=1;s.last=s.deadline;absent(&q,&s,&info);s.last=101;s.dropped=2;absent(&q,&s,&info);s.dropped=1;s.completion.sequence=1;absent(&q,&s,&info);
+ trailer_tests();
  niwj_clear(&q,sizeof q);struct niwj_request zero={0};C(!memcmp(&q,&zero,sizeof q));printf("join-policy: %u checks PASS (synthetic; no native readiness)\n",checks);return 0;}

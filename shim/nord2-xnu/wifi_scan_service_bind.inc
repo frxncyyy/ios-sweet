@@ -6,6 +6,7 @@
 extern void nord2_wifi_ios_backend_ready(void);
 #endif
 #include "wifi_scan_service.h"
+#include "wifi_ios_join.h"
 enum {NSS_FREE,NSS_QUEUED,NSS_RUNNING,NSS_DONE};
 struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
 static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
@@ -51,7 +52,7 @@ static int nss_start(void){
  s->basic!=&nbc_native.state||s->cap!=&ncd_native.diag||s->init!=&nwfn_native.init||s->firmware!=&nfp_native||
  nbc_native.state.halt||nbc_native.state.error||ncd_native.diag.halt||ncd_native.diag.error||nfp_native.state.halt||nfp_native.state.error||
  nwfn_native.halt||nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||!nwfn_native.wf_owned||nwfn_native.asleep||!nwfn_native.init.initialized||nwfn_native.init.halt||nwfn_native.init.transport.halt||nfp_native.halt||!nfp_native.ready||!nfp_native.finish_done||
- ncb_native.rx.halt||ncb_native.rx.error||ncb_native.rx.active||!ncb_native.rx.scan.done||ncb_native.rx.scan.partial||ncb_native.rx.scan.timed_out||ncb_native.rx.scan.completion.state!=7||
+ ncb_native.rx.halt||ncb_native.rx.error||ncb_native.rx.active||!niwj_scan_usable(&ncb_native.rx.scan)||
  nwfn_native.init.transport.completed!=5u+NCB_COMMANDS||
  ncfg_address(&ncb_native.plan.input,&ncb_native.plan.config,&address)||address.source!=NNI_ADDRESS_BOARD||
  ncfg_channels(&ncb_native.plan.input,&ncb_native.plan.config,channels,39,&count))return 1;
@@ -90,7 +91,7 @@ static int nss_execute(struct nss_slot*slot){
  slot->scan=r->scan;slot->captured=now;return 0;
 }
 static void nss_deliver(struct nss_slot*s,enum nss_status status){
- IOLockLock(nss_native.lock);if(!s->canceled&&status==NSS_COMPLETE)njs_cache_scan_locked(&s->scan);s->status=s->canceled?NSS_CANCELED:status;s->state=NSS_DONE;s->callback_busy=1;
+ IOLockLock(nss_native.lock);if(!s->canceled&&(status==NSS_COMPLETE||status==NSS_PARTIAL))njs_cache_scan_locked(&s->scan);s->status=s->canceled?NSS_CANCELED:status;s->state=NSS_DONE;s->callback_busy=1;
  printf("NORD2 WIFI IOS SCAN: ticket=%llu generation=%llu status=%u sequence=%u frames=%u bss=%u done=%u partial=%u canceled=%u error=%u rx_error=%u\n",(unsigned long long)s->ticket,(unsigned long long)s->generation,(unsigned)s->status,s->scan.sequence,s->scan.frames,s->scan.count,s->scan.done,s->scan.partial,s->canceled,nct_native.session.error,ncb_native.rx.error);
  if(s->status==NSS_FATAL)printf("NORD2 WIFI IOS GUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);
  nss_completion fn=s->completion;void*cookie=s->cookie;uint64_t gen=s->generation,ticket=s->ticket;status=s->status;IOLockUnlock(nss_native.lock);

@@ -18,6 +18,7 @@ struct stc_config {
  uint8_t sta_wlan,group_wlan; /* source-owned distinct WTBL allocations */
  const uint8_t *pmk,*station_rsn,*ap_rsn; /*32/22/full AP IE */
  size_t ap_rsn_bytes; /*0 retains legacy22; otherwise exact captured IE extent */
+ const uint8_t *ap_ies;size_t ap_ies_bytes; /* captured complete AP IEs; optional when absent */
  nwp_rng rng;void*rng_context;
 };
 struct stc_action {uint64_t generation,ticket;unsigned kind,bytes;uint8_t payload[640];};
@@ -25,6 +26,7 @@ struct stc {
  unsigned attempted,phase,outcome,authenticated,associated,channel_held,peer_prepared,ptk_attempted,gtk_attempted;
  unsigned grant_seen,key_event_seen,response_seen,response_bytes;uint16_t aid;uint8_t response[512];
  unsigned cleanup_abort_first,resume_phase,eapol_pending,eapol_bytes;uint8_t queued_eapol[640];
+ unsigned auth_attempts,assoc_attempts;uint64_t response_deadline;
  uint64_t generation,serial,last_ms,deadline,cleanup_deadline,wpa_tx_ticket;uint32_t cleanup_timeout_ms;
  struct stc_arbiter *arbiter;struct sw_peer peer;struct sw_channel channel;
  uint8_t sta_wlan,group_wlan,gtk_index,ssid[32],rates[12];

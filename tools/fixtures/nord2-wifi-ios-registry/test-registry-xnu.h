@@ -1,6 +1,7 @@
 #ifndef NIWI_REGISTRY_TEST
 #define NIWI_REGISTRY_TEST
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <cstdio>
 #include <cassert>
@@ -60,10 +61,19 @@ static int bpf_tap_in(ifnet_t,unsigned,mbuf_t p,void*h,size_t n){rxTaps++;tapped
 static int ifnet_stat_increment_out(ifnet_t,unsigned,size_t,unsigned){return 0;}
 static int ifnet_input(ifnet_t net,mbuf_t p,ifnet_stat_increment_param*stats){inputCalls++;assert(p->rcvif==net&&p->header==p->storage.data()&&p->off==14&&p->headerlen==p->len);assert(stats->packets_in==1&&stats->bytes_in==p->len+14);inputFrame.assign((uint8_t*)p->header,(uint8_t*)p->header+14+p->len);mbuf_freem(p);return inputError;}
 static void bpfattach(ifnet_t,unsigned type,unsigned hlen){assert(type==DLT_EN10MB&&hlen==14);bpfAttached++;}
-struct kern_event_msg{uint32_t total_size,vendor_code,kev_class,kev_subclass,id,event_code;};
-constexpr unsigned KEV_VENDOR_APPLE=1,KEV_NETWORK_CLASS=1,KEV_DL_SUBCLASS=2,KEV_DL_LINK_ON=12,KEV_DL_LINK_OFF=13;
+struct kern_event_msg{uint32_t total_size,vendor_code,kev_class,kev_subclass,id,event_code,event_data[1];};
+#define KEV_MSG_HEADER_SIZE offsetof(kern_event_msg,event_data[0])
+static_assert(KEV_MSG_HEADER_SIZE==24&&sizeof(kern_event_msg)==28,"selected XNU event ABI");
+constexpr unsigned KEV_VENDOR_APPLE=1,KEV_NETWORK_CLASS=1,KEV_DL_SUBCLASS=2,KEV_DL_LINK_ON=13,KEV_DL_LINK_OFF=12;
 struct TestLinkEvent{kern_event_msg header;uint32_t family,unit;char name[IFNAMSIZ];};static std::vector<TestLinkEvent>linkEvents;
-static int ifnet_event(ifnet_t,kern_event_msg*event){assert(event->total_size==sizeof(TestLinkEvent));linkEvents.push_back(*(TestLinkEvent*)(void*)event);if(eventHook)eventHook();return eventError;}
+static int ifnet_event(ifnet_t,kern_event_msg*event){
+ /* Match dlil.c's posted payload span; do not reinterpret the producer's
+  * enclosing allocation, which previously concealed a one-word offset bug. */
+ assert(event->total_size==KEV_MSG_HEADER_SIZE+8+IFNAMSIZ);
+ TestLinkEvent captured={};memcpy(&captured.header,event,KEV_MSG_HEADER_SIZE);
+ memcpy(&captured.family,event->event_data,event->total_size-KEV_MSG_HEADER_SIZE);
+ linkEvents.push_back(captured);if(eventHook)eventHook();return eventError;
+}
 
 struct sockaddr{};struct sockaddr_dl{uint8_t sdl_len,sdl_family,sdl_index,sdl_type,sdl_nlen,sdl_alen;char sdl_data[24];};struct ifnet_demux_desc{};
 struct ifnet_init_eparams{uint32_t ver,len,flags,unit,family,subfamily,type;const char*name;errno_t(*output)(ifnet_t,mbuf_t);errno_t(*ioctl)(ifnet_t,u_long,void*);errno_t(*demux)(ifnet_t,mbuf_t,char*,protocol_family_t*);errno_t(*add_proto)(ifnet_t,protocol_family_t,const ifnet_demux_desc*,uint32_t);errno_t(*del_proto)(ifnet_t,protocol_family_t);errno_t(*check_multi)(ifnet_t,const sockaddr*);errno_t(*framer_extended)(ifnet_t,mbuf_t*,const sockaddr*,const char*,const char*,uint32_t*,uint32_t*);void(*detach)(ifnet_t);const void*broadcast_addr;unsigned broadcast_len;};

@@ -14,12 +14,15 @@ struct nwp {
  uint64_t generation,serial,pending,install_ticket;unsigned state,tx_kind,installed,ready_mask;
  uint8_t pmk[32],own[6],peer[6],snonce[32],anonce[32],kck[16],kek[16],tk[16],gtk[16],rsc[8];
  unsigned gtk_index;uint8_t rsn[22],ap_rsn[257],m1_replay[8];unsigned ap_rsn_bytes;
+ uint8_t ap_rsnxe[257];unsigned ap_rsnxe_bytes;
  uint8_t m3[NWP_FRAME];unsigned m3_bytes;
 };
 /* RNG callback must use actual cryptographic RNG and return0 only after all32
  * bytes are filled. This private engine has no XNU adapter yet. */
 typedef int (*nwp_rng)(void*,uint8_t*,size_t);
 int nwp_begin_ap(struct nwp*,uint64_t,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t *ap_rsn,size_t ap_bytes,nwp_rng,void*);
+/* Full captured AP IE list, called before processing M1; exact RSNXE binding. */
+int nwp_copy_ap_rsnxe(struct nwp*,const uint8_t*,size_t);
 int nwp_ap_rsn(const uint8_t*,size_t);
 int nwp_begin(struct nwp*,uint64_t,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t ap_rsn[22],nwp_rng,void*);
 int nwp_receive(struct nwp*,const uint8_t*,size_t,struct nwp_result*);

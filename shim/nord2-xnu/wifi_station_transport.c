@@ -15,8 +15,18 @@ int nst_lease_window(const struct nst*s,const struct nwi_state*i){
  for(unsigned k=0;k<5;k++){const struct ncr_queue*q=&s->queue[k];const struct nwi_ring*r=&i->rings[k+4];if(q->next>=r->count||q->ring.descriptors!=r->descriptors||q->ring.buffers!=r->buffers||q->ring.base!=r->base||q->ring.count!=r->count)return 0;}
  return 1;
 }
+/* nsb_scan.partial is aggregate: overflow drops whole excess records but never
+ * damages retained rows. Terminal state7 excludes firmware failure; timed_out
+ * and active exclude timeout/clock rollback. Only a full bounded result array
+ * with real dropped count can explain a successful partial scan here. */
+int nst_scan_admissible(const struct nsb_scan*s){
+ return s&&s->entered&&s->done&&!s->active&&!s->timed_out&&s->completion.state==7&&
+ s->completion.sequence==s->sequence&&s->count<=NSB_RESULTS&&s->count<=s->frames&&
+ s->dropped<=s->frames-s->count&&s->last>=s->started&&s->last<s->deadline&&s->deadline>s->started&&
+ (s->partial?(s->dropped&&s->count==NSB_RESULTS):!s->dropped);
+}
 int nst_prepare(struct nst*s,struct nwi_state*i,const struct nct_session*t,const struct ncr_state*r,const struct ncs_cap*c,const struct nst_peer*p,const struct sw_txd*d,uint64_t gen,uint64_t now,uint64_t end){
- if(!s||s->prepared||!i||!t||!r||!c||!p||!d||!gen||now>=end||end-now>UINT64_C(60000000)||!nct_done_receipt(t)||!t->capacity||t->init!=i||i->transport.tx_index!=(t->first_tx+t->count)%1024||i->transport.completed!=t->base_completed+t->count||i->transport.next_sequence!=(uint8_t)(t->first_sequence+t->count)||r->init!=i||r->session!=t||r->active||r->halt||r->error||!r->scan.done||r->scan.active||r->scan.partial||r->scan.timed_out||r->scan.completion.state!=7||i->transport.submit_attempted||!mac(p->self)||!mac(p->ap)||p->bss||p->sta||p->own_mac!=c->own_mac||p->group_wlan!=c->bmc||p->wlan<=p->group_wlan||p->wlan>=c->wtbl-1||c->wtbl<7||d->own_mac!=p->own_mac||d->wlan!=p->wlan||d->pse_header_len!=8||d->queue!=1||!((p->band==1&&p->channel>=1&&p->channel<=14)||(p->band==2&&p->channel>14)))return -1;
+ if(!s||s->prepared||!i||!t||!r||!c||!p||!d||!gen||now>=end||end-now>UINT64_C(60000000)||!nct_done_receipt(t)||!t->capacity||t->init!=i||i->transport.tx_index!=(t->first_tx+t->count)%1024||i->transport.completed!=t->base_completed+t->count||i->transport.next_sequence!=(uint8_t)(t->first_sequence+t->count)||r->init!=i||r->session!=t||r->active||r->halt||r->error||!nst_scan_admissible(&r->scan)||i->transport.submit_attempted||!mac(p->self)||!mac(p->ap)||p->bss||p->sta||p->own_mac!=c->own_mac||p->group_wlan!=c->bmc||p->wlan<=p->group_wlan||p->wlan>=c->wtbl-1||c->wtbl<7||d->own_mac!=p->own_mac||d->wlan!=p->wlan||d->pse_header_len!=8||d->queue!=1||!((p->band==1&&p->channel>=1&&p->channel<=14)||(p->band==2&&p->channel>14)))return -1;
  s->credit_capacity=s->credit_available=t->capacity;s->init=i;s->previous=t;s->previous_rx=r;s->peer=*p;s->txd=*d;s->generation=gen;s->last=now;s->deadline=end;s->tx_next=i->transport.tx_index;s->base_completed=i->transport.completed;s->next_pid=1;
  for(unsigned k=0;k<5;k++)s->queue[k]=r->queue[k];s->prepared=1;return 0;
 }
@@ -119,6 +129,21 @@ static int decode(struct nst*s){
  if(groups&8){g4=off;off+=16;}if(groups&1){g1=off;off+=16;}if(groups&2)off+=8;if(groups&4)off+=8;if(groups&16)off+=72;off+=((d2>>14)&3)*2;if(off>bytes)return 0;
  const uint8_t*m=p+off;size_t len=bytes-off;unsigned translated=(d2>>13)&1,sec=(d1>>16)&31,key=(d1>>21)&3,wlan=d1&1023,tid=(d2>>16)&15;
  if(!translated){
+  /* Selected gen4m accepts raw 802.11 data too (que_mgt.c3222+). Support
+   * only plaintext non-QoS EAPOL here, with exact FromDS/AP/self ownership.
+   * No CCMP bytes, A-MSDU, four-address, fragment or arbitrary LLC fallback. */
+  if(type==2&&len>=2&&(u16(m)&12)==8){
+   s->rx_untranslated++;
+   if(len<36||len-18>NST_MAX_ETHERNET||((d2>>8)&31)!=12||sec||
+      (u16(m)&0xc7ff)!=0x0208||(u16(m+22)&15)||wlan!=s->peer.wlan||
+      !eq(m+4,s->peer.self,6)||!eq(m+10,s->peer.ap,6)||!eq(m+16,s->peer.ap,6)||
+      !eq(m+24,"\xaa\xaa\x03\x00\x00\x00\x88\x8e",8)||
+      ((size_t)m[34]<<8|m[35])!=len-36){s->rx_untranslated_drop++;return 0;}
+   uint8_t da[6],sa[6];cp(da,m+4,6);cp(sa,m+16,6);
+   uint8_t*ether=s->rx_frame+off+18;cp(ether,da,6);cp(ether+6,sa,6);
+   s->rx_untranslated_eapol++;e->kind=NST_EAPOL;e->body=ether;e->bytes=len-18;
+   e->wlan=(uint8_t)wlan;return 0;
+  }
   if(len<24||((d2>>8)&31)!=12||sec||u16(m)&0xc700||u16(m+22)&15||!eq(m+10,s->peer.ap,6)||!eq(m+16,s->peer.ap,6))return 0;
   unsigned fc=u16(m)&255;if(fc==0xb0||fc==0x10||fc==0xc0||fc==0xa0){if(!eq(m+4,s->peer.self,6))return 0;e->kind=NST_MANAGEMENT;e->body=m;e->bytes=len;}
   /* Actual first beacon supplies DTIM for deferred source PM connected command. */
@@ -132,7 +157,7 @@ static int decode(struct nst*s){
  else if(!s->controlled_port||(unsigned)(m[12]<<8|m[13])<1536)return 0;
  if(sec){
   if(sec!=4||!g1||g1+16>bytes||!(fc&0x4000))return 0;struct nst_replay*r=(m[0]&1)?&s->gtk:&s->ptk;
-  if(!r->installed||key!=r->key_id||wlan!=((m[0]&1)?s->peer.group_wlan:s->peer.wlan))return 0;
+  if(!r->installed||key!=r->key_id||(wlan!=s->peer.wlan&&(!(m[0]&1)||wlan!=s->peer.group_wlan)))return 0;
   unsigned lane=(fc&0x0080)?tid:16;uint64_t pn=pn48(p+g1);if(!pn||pn<=r->pn[lane])return 0;r->pn[lane]=pn;
  }else if(!eapol||(fc&0x4000)||wlan!=s->peer.wlan)return 0;
  e->kind=eapol?NST_EAPOL:NST_ETHERNET;e->body=m;e->bytes=len;e->wlan=(uint8_t)wlan;e->key_id=(uint8_t)key;return 0;

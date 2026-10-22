@@ -40,13 +40,33 @@ int nwp_ap_rsn(const uint8_t*p,size_t n){
  for(unsigned i=0;i<count;i++,at+=4)psk|=suite(p+at,2);
  if(!ccmp||!psk)return -1;
  if(at==n)return 0;
- if(n-at<2)return -1;unsigned caps=le16(p+at);at+=2;if(caps&(64u|2u|8192u))return -1;
+ if(n-at<2)return -1;unsigned caps=le16(p+at);at+=2;if(caps&(64u|2u))return -1;
  if(at==n)return 0;
  if(n-at<2)return -1;count=le16(p+at);at+=2;
  if(count>(n-at)/16)return -1;at+=(size_t)count*16;
  /* Optional group-management cipher is metadata only for non-PMF selection. */
  if(n-at==4){if(!(caps&128u)||p[at]||p[at+1]!=15||p[at+2]!=172)return -1;at+=4;}
  return at==n?0:-1;
+}
+/* Captured RSNXE must match authenticated M3. No SAE/PMF negotiation added. */
+int nwp_copy_ap_rsnxe(struct nwp*w,const uint8_t*p,size_t n){
+ if(!w||w->state!=NWP_M1||n>1024||(!p&&n))return -1;
+ unsigned found=0;const uint8_t*e=0;size_t z=0;
+ for(size_t at=0;at<n;){if(n-at<2||p[at+1]>n-at-2)return -1;
+  size_t bytes=p[at+1]+2u;
+  if(p[at]==244){if(found++||bytes<3||((p[at+2]&15u)+1u)!=p[at+1])return -1;e=p+at;z=bytes;}
+  at+=bytes;
+ }
+ wipe(w->ap_rsnxe,sizeof w->ap_rsnxe);w->ap_rsnxe_bytes=(unsigned)z;if(z)memcpy(w->ap_rsnxe,e,z);return 0;
+}
+/* M1 may carry a single plaintext PMKID KDE; no PMKSA cache or trust grant. */
+static int m1_data(const uint8_t*p,unsigned n){
+ unsigned seen=0;
+ for(unsigned at=0;at<n;){
+  if(p[at]==221&&(at+1==n||p[at+1]==0)){for(unsigned j=at+1;j<n;j++)if(p[j])return -1;return 0;}
+  if(n-at<22||seen++||p[at]!=221||p[at+1]!=20||!suite(p+at+2,4))return -1;
+  at+=22;
+ }return 0;
 }
 void nwp_cancel(struct nwp*w){if(w)wipe(w,sizeof(*w));}
 static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r)wipe(r,sizeof(*r));return NWP_FAIL;}
@@ -84,7 +104,7 @@ static int reply(struct nwp*w,const uint8_t*p,unsigned kind,struct nwp_result*r)
  mic(w,r->frame,n,r->frame+81);r->action=NWP_TX;r->bytes=n;r->ticket=++w->serial;w->pending=r->ticket;w->tx_kind=kind;return NWP_TX;
 }
 static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
- unsigned at=0,have_rsn=0,have_gtk=0;
+ unsigned at=0,have_rsn=0,have_gtk=0,have_rsnxe=0;
  while(at<n){
   if(p[at]==0xdd&&(at+1==n||p[at+1]==0)){
    for(unsigned j=at+1;j<n;j++)if(p[j])return -1;
@@ -93,6 +113,8 @@ static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
   if(n-at<2||p[at+1]>n-at-2)return -1;
   unsigned len=p[at+1]+2;const uint8_t*e=p+at;
   if(e[0]==48){if(have_rsn++||len!=w->ap_rsn_bytes||!equal(e,w->ap_rsn,len))return -1;}
+  else if(e[0]==244){if(have_rsnxe++||len!=w->ap_rsnxe_bytes||len<3||!equal(e,w->ap_rsnxe,len))return -1;}
+  else if(e[0]==221&&len>=6&&!(e[2]==0&&e[3]==15&&e[4]==172)){/* Bounded unknown vendor IE: no security state. */}
   else if(e[0]==221){
    static const uint8_t oui[4]={0,15,172,1};
    if(have_gtk++||len!=24||!equal(e+2,oui,4)||(e[6]&~7u)||e[7])return -1;
@@ -100,7 +122,7 @@ static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
   }else return -1;
   at+=len;
  }
- return have_rsn==1&&have_gtk==1?0:-1;
+ return have_rsn==1&&have_gtk==1&&have_rsnxe==(w->ap_rsnxe_bytes?1u:0u)?0:-1;
 }
 int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  if(!r)return NWP_FAIL;
@@ -111,7 +133,7 @@ int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
  unsigned info=be16(p+5);
  if(be16(p+7)!=16)return fail(w,r);
  if(info==0x008a){
-  if(!nonzero(p+17,32)||be16(p+97))return fail(w,r);
+  if(!nonzero(p+17,32)||m1_data(p+99,be16(p+97)))return fail(w,r);
   if(w->state!=NWP_M1){
    if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return fail(w,r);
    if(w->pending)return NWP_BUSY;

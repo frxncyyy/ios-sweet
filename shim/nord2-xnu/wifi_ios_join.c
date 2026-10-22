@@ -6,16 +6,24 @@ static int nz(const uint8_t*p,size_t n){unsigned d=0;while(n--)d|=*p++;return d!
 static void copy(void*v,const void*s,size_t n){uint8_t*d=v;const uint8_t*p=s;while(n--)*d++=*p++;}
 void niwj_clear(void*v,size_t n){volatile uint8_t*p=v;if(p)while(n--)*p++=0;}
 static const uint8_t station_rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
+/* Selected producer 1d3ec138c..15c0 emits optional PMKID0/BIP trailer
+ * even with station caps0. We negotiate no PMF: native association/M2 retain
+ * exactly station_rsn22, never adopt AP-required capabilities or PMKIDs. */
+static int station_rsn_ok(const uint8_t*p,unsigned n){
+ if(n==22)return same(p,station_rsn,22);
+ if((n!=24&&n!=28)||p[0]!=48||p[1]!=n-2||!same(p+2,station_rsn+2,20)||p[22]||p[23])return 0;
+ return n==24||(!p[24]&&p[25]==15&&p[26]==172&&(p[27]==6||p[27]==11||p[27]==12||p[27]==13));
+}
 static int refuse(struct niwj_diagnostic*d,int reason){if(d)d->reason=(uint32_t)-reason;return reason;}
 int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
  const uint8_t*p=v;if(d)niwj_clear(d,sizeof(*d));if(out)niwj_clear(out,sizeof(*out));
  if(!out||!p||n!=NIWJ_ASSOC_BYTES)return refuse(d,NIWJ_SHAPE);
- if(d){d->key_kind=j32(p+64);d->key_bytes=j32(p+60);d->native_flags=j32(p+504);d->association_flags=j16(p+463);d->association_reason=p[465];
+ if(d){d->mode=j16(p+4);d->auth_lower=j16(p+6);d->auth_upper=j16(p+8);d->rsn_bytes=j16(p+204);d->key_kind=j32(p+64);d->key_bytes=j32(p+60);d->native_flags=j32(p+504);d->association_flags=j16(p+463);d->association_reason=p[465];
   d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);}
  if(j32(p)!=1||!j32(p+12)||j32(p+12)>32||(nz(p+48,6)&&(p[48]&1)))return refuse(d,NIWJ_SHAPE);
  if(j16(p+4)!=2||j16(p+6)!=1||j16(p+8)!=8)return refuse(d,NIWJ_PROFILE);
  if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
- if(j16(p+204)!=22||!same(p+206,station_rsn,22))return refuse(d,NIWJ_SECURITY);
+ if(!station_rsn_ok(p+206,j16(p+204)))return refuse(d,NIWJ_SECURITY);
  /* Port policy: producer's PMK6 WPA2 profile flags0/4 are handled by our
   * host WPA2 engine. No claim of undocumented vendor offload semantics. */
  if((p[463]&~0x20u)||p[464]||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
@@ -36,8 +44,7 @@ static int rsn_ok(const uint8_t*p,size_t z){
  count=j16(p+at);at+=2;if(!count||count>(z-at)/4)return 0;
  while(count--){psk|=suite(p+at,2);at+=4;}if(!psk)return 0;
  if(z-at<2)return 0;unsigned caps=j16(p+at);at+=2;if(caps&(64u|2u))return 0; /*MFPR or NoPairwise*/
- /* Reject a required extended-key-id capability unsupported by this engine. */
- if(caps&8192u)return 0;
+ /* AP ExtendedKeyID support is optional; station caps0 negotiates key ID0. */
  if(at==z)return 1;
  if(z-at<2)return 0;count=j16(p+at);at+=2;if(count>(z-at)/16)return 0;at+=16*count;
  if(at==z)return 1;
@@ -71,9 +78,7 @@ int niwj_select(const struct niwj_request*q,const struct nsb_scan*s,const struct
  const struct nsb_record*best=0;struct parsed a,b={0};
  if(!q||!s||!info||!out||q->security!=NIWJ_WPA2_PSK_CCMP||!q->ssid_length||q->ssid_length>32||q->association_reason>2||
   (q->has_target!=0&&q->has_target!=1)||(q->has_target&&(!nz(q->target,6)||(q->target[0]&1)))||
-  !same(q->station_rsn,station_rsn,22)||!s->entered||!s->done||s->active||s->timed_out||s->partial||
-  s->completion.state!=7||s->completion.sequence!=s->sequence||s->count>NSB_RESULTS||s->count>s->frames||
-  s->last<s->started||s->deadline<=s->started||(q->native_flags!=0&&q->native_flags!=4)||!now||!info->count||info->count>NSS_CHANNELS||info->band5>1)return NIWJ_TARGET;
+  !same(q->station_rsn,station_rsn,22)||!niwj_scan_usable(s)||(q->native_flags!=0&&q->native_flags!=4)||!now||!info->count||info->count>NSS_CHANNELS||info->band5>1)return NIWJ_TARGET;
  for(unsigned i=0;i<info->count;i++){if((info->channels[i].band!=1&&info->channels[i].band!=2)||!info->channels[i].channel||
    (info->channels[i].band==1&&info->channels[i].channel>14)||
    (info->channels[i].band==2&&(!info->band5||info->channels[i].channel<=14||info->channels[i].channel>196)))return NIWJ_TARGET;
