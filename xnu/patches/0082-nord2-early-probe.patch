@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,54 @@
+@@ -648,3 +666,64 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2745,6 +2745,16 @@
 +bsd/dev/wifi_ios_rates.c			standard
 +bsd/dev/wifi_ios_scan_contract.c			standard
 +bsd/dev/wifi_ios_snapshot.c			standard
++
++bsd/dev/wifi_ios_join.c			standard
++bsd/dev/wifi_ios_station_view.c			standard
++bsd/dev/wifi_station_wire.c			standard
++bsd/dev/wifi_station_transport.c			standard
++bsd/dev/wifi_station_transaction.c			standard
++bsd/dev/wifi_wpa_crypto.c			standard
++bsd/dev/wifi_wpa2.c			standard
++bsd/dev/wifi_wpa_owner.c			standard
++bsd/dev/wifi_wpa_nst.c			standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -11864,6 +11874,1534 @@
 +int nwdp_capture(const struct nwdp_io *,void *,struct nwdp_state *,unsigned);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_ios_join.c
+@@ -0,0 +1,89 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_join.h"
++static uint16_t j16(const uint8_t*p){return p[0]|(uint16_t)p[1]<<8;}
++static uint32_t j32(const uint8_t*p){return j16(p)|(uint32_t)j16(p+2)<<16;}
++static int same(const uint8_t*a,const uint8_t*b,size_t n){unsigned d=0;while(n--)d|=*a++^*b++;return !d;}
++static int nz(const uint8_t*p,size_t n){unsigned d=0;while(n--)d|=*p++;return d!=0;}
++static void copy(void*v,const void*s,size_t n){uint8_t*d=v;const uint8_t*p=s;while(n--)*d++=*p++;}
++void niwj_clear(void*v,size_t n){volatile uint8_t*p=v;if(p)while(n--)*p++=0;}
++static const uint8_t station_rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
++static int refuse(struct niwj_diagnostic*d,int reason){if(d)d->reason=(uint32_t)-reason;return reason;}
++int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
++ const uint8_t*p=v;if(d)niwj_clear(d,sizeof(*d));if(out)niwj_clear(out,sizeof(*out));
++ if(!out||!p||n!=NIWJ_ASSOC_BYTES)return refuse(d,NIWJ_SHAPE);
++ if(d){d->key_kind=j32(p+64);d->key_bytes=j32(p+60);d->native_flags=j32(p+504);d->association_flags=j16(p+463);d->association_reason=p[465];
++  d->cached_pmk_bytes=j32(p+468);d->blacklist_count=p[514];d->scope_id=j32(p+536);d->conditional_option=j32(p+580);d->transition_disable=j32(p+584);d->band_preference=j32(p+588);}
++ if(j32(p)!=1||!j32(p+12)||j32(p+12)>32||(nz(p+48,6)&&(p[48]&1)))return refuse(d,NIWJ_SHAPE);
++ if(j16(p+4)!=2||j16(p+6)!=1||j16(p+8)!=8)return refuse(d,NIWJ_PROFILE);
++ if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
++ if(j16(p+204)!=22||!same(p+206,station_rsn,22))return refuse(d,NIWJ_SECURITY);
++ /* Port policy: producer's PMK6 WPA2 profile flags0/4 are handled by our
++  * host WPA2 engine. No claim of undocumented vendor offload semantics. */
++ if((p[463]&~0x20u)||p[464]||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
++    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+536)||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
++ out->ssid_length=(uint8_t)j32(p+12);copy(out->ssid,p+16,out->ssid_length);
++ out->has_target=(uint8_t)nz(p+48,6);copy(out->target,p+48,6);copy(out->pmk,p+72,32);
++ copy(out->station_rsn,station_rsn,22);out->association_reason=p[465];out->security=NIWJ_WPA2_PSK_CCMP;out->native_flags=j32(p+504);return 0;
++}
++/* AP offer may contain SAE in addition to PSK. We negotiate PSK/CCMP only,
++ * never SAE/PMF. Unknown optional suites do not become our capabilities. */
++static int suite(const uint8_t*p,unsigned type){return !p[0]&&p[1]==15&&p[2]==172&&p[3]==type;}
++static int rsn_ok(const uint8_t*p,size_t z){
++ size_t at=2;unsigned count,psk=0,ccmp=0;
++ if(z<22||z>NIWJ_AP_RSN_BYTES||p[0]!=48||(size_t)p[1]+2!=z||j16(p+at)!=1)return 0;at+=2;
++ if(!suite(p+at,4))return 0;at+=4;
++ count=j16(p+at);at+=2;if(!count||count>(z-at)/4)return 0;
++ while(count--){ccmp|=suite(p+at,4);at+=4;}if(!ccmp||z-at<2)return 0;
++ count=j16(p+at);at+=2;if(!count||count>(z-at)/4)return 0;
++ while(count--){psk|=suite(p+at,2);at+=4;}if(!psk)return 0;
++ if(z-at<2)return 0;unsigned caps=j16(p+at);at+=2;if(caps&(64u|2u))return 0; /*MFPR or NoPairwise*/
++ /* Reject a required extended-key-id capability unsupported by this engine. */
++ if(caps&8192u)return 0;
++ if(at==z)return 1;
++ if(z-at<2)return 0;count=j16(p+at);at+=2;if(count>(z-at)/16)return 0;at+=16*count;
++ if(at==z)return 1;
++ /* Group-management cipher may be advertised with optional PMF; never used. */
++ return z-at==4&&(caps&128u)!=0&&!p[at]&&p[at+1]==15&&p[at+2]==172;
++}
++static int legacy_rate(unsigned v){return v==2||v==4||v==11||v==22||v==12||v==18||v==24||v==36||v==48||v==72||v==96||v==108;}
++struct parsed {unsigned rsn_at,rsn_bytes,count;uint8_t rates[12];int16_t rssi;};
++static int candidate(const struct nsb_record*r,const struct niwj_request*q,const struct nss_info*info,uint64_t now,struct parsed*a){
++ unsigned seen=0;niwj_clear(a,sizeof(*a));
++ if(!r->ssid_present||r->hidden||r->ssid_len!=q->ssid_length||!same(r->ssid,q->ssid,r->ssid_len)||
++  !nz(r->bssid,6)||(r->bssid[0]&1)||(q->has_target&&!same(q->target,r->bssid,6))||
++  !r->privacy||!(r->capability&1)||(r->capability&2)||r->channel_mismatch||!r->channel||r->channel!=r->hw_channel||
++  (r->subtype!=8&&r->subtype!=5)||r->ies_truncated||r->ie_bytes!=r->ie_total||r->ie_bytes>NSB_IE_BYTES||
++  !r->rsn_present||!r->observed_us||r->observed_us>now||!r->rxv_valid||!(r->group_valid&4))return 0;
++ unsigned band=r->hw_channel<=14?1:2,allowed=0;
++ for(unsigned i=0;i<info->count;i++)if(info->channels[i].band==band&&info->channels[i].channel==r->channel)allowed=1;
++ if(!allowed)return 0;
++ unsigned x=r->rxv[4],y=r->rxv[5];if(x==255&&y==255)return 0;if(x==255)x=0;if(y==255)y=0;x=x>y?x:y;if(x>220)x=220;a->rssi=(int16_t)((int)x/2-110);
++ for(size_t i=0;i<r->ie_bytes;){if(r->ie_bytes-i<2)return 0;unsigned id=r->ies[i],z=r->ies[i+1];size_t body=i+2;if(z>r->ie_bytes-body)return 0;
++  if(id==48){if(seen&4||!rsn_ok(r->ies+i,z+2))return 0;seen|=4;a->rsn_at=(unsigned)i;a->rsn_bytes=z+2;}
++  if(id==1||id==50){unsigned flag=id==1?1:2;if((seen&flag)||!z||(id==1&&z>8))return 0;seen|=flag;
++   for(unsigned j=0;j<z;j++){unsigned raw=r->ies[body+j],rate=raw&127;if(!legacy_rate(rate)){if(raw&128)return 0;continue;}
++    if(band==2&&(rate==2||rate==4||rate==11||rate==22)){if(raw&128)return 0;continue;}
++    unsigned k=0;while(k<a->count&&(a->rates[k]&127)!=rate)k++;if(k==a->count){if(k==12)return 0;a->rates[a->count++]=(uint8_t)raw;}else a->rates[k]|=(uint8_t)(raw&128);}
++  }i=body+z;
++ }
++ return (seen&5)==5&&a->count!=0;
++}
++int niwj_select(const struct niwj_request*q,const struct nsb_scan*s,const struct nss_info*info,uint64_t now,struct niwj_target*out){
++ const struct nsb_record*best=0;struct parsed a,b={0};
++ if(!q||!s||!info||!out||q->security!=NIWJ_WPA2_PSK_CCMP||!q->ssid_length||q->ssid_length>32||q->association_reason>2||
++  (q->has_target!=0&&q->has_target!=1)||(q->has_target&&(!nz(q->target,6)||(q->target[0]&1)))||
++  !same(q->station_rsn,station_rsn,22)||!s->entered||!s->done||s->active||s->timed_out||s->partial||
++  s->completion.state!=7||s->completion.sequence!=s->sequence||s->count>NSB_RESULTS||s->count>s->frames||
++  s->last<s->started||s->deadline<=s->started||(q->native_flags!=0&&q->native_flags!=4)||!now||!info->count||info->count>NSS_CHANNELS||info->band5>1)return NIWJ_TARGET;
++ for(unsigned i=0;i<info->count;i++){if((info->channels[i].band!=1&&info->channels[i].band!=2)||!info->channels[i].channel||
++   (info->channels[i].band==1&&info->channels[i].channel>14)||
++   (info->channels[i].band==2&&(!info->band5||info->channels[i].channel<=14||info->channels[i].channel>196)))return NIWJ_TARGET;
++  for(unsigned j=0;j<i;j++)if(info->channels[j].band==info->channels[i].band&&info->channels[j].channel==info->channels[i].channel)return NIWJ_TARGET;}
++ for(unsigned i=0;i<s->count;i++)if(candidate(&s->records[i],q,info,now,&a)&&(!best||a.rssi>b.rssi)){best=&s->records[i];b=a;}
++ if(!best)return NIWJ_TARGET;
++ niwj_clear(out,sizeof(*out));out->record=*best;out->band=best->hw_channel<=14?1:2;out->channel=best->channel;out->rssi_dbm=b.rssi;
++ out->rate_count=(uint8_t)b.count;copy(out->rates,b.rates,b.count);out->ap_rsn_bytes=(uint16_t)b.rsn_bytes;copy(out->ap_rsn,best->ies+b.rsn_at,b.rsn_bytes);return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_join.h
+@@ -0,0 +1,46 @@
++#ifndef WIFI_IOS_JOIN_H
++#define WIFI_IOS_JOIN_H
++#include <stddef.h>
++#include <stdint.h>
++#include "wifi_scan_bss.h"
++#include "wifi_scan_service.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++#define NIWJ_ASSOC_BYTES 592u
++#define NIWJ_AP_RSN_BYTES 257u
++#define NIWJ_WPA2_PSK_CCMP 1u
++/* Copied kernel-only secret input; never a user pointer or authority receipt.
++ * Framework supplies PMK32 for both ordinary passphrase and ready-PMK input.
++ * Caller and backend must explicitly clear their copies on every retirement. */
++struct niwj_request {
++ uint8_t ssid_length,ssid[32],has_target,target[6],pmk[32],station_rsn[22],association_reason;
++ uint32_t security,native_flags;
++};
++enum niwj_refusal {NIWJ_OK=0,NIWJ_SHAPE=-1,NIWJ_PROFILE=-2,
++ NIWJ_CREDENTIAL=-3,NIWJ_SECURITY=-4,NIWJ_OPTIONS=-5,NIWJ_TARGET=-6};
++struct niwj_diagnostic {
++ uint32_t reason,key_kind,key_bytes,native_flags,association_flags,association_reason;
++ uint32_t cached_pmk_bytes,blacklist_count,scope_id,conditional_option,transition_disable,band_preference;
++};
++/* Secret output cleared before refusal; no full-record zero sweep. Disjoint
++ * buffers required. Diagnostic contains numeric metadata only, never secrets. */
++int niwj_decode(const void*,size_t,struct niwj_request*,struct niwj_diagnostic*);
++void niwj_clear(void*,size_t);
++struct niwj_target {
++ struct nsb_record record;
++ uint8_t band,channel,rate_count,rates[12]; /*500kbps; basic flags retained*/
++ uint16_t ap_rsn_bytes;uint8_t ap_rsn[NIWJ_AP_RSN_BYTES];
++ int16_t rssi_dbm;
++};
++/* Owner-thread pure selection from its immutable actual complete scan and
++ * allowed-channel snapshot. Does not establish freshness/airtime/ownership.
++ * Cached AP must be authenticated/associated and its RSN verified by native
++ * transaction; a beacon never establishes connection or permits ordinary TX.
++ * Atomic output; no target/country/rate/index is invented. */
++int niwj_select(const struct niwj_request*,const struct nsb_scan*,
++ const struct nss_info*,uint64_t now_us,struct niwj_target*);
++#ifdef __cplusplus
++}
++#endif
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ios_station_view.c
+@@ -0,0 +1,63 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_ios_station_view.h"
++#include "wifi_ios_policy.h"
++#include "wifi_ios_mapping.h"
++#include "wifi_ios_scan_contract.h"
++static void p16(uint8_t*p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
++static void p32(uint8_t*p,uint32_t v){p16(p,(uint16_t)v);p16(p+2,(uint16_t)(v>>16));}
++static void cp(void*v,const void*s,size_t n){uint8_t*p=v;const uint8_t*q=s;while(n--)*p++=*q++;}
++static int valid(const struct njs_snapshot*s){return s&&s->phase<=NJS_FAILED&&s->associated<=1&&s->ptk_ready<=1&&s->gtk_ready<=1&&s->data_ready<=1&&s->involuntary<=1&&(s->result==0||s->result==1||s->result==2||s->result==9||s->result==21);}
++int niwj_authorized(const struct njs_snapshot*s){return valid(s)&&s->native_generation&&s->ticket&&s->phase==NJS_AUTHORIZED&&s->result==1&&s->associated&&s->ptk_ready&&s->gtk_ready&&s->data_ready;}
++int niwj_state_reply(const struct njs_snapshot*s,unsigned request,size_t payload,unsigned scanning,uint64_t now,void*v,size_t cap,size_t*used){
++ uint8_t*p=v;size_t bytes=0;unsigned scalar=0;if(!used)return -1;*used=0;if(!p||!valid(s)||scanning>1)return -1;
++ if(request==13||request==21){if(payload||cap<4)return -1;
++  if(request==21){scalar=s->result;if(scalar==1&&!niwj_authorized(s))return 1;}
++  else if(niwj_authorized(s))scalar=4;
++  else if(s->phase==NJS_AUTHENTICATING)scalar=2;
++  else if(s->phase==NJS_ASSOCIATING||s->phase==NJS_SECURING)scalar=3;
++  else scalar=scanning?1:0;
++  p32(p,scalar);*used=4;return 0;
++ }
++ switch(request){case 1:bytes=s->peer.record.ssid_len;break;case 9:bytes=6;break;case 2:case 4:bytes=16;break;case 16:bytes=52;break;case 103:bytes=1164;break;default:return -2;}
++ /* Preserve the established IOUC fixed-shape refusal before no-association.
++  * Unauthenticated state cannot make a malformed user output shape valid. */
++ if(request==1){if(!payload||payload>32||!cap)return -1;}
++ else if(payload!=bytes||cap<bytes)return -1;
++ if(!niwj_authorized(s))return 1;
++ if(!s->peer.record.ssid_present||!bytes||s->peer.record.ssid_len>32||s->peer.record.ie_bytes>NSB_IE_BYTES||s->peer.rate_count>12||
++  (s->peer.band!=1&&s->peer.band!=2)||!s->peer.channel||s->peer.channel!=s->peer.record.channel)return -1;
++ if(cap<bytes||(request==1?payload<bytes:payload!=bytes))return -1;
++ if(request==103){struct niws_result r={0};size_t n=0,count=0;const struct niwp_rate_map*map=niwi_rate_map(&n);
++  if(!now||!s->peer.record.observed_us||s->peer.record.observed_us>now||(now-s->peer.record.observed_us)/1000>UINT32_MAX||
++   s->peer.record.ie_bytes!=s->peer.record.ie_total||s->peer.record.ies_truncated||
++   niwp_rates(map,n,s->peer.rates,s->peer.rate_count,r.rates,NIWS_MAX_RATES,&count))return -1;
++  r.channel=s->peer.channel;r.channel_flags=s->peer.band==1?8:16;r.age=(uint32_t)((now-s->peer.record.observed_us)/1000);
++  r.rssi=s->peer.rssi_dbm;r.beacon_interval=s->peer.record.interval;r.capabilities=s->peer.record.capability;
++  r.rate_count=(uint8_t)count;r.ssid_bytes=s->peer.record.ssid_len;r.ie_bytes=s->peer.record.ie_bytes;
++  cp(r.bssid,s->peer.record.bssid,6);cp(r.ssid,s->peer.record.ssid,r.ssid_bytes);cp(r.ie,s->peer.record.ies,r.ie_bytes);
++  if(niws_encode_result(&r,p,1164))return -1;
++ }else{
++  niwj_clear(p,bytes);
++  if(request==1)cp(p,s->peer.record.ssid,bytes);
++  else if(request==9)cp(p,s->peer.record.bssid,6);
++  else if(request==2){p32(p,1);p32(p+4,1);p32(p+8,8);}
++  else if(request==4){p32(p,1);p32(p+4,1);p32(p+8,s->peer.channel);p32(p+12,s->peer.band==1?8:16);}
++  else{p32(p,1);p32(p+4,1);p32(p+12,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+28,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+32,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+48,(uint32_t)(int32_t)s->peer.rssi_dbm);}
++ }
++ *used=bytes;return 0;
++}
++int niwj_notice_record(const struct njs_snapshot*s,unsigned event,const char name[16],void*v,size_t cap,size_t*used){
++ uint8_t*p=v;size_t bytes=event==4?80:48;unsigned terminated=0;
++ if(!used)return -1;*used=0;if(!valid(s)||!name||!name[0]||!p||cap<bytes)return -1;
++ for(unsigned i=0;i<16;i++)if(!name[i])terminated=1;if(!terminated)return -1;
++ if(event==9){if(s->result!=1&&s->result!=2&&s->result!=9&&s->result!=21)return -1;if(s->result==1&&!niwj_authorized(s))return -1;}
++ else if(event==2||event==3){if(!niwj_authorized(s)&&s->phase!=NJS_IDLE&&s->phase!=NJS_FAILED&&s->phase!=NJS_LEAVING)return -1;}
++ else if(event==4){if(!niwj_authorized(s)&&(s->associated||s->ptk_ready||s->gtk_ready||s->data_ready))return -1;}
++ else return -1;
++ niwj_clear(p,bytes);p32(p,87);p16(p+24,event==4?32:0);p32(p+28,event);for(unsigned i=0;i<16&&name[i];i++)p[32+i]=(uint8_t)name[i];
++ if(event==4){p[48]=niwj_authorized(s)?0:1;p32(p+52,niwj_authorized(s)?(uint32_t)(int32_t)s->peer.rssi_dbm:0);p[64]=(uint8_t)s->involuntary;p32(p+68,s->reason);p32(p+72,s->subreason);}
++ *used=bytes;return 0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_ios_station_view.h
+@@ -0,0 +1,24 @@
++#ifndef WIFI_IOS_STATION_VIEW_H
++#define WIFI_IOS_STATION_VIEW_H
++#include "wifi_station_service.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* Pure snapshot checks, never an ownership/cipher/data-path authority. Native
++ * service must create these fields from its real serialized receipts. */
++int niwj_authorized(const struct njs_snapshot*);
++/*0 encoded,1 no associated/current state,-1 shape,-2 unsupported. used=0 on
++ * refusal, output unchanged. now_us must be actual monotonic uptime. Current
++ * RSSI/IEs remain the recorded observation; age is never reset to manufacture
++ * a fresh measurement. request13/21 are raw4 scalar output, payload_bytes0. */
++int niwj_state_reply(const struct njs_snapshot*,unsigned request,size_t payload_bytes,
++ unsigned scanning,uint64_t now_us,void*,size_t,size_t*);
++/* Consumer-compatible copied pipe records. Native caller commits snapshot,
++ * validates current client epoch/ticket under gate, publishes and notifies.
++ * Event9 no-primary48B is safe through selected consumer's zeroed scratch.
++ * Event4 carries32B, up only authorized; caller closes real port before down. */
++int niwj_notice_record(const struct njs_snapshot*,unsigned event,const char[16],void*,size_t,size_t*);
++#ifdef __cplusplus
++}
++#endif
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_station_wire.c
+@@ -0,0 +1,210 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_station_wire.h"
++#include "wifi_station_source_layout.h"
++#include <string.h>
++
++#define OFF(s,f) SW_OFF_##s##_##f
++#define P8(s,f,v) b[OFF(s,f)]=(uint8_t)(v)
++#define P16(s,f,v) le16(b+OFF(s,f),(v))
++#define P32(s,f,v) le32(b+OFF(s,f),(v))
++#define CP(s,f,p,n) memcpy(b+OFF(s,f),(p),(n))
++static void le16(uint8_t *p,uint16_t v) {p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
++static void le32(uint8_t *p,uint32_t v) {le16(p,(uint16_t)v);le16(p+2,(uint16_t)(v>>16));}
++static uint16_t rd16(const uint8_t *p) {return p[0]|((uint16_t)p[1]<<8);}
++static int start(size_t *used) {if(!used)return 0;*used=0;return 1;}
++static int finish(uint8_t *out,size_t cap,size_t *used,const uint8_t *b,size_t n) {
++    if(!out)return SW_INVALID;
++    if(cap<n)return SW_CAPACITY;
++    memcpy(out,b,n);*used=n;return SW_OK;
++}
++static int unicast(const uint8_t p[6]) {
++    unsigned i; uint8_t v=0;
++    if(p[0]&1)return 0;
++    for(i=0;i<6;i++)v|=p[i];
++    return v!=0;
++}
++static int peer_ok(const struct sw_peer *p) {
++    return p&&unicast(p->self)&&unicast(p->ap)&&memcmp(p->self,p->ap,6);
++}
++static void header(uint8_t *b,uint16_t fc,const struct sw_peer *p) {
++    le16(b,fc);memcpy(b+4,p->ap,6);memcpy(b+10,p->self,6);memcpy(b+16,p->ap,6);
++}
++int sw_auth(uint8_t *out,size_t cap,size_t *used,const struct sw_peer *p) {
++    uint8_t b[30]={0};
++    if(!start(used)||!peer_ok(p))return SW_INVALID;
++    header(b,0xb0,p);le16(b+26,1);
++    return finish(out,cap,used,b,sizeof(b));
++}
++static const uint8_t rsn[]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
++static int rate_ok(uint8_t r) {
++    switch(r&127) {case 2:case 4:case 11:case 22:case 12:case 18:case 24:
++    case 36:case 48:case 72:case 96:case 108:return 1;default:return 0;}
++}
++int sw_assoc(uint8_t *out,size_t cap,size_t *used,const struct sw_assoc *p) {
++    uint8_t b[110]={0};size_t i,j,n=28,first;
++    if(!start(used)||!p||!peer_ok(&p->peer)||!p->ssid||!p->ssid_len||
++       p->ssid_len>32||!p->rates||!p->rates_len||p->rates_len>12||
++       !p->listen_interval||(p->capability&0x11)!=0x11||
++       (p->capability&~0x0431u))return SW_INVALID;
++    for(i=0;i<p->rates_len;i++) {
++        if(!rate_ok(p->rates[i]))return SW_INVALID;
++        for(j=0;j<i;j++)if((p->rates[i]&127)==(p->rates[j]&127))return SW_INVALID;
++    }
++    header(b,0,&p->peer);le16(b+24,p->capability);le16(b+26,p->listen_interval);
++    b[n++]=0;b[n++]=(uint8_t)p->ssid_len;memcpy(b+n,p->ssid,p->ssid_len);n+=p->ssid_len;
++    first=p->rates_len<8?p->rates_len:8;
++    b[n++]=1;b[n++]=(uint8_t)first;memcpy(b+n,p->rates,first);n+=first;
++    if(p->rates_len>8) {b[n++]=50;b[n++]=(uint8_t)(p->rates_len-8);
++        memcpy(b+n,p->rates+8,p->rates_len-8);n+=p->rates_len-8;}
++    memcpy(b+n,rsn,sizeof(rsn));n+=sizeof(rsn);
++    return finish(out,cap,used,b,n);
++}
++static int key_ok(const struct sw_key *p) {
++    return p&&unicast(p->ap)&&p->pairwise<=1&&p->key_id<=3&&
++           (!p->pairwise||p->key_id==0)&&p->wlan!=255;
++}
++static int key(uint8_t *out,size_t cap,size_t *used,const struct sw_key *p,int add) {
++    uint8_t b[SW_SIZE_CMD_802_11_KEY]={0};
++    if(!start(used)||!key_ok(p)||(add&&(!p->key||p->key_len!=16)))return SW_INVALID;
++    P8(CMD_802_11_KEY,ucAddRemove,add);
++    P8(CMD_802_11_KEY,ucKeyType,p->pairwise);
++    CP(CMD_802_11_KEY,aucPeerAddr,p->ap,6);
++    P8(CMD_802_11_KEY,ucBssIdx,p->bss);
++    P8(CMD_802_11_KEY,ucKeyId,p->key_id);
++    P8(CMD_802_11_KEY,ucWlanIndex,p->wlan);
++    if(add) {
++        P8(CMD_802_11_KEY,ucTxKey,p->pairwise);
++        P8(CMD_802_11_KEY,ucAlgorithmId,4);
++        P8(CMD_802_11_KEY,ucKeyLen,16);
++        CP(CMD_802_11_KEY,aucKeyMaterial,p->key,16);
++    }
++    /* Erase temporary key material after copying or rejecting capacity. */
++    { int r=finish(out,cap,used,b,sizeof(b));volatile uint8_t *v=b;size_t n=sizeof(b);
++      while(n--)*v++=0;
++      return r; }
++}
++int sw_key_add(uint8_t *o,size_t c,size_t *u,const struct sw_key *p) {return key(o,c,u,p,1);}
++int sw_key_remove(uint8_t *o,size_t c,size_t *u,const struct sw_key *p) {return key(o,c,u,p,0);}
++static int channel_ok(uint8_t band,uint8_t channel) {
++    /* Syntactic RF range only; real regulatory/DFS policy belongs to caller. */
++    return (band==1&&channel>=1&&channel<=14)||(band==2&&channel>=32&&channel<=177);
++}
++int sw_channel(uint8_t *out,size_t cap,size_t *used,const struct sw_channel *p) {
++    uint8_t b[SW_SIZE_CMD_CH_PRIVILEGE]={0};
++    if(!start(used)||!p||p->abort>1||(p->dbdc_band!=0&&p->dbdc_band!=1&&p->dbdc_band!=4)||
++       (!p->abort&&(!channel_ok(p->band,p->channel)||!p->interval_ms)))return SW_INVALID;
++    P8(CMD_CH_PRIVILEGE,ucBssIndex,p->bss);P8(CMD_CH_PRIVILEGE,ucTokenID,p->token);
++    P8(CMD_CH_PRIVILEGE,ucAction,p->abort);P8(CMD_CH_PRIVILEGE,ucDBDCBand,p->dbdc_band);
++    if(!p->abort) {
++        P8(CMD_CH_PRIVILEGE,ucPrimaryChannel,p->channel);
++        P8(CMD_CH_PRIVILEGE,ucRfBand,p->band);
++        P32(CMD_CH_PRIVILEGE,u4MaxInterval,p->interval_ms);
++    }
++    return finish(out,cap,used,b,sizeof(b));
++}
++static int rlm_ok(const struct sw_rlm *p) {
++    return p&&channel_ok(p->band,p->channel)&&p->erp_protect<=1&&p->short_preamble<=1&&
++        p->short_slot<=1&&p->tx_nss==1&&p->rx_nss==1;
++}
++static void rlm(uint8_t *b,const struct sw_rlm *p) {
++    P8(CMD_SET_BSS_RLM_PARAM,ucBssIndex,p->bss);P8(CMD_SET_BSS_RLM_PARAM,ucRfBand,p->band);
++    P8(CMD_SET_BSS_RLM_PARAM,ucPrimaryChannel,p->channel);
++    P8(CMD_SET_BSS_RLM_PARAM,ucErpProtectMode,p->erp_protect);
++    P8(CMD_SET_BSS_RLM_PARAM,ucUseShortPreamble,p->short_preamble);
++    P8(CMD_SET_BSS_RLM_PARAM,ucUseShortSlotTime,p->short_slot);
++    P8(CMD_SET_BSS_RLM_PARAM,ucTxNss,p->tx_nss);P8(CMD_SET_BSS_RLM_PARAM,ucRxNss,p->rx_nss);
++}
++int sw_rlm(uint8_t *out,size_t cap,size_t *used,const struct sw_rlm *p) {
++    uint8_t b[SW_SIZE_CMD_SET_BSS_RLM_PARAM]={0};
++    if(!start(used)||!rlm_ok(p))return SW_INVALID;
++    rlm(b,p);return finish(out,cap,used,b,sizeof(b));
++}
++static int rates_ok(uint16_t rates,uint16_t basic,uint8_t phy) {
++    return rates&&basic&&!(rates&~0x3fcfu)&&!(basic&~rates)&&phy&&!(phy&~0xfu);
++}
++int sw_bss(uint8_t *out,size_t cap,size_t *used,const struct sw_bss *p) {
++    uint8_t b[SW_SIZE_CMD_SET_BSS_INFO]={0};
++    if(!start(used)||!p||!rlm_ok(&p->rlm)||!p->ssid||!p->ssid_len||p->ssid_len>32||
++       !unicast(p->ap)||p->connected>1||(p->dbdc_band!=0&&p->dbdc_band!=1&&p->dbdc_band!=4)||p->nonht_phy>3||
++       p->disconnect_threshold||!rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
++    P8(CMD_SET_BSS_INFO,ucBssIndex,p->rlm.bss);
++    P8(CMD_SET_BSS_INFO,ucConnectionState,p->connected?0:1);
++    P8(CMD_SET_BSS_INFO,ucSSIDLen,p->ssid_len);CP(CMD_SET_BSS_INFO,aucSSID,p->ssid,p->ssid_len);
++    CP(CMD_SET_BSS_INFO,aucBSSID,p->ap,6);P16(CMD_SET_BSS_INFO,u2OperationalRateSet,p->rates);
++    P16(CMD_SET_BSS_INFO,u2BSSBasicRateSet,p->basic_rates);
++    P8(CMD_SET_BSS_INFO,ucStaRecIdxOfAP,p->ap_sta);
++    P16(CMD_SET_BSS_INFO,u2HwDefaultFixedRateCode,p->fixed_rate);
++    P8(CMD_SET_BSS_INFO,ucNonHTBasicPhyType,p->nonht_phy);
++    P8(CMD_SET_BSS_INFO,ucAuthMode,7);P8(CMD_SET_BSS_INFO,ucEncStatus,6);
++    P8(CMD_SET_BSS_INFO,ucPhyTypeSet,p->phy_set);P8(CMD_SET_BSS_INFO,ucBMCWlanIndex,p->bmc_wlan);
++    P32(CMD_SET_BSS_INFO,u4PrivateData,p->private_data);
++    rlm(b+OFF(CMD_SET_BSS_INFO,rBssRlmParam),&p->rlm);
++    P8(CMD_SET_BSS_INFO,ucDBDCBand,p->dbdc_band);P8(CMD_SET_BSS_INFO,ucWmmSet,p->wmm_set);
++    P8(CMD_SET_BSS_INFO,ucNss,1);
++    return finish(out,cap,used,b,sizeof(b));
++}
++int sw_sta(uint8_t *out,size_t cap,size_t *used,const struct sw_sta *p) {
++    uint8_t b[SW_SIZE_CMD_UPDATE_STA_RECORD]={0};
++    if(!start(used)||!p||!unicast(p->ap)||p->state<1||p->state>3||p->need_response>1||
++       p->sta_type!=65||p->aid>2007||!p->listen_interval||p->wlan==255||p->version>1||
++       !rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
++    P8(CMD_UPDATE_STA_RECORD,ucStaIndex,p->sta);P8(CMD_UPDATE_STA_RECORD,ucStaType,p->sta_type);
++    CP(CMD_UPDATE_STA_RECORD,aucMacAddr,p->ap,6);P16(CMD_UPDATE_STA_RECORD,u2AssocId,p->aid);
++    P16(CMD_UPDATE_STA_RECORD,u2ListenInterval,p->listen_interval);
++    P8(CMD_UPDATE_STA_RECORD,ucBssIndex,p->bss);P8(CMD_UPDATE_STA_RECORD,ucDesiredPhyTypeSet,p->phy_set);
++    P16(CMD_UPDATE_STA_RECORD,u2DesiredNonHTRateSet,p->rates);
++    P16(CMD_UPDATE_STA_RECORD,u2BSSBasicRateSet,p->basic_rates);
++    P8(CMD_UPDATE_STA_RECORD,ucStaState,p->state);P8(CMD_UPDATE_STA_RECORD,ucRCPI,p->rcpi);
++    P8(CMD_UPDATE_STA_RECORD,ucVersion,p->version);
++    P8(CMD_UPDATE_STA_RECORD,ucNeedResp,p->need_response);P8(CMD_UPDATE_STA_RECORD,ucWlanIndex,p->wlan);
++    P8(CMD_UPDATE_STA_RECORD,ucBMCWlanIndex,p->bmc_wlan);
++    P8(CMD_UPDATE_STA_RECORD,ucRtsPolicy,p->rts_policy);
++    P16(CMD_UPDATE_STA_RECORD,u2HwDefaultFixedRateCode,p->fixed_rate);
++    return finish(out,cap,used,b,sizeof(b));
++}
++static int txd(uint8_t *out,size_t cap,size_t *used,const struct sw_txd *p,
++               const uint8_t *frame,size_t len,int security) {
++    uint8_t b[32]={0};uint32_t d0,d1,d2,d3,d5,d6,d7=0,life;uint16_t fc=0;
++    if(!start(used)||!p||!frame||len>65503||p->own_mac>63||p->queue>127||
++       p->wlan==255||!p->pid||p->pid>=128||p->retry_limit>31||!p->retry_limit||
++       p->fixed_rate>0x3fff||p->protected_frame>1||p->spe_index>31||p->pse_header_len>230||
++       (p->pse_header_len&1)||!p->lifetime_ms||p->lifetime_ms>60000)return SW_INVALID;
++    if(security==1) {
++        if(len<18||len>1518||frame[12]!=0x88||frame[13]!=0x8e||
++           (((size_t)frame[16]<<8)|frame[17])!=len-18)return SW_INVALID;
++    } else if(security==2) {
++        if(len<14||len>1514||((unsigned)frame[12]<<8|frame[13])<1536||
++           (frame[12]==0x88&&frame[13]==0x8e)||!p->protected_frame)return SW_INVALID;
++    } else {
++        if(len<26||p->protected_frame)return SW_INVALID;
++        fc=rd16(frame);
++        if(fc!=0xb0&&fc!=0&&fc!=0xc0)return SW_INVALID;
++        if(fc==0xc0&&(len!=26||rd16(frame+24)!=3))return SW_INVALID;
++        if(fc==0&&len<28)return SW_INVALID;
++        if(fc==0xb0&&(len!=30||rd16(frame+24)||rd16(frame+26)!=1||rd16(frame+28)))return SW_INVALID;
++    }
++    life=(p->lifetime_ms*1000u/1024u)>>6;
++    /* Match pinned macro, including its unreachable minimum-life branch.
++     * Reject life=0 instead of silently encoding no timeout. */
++    if(!life)return SW_INVALID;
++    if(life>127)life=127;
++    d0=(uint32_t)(32+len)|(((p->pse_header_len+(security?12u:24u))>>1)<<16)|
++        (2u<<23)|((uint32_t)p->queue<<25);
++    d1=p->wlan|(UINT32_C(1)<<31)|((uint32_t)p->own_mac<<24);
++    if(security){d1|=1u<<15;if(security==2)d1|=1u<<10;}
++    else d1|=(1u<<10)|(2u<<16)|(12u<<11);
++    d2=(life<<16)|(UINT32_C(1)<<31);
++    if(!security) {d2|=(fc>>4)&15u;d7=(((uint32_t)(fc>>4)&15u)<<16)|((uint32_t)p->spe_index<<11);}
++    d3=((uint32_t)p->retry_limit<<11)|(p->protected_frame?2u:0u);
++    d5=p->pid|(1u<<9);d6=(uint32_t)p->fixed_rate<<16;
++    le32(b,d0);le32(b+4,d1);le32(b+8,d2);le32(b+12,d3);
++    le32(b+20,d5);le32(b+24,d6);le32(b+28,d7);
++    return finish(out,cap,used,b,sizeof(b));
++}
++int sw_management_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,0);}
++int sw_security_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,1);}
++
++int sw_data_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,2);}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_station_wire.h
+@@ -0,0 +1,85 @@
++#ifndef STATION_WIRE_H
++#define STATION_WIRE_H
++#include <stddef.h>
++#include <stdint.h>
++
++/* Offline payload codec only. No allocation, logging, transport, or state changes.
++ * All buffers must be disjoint from inputs. On failure: used=0, output unchanged.
++ * Little endian firmware payloads; never cast these bytes to native structs.
++ */
++enum sw_result { SW_OK=0, SW_INVALID=-1, SW_CAPACITY=-2 };
++enum sw_cid { SW_KEY=0x07, SW_BSS=0x12, SW_STA=0x13, SW_RLM=0x19,
++              SW_CHANNEL=0x1c };
++struct sw_peer { uint8_t self[6], ap[6]; };
++struct sw_assoc {
++    struct sw_peer peer;
++    const uint8_t *ssid; size_t ssid_len;
++    const uint8_t *rates; size_t rates_len; /* 500 kb/s, basic bit retained */
++    uint16_t capability, listen_interval;
++};
++/* Open-system transaction 1, or legacy WPA2-PSK/CCMP association request.
++ * Auth sequence-control is zero as selected source leaves HW to assign it.
++ * Assoc emits SSID, supported/ext rates and exactly WPA2 PSK/CCMP RSN.
++ * No HT/VHT/HE, WMM, PMF, reassociation, vendor IE or enterprise support.
++ */
++int sw_auth(uint8_t *, size_t, size_t *, const struct sw_peer *);
++int sw_assoc(uint8_t *, size_t, size_t *, const struct sw_assoc *);
++
++struct sw_key {
++    uint8_t bss, wlan, pairwise, key_id;
++    uint8_t ap[6];
++    const uint8_t *key; size_t key_len; /* add requires exactly 16 */
++};
++/* RSC remains zero to reproduce wlanoidSetAddKey, which zeroes the payload
++ * but never copies PARAM_KEY RSC. RX replay state is a separate host contract.
++ * remove uses the separate source removal shape; caller retires secret bytes.
++ */
++int sw_key_add(uint8_t *, size_t, size_t *, const struct sw_key *);
++int sw_key_remove(uint8_t *, size_t, size_t *, const struct sw_key *);
++struct sw_channel {
++    uint8_t bss, token, abort, band, channel, dbdc_band;
++    uint32_t interval_ms;
++};
++int sw_channel(uint8_t *, size_t, size_t *, const struct sw_channel *);
++struct sw_rlm {
++    uint8_t bss, band, channel, erp_protect, short_preamble, short_slot;
++    uint8_t tx_nss, rx_nss;
++};
++int sw_rlm(uint8_t *, size_t, size_t *, const struct sw_rlm *);
++struct sw_bss {
++    struct sw_rlm rlm;
++    const uint8_t *ssid; size_t ssid_len;
++    uint8_t ap[6], connected, ap_sta, bmc_wlan, nonht_phy, phy_set;
++    uint8_t dbdc_band, wmm_set, disconnect_threshold;
++    uint16_t rates, basic_rates, fixed_rate;
++    uint32_t private_data;
++};
++int sw_bss(uint8_t *, size_t, size_t *, const struct sw_bss *);
++struct sw_sta {
++    uint8_t bss, sta, wlan, bmc_wlan, sta_type, state, need_response;
++    uint8_t ap[6], phy_set, rcpi, rts_policy, version;
++    uint16_t aid, listen_interval, rates, basic_rates, fixed_rate;
++};
++/* AX layout enabled, BE disabled. version is 0 or 1, selected by real efuse
++ * policy (cnmStaRecCmdHeContentFill sets1 when fgEfuseCtrlAxOn==1).
++ * No aggregated/HT features; zero HE fields have no advertised HE meaning.
++ * Caller supplies source-owned indices and source enum values; no allocator.
++ */
++int sw_sta(uint8_t *, size_t, size_t *, const struct sw_sta *);
++struct sw_txd {
++    uint8_t wlan, own_mac, queue, pid, retry_limit;
++    uint16_t fixed_rate, pse_header_len;
++    uint32_t lifetime_ms;
++    uint8_t protected_frame, spe_index;
++};
++/* Long Connac2x TXD ONLY; frame is a separate scatter/gather payload.
++ * management: auth/assoc only; security: complete Ethernet-II EAPOL frame.
++ * Explicit queue/rate/PSE values must come from selected hardware owner.
++ * PID requests EVENT_TX_DONE; neither bytes built nor DMA DDONE prove TX ACK.
++ */
++int sw_management_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
++                      const uint8_t *,size_t);
++int sw_security_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
++                    const uint8_t *,size_t);
++int sw_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_station_transport.c
+@@ -0,0 +1,207 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_station_transport.h"
++static uint16_t u16(const uint8_t*p){return p[0]|(uint16_t)p[1]<<8;}
++static uint32_t u32(const uint8_t*p){return u16(p)|(uint32_t)u16(p+2)<<16;}
++static void p16(uint8_t*p,uint16_t n){p[0]=(uint8_t)n;p[1]=(uint8_t)(n>>8);}
++static void p32(uint8_t*p,uint32_t n){p16(p,(uint16_t)n);p16(p+2,(uint16_t)(n>>16));}
++static void cp(void*d,const void*s,size_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
++static int eq(const void*a,const void*b,size_t n){const uint8_t*x=a,*y=b;while(n--)if(*x++!=*y++)return 0;return 1;}
++static void wipe(void*p,size_t n){volatile uint8_t*q=p;while(n--)*q++=0;}
++static int mac(const uint8_t*p){unsigned any=0;for(unsigned i=0;i<6;i++)any|=p[i];return any&&!(p[0]&1);}
++void nst_close_port(struct nst*s){if(s){if(s->controlled_port&&!s->cleanup_started)s->deadline=s->last>UINT64_MAX-UINT64_C(30000000)?UINT64_MAX:s->last+UINT64_C(30000000);s->controlled_port=0;if(s->wire_busy&&s->wire_type==3&&!s->published){wipe(s->wire,sizeof s->wire);s->wire_busy=0;}}}
++static int fail(struct nst*s,unsigned e){nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
++static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
++int nst_lease_window(const struct nst*s,const struct nwi_state*i){
++ if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||!s->active||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
++ for(unsigned k=0;k<5;k++){const struct ncr_queue*q=&s->queue[k];const struct nwi_ring*r=&i->rings[k+4];if(q->next>=r->count||q->ring.descriptors!=r->descriptors||q->ring.buffers!=r->buffers||q->ring.base!=r->base||q->ring.count!=r->count)return 0;}
++ return 1;
++}
++int nst_prepare(struct nst*s,struct nwi_state*i,const struct nct_session*t,const struct ncr_state*r,const struct ncs_cap*c,const struct nst_peer*p,const struct sw_txd*d,uint64_t gen,uint64_t now,uint64_t end){
++ if(!s||s->prepared||!i||!t||!r||!c||!p||!d||!gen||now>=end||end-now>UINT64_C(60000000)||!nct_done_receipt(t)||!t->capacity||t->init!=i||i->transport.tx_index!=(t->first_tx+t->count)%1024||i->transport.completed!=t->base_completed+t->count||i->transport.next_sequence!=(uint8_t)(t->first_sequence+t->count)||r->init!=i||r->session!=t||r->active||r->halt||r->error||!r->scan.done||r->scan.active||r->scan.partial||r->scan.timed_out||r->scan.completion.state!=7||i->transport.submit_attempted||!mac(p->self)||!mac(p->ap)||p->bss||p->sta||p->own_mac!=c->own_mac||p->group_wlan!=c->bmc||p->wlan<=p->group_wlan||p->wlan>=c->wtbl-1||c->wtbl<7||d->own_mac!=p->own_mac||d->wlan!=p->wlan||d->pse_header_len!=8||d->queue!=1||!((p->band==1&&p->channel>=1&&p->channel<=14)||(p->band==2&&p->channel>14)))return -1;
++ s->credit_capacity=s->credit_available=t->capacity;s->init=i;s->previous=t;s->previous_rx=r;s->peer=*p;s->txd=*d;s->generation=gen;s->last=now;s->deadline=end;s->tx_next=i->transport.tx_index;s->base_completed=i->transport.completed;s->next_pid=1;
++ for(unsigned k=0;k<5;k++)s->queue[k]=r->queue[k];s->prepared=1;return 0;
++}
++int nst_cleanup_begin(struct nst*s,uint64_t now,uint64_t end){
++ if(!source(s)||s->cleanup_started||now<s->last||now>=end||end-now>UINT64_C(30000000))return -1;
++ s->cleanup_started=1;s->last=now;s->deadline=end;nst_close_port(s);return 0;
++}
++static int acceptable(const struct nst*s){return source(s)&&!s->callback_active;}
++static int busy(const struct nst*s){return s->wire_busy||s->air_pending||s->peer_kind;}
++static int cid_size(uint8_t cid,size_t n){switch(cid){case 7:return n==64;case 0x0a:return n==68;case 0x11:return n==12;case 0x12:return n==116;case 0x13:return n==200;case 0x14:return n==4;case 0x16:return n==12;case 0x17:return n==4;case 0x19:return n==22;case 0x1c:return n==24;default:return 0;}}
++static int command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n,unsigned internal){
++ if(!acceptable(s)||!ticket||!p||!cid_size(cid,n))return -1;if(s->wire_busy||s->air_pending)return 1;
++ if(cid==7&&(p[10]!=s->peer.bss||!eq(p+4,s->peer.ap,6)||p[11]!=(p[0]?4:0)||p[12]>3||p[13]!=(p[0]?16:0)||p[14]!=(p[2]?s->peer.wlan:s->peer.group_wlan)||p[0]>1||p[2]>1||p[3]||p[1]!=(p[0]?p[2]:0)||(p[2]&&p[12])))return -1;
++ if(cid==0x1c&&(p[0]!=s->peer.bss||(!p[2]&&(p[3]!=s->peer.channel||p[5]!=s->peer.band))||p[2]>1))return -1;
++ wipe(s->wire,sizeof s->wire);unsigned bytes=(unsigned)n+64;p32(s->wire,bytes|(2u<<23));p32(s->wire+4,1u<<16);p16(s->wire+32,(uint16_t)(bytes-32));s->wire[36]=cid;s->wire[37]=0xa0;s->wire[38]=1;s->wire[39]=s->init->transport.next_sequence;cp(s->wire+64,p,n);
++ s->ticket=ticket;s->wire_cid=cid;s->wire_sequence=s->wire[39];s->wire_bytes=bytes;s->wire_type=0;s->wire_busy=1;s->published=s->dma_done=s->air_done=0;s->internal_wire=internal;
++ return 0;
++}
++int nst_command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n){if(!acceptable(s))return -1;if(busy(s))return 1;return command(s,ticket,cid,p,n,0);}
++static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned type,unsigned protect){
++ if(!acceptable(s)||!ticket||!p||n<2||n>NST_FRAME_BYTES-32)return -1;if(busy(s))return 1;
++ if(s->cleanup_started&&(type!=1||u16(p)!=0xc0))return -1;
++ struct sw_txd d=s->txd;if(type==1&&(u16(p)==0xb0||u16(p)==0))d.queue=16;d.pid=(uint8_t)s->next_pid;d.protected_frame=(uint8_t)protect;size_t used=0;uint8_t txd[32];int e;
++ if(type==1)e=sw_management_txd(txd,sizeof txd,&used,&d,p,n);else if(type==2)e=sw_security_txd(txd,sizeof txd,&used,&d,p,n);else e=sw_data_txd(txd,sizeof txd,&used,&d,p,n);
++ if(e||used!=32)return -1;
++ if(type==1){if(n<24||!eq(p+4,s->peer.ap,6)||!eq(p+10,s->peer.self,6)||!eq(p+16,s->peer.ap,6))return -1;}
++ else if(!eq(p+6,s->peer.self,6)||(type==2&&!eq(p,s->peer.ap,6)))return -1;
++ wipe(s->wire,sizeof s->wire);cp(s->wire,txd,32);cp(s->wire+32,p,n);s->wire_bytes=(unsigned)n+32;s->ticket=ticket;s->wire_cid=0;s->wire_type=type;s->wire_pid=d.pid;s->wire_wlan=d.wlan;s->wire_busy=1;s->published=s->dma_done=s->air_done=0;s->internal_wire=0;return 0;
++}
++int nst_management(struct nst*s,uint64_t t,const uint8_t*p,size_t n){return frame(s,t,p,n,1,0);}
++int nst_eapol(struct nst*s,uint64_t t,const uint8_t*p,size_t n,unsigned protect){if(protect>1||!s||(protect&&!s->ptk_ready))return -1;return frame(s,t,p,n,2,protect);}
++int nst_data(struct nst*s,uint64_t t,const uint8_t*p,size_t n){if(!s||!s->controlled_port||s->bss_absent)return 1;return frame(s,t,p,n,3,1);}
++int nst_memory_range(const struct nst*s,uint64_t a,uint32_t n,unsigned write){
++ if(!source(s)||!s->active||!n)return 0;
++ if(a==s->init->transport.command&&n==s->wire_bytes)return write&&s->phase==NST_TX_WRITE;
++ if(a==s->init->transport.tx_ring+16u*s->tx_next&&n==16)return write?s->phase==NST_TX_WRITE:s->phase==NST_TX_READ;
++ if(s->rx_current>=5)return 0;const struct ncr_queue*q=&s->queue[s->rx_current];
++ if(a==q->ring.descriptors+16u*q->next&&n==16)return write?s->phase==NST_RX_WRITE:s->phase==NST_RX_READ;
++ return !write&&s->phase==NST_RX_FRAME&&n==s->rx_bytes&&a==q->ring.buffers+4096u*q->next;
++}
++int nst_register_write(const struct nst*s,uint32_t a,uint32_t v){if(!source(s)||!s->active)return 0;if(a==0x18025418)return s->phase==NST_TX_PUBLISH&&s->wire_busy&&!s->published&&v==(s->tx_next+1)%1024;if(s->rx_current>=5||s->phase!=NST_RX_PUBLISH)return 0;const struct ncr_queue*q=&s->queue[s->rx_current];return a==q->ring.base+8&&v==q->next;}
++static int before(struct nst*s,const struct ncd_io*o,void*c){uint64_t now;if(!nst_lease_window(s,s->init)||o->bus->owner(c)||o->now_us(c,&now)||now<s->last)return fail(s,1);s->last=now;if(!s->controlled_port&&now>=s->deadline)return fail(s,2);if((s->wire_busy||s->air_pending)&&s->published&&now>=s->operation_deadline)return fail(s,3);if(s->channel_held&&s->grant_deadline&&now>=s->grant_deadline&&!s->cleanup_started)return fail(s,4);return 0;}
++static int rr(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t*v){return before(s,o,c)||o->bus->reg_read(c,a,v)?fail(s,5):0;}
++static int rw(struct nst*s,const struct ncd_io*o,void*c,uint32_t a,uint32_t v){if(before(s,o,c)||!nst_register_write(s,a,v))return fail(s,6);s->mutated=1;return o->bus->reg_write(c,a,v)?fail(s,6):0;}
++static int mr(struct nst*s,const struct ncd_io*o,void*c,uint64_t a,void*p,uint32_t n){return before(s,o,c)||!nst_memory_range(s,a,n,0)||o->bus->mem_read(c,a,p,n)?fail(s,7):0;}
++static int mw(struct nst*s,const struct ncd_io*o,void*c,uint64_t a,const void*p,uint32_t n){if(before(s,o,c)||!nst_memory_range(s,a,n,1))return fail(s,8);s->mutated=1;return o->bus->mem_write(c,a,p,n)?fail(s,8):0;}
++static int sy(struct nst*s,const struct ncd_io*o,void*c,uint64_t a,uint32_t n,unsigned way){return before(s,o,c)||!nst_memory_range(s,a,n,way==1)||o->bus->sync(c,a,n,way)?fail(s,9):0;}
++static int emit(struct nst*s,nst_event_fn fn,void*c,struct nst_event*e){if(!fn)return 0;e->generation=s->generation;s->callback_active=1;int r=fn(c,e);s->callback_active=0;return r<0?fail(s,10):0;}
++static int coherent(struct nst*s,const struct ncd_io*o,void*c){uint32_t v;for(unsigned d=0;d<2;d++)if(rr(s,o,c,0x18024200u+4096u*d,&v)||(v&0x00300000))return fail(s,11);return 0;}
++static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,void*ctx){
++ if(!s->wire_busy||(s->wire_type==3&&s->bss_absent&&!s->published))return 0;
++ if(s->cleanup_started&&!s->published&&s->wire_type&&!(s->wire_type==1&&u16(s->wire+32)==0xc0)){
++  wipe(s->wire,sizeof s->wire);s->wire_busy=0;struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=1};return emit(s,fn,ctx,&e);
++ }
++ uint32_t v;uint64_t a=s->init->transport.tx_ring+16u*s->tx_next;
++ if(!s->published){
++  if(rr(s,o,c,0x180600f0,&v)||(v&3)!=3||coherent(s,o,c)||rr(s,o,c,0x18025418,&v)||v!=s->tx_next||rr(s,o,c,0x1802541c,&v)||v!=s->tx_next)return fail(s,12);
++  s->phase=NST_TX_READ;if(sy(s,o,c,a,16,2)||mr(s,o,c,a,s->descriptor,16))return -1;if(!(u32(s->descriptor+4)&0x80000000))return fail(s,13);
++  if(nwt_tx_desc(s->descriptor,s->init->transport.command,s->wire_bytes))return fail(s,14);
++  if(!s->credit_available||s->credit_reserved)return fail(s,35);s->credit_available--;s->credit_reserved=1;s->credit_acquired++;
++  s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,s->wire_bytes)||sy(s,o,c,s->init->transport.command,s->wire_bytes,1)||mw(s,o,c,a,s->descriptor,16)||sy(s,o,c,a,16,1))return -1;
++  if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
++  if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
++  if(s->wire_type)s->air_pending=1;
++  if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
++  if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
++  if(s->wire_cid==0x1c&&!s->wire[66]){s->channel_token=s->wire[65];s->channel_held=1;}
++ }
++ s->phase=NST_TX_WAIT;if(rr(s,o,c,0x1802541c,&v))return -1;if(v!=s->tx_next&&v!=(s->tx_next+1)%1024)return fail(s,16);if(v==s->tx_next)return 0;
++ s->phase=NST_TX_READ;if(sy(s,o,c,a,16,2)||mr(s,o,c,a,s->descriptor,16))return -1;if(!(u32(s->descriptor+4)&0x80000000))return 0;
++ unsigned channel_release=s->wire_cid==0x1c&&s->wire[66]==1;
++ if(s->internal_wire==2&&s->wire_cid==0x16)s->pm_connected=1;
++ if(s->wire_cid==7){unsigned pair=s->wire[66];if(s->wire[64]){if(pair)s->ptk_submitted=1;else{s->gtk_submitted=1;s->gtk_command_index=s->wire[76];}}}
++ /* DDONE proves host buffer no longer read. Erase key-bearing host/DMA copy now. */
++ unsigned bytes=s->wire_bytes;wipe(s->wire,sizeof s->wire);s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,bytes)||sy(s,o,c,s->init->transport.command,bytes,1))return -1;
++ s->init->transport.tx_index=(s->tx_next+1)%1024;s->tx_next=s->init->transport.tx_index;s->init->transport.completed++;if(!s->wire_type)s->init->transport.next_sequence++;s->init->transport.submit_attempted=0;s->dma_completed++;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
++ if(channel_release){s->channel_held=0;s->grant_deadline=0;struct nst_event released={.kind=NST_CHANNEL_RELEASED,.ticket=s->ticket,.token=s->channel_token};if(emit(s,fn,ctx,&released))return -1;}
++ if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;return 0;}struct nst_event e={.kind=NST_COMMAND_DMA,.ticket=s->ticket,.cid=(uint8_t)s->wire_cid,.sequence=(uint8_t)s->wire_sequence};return emit(s,fn,ctx,&e);}return 0;
++}
++static uint64_t pn48(const uint8_t*p){uint64_t n=0;for(unsigned k=0;k<6;k++)n|=(uint64_t)p[k]<<(8*k);return n;}
++int nst_replay_install(struct nst*s,unsigned pair,uint8_t key,const uint8_t rsc[8]){if(!source(s)||pair>1||key>3||!rsc||rsc[6]||rsc[7]||(pair?(!s->ptk_submitted||key):(!s->gtk_submitted||key!=s->gtk_command_index)))return -1;struct nst_replay*r=pair?&s->ptk:&s->gtk;if(r->installed)return -1;r->installed=1;r->key_id=key;for(unsigned k=0;k<17;k++)r->pn[k]=pn48(rsc);return 0;}
++int nst_authorize(struct nst*s){if(!source(s)||s->link_lost||s->cleanup_started||!s->sta_active||!s->ptk_ready||!s->ptk.installed||!s->gtk.installed||s->wire_busy||s->air_pending||s->peer_kind)return -1;s->controlled_port=1;return 0;}
++/* Deferred RX event uses owned rx_frame until descriptor is safely rearmed. */
++static int decode(struct nst*s){
++ const uint8_t*p=s->rx_frame;size_t n=s->rx_bytes;struct nst_event*e=&s->deferred;*e=(struct nst_event){0};if(n<24)return 0;
++ unsigned type=(u16(p+2)>>11)&31;if(type==7&&(u16(p+2)&0x380f)==0x3800){
++  if(n<36)return 0;const uint8_t*b=p+36;size_t z=n-36;e->body=b;e->bytes=z;e->sequence=p[29];
++  if(p[28]==0x0f&&z>=88&&s->air_pending&&b[0]==s->wire_pid&&b[4]==s->wire_wlan&&!s->air_done){s->air_done=1;s->air_status=b[1];}
++  else if(p[28]==0x10&&z>=24&&s->channel_held&&b[0]==s->peer.bss&&b[1]==s->channel_token&&b[3]==s->peer.channel&&b[5]==s->peer.band){uint32_t ms=u32(b+12);if(b[2]||!ms||ms>60000||s->last>UINT64_MAX-(uint64_t)ms*1000)return 0;s->grant_deadline=s->last+(uint64_t)ms*1000;e->kind=NST_CHANNEL_GRANT;e->bss=b[0];e->token=b[1];e->status=b[2];e->channel=b[3];e->band=b[5];e->interval_ms=ms;}
++  else if(p[28]==0x0c&&z>=8&&s->activation_pending&&p[29]==s->activation_sequence&&eq(b,s->peer.ap,6)&&b[6]==s->peer.sta&&b[7]==s->peer.bss){s->sta_active=1;s->activation_pending=0;e->kind=NST_STA_ACTIVE;e->sta=b[6];e->bss=b[7];}
++  else if(p[28]==0x11&&z>=4&&b[0]==s->peer.bss&&b[1]<=1){s->bss_absent=b[1];}
++  else if(p[28]==0x13&&z>=4&&b[0]==s->peer.bss&&s->sta_active){nst_close_port(s);s->link_lost=1;e->kind=NST_LINK_LOST;e->status=b[1];e->bss=b[0];}
++  else if(p[28]==0x24&&z>=8&&s->ptk_command&&!s->ptk_ready&&b[0]==s->peer.bss&&eq(b+2,s->peer.ap,6)){s->ptk_ready=1;e->kind=NST_KEY_READY;e->bss=b[0];e->bytes=8;}
++  else if(p[28]==0xf0||(p[28]==0xed&&p[32]==0x23)||p[28]==0xfd)return -1;
++  return 0;
++ }
++ if(type!=2&&!(type==7&&(u16(p+2)&0x380f)==0x3801))return 0;
++ size_t bytes=u16(p),off=24,g1=0,g4=0;uint32_t d1=u32(p+4),d2=u32(p+8),d4=u32(p+16);unsigned groups=(d1>>11)&31;
++ if(bytes>n||bytes<24||d1&0x0f800000u||d2&0x0b800000u||(d4&3)||(d4&(3u<<11)))return 0;
++ if(groups&8){g4=off;off+=16;}if(groups&1){g1=off;off+=16;}if(groups&2)off+=8;if(groups&4)off+=8;if(groups&16)off+=72;off+=((d2>>14)&3)*2;if(off>bytes)return 0;
++ const uint8_t*m=p+off;size_t len=bytes-off;unsigned translated=(d2>>13)&1,sec=(d1>>16)&31,key=(d1>>21)&3,wlan=d1&1023,tid=(d2>>16)&15;
++ if(!translated){
++  if(len<24||((d2>>8)&31)!=12||sec||u16(m)&0xc700||u16(m+22)&15||!eq(m+10,s->peer.ap,6)||!eq(m+16,s->peer.ap,6))return 0;
++  unsigned fc=u16(m)&255;if(fc==0xb0||fc==0x10||fc==0xc0||fc==0xa0){if(!eq(m+4,s->peer.self,6))return 0;e->kind=NST_MANAGEMENT;e->body=m;e->bytes=len;}
++  /* Actual first beacon supplies DTIM for deferred source PM connected command. */
++  else if(fc==0x80&&len>=36&&s->sta_active&&!s->pm_scheduled&&!s->pm_connected&&!s->cleanup_started&&!s->link_lost){for(size_t k=36;k<len;){if(len-k<2||m[k+1]>len-k-2)return 0;if(m[k]==5&&m[k+1]>=4&&m[k+3]){s->dtim_period=m[k+3];s->pm_pending=1;}k+=2+m[k+1];}}
++  return 0;
++ }
++ if(type!=2||len<14||len>NST_MAX_ETHERNET||!g4||g4+16>bytes||!eq(p+g4+2,s->peer.ap,6)||!((m[0]&1)||eq(m,s->peer.self,6)))return 0;
++ uint16_t fc=u16(p+g4);if((fc&0x030c)!=0x0208||(fc&0x8400)||(u16(p+g4+8)&15))return 0;
++ int eapol=m[12]==0x88&&m[13]==0x8e;
++ if(eapol){if(!eq(m+6,s->peer.ap,6)||!eq(m,s->peer.self,6)||len<18||((size_t)m[16]<<8|m[17])!=len-18)return 0;}
++ else if(!s->controlled_port||(unsigned)(m[12]<<8|m[13])<1536)return 0;
++ if(sec){
++  if(sec!=4||!g1||g1+16>bytes||!(fc&0x4000))return 0;struct nst_replay*r=(m[0]&1)?&s->gtk:&s->ptk;
++  if(!r->installed||key!=r->key_id||wlan!=((m[0]&1)?s->peer.group_wlan:s->peer.wlan))return 0;
++  unsigned lane=(fc&0x0080)?tid:16;uint64_t pn=pn48(p+g1);if(!pn||pn<=r->pn[lane])return 0;r->pn[lane]=pn;
++ }else if(!eapol||(fc&0x4000)||wlan!=s->peer.wlan)return 0;
++ e->kind=eapol?NST_EAPOL:NST_ETHERNET;e->body=m;e->bytes=len;e->wlan=(uint8_t)wlan;e->key_id=(uint8_t)key;return 0;
++}
++static int receive(struct nst*s,const struct ncd_io*o,void*c,unsigned k,nst_event_fn fn,void*ctx){
++ struct ncr_queue*q=&s->queue[k];uint32_t v;s->rx_current=k;s->phase=NST_IDLE;if(rr(s,o,c,q->ring.base+12,&v))return -1;if(v>=q->ring.count)return fail(s,20);if(v==q->next)return 0;
++ uint64_t d=q->ring.descriptors+16u*q->next,a=q->ring.buffers+4096u*q->next;s->phase=NST_RX_READ;if(sy(s,o,c,d,16,2)||mr(s,o,c,d,s->rx_descriptor,16))return -1;uint32_t ctl=u32(s->rx_descriptor+4);if(!(ctl&0x80000000))return 0;
++ s->rx_bytes=(ctl>>16)&0x3fff;unsigned last=!!(ctl&0x40000000),skip=q->segmented||!last||!s->rx_bytes||s->rx_bytes>NST_RX_BYTES;q->segmented=!last;s->deferred=(struct nst_event){0};
++ if(!skip){s->phase=NST_RX_FRAME;if(sy(s,o,c,a,s->rx_bytes,2)||mr(s,o,c,a,s->rx_frame,s->rx_bytes))return -1;if(decode(s))return fail(s,21);}
++ if(nwt_rx_desc(s->rx_descriptor,a,NST_RX_BYTES))return fail(s,22);s->phase=NST_RX_WRITE;if(mw(s,o,c,d,s->rx_descriptor,16)||sy(s,o,c,d,16,1))return -1;s->phase=NST_RX_PUBLISH;if(rw(s,o,c,q->ring.base+8,q->next))return -1;q->next=(q->next+1)%q->ring.count;if(k==1)s->init->transport.rx_index=q->next;q->rearmed++;s->phase=NST_IDLE;
++ if(s->deferred.kind&&emit(s,fn,ctx,&s->deferred))return -1;return 1;
++}
++static int peer_progress(struct nst*,nst_event_fn,void*);
++int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event_fn fn,void*ctx){
++ if(!source(s)||s->active||s->callback_active||!o||!o->bus||!o->now_us||!o->bus->owner||!o->bus->reg_read||!o->bus->reg_write||!o->bus->mem_read||!o->bus->mem_write||!o->bus->sync||!budget||budget>16)return -1;
++ s->active=1;s->entered=1;s->phase=NST_IDLE;if(before(s,o,c)||coherent(s,o,c)||transmit(s,o,c,fn,ctx))return -1;
++ static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
++ if(s->air_pending&&s->air_done&&s->dma_done){struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=s->air_status,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};s->air_pending=0;s->next_pid=s->wire_pid==127?1:s->wire_pid+1;if(emit(s,fn,ctx,&e))return -1;}
++ if(peer_progress(s,fn,ctx))return -1;s->phase=NST_IDLE;s->active=0;return 0;
++}
++/* Original legacy policy: bit4/5 are unsupported22/33Mbps, not OFDM6/9. */
++static int rate_index(unsigned v){static const uint8_t rates[14]={2,4,11,22,44,66,12,18,24,36,48,72,96,108};for(unsigned k=0;k<14;k++)if(rates[k]==v)return (k==4||k==5)?-1:(int)k;return -1;}
++static int rate_sets(const uint8_t*p,size_t n,uint16_t*all,uint16_t*basic){uint16_t a=0,b=0;for(size_t k=0;k<n;k++){int j=rate_index(p[k]&127);if(j<0||(a&(1u<<j)))return -1;a|=(uint16_t)(1u<<j);if(p[k]&128)b|=(uint16_t)(1u<<j);}if(!a||!b)return -1;*all=a;*basic=b;return 0;}
++static uint16_t lowest(uint16_t rates){static const uint16_t codes[14]={0,1,2,3,0xffff,0xffff,0x4b,0x4f,0x4a,0x4e,0x49,0x4d,0x48,0x4c};static const uint8_t order[12]={0,1,2,6,7,3,8,9,10,11,12,13};for(unsigned k=0;k<12;k++)if(rates&(1u<<order[k]))return codes[order[k]];return 0xffff;}
++static unsigned phy(const struct nst*s){return s->peer.band==2?8:((s->negotiated_rates&0x3fc0)?3:1);}
++int nst_legacy_rates(const uint8_t*p,size_t n,uint16_t*a,uint16_t*b,uint16_t*f){uint16_t x,y;if(!p||!n||n>12||!a||!b||!f||rate_sets(p,n,&x,&y))return -1;*a=x;*b=y;*f=lowest(y);return 0;}
++int nst_peer_begin(struct nst*s,uint64_t ticket,unsigned kind,const struct nst_profile*p,const uint8_t*response,size_t n){
++ if(!acceptable(s)||!ticket||kind<1||kind>3)return -1;if(busy(s))return 1;
++ if(kind==NST_PREPARE_PEER){
++  if(!p||!p->assoc.ssid||!p->assoc.ssid_len||p->assoc.ssid_len>32||!p->assoc.rates||!p->assoc.rates_len||p->assoc.rates_len>12||p->sta_version>1||!p->assoc.listen_interval||!p->beacon_interval||!eq(p->assoc.peer.self,s->peer.self,6)||!eq(p->assoc.peer.ap,s->peer.ap,6)||rate_sets(p->assoc.rates,p->assoc.rates_len,&s->negotiated_rates,&s->basic_rates))return -1;
++  s->profile=*p;cp(s->ssid,p->assoc.ssid,p->assoc.ssid_len);cp(s->rates,p->assoc.rates,p->assoc.rates_len);s->profile.assoc.ssid=s->ssid;s->profile.assoc.rates=s->rates;s->txd.fixed_rate=lowest(s->basic_rates);
++ }else if(kind==NST_CONFIGURE_PEER){
++  if(!response||n<30||n>512||u16(response)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
++  uint16_t aid=u16(response+28)&0x3fff;if(!aid||aid>2007)return -1;uint8_t rates[12];size_t count=0;unsigned seen1=0,seen50=0;
++  for(size_t off=30;off<n;){if(n-off<2||response[off+1]>n-off-2)return -1;unsigned id=response[off],bytes=response[off+1];off+=2;if(id==1||id==50){if(!bytes||(id==1&&(seen1++||bytes>8))||(id==50&&seen50++)||bytes>12-count)return -1;cp(rates+count,response+off,bytes);count+=bytes;}off+=bytes;}
++  uint16_t all=0,basic=0;if(!seen1||rate_sets(rates,count,&all,&basic)||basic&~s->negotiated_rates)return -1;
++  all&=s->negotiated_rates;if(!all||basic&~all)return -1;s->negotiated_rates=all;s->basic_rates=basic;s->aid=aid;s->txd.fixed_rate=lowest(basic);s->profile.assoc.capability&=(uint16_t)(u16(response+24)|0x11);
++ }else nst_close_port(s);
++ s->peer_ticket=ticket;s->peer_kind=kind;s->peer_step=0;return 0;
++}
++static int peer_progress(struct nst*s,nst_event_fn fn,void*ctx){
++ if(s->wire_busy||s->air_pending)return 0;
++ if(!s->peer_kind){
++  /* Power-management connect is source-deferred to a real postjoin beacon. */
++  if(s->pm_pending&&!s->pm_scheduled&&!s->pm_connected&&!s->cleanup_started&&!s->link_lost&&s->sta_active&&s->aid){uint8_t b[12]={0};b[0]=s->peer.bss;b[1]=(uint8_t)s->dtim_period;p16(b+2,s->aid);p16(b+4,s->profile.beacon_interval);int rc=command(s,UINT64_MAX,0x16,b,sizeof b,2);if(!rc){s->pm_pending=0;s->pm_scheduled=1;}return rc;}
++  return 0;
++ }
++ unsigned kind=s->peer_kind,step=s->peer_step;uint8_t payload[200];size_t used=0;uint8_t cid=0;
++ struct sw_rlm r={s->peer.bss,s->peer.band,s->peer.channel,s->profile.erp_protect,(uint8_t)!!(s->profile.assoc.capability&32),(uint8_t)!!(s->profile.assoc.capability&1024),1,1};
++ struct sw_bss b={.rlm=r,.ssid=s->ssid,.ssid_len=s->profile.assoc.ssid_len,.connected=(uint8_t)(kind==NST_CONFIGURE_PEER),.ap_sta=s->peer.sta,.bmc_wlan=s->peer.group_wlan,.nonht_phy=(uint8_t)(s->peer.band==2?3:(phy(s)==1?0:1)),.phy_set=(uint8_t)phy(s),.dbdc_band=4,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(b.ap,s->peer.ap,6);
++ struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=s->peer.group_wlan,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?3:1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
++ if(kind==NST_PREPARE_PEER&&step==0){wipe(payload,68);p32(payload,13);return command(s,s->peer_ticket,0x0a,payload,68,1);}
++ if(kind==NST_PREPARE_PEER)step--;
++ if(kind==NST_RETIRE_PEER){
++  if(step==0){payload[0]=0;payload[1]=s->peer.sta;payload[2]=s->peer.bss;payload[3]=0;used=4;cid=0x14;}
++  else if(step==1){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,30);cid=0x12;}
++  else if(step==2){wipe(payload,4);payload[0]=s->peer.bss;used=4;cid=0x17;}
++  else{s->peer_kind=0;s->sta_active=s->ptk_ready=0;wipe(&s->ptk,sizeof s->ptk);wipe(&s->gtk,sizeof s->gtk);struct nst_event e={.kind=NST_PEER_RETIRED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
++ }else{
++  if(step==0){if(sw_bss(payload,sizeof payload,&used,&b))return fail(s,31);cid=0x12;}
++  else if(step==1){if(sw_rlm(payload,sizeof payload,&used,&r))return fail(s,32);cid=0x19;}
++  else if(step==2){if(sw_sta(payload,sizeof payload,&used,&a))return fail(s,33);cid=0x13;}
++  else if(kind==NST_CONFIGURE_PEER&&!s->sta_active)return 0;
++  else if(kind==NST_CONFIGURE_PEER&&s->channel_held){struct sw_channel ch={s->peer.bss,s->channel_token,1,s->peer.band,s->peer.channel,4,0};if(sw_channel(payload,sizeof payload,&used,&ch))return fail(s,34);cid=0x1c;}
++  else{s->peer_kind=0;struct nst_event e={.kind=kind==NST_CONFIGURE_PEER?NST_PEER_CONFIGURED:NST_PEER_PREPARED,.ticket=s->peer_ticket};return emit(s,fn,ctx,&e);}
++ }
++ return command(s,s->peer_ticket,cid,payload,used,1);
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_station_transport.h
+@@ -0,0 +1,82 @@
++#ifndef NORD2_STATION_TRANSPORT_H
++#define NORD2_STATION_TRANSPORT_H
++#include <stddef.h>
++#include <stdint.h>
++#include "wifi_normal_backend.h"
++#include "wifi_station_wire.h"
++#define NST_MAX_ETHERNET 1514u
++#define NST_RX_BYTES 3840u
++#define NST_FRAME_BYTES 1600u
++/* Only the actual CAP worker may prepare/run this object. The native binder
++ * authenticates exact addresses/thread; these public structs alone grant no IO. */
++enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,
++ NST_STA_ACTIVE,NST_KEY_READY,NST_MANAGEMENT,NST_EAPOL,NST_ETHERNET,NST_PEER_PREPARED,NST_PEER_CONFIGURED,NST_PEER_RETIRED,NST_CHANNEL_RELEASED,NST_LINK_LOST,NST_FATAL};
++enum nst_phase {NST_IDLE,NST_TX_READ,NST_TX_WRITE,NST_TX_PUBLISH,NST_TX_WAIT,
++ NST_RX_READ,NST_RX_FRAME,NST_RX_WRITE,NST_RX_PUBLISH,NST_HALTED};
++struct nst_event {
++ unsigned kind,status;uint64_t generation,ticket;
++ uint8_t cid,sequence,pid,wlan,bss,sta,token,band,channel,key_id;
++ uint32_t interval_ms;const uint8_t *body;size_t bytes;
++};
++/* Callback consumes/copies borrowed bytes synchronously; never retain them or
++ * submit recursively. It is called only after the corresponding RX slot rearm. */
++typedef int (*nst_event_fn)(void *,const struct nst_event *);
++struct nst_peer {uint8_t self[6],ap[6],bss,own_mac,sta,wlan,group_wlan,band,channel;};
++enum nst_peer_kind {NST_PREPARE_PEER=1,NST_CONFIGURE_PEER,NST_RETIRE_PEER};
++struct nst_profile {struct sw_assoc assoc;uint16_t beacon_interval;uint8_t rcpi,sta_version,erp_protect;};
++struct nst_replay {unsigned installed;uint8_t key_id;uint64_t pn[17];};
++struct nst {
++ struct nwi_state *init;const struct nct_session *previous;const struct ncr_state *previous_rx;
++ unsigned cleanup_started;
++ unsigned prepared,entered,active,phase,halt,error,mutated,wire_busy,air_pending;
++ unsigned credit_capacity,credit_available,credit_reserved,credit_acquired,credit_released;
++ unsigned tx_next,base_completed,submitted,dma_completed,rx_current,next_pid;
++ unsigned wire_bytes,wire_cid,wire_sequence,wire_pid,wire_wlan,wire_type;
++ unsigned published,dma_done,air_done,air_status,callback_active;
++ uint64_t generation,ticket,last,deadline,operation_deadline;
++ struct nst_peer peer;struct sw_txd txd;
++ struct ncr_queue queue[NCR_QUEUES];struct nst_replay ptk,gtk;
++ unsigned controlled_port,sta_active,ptk_ready,ptk_command,ptk_submitted,gtk_submitted;
++ unsigned activation_pending,activation_sequence,peer_kind,peer_step,internal_wire;
++ uint64_t peer_ticket,grant_deadline;uint8_t channel_token,channel_held;
++ struct nst_profile profile;uint8_t ssid[32],rates[12];uint16_t aid,negotiated_rates,basic_rates;
++ unsigned link_lost;
++ unsigned pm_scheduled,pm_connected;
++ unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
++ uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
++ uint32_t rx_bytes;struct nst_event deferred;
++};
++/* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
++ * no guessed capability indices. peer indices must match retained scan profile. */
++int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
++ const struct ncr_state *,const struct ncs_cap *,const struct nst_peer *,
++ const struct sw_txd *,uint64_t generation,uint64_t now_us,uint64_t deadline_us);
++/* Copy complete CID payload or frame into owned storage.0 accepted,1busy,-1bad.
++ * CID ticket completion means DMA/source software submission, not firmware ACK.
++ * Frames wait separately for actual PID+WLAN EID0f result. */
++int nst_command(struct nst *,uint64_t ticket,uint8_t cid,const uint8_t *,size_t);
++int nst_management(struct nst *,uint64_t ticket,const uint8_t *,size_t);
++int nst_eapol(struct nst *,uint64_t ticket,const uint8_t *ethernet,size_t,unsigned protected_frame);
++int nst_legacy_rates(const uint8_t *,size_t,uint16_t*,uint16_t*,uint16_t*);
++int nst_peer_begin(struct nst *,uint64_t ticket,unsigned kind,const struct nst_profile *,const uint8_t *response,size_t);
++int nst_data(struct nst *,uint64_t ticket,const uint8_t *ethernet,size_t);
++/* Actual bounded IO pass: one TX progression and <=budget RX frames, budget1..16.
++ * Uses real ncd_io with native exact-worker/lease checks, not nct_checked_io. */
++int nst_step(struct nst *,const struct ncd_io *,void *,unsigned budget,
++ nst_event_fn,void *);
++/* Precise slots for the retained owner's normal-stage allowlist extension. */
++int nst_lease_window(const struct nst *,const struct nwi_state *);
++int nst_memory_range(const struct nst *,uint64_t,uint32_t,unsigned write);
++int nst_register_write(const struct nst *,uint32_t,uint32_t);
++/* Install replay state only once after corresponding actual CID07 submission.
++ * GTK RSC6 is little endian (EAPOL RSC bytes0..5); bytes6..7 must be0. */
++int nst_replay_install(struct nst *,unsigned pairwise,uint8_t key_id,const uint8_t rsc[8]);
++/* Authorize only after actual STA+PTK ready, GTK replay installed, and no pending
++ * key command. No external boolean can supply STA/PTK readiness. */
++int nst_authorize(struct nst *);
++/* Once per attempt, install the owner's fresh <=30s teardown deadline. Existing
++ * published-operation and RF grant deadlines remain binding. No IO or retirement
++ * claim; may be called under the serialized event callback. */
++int nst_cleanup_begin(struct nst *,uint64_t now_us,uint64_t deadline_us);
++void nst_close_port(struct nst *);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_station_transaction.c
+@@ -0,0 +1,140 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* New private transaction model. No kernel IO, waits, publication or secrets log. */
++#include "wifi_station_transaction.h"
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static void erase(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
++static unsigned le16(const uint8_t*p){return p[0]|(unsigned)p[1]<<8;}
++int stc_scan_acquire(struct stc_arbiter*a,uint64_t g){if(!a||!g||a->mode)return -1;a->mode=1;a->generation=g;return 0;}
++int stc_scan_release(struct stc_arbiter*a,uint64_t g){if(!a||a->mode!=1||a->generation!=g)return -1;a->mode=0;a->generation=0;return 0;}
++static int emit(struct stc*s,unsigned phase,unsigned kind){
++ erase(&s->action,sizeof s->action);s->phase=phase;
++ if(s->serial==UINT64_MAX){s->phase=STC_HALTED;nwp_cancel(&s->wpa);return -1;}
++ s->action.generation=s->generation;s->action.ticket=++s->serial;s->action.kind=kind;return 1;
++}
++static int halt(struct stc*s){if(s->outcome==STC_AUTHORIZED)s->outcome=STC_FAILED;erase(s->queued_eapol,sizeof s->queued_eapol);nwp_cancel(&s->wpa);erase(&s->action,sizeof s->action);erase(s->response,sizeof s->response);s->phase=STC_HALTED;return -1;}
++static int release_done(struct stc*s){
++ if(!s->arbiter||s->arbiter->mode!=2||s->arbiter->generation!=s->generation)return halt(s);
++ s->arbiter->mode=0;s->arbiter->generation=0;s->authenticated=s->associated=0;s->phase=STC_DONE;erase(&s->action,sizeof s->action);erase(&s->peer,sizeof s->peer);return 1;
++}
++static int command_key(struct stc*s,int group,int remove){
++ struct sw_key k={0};size_t used=0;k.bss=s->channel.bss;k.wlan=group?s->group_wlan:s->sta_wlan;k.pairwise=!group;k.key_id=group?s->gtk_index:0;memcpy(k.ap,s->peer.ap,6);
++ if(!remove){k.key=group?s->wpa.gtk:s->wpa.tk;k.key_len=16;if(group)s->gtk_attempted=1;else s->ptk_attempted=1;}
++ if(emit(s,remove?(group?STC_REMOVE_GTK:STC_REMOVE_PTK):(group?STC_GTK:STC_PTK),remove?(group?STC_DELETE_GTK:STC_DELETE_PTK):(group?STC_CID_GTK:STC_CID_PTK))<0)return -1;
++ int r=remove?sw_key_remove(s->action.payload,sizeof s->action.payload,&used,&k):sw_key_add(s->action.payload,sizeof s->action.payload,&used,&k);
++ if(r)return halt(s);s->action.bytes=(unsigned)used;return 1;
++}
++static int abort_channel(struct stc*s){s->channel_held=0;struct sw_channel c=s->channel;c.abort=1;size_t used=0;if(emit(s,STC_RELEASE,STC_ABORT_CHANNEL)<0)return -1;if(sw_channel(s->action.payload,sizeof s->action.payload,&used,&c))return halt(s);s->action.bytes=(unsigned)used;return 1;}
++static int cleanup_next(struct stc*s){
++ if(s->cleanup_abort_first&&s->channel_held){s->cleanup_abort_first=0;return abort_channel(s);}
++ if(s->authenticated){s->authenticated=0;if(emit(s,STC_DEAUTH,STC_TX_DEAUTH)<0)return -1;
++  uint8_t*p=s->action.payload;p[0]=0xc0;memcpy(p+4,s->peer.ap,6);memcpy(p+10,s->peer.self,6);memcpy(p+16,s->peer.ap,6);p[24]=3;s->action.bytes=26;return 1;
++ }
++ if(s->ptk_attempted){s->ptk_attempted=0;return command_key(s,0,1);}
++ if(s->gtk_attempted){s->gtk_attempted=0;return command_key(s,1,1);}
++ if(s->peer_prepared){s->peer_prepared=0;return emit(s,STC_RETIRE,STC_RETIRE_PEER);}
++ if(s->channel_held)return abort_channel(s);
++ return release_done(s);
++}
++static int stop(struct stc*s,unsigned outcome){
++ if(s->phase>=STC_DEAUTH)return 0;
++ s->outcome=outcome;if(s->last_ms>UINT64_MAX-s->cleanup_timeout_ms)return halt(s);s->cleanup_deadline=s->last_ms+s->cleanup_timeout_ms;nwp_cancel(&s->wpa);erase(s->ssid,sizeof s->ssid);erase(s->rates,sizeof s->rates);erase(s->response,sizeof s->response);erase(s->queued_eapol,sizeof s->queued_eapol);s->eapol_pending=s->eapol_bytes=0;s->response_bytes=s->response_seen=0;
++ if(s->phase<STC_EAPOL){s->cleanup_abort_first=s->channel_held;if(!s->associated)s->authenticated=0;}
++
++ erase(&s->action,sizeof s->action);return cleanup_next(s);
++}
++int stc_tick(struct stc*s,uint64_t now){
++ if(!s||!s->attempted||s->phase==STC_NEW||s->phase==STC_DONE||s->phase==STC_HALTED)return 0;
++ if(!s->arbiter||s->arbiter->mode!=2||s->arbiter->generation!=s->generation)return halt(s);
++ if(now<s->last_ms)return halt(s);s->last_ms=now;
++ if(s->phase>=STC_DEAUTH){if(now>=s->cleanup_deadline)return halt(s);return 0;}
++ if(s->outcome!=STC_AUTHORIZED&&now>=s->deadline)return stop(s,STC_TIMEOUT);
++ return 0;
++}
++static int current(struct stc*s,uint64_t gen,uint64_t now){
++ if(!s||gen!=s->generation||!s->attempted||s->phase==STC_DONE||s->phase==STC_HALTED)return 0;
++ unsigned before=s->phase;if(stc_tick(s,now)<0||s->phase!=before)return 0;return 1;
++}
++int stc_begin(struct stc*s,struct stc_arbiter*a,const struct stc_config*c,uint64_t now){
++ if(!s||!a||!c||s->attempted||a->mode||a->connection_used||!c->generation||c->deadline_ms<=now||!c->cleanup_timeout_ms||c->sta_wlan==255||c->group_wlan==255||c->sta_wlan==c->group_wlan)return -1;
++ uint8_t preflight[640];size_t used;
++ if(sw_auth(preflight,sizeof preflight,&used,&c->assoc.peer)||sw_assoc(preflight,sizeof preflight,&used,&c->assoc)||sw_channel(preflight,sizeof preflight,&used,&c->channel)||c->channel.abort)return -1;
++ memset(s,0,sizeof *s);s->attempted=1;s->generation=c->generation;s->last_ms=now;s->deadline=c->deadline_ms;s->cleanup_timeout_ms=c->cleanup_timeout_ms;
++ if(nwp_begin_ap(&s->wpa,c->generation,c->pmk,c->assoc.peer.self,c->assoc.peer.ap,c->station_rsn,c->ap_rsn,c->ap_rsn_bytes?c->ap_rsn_bytes:22,c->rng,c->rng_context)){erase(s,sizeof *s);s->attempted=1;return -1;}
++ s->arbiter=a;a->mode=2;a->connection_used=1;a->generation=c->generation;s->peer=c->assoc.peer;s->channel=c->channel;s->sta_wlan=c->sta_wlan;s->group_wlan=c->group_wlan;s->assoc=c->assoc;
++ memcpy(s->ssid,c->assoc.ssid,c->assoc.ssid_len);memcpy(s->rates,c->assoc.rates,c->assoc.rates_len);s->assoc.ssid=s->ssid;s->assoc.rates=s->rates;s->peer_prepared=1;return emit(s,STC_PREPARE,STC_PREPARE_PEER);
++}
++const struct stc_action*stc_next(const struct stc*s){return s&&s->action.kind?&s->action:0;}
++static int send_assoc(struct stc*s){size_t n=0;s->response_seen=0;if(emit(s,STC_ASSOC_TX,STC_TX_ASSOC)<0)return -1;if(sw_assoc(s->action.payload,sizeof s->action.payload,&n,&s->assoc))return stop(s,STC_FAILED);s->action.bytes=(unsigned)n;return 1;}
++static int response_done(struct stc*s){
++ if(!s->response_seen)return 0;
++ if(s->phase==STC_AUTH_RX){s->authenticated=1;return send_assoc(s);}
++ if(s->phase==STC_ASSOC_RX){s->associated=1;if(emit(s,STC_CONFIGURE,STC_CONFIGURE_PEER)<0)return -1;memcpy(s->action.payload,s->response,s->response_bytes);s->action.bytes=s->response_bytes;s->response_seen=0;erase(s->response,sizeof s->response);return 1;}
++ return 0;
++}
++static int consume_eapol(struct stc*s,uint64_t now){
++ if(!s->eapol_pending)return 1;
++ if(s->phase!=STC_EAPOL&&s->phase!=STC_PTK_READY&&s->phase!=STC_CONNECTED)return 1;
++ uint8_t p[640];unsigned n=s->eapol_bytes;memcpy(p,s->queued_eapol,n);erase(s->queued_eapol,sizeof s->queued_eapol);s->eapol_pending=s->eapol_bytes=0;
++ int r=stc_eapol(s,s->generation,p,n,now);erase(p,sizeof p);return r;
++}
++int stc_receipt(struct stc*s,uint64_t gen,uint64_t ticket,int success,uint64_t now){
++ if(!current(s,gen,now)||!ticket||ticket!=s->action.ticket||!s->action.kind)return 0;
++ unsigned phase=s->phase;erase(&s->action,sizeof s->action);
++ if(success!=1){if(phase>=STC_DEAUTH)return halt(s);return stop(s,STC_FAILED);}
++ size_t n=0;
++ switch(phase){
++ case STC_PREPARE:s->channel_held=1;if(emit(s,STC_CHANNEL,STC_CID_CHANNEL)<0)return -1;if(sw_channel(s->action.payload,sizeof s->action.payload,&n,&s->channel))return stop(s,STC_FAILED);s->action.bytes=(unsigned)n;return 1;
++ case STC_CHANNEL:s->phase=STC_GRANT;if(s->grant_seen)return stc_grant(s,gen,s->channel.bss,s->channel.token,s->channel.band,s->channel.channel,1,now);return 1;
++ case STC_AUTH_TX:s->phase=STC_AUTH_RX;return response_done(s);
++ case STC_ASSOC_TX:s->phase=STC_ASSOC_RX;return response_done(s);
++ case STC_CONFIGURE:/* Actual peer/BSS/RLM and station-activation receipt, no invented grant release. */s->phase=STC_EAPOL;return consume_eapol(s,now);
++ case STC_EAPOL_TX:{int r=nwp_tx_done(&s->wpa,gen,s->wpa_tx_ticket,1);s->wpa_tx_ticket=0;if(r==NWP_INSTALL){s->gtk_index=s->wpa.gtk_index;return command_key(s,0,0);}if(r<0)return stop(s,STC_FAILED);s->phase=s->resume_phase;s->resume_phase=0;if(s->phase==STC_PTK_READY&&s->key_event_seen){if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);}return consume_eapol(s,now);}
++ case STC_PTK:s->phase=STC_PTK_READY;if(s->key_event_seen){if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);}return consume_eapol(s,now); /* submission, not key-ready */
++ case STC_GTK:/* Source no-response host completion/replay initialization, NOT firmware ACK. */if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,2,1)<0)return stop(s,STC_FAILED);return emit(s,STC_DATA,STC_INSTALL_DATA_PATH);
++ case STC_DATA:if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,4,1)!=NWP_AUTH)return stop(s,STC_FAILED);s->phase=STC_CONNECTED;s->outcome=STC_AUTHORIZED;return consume_eapol(s,now);
++ case STC_DEAUTH:case STC_REMOVE_PTK:case STC_REMOVE_GTK:case STC_RETIRE:case STC_RELEASE:return cleanup_next(s);
++ default:return halt(s);
++ }
++}
++int stc_grant(struct stc*s,uint64_t gen,uint8_t bss,uint8_t token,uint8_t band,uint8_t ch,int granted,uint64_t now){
++ if(!current(s,gen,now)||(s->phase!=STC_GRANT&&s->phase!=STC_CHANNEL)||bss!=s->channel.bss||token!=s->channel.token||band!=s->channel.band||ch!=s->channel.channel)return 0;
++ if(granted!=1)return stop(s,STC_FAILED);s->grant_seen=1;if(s->phase==STC_CHANNEL)return 1;size_t n=0;if(emit(s,STC_AUTH_TX,STC_TX_AUTH)<0)return -1;if(sw_auth(s->action.payload,sizeof s->action.payload,&n,&s->peer))return stop(s,STC_FAILED);s->action.bytes=(unsigned)n;return 1;
++}
++int stc_management(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
++ if(!current(s,gen,now)||!p||n<24)return 0;
++ unsigned fc=le16(p);if((fc&0x4703)||memcmp(p+4,s->peer.self,6)||memcmp(p+10,s->peer.ap,6)||memcmp(p+16,s->peer.ap,6))return 0;
++ if((fc&0xfc)==0xc0||(fc&0xfc)==0xa0){if(n<26)return 0;s->authenticated=0;return stop(s,STC_DISCONNECTED);}
++ int auth=s->phase==STC_AUTH_TX||s->phase==STC_AUTH_RX,assoc=s->phase==STC_ASSOC_TX||s->phase==STC_ASSOC_RX;
++ if((!auth&&!assoc)||s->response_seen)return 0;
++ if(n<30||n>sizeof s->response||(fc&0xfc)!=(auth?0xb0u:0x10u))return 0;
++ if(auth){if(n!=30||le16(p+24)!=0||le16(p+26)!=2)return 0;if(le16(p+28))return stop(s,STC_FAILED);}
++ else{if(le16(p+26))return stop(s,STC_FAILED);unsigned aid=le16(p+28)&0x3fff;if(!aid||aid>2007)return stop(s,STC_FAILED);for(size_t i=30;i<n;){if(n-i<2||p[i+1]>n-i-2)return stop(s,STC_FAILED);i+=2+p[i+1];}s->aid=(uint16_t)aid;}
++ memcpy(s->response,p,n);s->response_bytes=(unsigned)n;s->response_seen=1;return response_done(s);
++}
++int stc_eapol(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
++ if(!current(s,gen,now)||s->phase<STC_CONFIGURE||s->phase>=STC_DEAUTH)return 0;
++ if(!p||!n||n>640)return stop(s,STC_FAILED);
++ if(s->phase!=STC_EAPOL&&s->phase!=STC_PTK_READY&&s->phase!=STC_CONNECTED){
++  if(s->eapol_pending)return s->eapol_bytes==n&&!memcmp(s->queued_eapol,p,n)?0:2;
++  memcpy(s->queued_eapol,p,n);s->eapol_bytes=(unsigned)n;s->eapol_pending=1;return 1;
++ }
++ unsigned resume=s->phase;struct nwp_result r;int result=nwp_receive(&s->wpa,p,n,&r);
++ if(result<0){erase(&r,sizeof r);return stop(s,STC_FAILED);}if(result!=NWP_TX){erase(&r,sizeof r);return 0;}
++ if(emit(s,STC_EAPOL_TX,STC_TX_EAPOL)<0){erase(&r,sizeof r);return -1;}s->resume_phase=resume;s->wpa_tx_ticket=r.ticket;memcpy(s->action.payload,r.frame,r.bytes);s->action.bytes=r.bytes;erase(&r,sizeof r);return 1;
++}
++int stc_key_event(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
++ if(!current(s,gen,now)||(s->phase!=STC_PTK_READY&&s->phase!=STC_PTK&&!(s->phase==STC_EAPOL_TX&&s->resume_phase==STC_PTK_READY))||!p||n!=8||p[0]!=s->channel.bss||memcmp(p+2,s->peer.ap,6))return 0;
++ s->key_event_seen=1;if(s->phase!=STC_PTK_READY)return 1;
++ if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);
++}
++int stc_link_lost(struct stc*s,uint64_t gen,uint64_t now){if(!current(s,gen,now))return 0;s->authenticated=0;return stop(s,STC_DISCONNECTED);}
++int stc_cancel(struct stc*s,uint64_t gen,uint64_t now){if(!current(s,gen,now))return 0;return stop(s,STC_CANCELED);}
++
++int stc_channel_released(struct stc*s,uint64_t gen,uint8_t token,uint64_t now){if(!current(s,gen,now)||token!=s->channel.token||s->phase>=STC_DEAUTH)return 0;s->channel_held=0;return 1;}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_station_transaction.h
+@@ -0,0 +1,53 @@
++#ifndef STC_TRANSACTION_H
++#define STC_TRANSACTION_H
++#include <stdint.h>
++#include <stddef.h>
++#include "wifi_station_wire.h"
++#include "wifi_wpa2.h"
++/* Pure serialized model, NOT a native lease/adapter. Zero-initialize once.
++ * Caller-owned scan arbiter must be shared with the actual scan owner. */
++enum stc_phase {STC_NEW,STC_PREPARE,STC_CHANNEL,STC_GRANT,STC_AUTH_TX,STC_AUTH_RX,STC_ASSOC_TX,STC_ASSOC_RX,STC_CONFIGURE,STC_EAPOL,STC_EAPOL_TX,STC_PTK,STC_PTK_READY,STC_GTK,STC_DATA,STC_CONNECTED,STC_DEAUTH,STC_REMOVE_PTK,STC_REMOVE_GTK,STC_RETIRE,STC_RELEASE,STC_DONE,STC_HALTED};
++enum stc_kind {STC_NONE,STC_PREPARE_PEER,STC_CID_CHANNEL,STC_TX_AUTH,STC_TX_ASSOC,STC_CONFIGURE_PEER,STC_TX_EAPOL,STC_CID_PTK,STC_CID_GTK,STC_INSTALL_DATA_PATH,STC_TX_DEAUTH,STC_DELETE_PTK,STC_DELETE_GTK,STC_RETIRE_PEER,STC_ABORT_CHANNEL};
++enum stc_outcome {STC_PENDING,STC_AUTHORIZED,STC_FAILED,STC_CANCELED,STC_TIMEOUT,STC_DISCONNECTED};
++struct stc_arbiter {unsigned mode,connection_used;uint64_t generation;}; /* 0idle,1scan,2connection */
++int stc_scan_acquire(struct stc_arbiter*,uint64_t);
++int stc_scan_release(struct stc_arbiter*,uint64_t);
++struct stc_config {
++ uint64_t generation,deadline_ms;uint32_t cleanup_timeout_ms;
++ struct sw_assoc assoc;struct sw_channel channel;
++ uint8_t sta_wlan,group_wlan; /* source-owned distinct WTBL allocations */
++ const uint8_t *pmk,*station_rsn,*ap_rsn; /*32/22/full AP IE */
++ size_t ap_rsn_bytes; /*0 retains legacy22; otherwise exact captured IE extent */
++ nwp_rng rng;void*rng_context;
++};
++struct stc_action {uint64_t generation,ticket;unsigned kind,bytes;uint8_t payload[640];};
++struct stc {
++ unsigned attempted,phase,outcome,authenticated,associated,channel_held,peer_prepared,ptk_attempted,gtk_attempted;
++ unsigned grant_seen,key_event_seen,response_seen,response_bytes;uint16_t aid;uint8_t response[512];
++ unsigned cleanup_abort_first,resume_phase,eapol_pending,eapol_bytes;uint8_t queued_eapol[640];
++ uint64_t generation,serial,last_ms,deadline,cleanup_deadline,wpa_tx_ticket;uint32_t cleanup_timeout_ms;
++ struct stc_arbiter *arbiter;struct sw_peer peer;struct sw_channel channel;
++ uint8_t sta_wlan,group_wlan,gtk_index,ssid[32],rates[12];
++ struct sw_assoc assoc;struct nwp wpa;struct stc_action action;
++};
++/* Adapter must COPY actions into its own DMA lifetime storage; never DMA this
++ * model's memory. Cancel wipes secrets immediately and asks bounded cleanup.
++ * command receipt success means actual source submission/software completion;
++ * TX_* receipt success means EID0f PID+WLAN correlated actual frame status.
++ * RETIRE means software deletion/queue cleanup, NOT a proven firmware barrier.
++ * PREPARE/CONFIGURE/RETIRE/DATA receipts are explicit future-adapter contracts,
++ * not evidence that these operations exist in the current installed runtime. */
++int stc_begin(struct stc*,struct stc_arbiter*,const struct stc_config*,uint64_t now_ms);
++const struct stc_action*stc_next(const struct stc*);
++int stc_receipt(struct stc*,uint64_t generation,uint64_t ticket,int success,uint64_t now_ms);
++int stc_grant(struct stc*,uint64_t generation,uint8_t bss,uint8_t token,uint8_t band,uint8_t channel,int granted,uint64_t now_ms);
++int stc_management(struct stc*,uint64_t generation,const uint8_t*,size_t,uint64_t now_ms);
++int stc_eapol(struct stc*,uint64_t generation,const uint8_t*,size_t,uint64_t now_ms);
++/* Full validated EID24 payload; body[1] opaque. No GTK ACK path exists. */
++int stc_key_event(struct stc*,uint64_t generation,const uint8_t*,size_t,uint64_t now_ms);
++/* Native owner records its actual source channel-release submission; no FW ACK. */
++int stc_channel_released(struct stc*,uint64_t generation,uint8_t token,uint64_t now_ms);
++int stc_link_lost(struct stc*,uint64_t generation,uint64_t now_ms);
++int stc_cancel(struct stc*,uint64_t generation,uint64_t now_ms);
++int stc_tick(struct stc*,uint64_t now_ms);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_crypto.c
+@@ -0,0 +1,70 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* New bounded RFC2104/8018/3394 and WPA PRF glue. No Redwood arithmetic copied.
++ * BearSSL dependencies retain their own Thomas Pornin MIT notices. */
++#include "wifi_wpa_crypto.h"
++#if defined(KERNEL) || defined(_KERNEL)
++/* Canonical placement is xnu/bsd/dev; reuse the already staged MIT library. */
++#include "../../libkern/crypto/sweet_bearssl/inc/bearssl_hash.h"
++#include "../../libkern/crypto/sweet_bearssl/inc/bearssl_block.h"
++#else
++#include "bearssl_hash.h"
++#include "bearssl_block.h"
++#endif
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static void clear(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
++int nwpc_hmac(const uint8_t*k,size_t kn,const uint8_t*const*p,const size_t*n,size_t count,uint8_t out[20]){
++ if(!out)return -1;
++ if(!k||kn>64||!p||!n||count>4){clear(out,20);return -1;}
++ for(size_t i=0;i<count;i++)if(n[i]>640||(!p[i]&&n[i])){clear(out,20);return -1;}
++ uint8_t pad[64],digest[20];br_sha1_context c;
++ for(unsigned i=0;i<64;i++)pad[i]=(i<kn?k[i]:0)^0x36;
++ br_sha1_init(&c);br_sha1_update(&c,pad,64);
++ for(size_t i=0;i<count;i++)if(n[i])br_sha1_update(&c,p[i],n[i]);
++ br_sha1_out(&c,digest);
++ for(unsigned i=0;i<64;i++)pad[i]^=0x36^0x5c;
++ br_sha1_init(&c);br_sha1_update(&c,pad,64);br_sha1_update(&c,digest,20);br_sha1_out(&c,out);
++ clear(&c,sizeof c);clear(pad,64);clear(digest,20);return 0;
++}
++int nwpc_pmk(const uint8_t*p,size_t pn,const uint8_t*s,size_t sn,uint8_t out[32]){
++ if(!out)return -1;
++ if(!p||pn<8||pn>63||!s||!sn||sn>32){clear(out,32);return -1;}
++ uint8_t u[20],x[20];
++ for(unsigned block=1;block<=2;block++){
++  uint8_t counter[4]={0,0,0,(uint8_t)block};const uint8_t*parts[2]={s,counter};size_t ns[2]={sn,4};
++  (void)nwpc_hmac(p,pn,parts,ns,2,u);memcpy(x,u,20);
++  for(unsigned round=1;round<4096;round++){const uint8_t*q[1]={u};size_t size[1]={20};(void)nwpc_hmac(p,pn,q,size,1,u);for(unsigned i=0;i<20;i++)x[i]^=u[i];}
++  memcpy(out+(block-1)*20,x,block==1?20:12);
++ }
++ clear(u,20);clear(x,20);return 0;
++}
++int nwpc_ptk(const uint8_t key[32],const uint8_t context[76],uint8_t out[48]){
++ if(!out)return -1;
++ if(!key||!context){clear(out,48);return -1;}
++ static const uint8_t label[]="Pairwise key expansion";uint8_t d[20],counter;
++ for(counter=0;counter<3;counter++){
++  const uint8_t*p[3]={label,context,&counter};size_t ns[3]={sizeof label,76,1};
++  (void)nwpc_hmac(key,32,p,ns,3,d);memcpy(out+20*counter,d,counter==2?8:20);
++ }
++ clear(d,20);return 0;
++}
++int nwpc_unwrap(const uint8_t key[16],const uint8_t*in,size_t n,uint8_t*out,size_t cap,size_t*used){
++ if(used)*used=0;
++ if(!key||!in||!out||!used||n<24||n>640||(n&7)||cap<n-8)return -1;
++ uint8_t plain[632],a[8],block[16],iv[16];br_aes_ct_cbcdec_keys ctx;
++ br_aes_ct_cbcdec_init(&ctx,key,16);memcpy(a,in,8);memcpy(plain,in+8,n-8);size_t blocks=n/8-1;
++ for(int j=5;j>=0;j--)for(size_t i=blocks;i;i--){
++  memcpy(block,a,8);uint64_t t=blocks*(unsigned)j+i;for(unsigned k=0;k<8;k++)block[7-k]^=(uint8_t)(t>>(k*8));
++  memcpy(block+8,plain+8*(i-1),8);memset(iv,0,16);br_aes_ct_cbcdec_run(&ctx,iv,block,16);
++  memcpy(a,block,8);memcpy(plain+8*(i-1),block+8,8);
++ }
++ unsigned bad=0;for(unsigned i=0;i<8;i++)bad|=a[i]^0xa6;
++ if(!bad){memcpy(out,plain,n-8);*used=n-8;}
++ clear(&ctx,sizeof ctx);clear(plain,sizeof plain);clear(a,8);clear(block,16);clear(iv,16);return bad?-1:0;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_crypto.h
+@@ -0,0 +1,11 @@
++#ifndef NWP_CRYPTO_PROVIDER_H
++#define NWP_CRYPTO_PROVIDER_H
++#include <stddef.h>
++#include <stdint.h>
++/* Original project glue over existing MIT-licensed BearSSL primitives.
++ * Separate nonaliasing bounded input/output, exclusive caller ownership. */
++int nwpc_hmac(const uint8_t*,size_t,const uint8_t*const*,const size_t*,size_t,uint8_t out[20]);
++int nwpc_pmk(const uint8_t*,size_t,const uint8_t*,size_t,uint8_t out[32]);
++int nwpc_ptk(const uint8_t pmk[32],const uint8_t sorted_context[76],uint8_t out[48]);
++int nwpc_unwrap(const uint8_t kek[16],const uint8_t*,size_t,uint8_t*,size_t,size_t*);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wpa2.c
+@@ -0,0 +1,161 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Private provider replacement. State machine unchanged from candidate135660fe;
++ * all original Redwood arithmetic removed. Existing BearSSL-backed provider
++ * supplies SHA1/HMAC/PBKDF2/PRF/AES-CT unwrap, with exact MIT provenance. */
++#include "wifi_wpa2.h"
++#include "wifi_wpa_crypto.h"
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static void wipe(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
++static void raw_pmk(const uint8_t*p,unsigned pn,const uint8_t*s,unsigned sn,uint8_t out[32]){(void)nwpc_pmk(p,pn,s,sn,out);}
++static void hmac_sha1(const uint8_t*k,unsigned kn,const uint8_t*const*p,const unsigned*n,unsigned count,uint8_t out[20]){
++ size_t sizes[4];if(count>4){wipe(out,20);return;}for(unsigned i=0;i<count;i++)sizes[i]=n[i];(void)nwpc_hmac(k,kn,p,sizes,count,out);
++}
++static void prf(const uint8_t*k,unsigned kn,const char*label,const uint8_t*p,unsigned n,uint8_t*out,unsigned on){
++ if(kn!=32||n!=76||on!=48||strcmp(label,"Pairwise key expansion")){wipe(out,on);return;}(void)nwpc_ptk(k,p,out);
++}
++static int aes_unwrap(const uint8_t*k,const uint8_t*p,unsigned n,uint8_t*out){size_t used=0;return nwpc_unwrap(k,p,n,out,NWP_FRAME,&used);}
++/* ---- strict first WPA2-PSK/CCMP transaction, no rekey/roam/PMF ---- */
++static unsigned be16(const uint8_t*p){return (unsigned)p[0]<<8|p[1];}
++static void put16(uint8_t*p,unsigned v){p[0]=(uint8_t)(v>>8);p[1]=(uint8_t)v;}
++static int equal(const uint8_t*a,const uint8_t*b,size_t n){unsigned d=0;for(size_t i=0;i<n;i++)d|=a[i]^b[i];return !d;}
++static int nonzero(const uint8_t*a,size_t n){unsigned d=0;for(size_t i=0;i<n;i++)d|=a[i];return !!d;}
++static int rsn_valid(const uint8_t*p){
++ static const uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
++ return equal(p,rsn,sizeof rsn); /* exactly one CCMP pairwise/group, PSK; no PMF */
++}
++/* Bounded WPA2 selection from a full AP RSN IE. This driver selects PSK/CCMP,
++ * never SAE or PMF. MFPC is an AP capability, MFPR requires unsupported PMF. */
++static unsigned le16(const uint8_t*p){return p[0]|(unsigned)p[1]<<8;}
++static int suite(const uint8_t*p,unsigned type){return p[0]==0&&p[1]==15&&p[2]==172&&p[3]==type;}
++int nwp_ap_rsn(const uint8_t*p,size_t n){
++ if(!p||n<20||n>257||p[0]!=48||p[1]+2u!=n||le16(p+2)!=1||!suite(p+4,4))return -1;
++ size_t at=8;unsigned count=le16(p+at),ccmp=0,psk=0;at+=2;
++ if(!count||count>(n-at)/4)return -1;
++ for(unsigned i=0;i<count;i++,at+=4)ccmp|=suite(p+at,4);
++ if(n-at<2)return -1;count=le16(p+at);at+=2;
++ if(!count||count>(n-at)/4)return -1;
++ for(unsigned i=0;i<count;i++,at+=4)psk|=suite(p+at,2);
++ if(!ccmp||!psk)return -1;
++ if(at==n)return 0;
++ if(n-at<2)return -1;unsigned caps=le16(p+at);at+=2;if(caps&(64u|2u|8192u))return -1;
++ if(at==n)return 0;
++ if(n-at<2)return -1;count=le16(p+at);at+=2;
++ if(count>(n-at)/16)return -1;at+=(size_t)count*16;
++ /* Optional group-management cipher is metadata only for non-PMF selection. */
++ if(n-at==4){if(!(caps&128u)||p[at]||p[at+1]!=15||p[at+2]!=172)return -1;at+=4;}
++ return at==n?0:-1;
++}
++void nwp_cancel(struct nwp*w){if(w)wipe(w,sizeof(*w));}
++static int fail(struct nwp*w,struct nwp_result*r){nwp_cancel(w);if(r)wipe(r,sizeof(*r));return NWP_FAIL;}
++int nwp_pmk(const uint8_t*p,size_t pn,const uint8_t*s,size_t sn,uint8_t out[32]){
++ if(!out)return -1;
++ if(!p||!s||pn<8||pn>63||sn<1||sn>32){wipe(out,32);return -1;}
++ raw_pmk(p,(unsigned)pn,s,(unsigned)sn,out);return 0;
++}
++int nwp_begin_ap(struct nwp*w,uint64_t gen,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t *ap,size_t ap_bytes,nwp_rng rng,void*ctx){
++ if(!w)return -1;
++ nwp_cancel(w);
++ if(!gen||!pmk||!own||!peer||!rsn||!ap||!rng||!rsn_valid(rsn)||nwp_ap_rsn(ap,ap_bytes)||
++    !nonzero(own,6)||!nonzero(peer,6)||(own[0]&1)||(peer[0]&1)||equal(own,peer,6))return -1;
++ w->generation=gen;memcpy(w->pmk,pmk,32);memcpy(w->own,own,6);memcpy(w->peer,peer,6);memcpy(w->rsn,rsn,22);memcpy(w->ap_rsn,ap,ap_bytes);w->ap_rsn_bytes=(unsigned)ap_bytes;
++ if(rng(ctx,w->snonce,32)||!nonzero(w->snonce,32)){nwp_cancel(w);return -1;}
++ w->state=NWP_M1;return 0;
++}
++int nwp_begin(struct nwp*w,uint64_t g,const uint8_t p[32],const uint8_t o[6],const uint8_t a[6],const uint8_t r[22],const uint8_t ar[22],nwp_rng rng,void*c){return nwp_begin_ap(w,g,p,o,a,r,ar,22,rng,c);}
++static void derive_keys(struct nwp*w){
++ uint8_t data[76],keys[48];int m=memcmp(w->own,w->peer,6)<0,n=memcmp(w->snonce,w->anonce,32)<0;
++ memcpy(data,m?w->own:w->peer,6);memcpy(data+6,m?w->peer:w->own,6);
++ memcpy(data+12,n?w->snonce:w->anonce,32);memcpy(data+44,n?w->anonce:w->snonce,32);
++ prf(w->pmk,32,"Pairwise key expansion",data,76,keys,48);
++ memcpy(w->kck,keys,16);memcpy(w->kek,keys+16,16);memcpy(w->tk,keys+32,16);wipe(keys,48);wipe(data,76);
++}
++static void mic(const struct nwp*w,const uint8_t*p,unsigned n,uint8_t*out){
++ const uint8_t z[16]={0},*pieces[3]={p,z,p+97};unsigned sizes[3]={81,16,n-97};uint8_t d[20];
++ hmac_sha1(w->kck,16,pieces,sizes,3,d);memcpy(out,d,16);wipe(d,20);
++}
++static int reply(struct nwp*w,const uint8_t*p,unsigned kind,struct nwp_result*r){
++ if(w->serial==UINT64_MAX)return fail(w,r);
++ unsigned n=kind==1?121:99;memset(r,0,sizeof(*r));r->frame[0]=p[0];r->frame[1]=3;put16(r->frame+2,n-4);r->frame[4]=2;
++ put16(r->frame+5,kind==1?0x010a:0x030a);memcpy(r->frame+9,p+9,8);
++ if(kind==1){memcpy(r->frame+17,w->snonce,32);put16(r->frame+97,22);memcpy(r->frame+99,w->rsn,22);}
++ mic(w,r->frame,n,r->frame+81);r->action=NWP_TX;r->bytes=n;r->ticket=++w->serial;w->pending=r->ticket;w->tx_kind=kind;return NWP_TX;
++}
++static int kde(struct nwp*w,const uint8_t*p,unsigned n,const uint8_t*rsc){
++ unsigned at=0,have_rsn=0,have_gtk=0;
++ while(at<n){
++  if(p[at]==0xdd&&(at+1==n||p[at+1]==0)){
++   for(unsigned j=at+1;j<n;j++)if(p[j])return -1;
++   break;
++  }
++  if(n-at<2||p[at+1]>n-at-2)return -1;
++  unsigned len=p[at+1]+2;const uint8_t*e=p+at;
++  if(e[0]==48){if(have_rsn++||len!=w->ap_rsn_bytes||!equal(e,w->ap_rsn,len))return -1;}
++  else if(e[0]==221){
++   static const uint8_t oui[4]={0,15,172,1};
++   if(have_gtk++||len!=24||!equal(e+2,oui,4)||(e[6]&~7u)||e[7])return -1;
++   w->gtk_index=e[6]&3;memcpy(w->gtk,e+8,16);memcpy(w->rsc,rsc,8);
++  }else return -1;
++  at+=len;
++ }
++ return have_rsn==1&&have_gtk==1?0:-1;
++}
++int nwp_receive(struct nwp*w,const uint8_t*p,size_t n,struct nwp_result*r){
++ if(!r)return NWP_FAIL;
++ memset(r,0,sizeof(*r));
++ if(!w)return NWP_FAIL;
++ if(w->state==NWP_OFF)return NWP_FAIL;
++ if(!p||n<99||n>NWP_FRAME||p[0]<1||p[0]>2||p[1]!=3||be16(p+2)!=n-4||p[4]!=2||be16(p+97)!=n-99)return fail(w,r);
++ unsigned info=be16(p+5);
++ if(be16(p+7)!=16)return fail(w,r);
++ if(info==0x008a){
++  if(!nonzero(p+17,32)||be16(p+97))return fail(w,r);
++  if(w->state!=NWP_M1){
++   if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<0||!equal(p+17,w->anonce,32))return fail(w,r);
++   if(w->pending)return NWP_BUSY;
++   memcpy(w->m1_replay,p+9,8);
++   return reply(w,p,1,r); /* Same ANonce, same SNonce/PTK; monotonic retransmit counter. */
++  }
++  if(w->pending)return NWP_BUSY;
++  memcpy(w->anonce,p+17,32);memcpy(w->m1_replay,p+9,8);derive_keys(w);w->state=NWP_M3;
++  return reply(w,p,1,r);
++ }
++ if(info!=0x13ca||w->state<NWP_M3)return fail(w,r);
++ uint8_t signature[16];mic(w,p,(unsigned)n,signature);int ok=equal(signature,p+81,16);wipe(signature,16);
++ if(!ok||!equal(p+17,w->anonce,32))return fail(w,r);
++ if(w->m3_bytes){
++  /* AP retries may use a higher replay counter. All authenticated key/RSN/RSC
++   * contents must remain identical; never reinstall/reset any packet number. */
++  if(n!=w->m3_bytes||memcmp(p+9,w->m3+9,8)<0)return fail(w,r);
++  for(unsigned i=0;i<n;i++)if(!((i>=9&&i<17)||(i>=81&&i<97))&&p[i]!=w->m3[i])return fail(w,r);
++  if(w->pending)return NWP_BUSY;
++  memcpy(w->m3,p,n);
++  return reply(w,p,3,r);
++ }
++ if(w->state!=NWP_M3||memcmp(p+9,w->m1_replay,8)<=0)return fail(w,r);
++ if(w->pending)return NWP_BUSY;
++ uint8_t plain[NWP_FRAME];unsigned wrapped=be16(p+97);
++ if(aes_unwrap(w->kek,p+99,wrapped,plain)||kde(w,plain,wrapped-8,p+65)){wipe(plain,sizeof plain);return fail(w,r);}
++ wipe(plain,sizeof plain);memcpy(w->m3,p,n);w->m3_bytes=(unsigned)n;w->state=NWP_M4_TX;
++ return reply(w,p,2,r);
++}
++int nwp_tx_done(struct nwp*w,uint64_t gen,uint64_t ticket,int success){
++ if(!w||!ticket||gen!=w->generation||ticket!=w->pending)return NWP_DROP;
++ unsigned kind=w->tx_kind;w->pending=0;w->tx_kind=0;
++ if(!success){nwp_cancel(w);return NWP_FAIL;}
++ if((kind==2||kind==3)&&w->state==NWP_M4_TX&&!w->installed){w->installed=1;w->install_ticket=ticket;w->state=NWP_KEYS;return NWP_INSTALL;}
++ return NWP_DROP;
++}
++int nwp_keys_ready(struct nwp*w,uint64_t gen,uint64_t ticket,unsigned mask,int success){
++ if(!w||gen!=w->generation||!ticket||ticket!=w->install_ticket||w->state!=NWP_KEYS||!w->installed)return NWP_DROP;
++ if(!mask||(mask&~7u)||success!=1){nwp_cancel(w);return NWP_FAIL;}
++ w->ready_mask|=mask;
++ if(w->ready_mask!=7)return NWP_DROP;
++ w->state=NWP_AUTHORIZED;return NWP_AUTH;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wpa2.h
+@@ -0,0 +1,41 @@
++#ifndef WIFI_WPA2_H
++#define WIFI_WPA2_H
++#include <stddef.h>
++#include <stdint.h>
++#define NWP_FRAME 640
++/* A pure serialized engine. One native owner must serialize ALL calls. No IO,
++ * timers, logging, installation or carrier changes happen here.
++ * Inputs/output/context must be disjoint; all buffers are kernel-owned copies.
++ * Any NWP_FAIL requires immediate controlled-port closure by the owner. */
++enum nwp_state {NWP_OFF,NWP_M1,NWP_M3,NWP_M4_TX,NWP_KEYS,NWP_AUTHORIZED};
++enum nwp_action {NWP_DROP=0,NWP_TX=1,NWP_INSTALL=2,NWP_AUTH=3,NWP_BUSY=4,NWP_FAIL=-1};
++struct nwp_result {unsigned action,bytes;uint64_t ticket;uint8_t frame[256];};
++struct nwp {
++ uint64_t generation,serial,pending,install_ticket;unsigned state,tx_kind,installed,ready_mask;
++ uint8_t pmk[32],own[6],peer[6],snonce[32],anonce[32],kck[16],kek[16],tk[16],gtk[16],rsc[8];
++ unsigned gtk_index;uint8_t rsn[22],ap_rsn[257],m1_replay[8];unsigned ap_rsn_bytes;
++ uint8_t m3[NWP_FRAME];unsigned m3_bytes;
++};
++/* RNG callback must use actual cryptographic RNG and return0 only after all32
++ * bytes are filled. This private engine has no XNU adapter yet. */
++typedef int (*nwp_rng)(void*,uint8_t*,size_t);
++int nwp_begin_ap(struct nwp*,uint64_t,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t *ap_rsn,size_t ap_bytes,nwp_rng,void*);
++int nwp_ap_rsn(const uint8_t*,size_t);
++int nwp_begin(struct nwp*,uint64_t,const uint8_t pmk[32],const uint8_t own[6],const uint8_t peer[6],const uint8_t rsn[22],const uint8_t ap_rsn[22],nwp_rng,void*);
++int nwp_receive(struct nwp*,const uint8_t*,size_t,struct nwp_result*);
++/* Real frame TX completion, NOT command/DMA DDONE. M4 completion requests
++ * exactly one install operation; engine never delays or assumes firmware ACK. */
++int nwp_tx_done(struct nwp*,uint64_t generation,uint64_t ticket,int success);
++/* Native owner correlation boundary: only after actual PTK AND GTK readiness
++ * and controlled data-path installation. GTK readiness here means actual source
++ * no-response submission plus installed host replay state, not a firmware ACK.
++ * EID24's unqualified8B is insufficient.
++ * No key identity is derived from that event by this module. */
++/* mask1 PTK event-qualified,2 GTK submitted/replay installed,4 enforced data path; each receipt must be owner-correlated
++ * to install_ticket. Partial successes accumulate, duplicate receipts do not
++ * authorize twice. A matching terminal failure clears the whole transaction. */
++int nwp_keys_ready(struct nwp*,uint64_t generation,uint64_t install_ticket,unsigned mask,int success);
++void nwp_cancel(struct nwp*);
++/* Validated passphrase8..63 and SSID1..32. Output wiped on refusal. */
++int nwp_pmk(const uint8_t*,size_t,const uint8_t*,size_t,uint8_t out[32]);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_owner.c
+@@ -0,0 +1,65 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wpa_owner.h"
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static void wipe(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
++static unsigned expected(unsigned k){switch(k){
++case STC_PREPARE_PEER:return NWO_PREPARED;
++case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_EAPOL:case STC_TX_DEAUTH:return NWO_AIR_TX;
++case STC_CONFIGURE_PEER:return NWO_CONFIGURED;
++case STC_CID_GTK:return NWO_GTK_REPLAY;
++case STC_INSTALL_DATA_PATH:return NWO_DATA_PATH;
++case STC_RETIRE_PEER:return NWO_RETIRED;
++case STC_CID_CHANNEL:case STC_CID_PTK:case STC_DELETE_PTK:case STC_DELETE_GTK:case STC_ABORT_CHANNEL:return NWO_COMMAND;
++default:return 0;}}
++static int close_port(struct nwo*s){if(s->ops.close_port(s->context)){s->halted=1;nwp_cancel(&s->transaction.wpa);wipe(&s->transaction.action,sizeof s->transaction.action);wipe(s->transaction.queued_eapol,sizeof s->transaction.queued_eapol);return -1;}s->closed=1;return 0;}
++static int sync_state(struct nwo*s,int result){
++ if(s->transaction.outcome!=STC_PENDING&&s->transaction.outcome!=STC_AUTHORIZED){if(close_port(s))return -1;}
++ if(s->transaction.phase==STC_HALTED){s->halted=1;return -1;}return result;
++}
++int nwo_begin(struct nwo*s,struct stc_arbiter*a,const struct stc_config*c,const struct nwo_ops*ops,void*ctx,uint64_t now){
++ if(!s||!ops||!ops->submit||!ops->close_port||s->transaction.attempted||s->halted)return -1;
++ s->ops=*ops;s->context=ctx;if(close_port(s))return -1;
++ return stc_begin(&s->transaction,a,c,now);
++}
++int nwo_authorized(const struct nwo*s){return s&&!s->halted&&!s->closed&&s->transaction.phase<STC_DEAUTH&&s->transaction.outcome==STC_AUTHORIZED;}
++int nwo_pump(struct nwo*s,uint64_t now){
++ if(!s||s->halted||s->issuing)return -1;
++ int r=sync_state(s,stc_tick(&s->transaction,now));if(r<0)return r;
++ if(s->in_ticket)return 0;const struct stc_action*a=stc_next(&s->transaction);if(!a)return 0;
++ if(!expected(a->kind)){s->halted=1;close_port(s);return -1;}
++ struct nwo_install meta={0};if(a->kind==STC_CID_GTK){meta.gtk_index=s->transaction.wpa.gtk_index;memcpy(meta.rsc,s->transaction.wpa.rsc,8);}
++ s->in_generation=a->generation;s->in_ticket=a->ticket;s->in_kind=a->kind;s->issuing=1;
++ r=s->ops.submit(s->context,a,&meta);s->issuing=0;wipe(&meta,sizeof meta);
++ if(r==1){s->in_ticket=0;s->in_kind=0;return 0;}
++ if(r){uint64_t g=s->in_generation,t=s->in_ticket;s->in_ticket=0;s->in_kind=0;return sync_state(s,stc_receipt(&s->transaction,g,t,0,now));}return 1;
++}
++int nwo_complete(struct nwo*s,uint64_t g,uint64_t t,unsigned receipt,int success,uint64_t now){
++ if(!s||s->halted||s->issuing||!t||g!=s->in_generation||t!=s->in_ticket)return 0;
++ if(receipt!=expected(s->in_kind)||!(success==0||success==1))return -1;
++ unsigned kind=s->in_kind;s->in_ticket=0;s->in_kind=0;
++ /* Canceled/timed-out transaction can now dispatch its cleanup; old receipts
++  * retire adapter storage only and cannot complete the new model action. */
++ const struct stc_action*a=stc_next(&s->transaction);
++ if(!a||a->ticket!=t||a->generation!=g)return sync_state(s,0);
++ int r=stc_receipt(&s->transaction,g,t,success,now);
++ if(kind==STC_INSTALL_DATA_PATH&&success&&s->transaction.outcome==STC_AUTHORIZED)s->closed=0;
++ return sync_state(s,r);
++}
++int nwo_link_lost(struct nwo*s,uint64_t g,uint64_t now){if(!s||s->halted||s->issuing||g!=s->transaction.generation)return 0;if(close_port(s))return -1;return sync_state(s,stc_link_lost(&s->transaction,g,now));}
++int nwo_cancel(struct nwo*s,uint64_t g,uint64_t now){if(!s||s->halted||s->issuing||g!=s->transaction.generation)return 0;if(close_port(s))return -1;return sync_state(s,stc_cancel(&s->transaction,g,now));}
++int nwo_eapol(struct nwo*s,uint64_t g,const uint8_t*p,size_t n,uint64_t now){if(!s||s->halted||s->issuing)return 0;return sync_state(s,stc_eapol(&s->transaction,g,p,n,now));}
++int nwo_management(struct nwo*s,uint64_t g,const uint8_t*p,size_t n,uint64_t now){if(!s||s->halted||s->issuing)return 0;return sync_state(s,stc_management(&s->transaction,g,p,n,now));}
++int nwo_grant(struct nwo*s,uint64_t g,uint8_t b,uint8_t t,uint8_t band,uint8_t ch,int ok,uint64_t now){if(!s||s->halted||s->issuing)return 0;return sync_state(s,stc_grant(&s->transaction,g,b,t,band,ch,ok,now));}
++int nwo_key24(struct nwo*s,uint64_t g,const uint8_t*p,size_t n,uint64_t now){
++ if(!s||s->halted||s->issuing)return 0;
++ /* No RX event may qualify a PTK before the native submit has been accepted. */
++ if(s->transaction.phase==STC_PTK&&s->in_kind!=STC_CID_PTK)return 0;
++ return sync_state(s,stc_key_event(&s->transaction,g,p,n,now));
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_owner.h
+@@ -0,0 +1,33 @@
++#ifndef WIFI_WPA_OWNER_H
++#define WIFI_WPA_OWNER_H
++#include "wifi_station_transaction.h"
++/* Serialized retained-radio-worker API. No client-thread calls or inline
++ * callbacks from submit. Not an installed native transport by itself. */
++enum nwo_receipt { NWO_PREPARED=1,NWO_COMMAND,NWO_AIR_TX,NWO_CONFIGURED,
++ NWO_GTK_REPLAY,NWO_DATA_PATH,NWO_RETIRED };
++struct nwo_install { uint8_t gtk_index,rsc[8]; };
++struct nwo_ops {
++ /* Must COPY action and metadata before returning0. Return1 BUSY without mutation or callbacks; -1 is a
++  * terminal refusal with no later callback. Never log their contents. */
++ int (*submit)(void*,const struct stc_action*,const struct nwo_install*);
++ /* Synchronous controlled-port closure, including queued ordinary data.
++  * Return0 only when enforced. Does not imply firmware key retirement. */
++ int (*close_port)(void*);
++};
++struct nwo {
++ struct stc transaction;struct nwo_ops ops;void *context;
++ uint64_t in_generation,in_ticket;unsigned in_kind,issuing,halted,closed;
++};
++int nwo_begin(struct nwo*,struct stc_arbiter*,const struct stc_config*,const struct nwo_ops*,void*,uint64_t);
++int nwo_pump(struct nwo*,uint64_t);
++/* Typed completion: DMA DDONE has deliberately no receipt type. Exactly one
++ * completion retires each submitted ticket. Failed receipt always closes port. */
++int nwo_complete(struct nwo*,uint64_t,uint64_t,unsigned receipt,int success,uint64_t);
++int nwo_eapol(struct nwo*,uint64_t,const uint8_t*,size_t,uint64_t);
++int nwo_management(struct nwo*,uint64_t,const uint8_t*,size_t,uint64_t);
++int nwo_grant(struct nwo*,uint64_t,uint8_t,uint8_t,uint8_t,uint8_t,int,uint64_t);
++int nwo_key24(struct nwo*,uint64_t,const uint8_t*,size_t,uint64_t);
++int nwo_link_lost(struct nwo*,uint64_t,uint64_t);
++int nwo_cancel(struct nwo*,uint64_t,uint64_t);
++int nwo_authorized(const struct nwo*);
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_nst.c
+@@ -0,0 +1,80 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "wifi_wpa_nst.h"
++#if defined(KERNEL) || defined(_KERNEL)
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static void clear(void*v,size_t n){volatile uint8_t*p=v;while(n--)*p++=0;}
++static int close_native(void*ctx){struct nwn*s=ctx;nst_close_port(s->transport);return s->transport->controlled_port?-1:0;}
++static int sync_cleanup(struct nwn*s){
++ if(s->owner.transaction.phase<STC_DEAUTH||s->cleanup_started)return 0;
++ uint64_t deadline=s->owner.transaction.cleanup_deadline;
++ if(deadline>UINT64_MAX/1000||s->now_ms>UINT64_MAX/1000)return -1;
++ uint64_t now=s->now_ms*1000;if(now<s->transport->last)now=s->transport->last;
++ if(nst_cleanup_begin(s->transport,now,deadline*1000))return -1;s->cleanup_started=1;return 0;
++}
++static int submit_native(void*ctx,const struct stc_action*a,const struct nwo_install*m){
++ struct nwn*s=ctx;struct nst*t=s->transport;
++ if(sync_cleanup(s))return -1;
++ if(t->wire_busy||t->air_pending)return 1;
++ switch(a->kind){
++ case STC_PREPARE_PEER:case STC_CONFIGURE_PEER:case STC_RETIRE_PEER:
++  return s->peer_submit(s->peer_context,a,&s->owner.transaction);
++ case STC_CID_CHANNEL:case STC_ABORT_CHANNEL:return nst_command(t,a->ticket,SW_CHANNEL,a->payload,a->bytes);
++ case STC_CID_PTK:case STC_CID_GTK:case STC_DELETE_PTK:case STC_DELETE_GTK:{
++  int r=nst_command(t,a->ticket,SW_KEY,a->payload,a->bytes);
++  if(!r){s->install=*m;s->key_pairwise=a->kind==STC_CID_PTK;}
++  return r;}
++ case STC_TX_AUTH:case STC_TX_ASSOC:case STC_TX_DEAUTH:return nst_management(t,a->ticket,a->payload,a->bytes);
++ case STC_TX_EAPOL:{
++  uint8_t frame[654];if(a->bytes>640)return -1;
++  memcpy(frame,t->peer.ap,6);memcpy(frame+6,t->peer.self,6);frame[12]=0x88;frame[13]=0x8e;memcpy(frame+14,a->payload,a->bytes);
++  int r=nst_eapol(t,a->ticket,frame,a->bytes+14,0);clear(frame,sizeof frame);return r;}
++ /* Pure readiness is performed by pump outside RX callback, then delivered
++  * as an explicit local receipt, not a fabricated firmware acknowledgement. */
++ case STC_INSTALL_DATA_PATH:return nst_authorize(t)?-1:0;
++ default:return -1;
++ }
++}
++int nwn_begin(struct nwn*s,struct nst*t,struct stc_arbiter*a,const struct stc_config*c,nwn_peer_submit peer,void*ctx,uint64_t now){
++ if(!s||!t||!c||!peer||!t->prepared||t->halt||t->generation!=c->generation||t->peer.bss!=c->channel.bss||t->peer.wlan!=c->sta_wlan||t->peer.group_wlan!=c->group_wlan||memcmp(t->peer.ap,c->assoc.peer.ap,6)||memcmp(t->peer.self,c->assoc.peer.self,6))return -1;
++ s->overall_deadline=c->deadline_ms;s->transport=t;s->peer_submit=peer;s->peer_context=ctx;s->now_ms=now;
++ const struct nwo_ops ops={submit_native,close_native};return nwo_begin(&s->owner,a,c,&ops,s,now);
++}
++int nwn_pump(struct nwn*s,uint64_t now){
++ if(!s)return -1;s->now_ms=now;int r=nwo_pump(&s->owner,now);if(r>=0&&sync_cleanup(s))return -1;
++ if(r==1&&s->owner.in_kind==STC_INSTALL_DATA_PATH){uint64_t g=s->owner.in_generation,t=s->owner.in_ticket;return nwo_complete(&s->owner,g,t,NWO_DATA_PATH,1,now);}return r;
++}
++int nwn_peer_complete(struct nwn*s,uint64_t g,uint64_t t,unsigned type,int success,uint64_t now){if(!s||(type!=NWO_PREPARED&&type!=NWO_CONFIGURED&&type!=NWO_RETIRED))return -1;s->now_ms=now;int r=nwo_complete(&s->owner,g,t,type,success,now);return r>=0&&sync_cleanup(s)?-1:r;}
++int nwn_cancel(struct nwn*s,uint64_t g,uint64_t now){if(!s)return -1;clear(&s->install,sizeof s->install);s->now_ms=now;int r=nwo_cancel(&s->owner,g,now);return r>=0&&sync_cleanup(s)?-1:r;}
++static int event_inner(struct nwn*s,const struct nst_event*e,uint64_t now){
++ if(!s||!e||e->generation!=s->owner.transaction.generation)return 0;
++ switch(e->kind){
++ case NST_COMMAND_DMA:{
++  if(e->ticket!=s->owner.in_ticket)return 0;
++  unsigned kind=s->owner.in_kind,type=NWO_COMMAND;int ok=e->status==0;
++  if(kind==STC_TX_AUTH||kind==STC_TX_ASSOC||kind==STC_TX_EAPOL||kind==STC_TX_DEAUTH){if(ok)return 0;return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,0,now);} /* DMA success is never air TX */
++  if(kind==STC_CID_GTK)type=NWO_GTK_REPLAY;
++  const struct stc_action *current=stc_next(&s->owner.transaction);
++  if(ok&&current&&current->ticket==e->ticket&&(kind==STC_CID_PTK||kind==STC_CID_GTK))ok=nst_replay_install(s->transport,s->key_pairwise,s->key_pairwise?0:s->install.gtk_index,s->install.rsc)==0;
++  int r=nwo_complete(&s->owner,e->generation,e->ticket,type,ok,now);clear(&s->install,sizeof s->install);return r;}
++ case NST_FRAME_RESULT:return nwo_complete(&s->owner,e->generation,e->ticket,NWO_AIR_TX,e->status==0,now);
++ case NST_CHANNEL_GRANT:{int r=nwo_grant(&s->owner,e->generation,e->bss,e->token,e->band,e->channel,e->status==0,now);
++  if(r>0){uint64_t interval=e->interval_ms>10?e->interval_ms-10:0;if(now>UINT64_MAX-interval)return nwo_link_lost(&s->owner,e->generation,now);uint64_t limit=now+interval;if(limit<s->owner.transaction.deadline)s->owner.transaction.deadline=limit;}return r;}
++ case NST_CHANNEL_RELEASED:{int r=stc_channel_released(&s->owner.transaction,e->generation,e->token,now);if(r>0&&s->owner.transaction.phase<STC_DEAUTH)s->owner.transaction.deadline=s->overall_deadline;return r;}
++ case NST_KEY_READY:return nwo_key24(&s->owner,e->generation,e->body,e->bytes,now);
++ case NST_MANAGEMENT:return nwo_management(&s->owner,e->generation,e->body,e->bytes,now);
++ case NST_EAPOL:{const uint8_t*p=e->body;size_t n=e->bytes;
++  if(!p||n<14||p[12]!=0x88||p[13]!=0x8e||memcmp(p,s->transport->peer.self,6)||memcmp(p+6,s->transport->peer.ap,6))return 0;
++  return nwo_eapol(&s->owner,e->generation,p+14,n-14,now);}
++ case NST_LINK_LOST:return nwo_link_lost(&s->owner,e->generation,now);
++ case NST_FATAL:return nwn_cancel(s,e->generation,now);
++ default:return 0;
++ }
++}
++
++int nwn_event(struct nwn*s,const struct nst_event*e,uint64_t now){if(!s)return -1;s->now_ms=now;int r=event_inner(s,e,now);return r>=0&&sync_cleanup(s)?-1:r;}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/wifi_wpa_nst.h
+@@ -0,0 +1,14 @@
++#ifndef WIFI_WPA_NST_H
++#define WIFI_WPA_NST_H
++#include "wifi_wpa_owner.h"
++#include "wifi_station_transport.h"
++/* Real source peer sequencer owned by native transport.0 accepted/1 busy/-1
++ * refused. Completion is delivered later by nwn_peer_complete, never inline. */
++typedef int (*nwn_peer_submit)(void*,const struct stc_action*,const struct stc*);
++struct nwn {struct nwo owner;struct nst *transport;nwn_peer_submit peer_submit;void *peer_context;struct nwo_install install;unsigned key_pairwise,cleanup_started;uint64_t now_ms,overall_deadline;};
++int nwn_begin(struct nwn*,struct nst*,struct stc_arbiter*,const struct stc_config*,nwn_peer_submit,void*,uint64_t);
++int nwn_pump(struct nwn*,uint64_t);
++int nwn_event(struct nwn*,const struct nst_event*,uint64_t);
++int nwn_peer_complete(struct nwn*,uint64_t,uint64_t,unsigned,int,uint64_t);
++int nwn_cancel(struct nwn*,uint64_t,uint64_t);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_ios_scalar.c
 @@ -0,0 +1,44 @@
 +#include <arm64/sweet_early.h>
@@ -16207,6 +17745,637 @@
 +int nfa_xnu_run(void);
 +#endif
 --- /dev/null
++++ b/bsd/dev/wifi_station_service.h
+@@ -0,0 +1,45 @@
++#ifndef WIFI_STATION_SERVICE_H
++#define WIFI_STATION_SERVICE_H
++#include "wifi_ios_join.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* Native snapshots only: GET/run/carrier require an actual current lease and
++ * authenticated assoc + PTK EID24 + GTK source completion + data-path receipt.
++ * Structs are kernel-only; never copy their padding/keys/addresses to logs. */
++enum njs_phase {NJS_UNAVAILABLE=0,NJS_IDLE,NJS_QUEUED,NJS_AUTHENTICATING,
++ NJS_ASSOCIATING,NJS_SECURING,NJS_AUTHORIZED,NJS_LEAVING,NJS_FAILED};
++enum njs_notice {NJS_JOINED=1,NJS_JOIN_FAILED,NJS_LEFT,NJS_RETIRED};
++struct njs_snapshot {
++ uint64_t native_generation,client_epoch,ticket;
++ unsigned phase,result,associated,ptk_ready,gtk_ready,data_ready;
++ unsigned involuntary;uint32_t reason,subreason;
++ struct niwj_target peer;
++};
++typedef void (*njs_completion)(void*,uint64_t client_epoch,uint64_t ticket,enum njs_notice);
++/* 0 accepted,1 unavailable,2 busy,-1 invalid; rejection must be atomic.
++ * Native immediately copies the complete secret input and owns/wipes its copy.
++ * No inline completion. Cookie retained by IOUC until final RETIRED notice,
++ * exactly once, even on canceled/closed delivery. Callbacks outside native queue
++ * lock, actual retained worker only; no radio calls from callback/client thread.
++ * JOINED/FAILED/LEFT snapshot committed before notice. Retired means no future
++ * callback can use cookie; it is not by itself a firmware/DMA retirement proof.
++ */
++int nord2_wifi_join_enqueue(const struct niwj_request*,void*,uint64_t,
++ njs_completion,uint64_t*);
++/* Idempotent while ticket retained: preauthorization cancel closes port and
++ * requests bounded cleanup; after authorization detach delivery only, preserving
++ * global native link. RETIRED follows any current callback before cookie reuse. */
++int nord2_wifi_join_cancel(uint64_t ticket);
++/* Manager-entitled native caller only. Closes controlled port/carrier before
++ * asynchronous cleanup and LEFT notification; must not reset shared firmware. */
++int nord2_wifi_join_disconnect(void);
++/* Copy authoritative global current state under native serialization. Shared
++ * queries across manager clients are allowed; only callback delivery binds to
++ * matching ticket/client epoch. No pointer into mutable RX/secret state escapes.
++ * 0 copied,1 unavailable,-1 invalid. Never returns success from a fake backend. */
++int nord2_wifi_join_copy_state(struct njs_snapshot*);
++#ifdef __cplusplus
++}
++#endif
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_station_source_layout.h
+@@ -0,0 +1,76 @@
++#define SW_SIZE_CMD_802_11_KEY 64
++#define SW_OFF_CMD_802_11_KEY_ucAddRemove 0
++#define SW_OFF_CMD_802_11_KEY_ucTxKey 1
++#define SW_OFF_CMD_802_11_KEY_ucKeyType 2
++#define SW_OFF_CMD_802_11_KEY_ucIsAuthenticator 3
++#define SW_OFF_CMD_802_11_KEY_aucPeerAddr 4
++#define SW_OFF_CMD_802_11_KEY_ucBssIdx 10
++#define SW_OFF_CMD_802_11_KEY_ucAlgorithmId 11
++#define SW_OFF_CMD_802_11_KEY_ucKeyId 12
++#define SW_OFF_CMD_802_11_KEY_ucKeyLen 13
++#define SW_OFF_CMD_802_11_KEY_ucWlanIndex 14
++#define SW_OFF_CMD_802_11_KEY_ucMgmtProtection 15
++#define SW_OFF_CMD_802_11_KEY_aucKeyMaterial 16
++#define SW_OFF_CMD_802_11_KEY_aucKeyRsc 48
++#define SW_SIZE_CMD_SET_BSS_RLM_PARAM 22
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucBssIndex 0
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucRfBand 1
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucPrimaryChannel 2
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucErpProtectMode 4
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucUseShortPreamble 13
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucUseShortSlotTime 14
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucTxNss 20
++#define SW_OFF_CMD_SET_BSS_RLM_PARAM_ucRxNss 21
++#define SW_SIZE_CMD_SET_BSS_INFO 116
++#define SW_OFF_CMD_SET_BSS_INFO_ucBssIndex 0
++#define SW_OFF_CMD_SET_BSS_INFO_ucConnectionState 1
++#define SW_OFF_CMD_SET_BSS_INFO_ucCurrentOPMode 2
++#define SW_OFF_CMD_SET_BSS_INFO_ucSSIDLen 3
++#define SW_OFF_CMD_SET_BSS_INFO_aucSSID 4
++#define SW_OFF_CMD_SET_BSS_INFO_aucBSSID 36
++#define SW_OFF_CMD_SET_BSS_INFO_ucIsQBSS 42
++#define SW_OFF_CMD_SET_BSS_INFO_ucVersion 43
++#define SW_OFF_CMD_SET_BSS_INFO_u2OperationalRateSet 44
++#define SW_OFF_CMD_SET_BSS_INFO_u2BSSBasicRateSet 46
++#define SW_OFF_CMD_SET_BSS_INFO_ucStaRecIdxOfAP 48
++#define SW_OFF_CMD_SET_BSS_INFO_u2HwDefaultFixedRateCode 50
++#define SW_OFF_CMD_SET_BSS_INFO_ucNonHTBasicPhyType 52
++#define SW_OFF_CMD_SET_BSS_INFO_ucAuthMode 53
++#define SW_OFF_CMD_SET_BSS_INFO_ucEncStatus 54
++#define SW_OFF_CMD_SET_BSS_INFO_ucPhyTypeSet 55
++#define SW_OFF_CMD_SET_BSS_INFO_ucBMCWlanIndex 58
++#define SW_OFF_CMD_SET_BSS_INFO_ucDisconnectDetectThreshold 60
++#define SW_OFF_CMD_SET_BSS_INFO_u4PrivateData 64
++#define SW_OFF_CMD_SET_BSS_INFO_rBssRlmParam 68
++#define SW_OFF_CMD_SET_BSS_INFO_ucDBDCBand 90
++#define SW_OFF_CMD_SET_BSS_INFO_ucWmmSet 91
++#define SW_OFF_CMD_SET_BSS_INFO_ucNss 93
++#define SW_SIZE_CMD_UPDATE_STA_RECORD 200
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucStaIndex 0
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucStaType 1
++#define SW_OFF_CMD_UPDATE_STA_RECORD_aucMacAddr 2
++#define SW_OFF_CMD_UPDATE_STA_RECORD_u2AssocId 8
++#define SW_OFF_CMD_UPDATE_STA_RECORD_u2ListenInterval 10
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucBssIndex 12
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucDesiredPhyTypeSet 13
++#define SW_OFF_CMD_UPDATE_STA_RECORD_u2DesiredNonHTRateSet 14
++#define SW_OFF_CMD_UPDATE_STA_RECORD_u2BSSBasicRateSet 16
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState 20
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucVersion 23
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucRCPI 50
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucNeedResp 51
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucWlanIndex 54
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucBMCWlanIndex 55
++#define SW_OFF_CMD_UPDATE_STA_RECORD_ucRtsPolicy 68
++#define SW_OFF_CMD_UPDATE_STA_RECORD_u2HwDefaultFixedRateCode 74
++#define SW_SIZE_CMD_CH_PRIVILEGE 24
++#define SW_OFF_CMD_CH_PRIVILEGE_ucBssIndex 0
++#define SW_OFF_CMD_CH_PRIVILEGE_ucTokenID 1
++#define SW_OFF_CMD_CH_PRIVILEGE_ucAction 2
++#define SW_OFF_CMD_CH_PRIVILEGE_ucPrimaryChannel 3
++#define SW_OFF_CMD_CH_PRIVILEGE_ucRfSco 4
++#define SW_OFF_CMD_CH_PRIVILEGE_ucRfBand 5
++#define SW_OFF_CMD_CH_PRIVILEGE_ucRfChannelWidth 6
++#define SW_OFF_CMD_CH_PRIVILEGE_ucReqType 9
++#define SW_OFF_CMD_CH_PRIVILEGE_ucDBDCBand 10
++#define SW_OFF_CMD_CH_PRIVILEGE_u4MaxInterval 12
+--- /dev/null
++++ b/bsd/dev/wifi_station_transport_forward.inc
+@@ -0,0 +1,6 @@
++/* Included by normal_backend_forward before the retained owner definition. */
++struct nwfn_native;
++static int nst_native_owner_window(const struct nwfn_native *);
++static int nst_native_rx_active(const struct nwfn_native *);
++static int nst_native_rx_memory(const struct nwfn_native *,uint64_t,uint32_t,unsigned);
++static int nst_native_rx_write(const struct nwfn_native *,uint32_t,uint32_t);
+--- /dev/null
++++ b/bsd/dev/wifi_station_transport_bind.inc
+@@ -0,0 +1,46 @@
++/* Include after NSS globals/functions and before station_service_bind. Authority
++ * is the existing retained worker and existing DMA claim, never this API alone. */
++#include "wifi_station_transport.h"
++#include "wifi_ios_join.h"
++static struct {struct nst state;unsigned attempted,active;}nst_native;
++static int nst_native_owner_window(const struct nwfn_native*n){
++ return n==&nwfn_native&&nst_native.attempted==1&&nst_native.active==1&&
++ ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&
++ ncd_native.worker==current_thread()&&!nct_native.active&&
++ nst_native.state.init==&nwfn_native.init&&nst_native.state.previous==&nct_native.session&&
++ nst_native.state.previous_rx==&ncb_native.rx&&
++ nst_lease_window(&nst_native.state,&nwfn_native.init);
++}
++static int nst_native_rx_active(const struct nwfn_native*n){return nst_native_owner_window(n)&&nst_native.state.rx_current<5&&nst_native.state.phase>=NST_RX_READ&&nst_native.state.phase<=NST_RX_PUBLISH;}
++static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t bytes,unsigned write){return nst_native_owner_window(n)&&nst_memory_range(&nst_native.state,a,bytes,write);}
++static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){return nst_native_owner_window(n)&&nst_register_write(&nst_native.state,a,v);}
++static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uint64_t now,uint64_t deadline,struct nst_profile*out){
++ if(!t||!out||!generation||nst_native.attempted||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||ncb_native.rx.active||!ncb_native.rx.scan.done||ncb_native.rx.scan.partial||ncb_native.rx.scan.timed_out||!nct_done_receipt(&nct_native.session))return -1;
++ for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)return 1;
++ struct ncs_cap cap;if(!ncd_native.diag.events||ncd_native.diag.events>sizeof(ncd_native.diag.history)/sizeof(ncd_native.diag.history[0])||ncs_cap_mac(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,&cap)||cap.bmc!=4||cap.wtbl<7)return -1;
++ unsigned allowed=0;for(unsigned k=0;k<nss_native.info.count;k++)if(nss_native.info.channels[k].band==t->band&&nss_native.info.channels[k].channel==t->channel)allowed=1;
++ if(!allowed||t->record.channel_mismatch||t->record.ies_truncated||t->record.ie_bytes!=t->record.ie_total||!t->record.ssid_present||!t->record.ssid_len||t->record.ssid_len>32||t->rate_count>12||!t->rate_count||!t->record.interval)return -1;
++ struct nst_profile profile={0};struct nst_peer peer={0};
++ uint16_t all,basic,rate;if(nst_legacy_rates(t->rates,t->rate_count,&all,&basic,&rate))return -1;
++ /* First source ledger: BSS0/ownMac from actual activated scan CAP; WTBL0..3
++  * reserved for BIP,4 already assigned BMC, first unused pairwise5; STA0. */
++ peer.bss=0;peer.own_mac=cap.own_mac;peer.group_wlan=cap.bmc;peer.wlan=5;peer.sta=0;peer.band=t->band;peer.channel=t->channel;
++ memcpy(peer.self,nss_native.info.mac,6);memcpy(peer.ap,t->record.bssid,6);
++ memcpy(profile.assoc.peer.self,peer.self,6);memcpy(profile.assoc.peer.ap,peer.ap,6);
++ profile.assoc.ssid=t->record.ssid;profile.assoc.ssid_len=t->record.ssid_len;profile.assoc.rates=t->rates;profile.assoc.rates_len=t->rate_count;
++ profile.assoc.listen_interval=10;profile.assoc.capability=0x11;
++ /* Implemented legacy PHY attributes: HRDSSS short preamble, ERP short
++  * preamble/slot, 5GHz OFDM neither. No copied HT/PMF/spectrum capability. */
++ if(t->band==1){profile.assoc.capability|=t->record.capability&32;if(all&0x3fc0)profile.assoc.capability|=1024;}
++ profile.beacon_interval=t->record.interval;
++ if(!t->record.rxv_valid||!(t->record.group_valid&4)||(t->record.rxv[4]==255&&t->record.rxv[5]==255))return -1;
++ uint8_t rcpi0=t->record.rxv[4]==255?0:t->record.rxv[4],rcpi1=t->record.rxv[5]==255?0:t->record.rxv[5];profile.rcpi=rcpi0>rcpi1?rcpi0:rcpi1;if(profile.rcpi>220)profile.rcpi=220;
++ profile.sta_version=1;
++ /* Selected Android source initializes fgEfuseCtrlAxOn=1, AX1/BE0 layout. */
++ for(size_t k=0;k<t->record.ie_bytes;){if(t->record.ie_bytes-k<2||t->record.ies[k+1]>t->record.ie_bytes-k-2)return -1;if(t->record.ies[k]==42&&t->record.ies[k+1]==1){profile.erp_protect=!!(t->record.ies[k+2]&2);if(t->record.ies[k+2]&4)profile.assoc.capability&=~32u;}k+=2+t->record.ies[k+1];}
++ /* Source TC4: MCU queue1, PSE8, retry30, lifetime2000; long legacy fixed
++  * basic rate chosen from peer rates. Explicit one-stream WF0 path policy. */
++ struct sw_txd txd={.wlan=peer.wlan,.own_mac=peer.own_mac,.queue=1,.pid=1,.retry_limit=30,.fixed_rate=rate,.pse_header_len=8,.lifetime_ms=2000,.spe_index=0};
++ if(nst_prepare(&nst_native.state,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
++ nst_native.attempted=1;nst_native.active=1;*out=profile;return 0;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_station_service_bind.inc
+@@ -0,0 +1,202 @@
++/* Included after NSS declarations/delivery and authenticated NST native binder.
++ * Same actual retained CAP worker, same admission lock. No second worker. */
++#include "wifi_station_service.h"
++#include "wifi_wpa_nst.h"
++#include "wifi_ifnet_link.h"
++#ifndef NJS_HOST_TEST
++#include <sys/random.h>
++#endif
++#define NJS_TX_SLOTS 8u
++#define NJS_CACHE_SLOTS 4u
++#define NJS_RX_SLOTS 16u
++static struct {
++ IOLock*notice_lock;
++ unsigned queued,active,canceled,leave,detach,used,joined,terminal,retiring,cache_next;
++ unsigned linked,tx_admit,tx_head,tx_count,rx_count;
++ unsigned logs,last_phase,last_kind,last_outcome,last_error,last_halt,last_ready,last_event,last_status,event_count,tx_accepted,tx_results,tx_ok,tx_fail,queued_drop,rx_delivered,data_logs,cookie_retired,last_service,last_linked,last_result;
++ uint64_t serial,ticket,epoch,native_generation,rx_generation[NJS_RX_SLOTS];
++ void*cookie;njs_completion completion;
++ struct niwj_request request;
++ struct niwj_target target,candidate;
++ struct njs_snapshot snapshot;
++ struct nsb_scan cache[NJS_CACHE_SLOTS];
++ struct nwo_install install;
++ struct nwn driver;struct stc_arbiter arbiter;
++ struct nst_profile profile;
++ uint8_t tx[NJS_TX_SLOTS][NWIL_ETHERNET_MAX];unsigned tx_bytes[NJS_TX_SLOTS];
++ uint8_t rx[NJS_RX_SLOTS][NWIL_ETHERNET_MAX];unsigned rx_bytes[NJS_RX_SLOTS];
++} njs_native;
++/* At most112 aggregate rows for this first transaction, never packet/secret
++ * bytes. State rows only on phase/action/outcome/error/readiness transitions. */
++static void njs_trace_locked(unsigned force){
++ struct stc*t=&njs_native.driver.owner.transaction;struct nst*n=&nst_native.state;
++ unsigned ready=n->sta_active|(n->ptk_ready<<1)|(n->gtk.installed<<2)|(n->controlled_port<<3);
++ if(njs_native.logs>=110)return;
++ if(!force&&njs_native.last_phase==t->phase&&njs_native.last_kind==t->action.kind&&njs_native.last_outcome==t->outcome&&njs_native.last_error==n->error&&njs_native.last_halt==n->halt&&njs_native.last_ready==ready&&njs_native.last_service==njs_native.snapshot.phase&&njs_native.last_linked==njs_native.linked&&njs_native.last_result==njs_native.snapshot.result)return;
++ njs_native.logs++;njs_native.last_phase=t->phase;njs_native.last_kind=t->action.kind;njs_native.last_outcome=t->outcome;njs_native.last_error=n->error;njs_native.last_halt=n->halt;njs_native.last_ready=ready;njs_native.last_service=njs_native.snapshot.phase;njs_native.last_linked=njs_native.linked;njs_native.last_result=njs_native.snapshot.result;
++ printf("NORD2 WIFI IOS STATION: generation=%llu ticket=%llu service=%u result=%u linked=%u retired=%u transaction=%u action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u rx_delivered=%u t_ms=%llu\n",(unsigned long long)njs_native.native_generation,(unsigned long long)njs_native.ticket,njs_native.snapshot.phase,njs_native.snapshot.result,njs_native.linked,njs_native.cookie_retired,t->phase,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.rx_delivered,(unsigned long long)njs_native.driver.now_ms);
++}
++static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
++static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
++static int njs_scan_blocked_locked(void){return njs_native.queued||njs_native.active||njs_native.used;}
++static void njs_cache_scan_locked(const struct nsb_scan*s){
++ if(!s||!s->entered||!s->done||s->active||s->partial||s->timed_out||s->dropped||s->completion.state!=7)return;
++ njs_native.cache[njs_native.cache_next++%NJS_CACHE_SLOTS]=*s;
++}
++static void njs_initialize_locked(void){njs_native.notice_lock=IOLockAlloc();njs_cache_scan_locked(&ncb_native.rx.scan);njs_native.snapshot.phase=NJS_IDLE;}
++static int njs_request_ok(const struct niwj_request*q){
++ static const uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
++ return q&&q->ssid_length&&q->ssid_length<=32&&q->has_target<=1&&q->association_reason<=2&&q->security==NIWJ_WPA2_PSK_CCMP&&(q->native_flags==0||q->native_flags==4)&&!memcmp(q->station_rsn,rsn,22)&&(!q->has_target||(!(q->target[0]&1)&&(q->target[0]|q->target[1]|q->target[2]|q->target[3]|q->target[4]|q->target[5])));
++}
++int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
++ if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
++ if(!nss_available())return 1;IOLockLock(nss_native.lock);
++ if(!njs_native.notice_lock||nss_native.failed||njs_native.used||njs_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
++ unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
++ for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)busy=1;
++ if(busy){IOLockUnlock(nss_native.lock);return 2;}
++ njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=++njs_native.serial;njs_native.native_generation=njs_native.ticket;
++ njs_native.epoch=epoch;njs_native.cookie=cookie;njs_native.completion=completion;njs_native.queued=1;njs_native.canceled=njs_native.leave=njs_native.detach=njs_native.terminal=njs_native.joined=njs_native.retiring=0;
++ njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED};
++ *ticket=njs_native.ticket;IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
++}
++int nord2_wifi_join_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);int r=1;if(ticket==njs_native.ticket&&(njs_native.queued||njs_native.active)){if(njs_native.linked&&njs_native.snapshot.phase==NJS_AUTHORIZED)njs_native.detach=1;else njs_native.canceled=1;r=0;}IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
++static void njs_drop_tx_locked(void);
++int nord2_wifi_join_disconnect(void){
++ if(!nss_available()||!njs_native.notice_lock)return 1;
++ IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
++ int r=1;uint64_t generation=0;
++ if(njs_native.queued||njs_native.active){njs_native.leave=1;generation=njs_native.native_generation;
++  if(njs_native.active)nst_close_port(&nst_native.state);
++  njs_drop_tx_locked();njs_native.linked=njs_native.tx_admit=0;njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=njs_native.snapshot.data_ready=0;njs_native.snapshot.phase=NJS_LEAVING;r=0;}
++ IOLockUnlock(nss_native.lock);
++ if(!r&&nord2_wifi_ifnet_link(generation,0))r=-1;
++ IOLockUnlock(njs_native.notice_lock);if(r!=1)thread_wakeup((event_t)&nss_native);return r;
++}
++int nord2_wifi_join_copy_state(struct njs_snapshot*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);*out=njs_native.snapshot;IOLockUnlock(nss_native.lock);return 0;}
++int nord2_wifi_link_send(const uint8_t*p,size_t n,uint64_t generation){
++ if(!p||n<14||n>NWIL_ETHERNET_MAX||!generation||(p[12]==0x88&&p[13]==0x8e))return NWIL_SEND_INVALID;
++ if(!nss_available())return NWIL_SEND_NOT_READY;IOLockLock(nss_native.lock);
++ if((((unsigned)p[12]<<8)|p[13])<1536||memcmp(p+6,nss_native.info.mac,6)){IOLockUnlock(nss_native.lock);return NWIL_SEND_INVALID;}
++ int r=NWIL_SEND_NOT_READY;
++ if(!nss_native.failed&&njs_native.active&&!njs_native.canceled&&!njs_native.leave&&(njs_native.linked||njs_native.tx_admit)&&njs_native.native_generation==generation&&nwo_authorized(&njs_native.driver.owner)){
++  if(njs_native.tx_count==NJS_TX_SLOTS)r=NWIL_SEND_BUSY;
++  else{unsigned k=(njs_native.tx_head+njs_native.tx_count)%NJS_TX_SLOTS;memcpy(njs_native.tx[k],p,n);njs_native.tx_bytes[k]=(unsigned)n;njs_native.tx_count++;njs_native.tx_accepted++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}r=NWIL_SEND_ACCEPTED;}}
++ IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;
++}
++static int njs_rng(void*unused,uint8_t*out,size_t n){(void)unused;if(!out||n!=32)return -1;read_random(out,(unsigned)n);return 0;}
++static int njs_peer(void*ctx,const struct stc_action*a,const struct stc*transaction){
++ if(ctx!=&njs_native||transaction!=&njs_native.driver.owner.transaction)return -1;
++ unsigned kind=a->kind==STC_PREPARE_PEER?NST_PREPARE_PEER:a->kind==STC_CONFIGURE_PEER?NST_CONFIGURE_PEER:a->kind==STC_RETIRE_PEER?NST_RETIRE_PEER:0;
++ if(!kind)return -1;
++ return nst_peer_begin(&nst_native.state,a->ticket,kind,kind==NST_PREPARE_PEER?&njs_native.profile:0,kind==NST_CONFIGURE_PEER?a->payload:0,kind==NST_CONFIGURE_PEER?a->bytes:0);
++}
++static void njs_notice(enum njs_notice notice){
++ IOLockLock(nss_native.lock);njs_completion fn=njs_native.completion;void*cookie=njs_native.cookie;uint64_t epoch=njs_native.epoch,ticket=njs_native.ticket;IOLockUnlock(nss_native.lock);
++ if(fn)fn(cookie,epoch,ticket,notice);
++ if(notice==NJS_RETIRED){IOLockLock(nss_native.lock);njs_native.completion=0;njs_native.cookie=0;njs_native.retiring=0;njs_native.cookie_retired=1;njs_trace_locked(1);IOLockUnlock(nss_native.lock);}
++}
++static void njs_drop_tx_locked(void){njs_native.queued_drop+=njs_native.tx_count;niwj_clear(njs_native.tx,sizeof njs_native.tx);memset(njs_native.tx_bytes,0,sizeof njs_native.tx_bytes);njs_native.tx_count=njs_native.tx_head=0;}
++static void njs_snapshot_locked(void){
++ struct stc*s=&njs_native.driver.owner.transaction;struct njs_snapshot*v=&njs_native.snapshot;
++ unsigned current=s->phase<STC_DEAUTH&&!njs_native.canceled&&!njs_native.leave;
++ v->peer=njs_native.target;v->associated=current&&s->associated;v->ptk_ready=current&&nst_native.state.ptk_ready&&nst_native.state.ptk.installed;v->gtk_ready=current&&nst_native.state.gtk.installed;v->data_ready=current&&njs_native.linked&&nst_native.state.controlled_port&&nwo_authorized(&njs_native.driver.owner);
++ if(v->data_ready)v->phase=NJS_AUTHORIZED;
++ else if(s->phase>=STC_DEAUTH)v->phase=s->phase==STC_DONE||s->phase==STC_HALTED?NJS_FAILED:NJS_LEAVING;
++ else if(s->phase>=STC_CONFIGURE)v->phase=NJS_SECURING;
++ else if(s->phase>=STC_ASSOC_TX)v->phase=NJS_ASSOCIATING;
++ else v->phase=NJS_AUTHENTICATING;
++ v->result=v->data_ready?1:(s->outcome==STC_PENDING||s->outcome==STC_AUTHORIZED)?0:s->outcome==STC_TIMEOUT?9:2;
++}
++/* Called by nst_step under admission lock: pure engine updates or bounded copy,
++ * never client callback/ifnet invocation/recursive transport publication. */
++static int njs_event(void*ctx,const struct nst_event*e){
++ if(ctx!=&njs_native||e->generation!=njs_native.native_generation)return 0;
++ njs_native.last_event=e->kind;njs_native.last_status=e->status;njs_native.event_count++;if(e->kind==NST_FRAME_RESULT&&e->ticket==UINT64_MAX){njs_native.tx_results++;if(e->status==0)njs_native.tx_ok++;else njs_native.tx_fail++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}}
++ if(e->kind==NST_ETHERNET){if(!njs_native.canceled&&!njs_native.leave&&njs_native.linked&&nwo_authorized(&njs_native.driver.owner)&&e->body&&e->bytes>=14&&e->bytes<=NWIL_ETHERNET_MAX){if(njs_native.rx_count==NJS_RX_SLOTS)return 1;unsigned k=njs_native.rx_count++;memcpy(njs_native.rx[k],e->body,e->bytes);njs_native.rx_bytes[k]=(unsigned)e->bytes;njs_native.rx_generation[k]=e->generation;}return 0;}
++ unsigned type=e->kind==NST_PEER_PREPARED?NWO_PREPARED:e->kind==NST_PEER_CONFIGURED?NWO_CONFIGURED:e->kind==NST_PEER_RETIRED?NWO_RETIRED:0;
++ if(type)return nwn_peer_complete(&njs_native.driver,e->generation,e->ticket,type,e->status==0,njs_native.driver.now_ms)<0?-1:0;
++ int result=nwn_event(&njs_native.driver,e,njs_native.driver.now_ms);
++ if(e->kind==NST_LINK_LOST){njs_native.snapshot.involuntary=1;njs_native.snapshot.reason=0;njs_native.snapshot.subreason=e->status;}
++ if(e->kind==NST_MANAGEMENT&&njs_native.driver.owner.transaction.outcome==STC_DISCONNECTED&&e->body&&e->bytes>=26){njs_native.snapshot.involuntary=1;njs_native.snapshot.reason=e->body[24]|(uint32_t)e->body[25]<<8;}
++ return result<0?-1:0;
++}
++static void njs_early_finish(void){
++ IOLockLock(nss_native.lock);njs_native.queued=njs_native.active=0;njs_native.retiring=1;njs_native.snapshot.phase=NJS_FAILED;njs_native.snapshot.result=2;niwj_clear(&njs_native.request,sizeof njs_native.request);IOLockUnlock(nss_native.lock);
++ njs_notice(NJS_JOIN_FAILED);njs_notice(NJS_RETIRED);
++}
++static int njs_start_owner(uint64_t now_us){
++ int found=0;IOLockLock(nss_native.lock);
++ if(njs_native.canceled||njs_native.leave){IOLockUnlock(nss_native.lock);njs_early_finish();return 0;}
++ for(unsigned k=0;k<NJS_CACHE_SLOTS;k++)if(!niwj_select(&njs_native.request,&njs_native.cache[k],&nss_native.info,now_us,&njs_native.candidate)&&(!found||njs_native.candidate.rssi_dbm>njs_native.target.rssi_dbm)){njs_native.target=njs_native.candidate;found=1;}
++ IOLockUnlock(nss_native.lock);
++ if(!found||now_us>UINT64_MAX-UINT64_C(30000000)||nst_native_prepare(&njs_native.target,njs_native.native_generation,now_us,now_us+UINT64_C(30000000),&njs_native.profile)){njs_early_finish();return 0;}
++ struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=now_us/1000+30000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
++ config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=1,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
++ config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
++ IOLockLock(nss_native.lock);njs_native.used=1;IOLockUnlock(nss_native.lock);
++ int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,now_us/1000);
++ niwj_clear(&config,sizeof config);
++ IOLockLock(nss_native.lock);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;if(result==1)njs_snapshot_locked();IOLockUnlock(nss_native.lock);
++ if(result!=1){njs_early_finish();return nst_native.state.mutated||nst_native.state.submitted?-1:0;}
++ IOLockLock(nss_native.lock);njs_trace_locked(1);IOLockUnlock(nss_native.lock);return 1;
++}
++static int njs_fatal_owner(void){
++ IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);nst_close_port(&nst_native.state);njs_native.linked=njs_native.tx_admit=0;njs_drop_tx_locked();
++ nwp_cancel(&njs_native.driver.owner.transaction.wpa);niwj_clear(&njs_native.driver.owner.transaction.action,sizeof njs_native.driver.owner.transaction.action);niwj_clear(njs_native.driver.owner.transaction.queued_eapol,sizeof njs_native.driver.owner.transaction.queued_eapol);niwj_clear(&njs_native.request,sizeof njs_native.request);
++ njs_trace_locked(1);
++#ifndef NJS_HOST_TEST
++ if(njs_native.logs<112){njs_native.logs++;printf("NORD2 WIFI IOS STATIONGUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);}
++#endif
++ njs_native.snapshot.phase=NJS_FAILED;njs_native.snapshot.result=2;njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=njs_native.snapshot.data_ready=0;
++ njs_native.active=njs_native.queued=0;njs_native.used=1;njs_native.retiring=1;IOLockUnlock(nss_native.lock);
++ (void)nord2_wifi_ifnet_link(njs_native.native_generation,0);IOLockUnlock(njs_native.notice_lock);njs_notice(njs_native.joined?NJS_LEFT:NJS_JOIN_FAILED);njs_notice(NJS_RETIRED);return -1;
++}
++/* Returns1 when the actual NSS worker remains occupied by connection;0 idle;
++ * -1 uncertain native DMA/lease failure requiring inherited retained drain. */
++static int njs_owner_work(void){
++ IOLockLock(nss_native.lock);unsigned queued=njs_native.queued,active=njs_native.active;IOLockUnlock(nss_native.lock);
++ if(!queued&&!active)return 0;
++ uint64_t now_us;if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner();
++ if(queued){int r=njs_start_owner(now_us);if(r<0)return -1;IOLockLock(nss_native.lock);active=njs_native.active;IOLockUnlock(nss_native.lock);if(!active)return 1;}
++ unsigned notify_join=0,notify_terminal=0,retire=0,detach=0,link_up=0,link_down=0;
++ IOLockLock(nss_native.lock);
++ if(njs_native.detach){njs_native.detach=0;detach=1;}
++ if(njs_native.canceled||njs_native.leave){(void)nwn_cancel(&njs_native.driver,njs_native.native_generation,now_us/1000);njs_drop_tx_locked();}
++ int result=nwn_pump(&njs_native.driver,now_us/1000);
++ if(result<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
++ if(!njs_native.canceled&&!njs_native.leave&&nwo_authorized(&njs_native.driver.owner)&&!nst_native.state.wire_busy&&!nst_native.state.air_pending&&njs_native.tx_count){
++  unsigned k=njs_native.tx_head;int sent=nst_data(&nst_native.state,UINT64_MAX,njs_native.tx[k],njs_native.tx_bytes[k]);
++  if(sent<=0){if(sent<0)njs_native.queued_drop++;niwj_clear(njs_native.tx[k],sizeof njs_native.tx[k]);njs_native.tx_bytes[k]=0;njs_native.tx_head=(k+1)%NJS_TX_SLOTS;njs_native.tx_count--;}}
++ if(nst_native.state.halt||nst_step(&nst_native.state,&ncd_io,&ncd_native,16,njs_event,&njs_native)<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
++ njs_snapshot_locked();njs_trace_locked(0);
++ if(nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!njs_native.canceled&&!njs_native.leave&&!njs_native.linked)link_up=1;
++ if((!njs_native.snapshot.data_ready||njs_native.canceled||njs_native.leave)&&njs_native.linked){njs_native.linked=njs_native.tx_admit=0;link_down=1;njs_drop_tx_locked();}
++ unsigned terminal=njs_native.driver.owner.transaction.phase==STC_DONE||njs_native.driver.owner.transaction.phase==STC_HALTED;
++ if(terminal){if(!njs_native.terminal){njs_native.terminal=1;notify_terminal=1;}njs_native.active=0;njs_native.retiring=1;retire=1;niwj_clear(&njs_native.driver.owner.transaction.wpa,sizeof njs_native.driver.owner.transaction.wpa);njs_drop_tx_locked();}
++ IOLockUnlock(nss_native.lock);
++ if(link_down){IOLockLock(njs_native.notice_lock);int down_error=nord2_wifi_ifnet_link(njs_native.native_generation,0);IOLockUnlock(njs_native.notice_lock);if(down_error)njs_link_error(0,down_error);}
++ if(link_up){
++  IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
++  unsigned eligible=!njs_native.canceled&&!njs_native.leave&&nwo_authorized(&njs_native.driver.owner);
++  /* Native station/key/port proof already exists. Admit output generated by
++   * the synchronous BSD link event; do not announce JOINED until it returns. */
++  if(eligible)njs_native.tx_admit=1;
++  IOLockUnlock(nss_native.lock);
++  int error=eligible?nord2_wifi_ifnet_link(njs_native.native_generation,1):0;
++  IOLockLock(nss_native.lock);njs_native.tx_admit=0;
++  if(error||!eligible||njs_native.canceled||njs_native.leave){njs_native.linked=njs_native.tx_admit=0;(void)nwn_cancel(&njs_native.driver,njs_native.native_generation,now_us/1000);njs_drop_tx_locked();njs_snapshot_locked();}
++  else{njs_native.linked=1;njs_snapshot_locked();if(!njs_native.joined){njs_native.joined=1;notify_join=1;}}
++  unsigned linked=njs_native.linked;IOLockUnlock(nss_native.lock);
++  if(eligible&&!linked)(void)nord2_wifi_ifnet_link(njs_native.native_generation,0);
++  IOLockUnlock(njs_native.notice_lock);
++  if(error)njs_link_error(1,error);
++ }
++ for(unsigned k=0;k<njs_native.rx_count;k++){IOLockLock(nss_native.lock);unsigned deliver=njs_native.linked&&!njs_native.canceled&&!njs_native.leave&&njs_native.rx_generation[k]==njs_native.native_generation;IOLockUnlock(nss_native.lock);if(deliver&&!nord2_wifi_ifnet_receive(njs_native.rx_generation[k],njs_native.rx[k],njs_native.rx_bytes[k])){IOLockLock(nss_native.lock);njs_native.rx_delivered++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}IOLockUnlock(nss_native.lock);}niwj_clear(njs_native.rx[k],sizeof njs_native.rx[k]);njs_native.rx_bytes[k]=0;}njs_native.rx_count=0;
++ if(detach)njs_notice(NJS_RETIRED);
++ if(notify_join&&!detach){IOLockLock(nss_native.lock);unsigned live=njs_native.linked&&!njs_native.canceled&&!njs_native.leave;IOLockUnlock(nss_native.lock);if(live)njs_notice(NJS_JOINED);}
++ if(notify_terminal)njs_notice(njs_native.joined?NJS_LEFT:NJS_JOIN_FAILED);
++ if(retire)njs_notice(NJS_RETIRED);
++ if(!terminal){uint64_t deadline;clock_interval_to_deadline(1000,NSEC_PER_USEC,&deadline);IOLockLock(nss_native.lock);assert_wait_deadline((event_t)&nss_native,THREAD_UNINT,deadline);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);}
++ return 1;
++}
+--- /dev/null
++++ b/bsd/dev/wifi_ifnet_link.h
+@@ -0,0 +1,25 @@
++#ifndef NORD2_WIFI_IFNET_LINK_H
++#define NORD2_WIFI_IFNET_LINK_H
++#include <stddef.h>
++#include <stdint.h>
++#define NWIL_ETHERNET_MAX 1514u
++enum nwil_send_result {
++ NWIL_SEND_ACCEPTED=0, NWIL_SEND_NOT_READY=1, NWIL_SEND_BUSY=2,
++ NWIL_SEND_INVALID=-1
++};
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* Native owner copies a complete Ethernet-II frame into bounded storage.
++ * It must revalidate generation + controlled-port admission atomically with
++ * acceptance and again before publication. No caller buffer is retained. */
++int nord2_wifi_link_send(const uint8_t *,size_t,uint64_t generation);
++/* Kernel owner callbacks only. Link-up follows genuine station/key/data-ready
++ * completion; link-down is synchronous before revocation notifications.
++ * Return zero or a positive BSD errno. No PMK/key bytes cross this boundary. */
++int nord2_wifi_ifnet_link(uint64_t generation,int authorized);
++int nord2_wifi_ifnet_receive(uint64_t generation,const uint8_t *,size_t);
++#ifdef __cplusplus
++}
++#endif
++#endif
+--- /dev/null
++++ b/bsd/dev/wifi_ifnet_link.inc
+@@ -0,0 +1,210 @@
++/* Real BSD Ethernet endpoint for the single retained radio owner.
++ * The gate linearizes admission, bind/unbind and generation changes. It is a
++ * kernel-lifetime lock; no callback can race a freed lock after detach.
++ * No IOKit client or mbuf is held by the native TX queue. */
++static IOLock *nwil_lock;
++static struct {
++ ifnet_t net;
++ uint64_t generation;
++ bool authorized;
++ unsigned transitions,rx_logs,tx_logs;
++} nwil;
++
++static bool nwil_init_lock(void) {
++ if (__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE)) return true;
++ IOLock *fresh=IOLockAlloc();
++ if (!fresh) return false;
++ IOLock *expected=nullptr;
++ if (!__atomic_compare_exchange_n(&nwil_lock,&expected,fresh,false,
++                                  __ATOMIC_RELEASE,__ATOMIC_ACQUIRE))
++  IOLockFree(fresh);
++ return true;
++}
++
++static int nwil_bind(ifnet_t net) {
++ if (!net || !nwil_init_lock()) return ENOMEM;
++ IOLockLock(nwil_lock);
++ int error=nwil.net ? EBUSY : ifnet_reference(net);
++ if (!error) { nwil.net=net; nwil.generation=0; nwil.authorized=false; }
++ IOLockUnlock(nwil_lock);
++ return error;
++}
++
++static void nwil_unbind(ifnet_t net) {
++ IOLock *gate=__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE);
++ if (!gate) return;
++ IOLockLock(gate);
++ bool owned=nwil.net==net;
++ if (owned) { nwil.net=nullptr; nwil.authorized=false; nwil.generation=0; }
++ IOLockUnlock(gate);
++ if (owned) { ifnet_set_flags(net,0,IFF_RUNNING); ifnet_release(net); }
++}
++
++static bool nwil_active(ifnet_t net) {
++ IOLock *gate=__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE);
++ if (!gate) return false;
++ IOLockLock(gate);
++ bool active=nwil.net==net && nwil.authorized;
++ IOLockUnlock(gate);
++ return active;
++}
++
++static int nwil_event(ifnet_t net,bool up) {
++ /* Same public DL event layout consumed by configd; payload describes the
++  * actual attached interface. The callback runs without the admission gate. */
++ struct link_data { uint32_t family,unit; char name[IFNAMSIZ]; };
++ alignas(struct kern_event_msg) uint8_t bytes[sizeof(struct kern_event_msg)+sizeof(link_data)]={};
++ auto *header=(struct kern_event_msg *)(void *)bytes;
++ auto *data=(link_data *)(void *)(header+1);
++ header->total_size=sizeof(bytes);
++ header->vendor_code=KEV_VENDOR_APPLE;
++ header->kev_class=KEV_NETWORK_CLASS;
++ header->kev_subclass=KEV_DL_SUBCLASS;
++ header->event_code=up?KEV_DL_LINK_ON:KEV_DL_LINK_OFF;
++ data->family=ifnet_family(net);data->unit=ifnet_unit(net);
++ strlcpy(data->name,ifnet_name(net),sizeof(data->name));
++ return ifnet_event(net,header);
++}
++
++extern "C" int nord2_wifi_ifnet_link(uint64_t generation,int authorized) {
++ if (!generation || (authorized!=0 && authorized!=1)) return EINVAL;
++ IOLock *gate=__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE);
++ if (!gate) return ENXIO;
++ IOLockLock(gate);
++ ifnet_t net=nwil.net;
++ if (!net) { IOLockUnlock(gate); return ENXIO; }
++ if (generation<nwil.generation) { IOLockUnlock(gate); return ESTALE; }
++ if (authorized && nwil.authorized && generation!=nwil.generation) {
++  IOLockUnlock(gate); return EBUSY; /* first revoke the previous peer */
++ }
++ int error=ifnet_reference(net);
++ if (error) { IOLockUnlock(gate); return error; }
++ bool changed=nwil.authorized!=(authorized!=0);
++ error=ifnet_set_flags(net,authorized?IFF_RUNNING:0,IFF_RUNNING);
++ if (!error) { nwil.generation=generation; nwil.authorized=authorized!=0; }
++ if (nwil.transitions<32) {
++  nwil.transitions++;
++  printf("NORD2 WIFI IFNET LINK: generation=%llu authorized=%u changed=%u error=%d\n",
++         (unsigned long long)generation,(unsigned)authorized,(unsigned)changed,error);
++ }
++ IOLockUnlock(gate);
++ /* Protocol event callbacks may generate output; never hold our gate here. */
++ if (!error && changed) error=nwil_event(net,authorized!=0);
++ if (error && authorized) {
++  /* A failed up notification is not a successful link transition. Revoke
++   * locally before reporting the failure to the owner, which closes its
++   * native controlled port and retires any queued transmissions. */
++  IOLockLock(gate);
++  bool rollback=nwil.net==net && nwil.generation==generation && nwil.authorized;
++  if (rollback) { nwil.authorized=false; ifnet_set_flags(net,0,IFF_RUNNING); }
++  IOLockUnlock(gate);
++  if (rollback) (void)nwil_event(net,false);
++ }
++ ifnet_release(net);
++ return error;
++}
++
++static bool nwil_ethernet(const uint8_t *frame,size_t length) {
++ if (!frame || length<14 || length>NWIL_ETHERNET_MAX) return false;
++ unsigned type=(unsigned)frame[12]*256u+frame[13];
++ /* EAPOL belongs exclusively to the owner's authenticator. No VLAN or
++  * 802.3-length/SNAP emulation is advertised by this first data path. */
++ return type>=0x600 && type!=0x888e && type!=0x8100 && type!=0x88a8;
++}
++
++static errno_t nwil_ioctl(ifnet_t net,u_long command,void *data) {
++ /* IFF_UP is administrative; only the native controlled port controls
++  * IFF_RUNNING. No flags ioctl may manufacture an authenticated carrier. */
++ if (command==SIOCSIFFLAGS) return 0;
++ if (command==SIOCSIFADDR) return ifnet_set_flags(net,IFF_UP,IFF_UP);
++ /* Native station activation admits directed, broadcast and all multicast
++  * RX (source filter 0x0d). BSD keeps protocol multicast memberships. */
++ if (command==SIOCADDMULTI || command==SIOCDELMULTI) return 0;
++ if (!data) return EINVAL;
++ if (command==SIOCSIFMTU) {
++  int mtu=((struct ifreq *)data)->ifr_mtu;
++  return mtu<(int)IF_MINMTU || mtu>1500 ? EINVAL : ifnet_set_mtu(net,(unsigned)mtu);
++ }
++ if (command==SIOCGIFDEVMTU) {
++  struct ifreq *request=(struct ifreq *)data;
++  request->ifr_devmtu.ifdm_current=ifnet_mtu(net);
++  request->ifr_devmtu.ifdm_min=IF_MINMTU;
++  request->ifr_devmtu.ifdm_max=1500;
++  return 0;
++ }
++ if (command!=SIOCGIFMEDIA) return EOPNOTSUPP;
++ struct ifmediareq *request=(struct ifmediareq *)data;
++ int requested=request->ifm_count,media=IFM_IEEE80211|IFM_AUTO;
++ request->ifm_current=media;request->ifm_active=media;
++ request->ifm_status=IFM_AVALID|(nwil_active(net)?IFM_ACTIVE:0);
++ request->ifm_mask=0;request->ifm_count=1;
++ if (requested<0) return EINVAL;
++ if (requested>0 && request->ifm_ulist)
++  return copyout(&media,(user_addr_t)request->ifm_ulist,sizeof(media));
++ return 0;
++}
++
++static errno_t nwil_output(ifnet_t net,mbuf_t packet) {
++ if (!packet) return EINVAL;
++ if (mbuf_nextpkt(packet)) { mbuf_freem_list(packet); return EINVAL; }
++ uint64_t generation=0;
++ IOLock *gate=__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE);
++ if (gate) {
++  IOLockLock(gate);
++  if (nwil.net==net && nwil.authorized) generation=nwil.generation;
++  IOLockUnlock(gate);
++ }
++ if (!generation) { mbuf_freem(packet); return ENETDOWN; }
++ size_t length=(mbuf_flags(packet)&MBUF_PKTHDR)?mbuf_pkthdr_len(packet):0;
++ uint8_t frame[NWIL_ETHERNET_MAX];
++ errno_t error=EINVAL;
++ if (length>=14 && length<=sizeof(frame) && !mbuf_copydata(packet,0,length,frame)
++     && nwil_ethernet(frame,length)) {
++  int result=nord2_wifi_link_send(frame,length,generation);
++  error=result==NWIL_SEND_ACCEPTED?0:result==NWIL_SEND_BUSY?ENOBUFS:
++        result==NWIL_SEND_NOT_READY?ENETDOWN:EINVAL;
++  if (!error) {
++   bpf_tap_out(net,DLT_EN10MB,packet,nullptr,0);
++   ifnet_stat_increment_out(net,1,(uint32_t)length,0);
++  }
++ }
++ mbuf_freem(packet);
++ return error;
++}
++
++extern "C" int nord2_wifi_ifnet_receive(uint64_t generation,
++                                       const uint8_t *frame,size_t length) {
++ if (!generation || !nwil_ethernet(frame,length)) return EINVAL;
++ IOLock *gate=__atomic_load_n(&nwil_lock,__ATOMIC_ACQUIRE);
++ if (!gate) return ENXIO;
++ IOLockLock(gate);
++ ifnet_t net=nwil.net;
++ int error=(!net || !nwil.authorized || generation!=nwil.generation)?ENETDOWN:
++           ifnet_reference(net);
++ IOLockUnlock(gate);
++ if (error) return error;
++ mbuf_t packet=nullptr;
++ error=mbuf_getpacket(MBUF_DONTWAIT,&packet);
++ if (!error && mbuf_maxlen(packet)<length) error=ENOBUFS;
++ if (error) { if(packet)mbuf_freem(packet); ifnet_release(net); return error; }
++ memcpy(mbuf_data(packet),frame,length);
++ mbuf_setlen(packet,length);mbuf_pkthdr_setlen(packet,length);
++ error=mbuf_pkthdr_setrcvif(packet,net);
++ if (!error) {
++  void *header=mbuf_data(packet);
++  mbuf_pkthdr_setheader(packet,header);
++  mbuf_pkthdr_setlen(packet,length-14);
++  error=mbuf_setdata(packet,(uint8_t *)header+14,length-14);
++  if (!error) {
++   bpf_tap_in(net,DLT_EN10MB,packet,header,14);
++   struct ifnet_stat_increment_param stats={};
++   stats.packets_in=1;stats.bytes_in=(uint32_t)length;
++   /* ifnet_input consumes even on failure. Native RX storage remains owned
++    * by the caller and can be reused immediately after this copy. */
++   error=ifnet_input(net,packet,&stats);packet=nullptr;
++  }
++ }
++ if (packet) mbuf_freem(packet);
++ ifnet_release(net);
++ return error;
++}
+--- /dev/null
 +++ b/bsd/dev/wifi_scan_service.h
 @@ -0,0 +1,33 @@
 +#ifndef PRIVATE_WIFI_SCAN_SERVICE_H
@@ -16244,7 +18413,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_scan_service_bind.inc
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,121 @@
 +/* Include at end of normal backend binder, before actual CAP worker. */
 +#ifdef NSS_HOST_TEST
 +#include "nss_host.h"
@@ -16256,12 +18425,26 @@
 +enum {NSS_FREE,NSS_QUEUED,NSS_RUNNING,NSS_DONE};
 +struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
 +static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
++#if defined(NSS_HOST_TEST) && !defined(NJS_HOST_TEST)
++#define NSS_STATION_TEST_DISABLED 1
++static int njs_scan_blocked_locked(void){return 0;}
++static int njs_pending_locked(void){return 0;}
++static void njs_cache_scan_locked(const struct nsb_scan*s){(void)s;}
++static void njs_initialize_locked(void){}
++static int njs_owner_work(void){return 0;}
++#else
++static int njs_scan_blocked_locked(void);
++static int njs_pending_locked(void);
++static void njs_cache_scan_locked(const struct nsb_scan*);
++static void njs_initialize_locked(void);
++#endif
 +static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC_ACQUIRE)==1;}
 +static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
 +int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
 +int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
 + if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS)return -1;
 + if(!nss_available())return 1;IOLockLock(nss_native.lock);
++ if(njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
 + if(nss_native.failed||nss_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
 + for(unsigned i=0;i<q->count;i++){unsigned found=0;for(unsigned j=0;j<nss_native.info.count;j++)if(q->channels[i].band==nss_native.info.channels[j].band&&q->channels[i].channel==nss_native.info.channels[j].channel)found=1;
 +  for(unsigned j=0;j<i;j++)if(q->channels[i].band==q->channels[j].band&&q->channels[i].channel==q->channels[j].channel)found=0;
@@ -16294,6 +18477,7 @@
 + if(!nss_native.info.count||nss_native.info.count!=ncb_native.plan.channel_count)return 1;
 + nss_native.scan_sequence=ncb_native.rx.scan.sequence;
 + nss_native.lock=IOLockAlloc();if(!nss_native.lock)return 1;
++ njs_initialize_locked();
 + __atomic_store_n(&nss_native.ready,1,__ATOMIC_RELEASE);
 + printf("NORD2 WIFI IOS OWNER: active=1 retained=1 boot_complete=1 ready=1\n");
 + nord2_wifi_ios_backend_ready();return 0;
@@ -16322,16 +18506,26 @@
 + slot->scan=r->scan;slot->captured=now;return 0;
 +}
 +static void nss_deliver(struct nss_slot*s,enum nss_status status){
-+ IOLockLock(nss_native.lock);s->status=s->canceled?NSS_CANCELED:status;s->state=NSS_DONE;s->callback_busy=1;
++ IOLockLock(nss_native.lock);if(!s->canceled&&status==NSS_COMPLETE)njs_cache_scan_locked(&s->scan);s->status=s->canceled?NSS_CANCELED:status;s->state=NSS_DONE;s->callback_busy=1;
 + printf("NORD2 WIFI IOS SCAN: ticket=%llu generation=%llu status=%u sequence=%u frames=%u bss=%u done=%u partial=%u canceled=%u error=%u rx_error=%u\n",(unsigned long long)s->ticket,(unsigned long long)s->generation,(unsigned)s->status,s->scan.sequence,s->scan.frames,s->scan.count,s->scan.done,s->scan.partial,s->canceled,nct_native.session.error,ncb_native.rx.error);
 + if(s->status==NSS_FATAL)printf("NORD2 WIFI IOS GUARD: reason=%u source=%u stage=%u error=%u valid=%u addr=%#x raw=%#x mask=%#x expected=%#x\n",nwfn_native.guard_reason,nwfn_native.guard_source,nwfn_native.failure_stage,nwfn_native.error,nwfn_native.guard_valid,nwfn_native.guard_address,nwfn_native.guard_raw,nwfn_native.guard_mask,nwfn_native.guard_expected);
 + nss_completion fn=s->completion;void*cookie=s->cookie;uint64_t gen=s->generation,ticket=s->ticket;status=s->status;IOLockUnlock(nss_native.lock);
 + fn(cookie,gen,ticket,status); /* no lock held; cookie not accessed afterward */
 + IOLockLock(nss_native.lock);s->callback_busy=0;if(s->retire)memset(s,0,sizeof(*s));IOLockUnlock(nss_native.lock);
 +}
++#ifndef NSS_STATION_TEST_DISABLED
++#include "wifi_station_transport_bind.inc"
++#include "wifi_station_service_bind.inc"
++#else
++static int nst_native_owner_window(const struct nwfn_native*n){(void)n;return 0;}
++static int nst_native_rx_active(const struct nwfn_native*n){(void)n;return 0;}
++static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t b,unsigned w){(void)n;(void)a;(void)b;(void)w;return 0;}
++static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){(void)n;(void)a;(void)v;return 0;}
++#endif
 +static void nss_owner_loop(void){
-+ for(;;){IOLockLock(nss_native.lock);struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED&&(!s||nss_native.slot[k].ticket<s->ticket))s=&nss_native.slot[k];
-+  if(!s){NVC_PHASE(6);assert_wait((event_t)&nss_native,THREAD_UNINT);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);continue;}
++ for(;;){int join_work=njs_owner_work();if(join_work<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);nwm_failure_drain();panic("NORD2 WIFI STATION: uncertain retained DMA; manual reset required");}if(join_work)continue;
++ IOLockLock(nss_native.lock);struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED&&(!s||nss_native.slot[k].ticket<s->ticket))s=&nss_native.slot[k];
++  if(!s){if(njs_pending_locked()){IOLockUnlock(nss_native.lock);continue;}NVC_PHASE(6);assert_wait((event_t)&nss_native,THREAD_UNINT);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);continue;}
 +  s->state=NSS_RUNNING;unsigned canceled=s->canceled;IOLockUnlock(nss_native.lock);
 +  int result=canceled?1:nss_execute(s);enum nss_status status=canceled?NSS_CANCELED:result<0?NSS_FATAL:result?NSS_REFUSED:(s->scan.done&&!s->scan.partial&&!s->scan.timed_out&&!s->scan.dropped)?NSS_COMPLETE:NSS_PARTIAL;
 +  if(result<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);}
@@ -16572,15 +18766,16 @@
 +static void nss_worker_continue(void) {if(!nss_start())nss_owner_loop();}
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_backend_forward.inc
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,9 @@
++#include "wifi_station_transport_forward.inc"
 +static int ncb_after_basic(void);
 +static int ncb_rx_active(const struct nwfn_native *);
 +static int ncb_rx_memory(const struct nwfn_native *,uint64_t,uint32_t,unsigned);
 +static int ncb_rx_write(const struct nwfn_native *,uint32_t,uint32_t);
 +#define NCT_AFTER_BASIC() ncb_after_basic()
-+#define NWFN_RX_ACTIVE(n) ncb_rx_active(n)
-+#define NWFN_RX_MEMORY(n,a,b,w) ncb_rx_memory(n,a,b,w)
-+#define NWFN_RX_WRITE(n,a,v) ncb_rx_write(n,a,v)
++#define NWFN_RX_ACTIVE(n) (ncb_rx_active(n)||nst_native_rx_active(n))
++#define NWFN_RX_MEMORY(n,a,b,w) (ncb_rx_memory(n,a,b,w)||nst_native_rx_memory(n,a,b,w))
++#define NWFN_RX_WRITE(n,a,v) (ncb_rx_write(n,a,v)||nst_native_rx_write(n,a,v))
 --- /dev/null
 +++ b/bsd/dev/wifi_normal_config_tables.inc
 @@ -0,0 +1,2054 @@
@@ -18646,7 +20841,7 @@
 +static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
 +#ifdef NCT_AFTER_BASIC
 +#include "wifi_normal_transport_bind.inc"
-+#define NCT_OWNER_WINDOW(n) nct_native_owner_window(n)
++#define NCT_OWNER_WINDOW(n) (nct_native_owner_window(n)||nst_native_owner_window(n))
 +#else
 +#define NCT_AFTER_BASIC() 0
 +#define NCT_OWNER_WINDOW(n) 0
@@ -19669,11 +21864,12 @@
 +}
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_client.cpp
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,397 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
-+/* Native owned IOUserClient: repeated passive scan, immutable cache and mapped
-+ * event producer. No association, security, data TX or carrier assertion. */
++/* Native owned IOUC: scan and bounded WPA2 join bridge. Native station owner
++ * establishes association, keys, data admission and real ifnet carrier; client
++ * never infers success from enqueue or a cached beacon. */
 +#ifdef NIWL_HOST_TEST
 +#include "test-xnu.h"
 +#else
@@ -19694,6 +21890,8 @@
 +#include "../../../bsd/dev/wifi_ios_card.h"
 +#include "../../../bsd/dev/wifi_ios_policy.h"
 +#include "../../../bsd/dev/wifi_ios_scalar.h"
++#include "../../../bsd/dev/wifi_ios_join.h"
++#include "../../../bsd/dev/wifi_ios_station_view.h"
 +}
 +static uint32_t niw_u32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 +/* Monotonic time is diagnostic only, never scan freshness or a timeout. */
@@ -19714,6 +21912,7 @@
 +/* Same-IPSW RawSet preserves IOReturn in errno; ScanAsync returns that errno.
 + * wifid retries raw EBUSY16, not Mach kIOReturnBusy (0xe00002d5). */
 +static const IOReturn kNiwScanBusy=16;
++static void niwj_free(void*p,size_t n){if(p){niwj_clear(p,n);IOFree(p,n);}}
 +class NiwlLifecycleClient : public IOUserClient {
 + OSDeclareDefaultStructors(NiwlLifecycleClient)
 + task_t owner;IOLock *gate;
@@ -19723,8 +21922,12 @@
 + uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned unsupportedLogs,pipeLogs,scanLogs,queueLogs,completionLogs,eventLogs,resultLogs,outputLogs;
 + struct {uint32_t request,operation,count;} controlTrace[40];
 + char interfaceName[16];struct nils_state cacheLife;struct nils_ticket cacheTicket;
++ struct njs_snapshot *station;uint64_t joinTicket,joinEpoch;unsigned joinLogs;
 + struct niwa_snapshot *snapshot;uint32_t producer;IOReturn lastScanError;
 + static void completed(void*,uint64_t,uint64_t,enum nss_status);
++ static void joinCompleted(void*,uint64_t,uint64_t,enum njs_notice);
++ IOReturn joinLocked(const uint8_t*,size_t);
++ bool stationEventLocked(unsigned);
 + IOReturn scanLocked(const uint8_t*,size_t);
 + IOReturn getLocked(const niw_request*,const void*,size_t,IOExternalMethodArguments*);
 + bool eventLocked(uint32_t);
@@ -19746,7 +21949,7 @@
 +};
 +OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
 +bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
-+ pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
++ station=nullptr;joinTicket=joinEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
 + owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
 + if(!task||current_task()!=task||type)return false;
 + OSObject *entitlement=IOUserClient::copyClientEntitlement(task,"com.apple.wifi.manager-access");
@@ -19755,6 +21958,7 @@
 + if(!authorized||!IOUserClient::initWithTask(task,security,type,props))return false;
 + gate=IOLockAlloc();if(!gate)return false;
 + snapshot=(niwa_snapshot*)IOMalloc(sizeof(*snapshot));if(!snapshot)return false;bzero(snapshot,sizeof(*snapshot));
++ station=(njs_snapshot*)IOMalloc(sizeof(*station));if(!station)return false;bzero(station,sizeof(*station));
 + task_reference(task);owner=task;generation=1;phase=Open;return true;
 +}
 +void NiwlLifecycleClient::discardLocked(void){
@@ -19766,7 +21970,7 @@
 + if(data){data->release();data=nullptr;}if(state){state->release();state=nullptr;}
 +}
 +void NiwlLifecycleClient::closeOwned(void){
-+ if(!gate)return;IOLockLock(gate);phase=Closed;if(generation!=UINT64_MAX)generation++;uint64_t ticket=pendingTicket;discardLocked();IOLockUnlock(gate);if(ticket)nord2_wifi_scan_cancel(ticket);
++ if(!gate)return;IOLockLock(gate);phase=Closed;if(generation!=UINT64_MAX)generation++;uint64_t ticket=pendingTicket,jt=joinTicket;discardLocked();IOLockUnlock(gate);if(ticket)nord2_wifi_scan_cancel(ticket);if(jt)nord2_wifi_join_cancel(jt);
 +}
 +bool NiwlLifecycleClient::traceControl(uint32_t request,uint32_t operation){
 + for(unsigned i=0;i<40;i++)if(controlTrace[i].count&&controlTrace[i].request==request&&controlTrace[i].operation==operation){if(controlTrace[i].count<8){controlTrace[i].count++;return true;}return false;}
@@ -19785,26 +21989,35 @@
 +   if(a->structureInputSize||a->structureInputDescriptor->getLength()!=bytes)return kIOReturnBadArgument;
 +   copy=IOMalloc(bytes);if(!copy)return kIOReturnNoMemory;
 +   IOReturn prepared=a->structureInputDescriptor->prepare(kIODirectionOut);
-+   if(prepared!=kIOReturnSuccess){IOFree(copy,bytes);return prepared;}
++   if(prepared!=kIOReturnSuccess){niwj_free(copy,bytes);return prepared;}
 +   IOByteCount copied=a->structureInputDescriptor->readBytes(0,copy,bytes);
 +   IOReturn completed=a->structureInputDescriptor->complete(kIODirectionOut);
-+   if(copied!=bytes||completed!=kIOReturnSuccess){IOFree(copy,bytes);return completed!=kIOReturnSuccess?completed:kIOReturnBadArgument;}
++   if(copied!=bytes||completed!=kIOReturnSuccess){niwj_free(copy,bytes);return completed!=kIOReturnSuccess?completed:kIOReturnBadArgument;}
 +   carrier=copy;
 +  }else if(a->structureInputSize!=bytes)return kIOReturnBadArgument;
 +  struct niw_request q={};IOReturn result=kIOReturnBadArgument;
-+  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){if(a->structureOutputSize){if(copy)IOFree(copy,bytes);return kIOReturnBadArgument;}result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)IOFree(copy,bytes);return result;}
++  if(niwi_scan_envelope(selector,carrier,bytes,interfaceName)==0){if(a->structureOutputSize){if(copy)niwj_free(copy,bytes);return kIOReturnBadArgument;}result=scanLocked((const uint8_t*)carrier+8,5456);if(copy)niwj_free(copy,bytes);return result;}
 +
 +  uint32_t unsupportedSet=0;
 +  if(!niwi_set_shape(selector,carrier,bytes,interfaceName,&unsupportedSet)){
 +   const uint8_t*power=(const uint8_t*)carrier+8;size_t tail=selector==0?15368:245768;
++   if(unsupportedSet==20||unsupportedSet==22){
++    uint32_t extent=niw_u32((const uint8_t*)carrier+4),value=niw_u32((const uint8_t*)carrier+tail+20);
++    if(a->structureOutputSize||value)result=kIOReturnBadArgument;
++    else if(unsupportedSet==20)result=joinLocked((const uint8_t*)carrier+8,extent);
++    else if(extent)result=kIOReturnUnsupported;
++    else{int x=nord2_wifi_join_disconnect();result=!x?kIOReturnSuccess:x==2?kNiwScanBusy:kIOReturnNotReady;}
++    if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS JOINCONTROL: request=%u bytes=%u status=%#x t_ms=%llu\n",unsupportedSet,extent,(unsigned)result,niw_ms());
++    if(copy)niwj_free(copy,bytes);return result;
++   }
 +   if(unsupportedSet==19&&niw_u32((const uint8_t*)carrier+4)==24&&traceControl(19,0))printf("NORD2 WIFI IOS POWERSET: version=%u radios=%u state=%u\n",niw_u32(power),niw_u32(power+4),niw_u32(power+8));
 +   if(unsupportedSet==19&&!a->structureOutputSize&&niw_u32((const uint8_t*)carrier+4)==24&&!niw_u32((const uint8_t*)carrier+tail+20)&&!niwi_power_on_admit(power,24)){
 +    nss_info info={};result=nord2_wifi_scan_info(&info)?kIOReturnNotReady:kIOReturnSuccess;
 +    if(traceControl(19,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=19 operation=0x802869c8 bytes=24 status=%#x\n",selector,(unsigned)result);
-+    if(copy)IOFree(copy,bytes);return result; /* already physically retained ON; no event/write */
++    if(copy)niwj_free(copy,bytes);return result; /* already physically retained ON; no event/write */
 +   }
 +   if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
-+   if(copy)IOFree(copy,bytes);return kIOReturnUnsupported;
++   if(copy)niwj_free(copy,bytes);return kIOReturnUnsupported;
 +  }
 +  if(!niw_decode(selector,carrier,bytes,&q)){
 +   if(selector==0&&q.request==43&&q.value==0&&q.payload_bytes==0&&!memcmp(q.interface_name,interfaceName,16)){
@@ -19815,7 +22028,7 @@
 +   }else result=getLocked(&q,carrier,bytes,a);
 +  }
 +  if(traceControl(q.request,q.operation))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=%#x bytes=%u status=%#x\n",selector,q.request,q.operation,q.payload_bytes,(unsigned)result);
-+  if(copy)IOFree(copy,bytes);
++  if(copy)niwj_free(copy,bytes);
 +  /* Unimplemented request IDs are explicitly unsupported; no security or link
 +   * state is inferred from successful scan operations. */
 +  return result;
@@ -19870,9 +22083,10 @@
 + /* XNU passes an owned wake-port send reference on async calls. Balance every
 +  * rejected/replayed call too, not only the accepted stored registration. */
 + OSAsyncReference64 incoming={0};bool incomingRight=a&&a->asyncReference&&a->asyncReferenceCount;
-+ if(incomingRight)incoming[0]=a->asyncReference[0];bool adopted=false;uint64_t cancel=0;IOReturn result=kIOReturnNotReady;
-+ if(gate){IOLockLock(gate);if(selector==4)cancel=pendingTicket;result=(d||t||r)?kIOReturnBadArgument:outputLocked(selector,a,&adopted);if(selector>=1&&selector<=5&&pipeLogs++<32)printf("NORD2 WIFI IOS PIPE: selector=%u phase=%u status=%#x output=%u refs=%u t_ms=%llu\n",selector,(unsigned)phase,(unsigned)result,a?(unsigned)a->structureOutputSize:0,a?a->asyncReferenceCount:0,niw_ms());IOLockUnlock(gate);}
++ if(incomingRight)incoming[0]=a->asyncReference[0];bool adopted=false;uint64_t cancel=0,cancelJoin=0;IOReturn result=kIOReturnNotReady;
++ if(gate){IOLockLock(gate);if(selector==4){cancel=pendingTicket;cancelJoin=joinTicket;}result=(d||t||r)?kIOReturnBadArgument:outputLocked(selector,a,&adopted);if(selector>=1&&selector<=5&&pipeLogs++<32)printf("NORD2 WIFI IOS PIPE: selector=%u phase=%u status=%#x output=%u refs=%u t_ms=%llu\n",selector,(unsigned)phase,(unsigned)result,a?(unsigned)a->structureOutputSize:0,a?a->asyncReferenceCount:0,niw_ms());IOLockUnlock(gate);}
 + if(cancel&&result==kIOReturnSuccess)nord2_wifi_scan_cancel(cancel);
++ if(cancelJoin&&result==kIOReturnSuccess)nord2_wifi_join_cancel(cancelJoin);
 + if(incomingRight&&!adopted)IOUserClient::releaseAsyncReference64(incoming);return result;
 +}
 +IOReturn NiwlLifecycleClient::clientMemoryForType(UInt32 type,IOOptionBits*options,IOMemoryDescriptor**memory){
@@ -19888,7 +22102,7 @@
 +IOReturn NiwlLifecycleClient::clientClose(void){closeOwned();terminate();return kIOReturnSuccess;}
 +IOReturn NiwlLifecycleClient::clientDied(void){closeOwned();terminate();return kIOReturnSuccess;}
 +void NiwlLifecycleClient::stop(IOService*p){closeOwned();IOUserClient::stop(p);}
-+void NiwlLifecycleClient::free(void){closeOwned();if(owner){task_deallocate(owner);owner=TASK_NULL;}if(gate){IOLockFree(gate);gate=nullptr;}if(snapshot){IOFree(snapshot,sizeof(*snapshot));snapshot=nullptr;}IOUserClient::free();}
++void NiwlLifecycleClient::free(void){closeOwned();if(owner){task_deallocate(owner);owner=TASK_NULL;}if(gate){IOLockFree(gate);gate=nullptr;}if(snapshot){IOFree(snapshot,sizeof(*snapshot));snapshot=nullptr;}if(station){niwj_free(station,sizeof(*station));station=nullptr;}IOUserClient::free();}
 +#ifdef NIWL_HOST_TEST
 +class NiwlLifecycleService : public IOService {
 + OSDeclareDefaultStructors(NiwlLifecycleService)
@@ -19984,14 +22198,67 @@
 + if(q->request==43||q->request==44){if(q->payload_bytes!=256||a->structureOutputSize<256)return kIOReturnBadArgument;
 +  static const char driver[]="Nord2 MT6893 passive scan controller";static const char hardware[]="Nord2 MT6893 Wi-Fi";bzero(a->structureOutput,256);
 +  if(q->request==43)memcpy(a->structureOutput,driver,sizeof driver);else memcpy(a->structureOutput,hardware,sizeof hardware);a->structureOutputSize=256;return kIOReturnSuccess;}
-+ if(q->request==13||q->request==15){nss_info info={};size_t used=0;if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
++ if(q->request==15){nss_info info={};size_t used=0;if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
 +  if(niws_reply(q,interfaceName,info.scanning?NIWS_SCANNING:NIWS_IDLE,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
-+ if(q->request==103){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;return (IOReturn)6; /* ENXIO: no association; never a scan-cache alias */}
++ if(q->request==13||q->request==21||q->request==1||q->request==9||q->request==2||q->request==4||q->request==16||q->request==103){
++  nss_info info={};size_t used=0;int native=nord2_wifi_join_copy_state(station);
++  if(native){if(q->request==21)return kIOReturnNotReady;bzero(station,sizeof(*station));station->phase=NJS_IDLE;}
++  if(q->request==13&&nord2_wifi_scan_info(&info))return kIOReturnNotReady;
++  int result=niwj_state_reply(station,q->request,q->payload_bytes,info.scanning,niw_ms()*1000,a->structureOutput,a->structureOutputSize,&used);
++  if(result==1)return (IOReturn)6; /*ENXIO: no authenticated current association*/
++  if(result)return result==-2?kIOReturnUnsupported:kIOReturnBadArgument;
++  a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;
++ }
 + if(q->request==12){niwc_manifest empty={};size_t used=0;if(niwc_card_reply(carrier,bytes,&empty,a->structureOutput,a->structureOutputSize,&used))return kIOReturnBadArgument;a->structureOutputSize=(uint32_t)used;return kIOReturnSuccess;}
 + if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
 + if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
 + if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);
 + return kIOReturnUnsupported;
++}
++
++IOReturn NiwlLifecycleClient::joinLocked(const uint8_t*p,size_t bytes){
++ if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
++ if(joinTicket)return kNiwScanBusy;
++ niwj_request*request=(niwj_request*)IOMalloc(sizeof(*request));if(!request)return kIOReturnNoMemory;
++ niwj_diagnostic diag={};int decoded=niwj_decode(p,bytes,request,&diag);
++ if(joinLogs++<32)printf("NORD2 WIFI IOS JOINREQ: bytes=%u reason=%u key_kind=%u key_bytes=%u native_flags=%#x assoc_flags=%#x assoc_reason=%u cached_pmk_bytes=%u blacklist_count=%u scope_id=%u conditional_option=%u transition_disable=%#x band_preference=%u t_ms=%llu\n",(unsigned)bytes,diag.reason,diag.key_kind,diag.key_bytes,diag.native_flags,diag.association_flags,diag.association_reason,diag.cached_pmk_bytes,diag.blacklist_count,diag.scope_id,diag.conditional_option,diag.transition_disable,diag.band_preference,niw_ms());
++ if(decoded){niwj_free(request,sizeof(*request));return decoded==NIWJ_SHAPE?kIOReturnBadArgument:kIOReturnUnsupported;}
++ retain();uint64_t ticket=0;int result=nord2_wifi_join_enqueue(request,this,generation,joinCompleted,&ticket);
++ niwj_free(request,sizeof(*request));
++ if(result){release();return result==2?kNiwScanBusy:result<0?kIOReturnBadArgument:kIOReturnNotReady;}
++ /* Backend promises nonzero ticket, copied input, and no inline callbacks. */
++ joinTicket=ticket;joinEpoch=generation;return kIOReturnSuccess;
++}
++void NiwlLifecycleClient::joinCompleted(void*cookie,uint64_t epoch,uint64_t ticket,enum njs_notice notice){
++ NiwlLifecycleClient*c=(NiwlLifecycleClient*)cookie;bool retire=false;
++ IOLockLock(c->gate);
++ bool owned=c->joinTicket==ticket&&c->joinEpoch==epoch;
++ bool current=owned&&c->phase==Armed&&c->generation==epoch;
++ if(current&&notice!=NJS_RETIRED&&!nord2_wifi_join_copy_state(c->station)&&c->station->ticket==ticket&&c->station->client_epoch==epoch){
++  if(notice==NJS_JOINED&&niwj_authorized(c->station)){
++   /* Prioritize terminal completion if the consumer has little ring room.
++    * Every query already sees the committed real native snapshot. */
++   c->stationEventLocked(9);c->stationEventLocked(2);c->stationEventLocked(3);c->stationEventLocked(4);
++  }else if(notice==NJS_JOIN_FAILED&&(c->station->result==2||c->station->result==9||c->station->result==21))c->stationEventLocked(9);
++  else if(notice==NJS_LEFT&&!c->station->associated&&!c->station->ptk_ready&&!c->station->gtk_ready&&!c->station->data_ready){
++   /* Native already closed controlled port + real ifnet link synchronously. */
++   c->stationEventLocked(2);c->stationEventLocked(3);c->stationEventLocked(4);
++  }
++ }
++ if(c->joinLogs++<64)printf("NORD2 WIFI IOS JOINNOTICE: notice=%u current=%u phase=%u result=%u authorized=%u generation=%llu ticket=%llu epoch=%llu t_ms=%llu\n",(unsigned)notice,(unsigned)current,c->station->phase,c->station->result,(unsigned)niwj_authorized(c->station),(unsigned long long)c->station->native_generation,(unsigned long long)ticket,(unsigned long long)epoch,niw_ms());
++ if(owned&&notice==NJS_RETIRED){c->joinTicket=0;c->joinEpoch=0;retire=true;}
++ IOLockUnlock(c->gate);if(retire)c->release();
++}
++bool NiwlLifecycleClient::stationEventLocked(unsigned event){
++ if(phase!=Armed||!ownsReference||!data||!state)return false;
++ uint8_t record[80];size_t bytes=0;if(niwj_notice_record(station,event,interfaceName,record,sizeof(record),&bytes))return false;
++ uint32_t*indices=(uint32_t*)state->getBytesNoCopy();uint32_t consumer=__atomic_load_n(indices,__ATOMIC_ACQUIRE);
++ niwe_view view={consumer,producer,4096};niwe_space space={};if(niwe_plan(&view,(uint16_t)(bytes-48),0,&space)!=1)return false;
++ uint8_t*ring=(uint8_t*)data->getBytesNoCopy();for(uint32_t i=0;i<space.padding;i+=4){uint32_t pad=80;memcpy(ring+producer+i,&pad,4);}
++ for(size_t i=0;i<bytes;i++)ring[(space.record_offset+i)%4096]=record[i];
++ producer=space.next;__atomic_store_n(indices+1,producer,__ATOMIC_RELEASE);
++ IOReturn result=sendAsyncResult64(reference,kIOReturnSuccess,nullptr,0);
++ if(eventLogs++<128)printf("NORD2 WIFI IOS EVENT: event=%u published=1 notified=%u status=%#x producer=%u consumer=%u generation=%llu ticket=%llu epoch=%llu t_ms=%llu\n",event,(unsigned)(result==kIOReturnSuccess),(unsigned)result,producer,consumer,(unsigned long long)station->native_generation,(unsigned long long)joinTicket,(unsigned long long)joinEpoch,niw_ms());return true;
 +}
 +
 +#endif /* NORD2 */
@@ -20001,7 +22268,7 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Compatible replacement registry classes: IOService ABI only. No proprietary
-+ * IO80211 vtable or data/link implementation. Explicit software ADT provider. */
++ * IO80211 vtable; a native-owner-gated BSD Ethernet path. Explicit software ADT provider. */
 +#ifdef NIWI_REGISTRY_HOST_TEST
 +#include "test-registry-xnu.h"
 +#else
@@ -20023,11 +22290,15 @@
 +#include <net/if_dl.h>
 +#include <net/if_types.h>
 +#include <net/if_media.h>
++#include <net/if_ether.h>
++#include <net/bpf.h>
++#include <sys/kern_event.h>
 +#include <sys/sockio.h>
 +#include <sys/systm.h>
 +#endif
 +extern "C" {
 +#include "../../../bsd/dev/wifi_scan_service.h"
++#include "../../../bsd/dev/wifi_ifnet_link.h"
 +#ifndef NIWI_REGISTRY_HOST_TEST
 +#include <pexpert/pexpert.h>
 +#endif
@@ -20192,25 +22463,13 @@
 + *out=client;opened();return kIOReturnSuccess;
 +}
 +
++#include "../../../bsd/dev/wifi_ifnet_link.inc"
++
 +class IO80211Controller : public IOService {
 + OSDeclareDefaultStructors(IO80211Controller)
 + ifnet_t net=nullptr;IO80211SkywalkInterface*interface=nullptr;IONetworkStack *stack=nullptr;
-+ static errno_t output(ifnet_t,mbuf_t p){mbuf_freem(p);return ENETDOWN;}
-+ static errno_t demux(ifnet_t,mbuf_t,char*,protocol_family_t*){return EOPNOTSUPP;}
-+ static errno_t add(ifnet_t,protocol_family_t,const ifnet_demux_desc*,u_int32_t){return EOPNOTSUPP;}
-+ static errno_t del(ifnet_t,protocol_family_t){return 0;}
-+ static errno_t multi(ifnet_t,const sockaddr*){return EOPNOTSUPP;}
 + static void detached(ifnet_t n){ifnet_release(n);}
-+ static errno_t ioctl(ifnet_t,u_long cmd,void*data){
-+  if(cmd==SIOCSIFFLAGS)return 0; /* administrative flags only; never link/carrier */
-+  if(cmd!=SIOCGIFMEDIA)return EOPNOTSUPP;
-+  if(!data)return EINVAL;struct ifmediareq*r=(struct ifmediareq*)data;
-+  int requested=r->ifm_count;int media=IFM_IEEE80211|IFM_AUTO;
-+  r->ifm_current=media;r->ifm_active=media;r->ifm_status=IFM_AVALID;r->ifm_mask=0;r->ifm_count=1;
-+  if(requested<0)return EINVAL;
-+  if(requested>0&&r->ifm_ulist)return copyout(&media,(user_addr_t)r->ifm_ulist,sizeof(media));
-+  return 0;
-+ }
++
 +public:
 + bool start(IOService*) override;
 + void stop(IOService*) override;
@@ -20224,7 +22483,7 @@
 + if(opt!=1||!compatible||compatible->getLength()!=sizeof expected||memcmp(compatible->getBytesNoCopy(),expected,sizeof expected))return false;
 + nss_info info={};if(nord2_wifi_scan_info(&info)||!info.count||!IOService::start(p))return false;
 + static const uint8_t broadcast[6]={255,255,255,255,255,255};
-+ ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=output;params.ioctl=ioctl;params.demux=demux;params.add_proto=add;params.del_proto=del;params.check_multi=multi;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
++ ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=nwil_output;params.ioctl=nwil_ioctl;params.demux=ether_demux;params.add_proto=ether_add_proto;params.del_proto=ether_del_proto;params.check_multi=ether_check_multi;params.framer_extended=ether_frameout_extended;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
 + /* Let ifnet_attach arbitrate real unit collisions; never rename an existing interface. */
 + for(unsigned unit=0;unit<32;unit++){
 +  params.unit=unit;if(ifnet_allocate_extended(&params,&net))continue;
@@ -20239,7 +22498,7 @@
 + if(!setProperty("IOMACAddress",info.mac,sizeof info.mac)||!setProperty("IOBuiltin",true)){
 +  printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=8\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
 + }
-+ /* Never signal link up, carrier, association, supported encryption or IP readiness. */
++ /* Discovery does not signal carrier. Only native station/key/data readiness can. */
 + /* IOInterfaceName is only on actual interface: one bind target. */
 + interface=new IO80211SkywalkInterface;
 + if(!interface||!interface->init()){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=3\n");if(interface)interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
@@ -20260,10 +22519,18 @@
 +  interface->stop(this);interface->detach(this);interface->release();interface=nullptr;
 +  ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
 + }
++ if(nwil_bind(net)){
++  stack->deactivate();stack->terminate();stack->detach(resources);stack->release();stack=nullptr;
++  interface->stop(this);interface->detach(this);interface->release();interface=nullptr;
++  ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
++ }
++ /* DHCP uses BPF on the same Ethernet endpoint; detach tears BPF down. */
++ bpfattach(net,DLT_EN10MB,14);
 + interface->registerService();stack->registerService();registerService();
 + printf("NORD2 WIFI IOS STACK: registered=1 unit=%u ifstate=1 t_ms=%llu\n",ifnet_unit(net),niws_ms());printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0 network_class=1 builtin=1\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
 +}
 +void IO80211Controller::stop(IOService*p){
++ if(net)nwil_unbind(net);
 + /* Invalidate the stack before removing the identity or detaching BSD. */
 + if(stack){stack->deactivate();stack->terminate();stack->detach(IOService::getResourceService());stack->release();stack=nullptr;}
 + if(interface)interface->removeProperty("IOInterfaceState");

@@ -16,6 +16,7 @@ with tempfile.TemporaryDirectory(prefix="nord2-ios-registry-") as temporary:
     bsd.mkdir(parents=True)
     for header in SOURCE.glob("*.h"):
         shutil.copy2(header, bsd / header.name)
+    shutil.copy2(SOURCE / "wifi_ifnet_link.inc", bsd)
     shutil.copy2(SOURCE / "wifi_ios_registry.cpp", arm)
     for fixture in FIXTURE.iterdir():
         shutil.copy2(fixture, arm / fixture.name)

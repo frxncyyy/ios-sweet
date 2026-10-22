@@ -3,6 +3,47 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-22: combined first WPA2 connection implemented; native checks PASS.**
+  Canonical integration includes bridge v3 dc18f399, MTK transport v4 fe23e167,
+  WPA/owner/service 5000d7cf and real existing-ifnet adapter 3feabf25. Independent
+  cross-reviews PASS. Actual generated generic ARMv8.2 compile of 12 translation
+  units PASS; canonical WPA owner/connector/actual transport/live binder suites,
+  client lifecycle/contract and BSD registry suites PASS (ASan/UBSan). Existing
+  NSS repeated-scan/default-off regression PASS. Generated
+  0082 applies and reproduces buildtree. Logs: research/nord2/wifi-ios-connect/ios.
+  SET20 -> native auth/assoc -> WPA2 PSK/CCMP -> hardware key receipts -> truthful
+  controlled port -> existing BSD Ethernet/BPF input/output is implemented;
+  no hardware association or DHCP/IP success yet. Mixed WPA2/WPA3 supported only
+  when PSK/CCMP and optional PMF are offered; no SAE/mandatory PMF/private MAC.
+  First attempt consumes the boot epoch: no rejoin/offchannel scan after it,
+  no firmware retirement invented. Ordinary auth/assoc/wrong-key timeouts clean
+  up; genuinely uncertain DMA retains inherited drain/halt policy. Retried M3
+  cannot reinstall keys; key buffers are wiped. No credential logging.
+  Includes prior IONetworkStack startup fix; UFS/boot-speed work remains closed.
+  Healthy discovery52d4b159 remains installed. Combined target is
+  nord2-ios-wifi-connect-battery-stop23.img, not yet built or authorized.
+  New stage gates remain FALSE, runner UNUSED; fallback is healthy52d4.
+  Next: commit/push, exact combined CI, linked/source/ISA audits, image verification,
+  then concrete boot-only authorization. Leave unrelated kmod/audio work intact.
+
+- **2026-10-22: next test expanded to WPA2 connection; parallel integration.**
+  User requires connection work in next hardware build, and confirms target is
+  WPA2-Personal or WPA2/WPA3 mixed. Keep healthy discovery52d4b159 installed;
+  no active USB collector/new flash approval. Stack fix4e48740 pushed, exact
+  CI39768467149 attempt1 SUCCESS, kernel17632424B SHA17e26e7966a072247ded42e236a1aaadd7eddcc9500affdaaaf1fd3d3c704e75.
+  Generated-source equality PASS; ISA2253086 instructions PASS; compile log's
+  interleaved sweet_touch line independently reconstructed (23 generic units).
+  Do not propose stack-only flash: combined connection source still private.
+  cap_stage owns actual iOS SET20/22/events/state bridge (candidate601d3ef3,
+  v2 reason metadata review pending); format_stage owns WPA2 engine plus live
+  njs binder on existing retained NSS worker; station_wire owns native MTK
+  association/key/data transport and source guards. Root owns real BSD Ethernet,
+  BPF/DHCP link/data adapter. Candidates under research/nord2/wifi/ios-service-bridge.
+  Host/native compile evidence is not hardware connection evidence. Outstanding:
+  compose typed ownership boundaries, review native failure/rejoin retirement,
+  independent review, canonical integration, new combined CI/image verification,
+  then concrete boot-only approval. UFS/boot-speed work remains closed.
+
 - **2026-10-22: functional IONetworkStack fix integrated; CI next.**
   Registry source50e69c6a registers stack/owned type0 client for existing real
   attached ifnet; adds truthful IOInterfaceState1, exact naming dictionaries,

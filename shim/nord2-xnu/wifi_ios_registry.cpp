@@ -1,5 +1,5 @@
 /* Compatible replacement registry classes: IOService ABI only. No proprietary
- * IO80211 vtable or data/link implementation. Explicit software ADT provider. */
+ * IO80211 vtable; a native-owner-gated BSD Ethernet path. Explicit software ADT provider. */
 #ifdef NIWI_REGISTRY_HOST_TEST
 #include "test-registry-xnu.h"
 #else
@@ -21,11 +21,15 @@
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/if_media.h>
+#include <net/if_ether.h>
+#include <net/bpf.h>
+#include <sys/kern_event.h>
 #include <sys/sockio.h>
 #include <sys/systm.h>
 #endif
 extern "C" {
 #include "../../../bsd/dev/wifi_scan_service.h"
+#include "../../../bsd/dev/wifi_ifnet_link.h"
 #ifndef NIWI_REGISTRY_HOST_TEST
 #include <pexpert/pexpert.h>
 #endif
@@ -190,25 +194,13 @@ IOReturn IONetworkStack::newUserClient(task_t task,void *security,UInt32 type,OS
  *out=client;opened();return kIOReturnSuccess;
 }
 
+#include "../../../bsd/dev/wifi_ifnet_link.inc"
+
 class IO80211Controller : public IOService {
  OSDeclareDefaultStructors(IO80211Controller)
  ifnet_t net=nullptr;IO80211SkywalkInterface*interface=nullptr;IONetworkStack *stack=nullptr;
- static errno_t output(ifnet_t,mbuf_t p){mbuf_freem(p);return ENETDOWN;}
- static errno_t demux(ifnet_t,mbuf_t,char*,protocol_family_t*){return EOPNOTSUPP;}
- static errno_t add(ifnet_t,protocol_family_t,const ifnet_demux_desc*,u_int32_t){return EOPNOTSUPP;}
- static errno_t del(ifnet_t,protocol_family_t){return 0;}
- static errno_t multi(ifnet_t,const sockaddr*){return EOPNOTSUPP;}
  static void detached(ifnet_t n){ifnet_release(n);}
- static errno_t ioctl(ifnet_t,u_long cmd,void*data){
-  if(cmd==SIOCSIFFLAGS)return 0; /* administrative flags only; never link/carrier */
-  if(cmd!=SIOCGIFMEDIA)return EOPNOTSUPP;
-  if(!data)return EINVAL;struct ifmediareq*r=(struct ifmediareq*)data;
-  int requested=r->ifm_count;int media=IFM_IEEE80211|IFM_AUTO;
-  r->ifm_current=media;r->ifm_active=media;r->ifm_status=IFM_AVALID;r->ifm_mask=0;r->ifm_count=1;
-  if(requested<0)return EINVAL;
-  if(requested>0&&r->ifm_ulist)return copyout(&media,(user_addr_t)r->ifm_ulist,sizeof(media));
-  return 0;
- }
+
 public:
  bool start(IOService*) override;
  void stop(IOService*) override;
@@ -222,7 +214,7 @@ bool IO80211Controller::start(IOService*p){
  if(opt!=1||!compatible||compatible->getLength()!=sizeof expected||memcmp(compatible->getBytesNoCopy(),expected,sizeof expected))return false;
  nss_info info={};if(nord2_wifi_scan_info(&info)||!info.count||!IOService::start(p))return false;
  static const uint8_t broadcast[6]={255,255,255,255,255,255};
- ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=output;params.ioctl=ioctl;params.demux=demux;params.add_proto=add;params.del_proto=del;params.check_multi=multi;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
+ ifnet_init_eparams params={};params.ver=IFNET_INIT_CURRENT_VERSION;params.len=sizeof params;params.flags=IFNET_INIT_LEGACY;params.name="en";params.family=IFNET_FAMILY_ETHERNET;params.subfamily=IFNET_SUBFAMILY_WIFI;params.type=IFT_ETHER;params.output=nwil_output;params.ioctl=nwil_ioctl;params.demux=ether_demux;params.add_proto=ether_add_proto;params.del_proto=ether_del_proto;params.check_multi=ether_check_multi;params.framer_extended=ether_frameout_extended;params.detach=detached;params.broadcast_addr=broadcast;params.broadcast_len=6;
  /* Let ifnet_attach arbitrate real unit collisions; never rename an existing interface. */
  for(unsigned unit=0;unit<32;unit++){
   params.unit=unit;if(ifnet_allocate_extended(&params,&net))continue;
@@ -237,7 +229,7 @@ bool IO80211Controller::start(IOService*p){
  if(!setProperty("IOMACAddress",info.mac,sizeof info.mac)||!setProperty("IOBuiltin",true)){
   printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=8\n");ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
  }
- /* Never signal link up, carrier, association, supported encryption or IP readiness. */
+ /* Discovery does not signal carrier. Only native station/key/data readiness can. */
  /* IOInterfaceName is only on actual interface: one bind target. */
  interface=new IO80211SkywalkInterface;
  if(!interface||!interface->init()){printf("NORD2 WIFI IOS REGISTRY: registered=0 failure=3\n");if(interface)interface->release();interface=nullptr;ifnet_detach(net);net=nullptr;IOService::stop(p);return false;}
@@ -258,10 +250,18 @@ bool IO80211Controller::start(IOService*p){
   interface->stop(this);interface->detach(this);interface->release();interface=nullptr;
   ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
  }
+ if(nwil_bind(net)){
+  stack->deactivate();stack->terminate();stack->detach(resources);stack->release();stack=nullptr;
+  interface->stop(this);interface->detach(this);interface->release();interface=nullptr;
+  ifnet_detach(net);net=nullptr;IOService::stop(p);return false;
+ }
+ /* DHCP uses BPF on the same Ethernet endpoint; detach tears BPF down. */
+ bpfattach(net,DLT_EN10MB,14);
  interface->registerService();stack->registerService();registerService();
  printf("NORD2 WIFI IOS STACK: registered=1 unit=%u ifstate=1 t_ms=%llu\n",ifnet_unit(net),niws_ms());printf("NORD2 WIFI IOS REGISTRY: registered=1 unit=%u media=%#x carrier=0 network_class=1 builtin=1\n",ifnet_unit(net),IFM_IEEE80211|IFM_AUTO);return true;
 }
 void IO80211Controller::stop(IOService*p){
+ if(net)nwil_unbind(net);
  /* Invalidate the stack before removing the identity or detaching BSD. */
  if(stack){stack->deactivate();stack->terminate();stack->detach(IOService::getResourceService());stack->release();stack=nullptr;}
  if(interface)interface->removeProperty("IOInterfaceState");

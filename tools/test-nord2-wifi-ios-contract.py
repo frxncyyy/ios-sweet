@@ -14,13 +14,15 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cc', default='clang', help='ASan/UBSan-capable C compiler')
-    parser.add_argument('--only', choices=('all', 'policy', 'caller', 'scalar', 'snapshot'), default='all')
+    parser.add_argument('--only', choices=('all', 'policy', 'caller', 'scalar', 'snapshot', 'join', 'station-view'), default='all')
     parser.add_argument('--report', type=Path, help='Optional JSON hashes and summaries')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     source = root / 'shim/nord2-xnu'
     fixtures = root / 'tools/fixtures/nord2-wifi-ios-contract'
     suites = {
+        'join': ('wifi_ios_join.c',),
+        'station-view': ('wifi_ios_station_view.c', 'wifi_ios_join.c', 'wifi_ios_policy.c', 'wifi_ios_mapping.c', 'wifi_ios_rates.c', 'wifi_ios_scan_contract.c'),
         'snapshot': ('wifi_ios_snapshot.c', 'wifi_ios_age.c', 'wifi_ios_bss.c', 'wifi_ios_rates.c', 'wifi_ios_mapping.c', 'wifi_ios_scan_contract.c', 'wifi_ios_cursor.c', 'wifi_scan_bss.c'),
         'policy': ('wifi_ios_policy.c', 'wifi_ios_rates.c', 'wifi_ios_mapping.c'),
         'scalar': ('wifi_ios_scalar.c',),
