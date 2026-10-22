@@ -4,6 +4,33 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: a73 join reaches association then FAILS; d9a restored, user confirms healthy.**
+  FirstactualWPA2 profile acceptedreason0 flags4000/scope36, SET22/SET20 status0.
+  Strictcomplete receipt VALID: associationobservedTRUE, STAactiveTRUE;
+  PTK/GTK/port/IP allFALSE. At174565ms M2published;submitted12==dma12,
+  air_pending1 persists; at177568ms nativephase9/error3/halt1. This is3s
+  published-operationdeadline with knownDDONE, not proof of missedDMA.
+  Log346639B SHA8763328e27e49681db4a823df4f6d2c4669f0dd18db45841d3b03dff45da6931
+  in newstage hardware-review/join-first-terminal.log; receipt4182364a.
+  User: UnableJoin then WiFi/devicecrash. Collector8715 CLOSED0 earlyUSBtimeout-7;
+  no finalpaniccaptured. Source chain fail3→njs_fatal_owner→nss_owner_loop drain
+  thenpanic explains expectedbehavior, not a capturedpanic. KnownDDONE timeout
+  must be distinguished from uncertainDMA without inventing successfulTX.
+  Manualfastboot ready call_69475b517edb41be95bcb9d86127dc3f; conditionalrecovery
+  underoriginal call_f0646fc alreadyapproved. Exactd9a boot restored/rebootOKAY;
+  recoverycollector18000 ownssoleUSB. User call_21fdce0b8eb742ca95e2938d0de34ef8
+  confirms tutto ok. Restorelog contains no retainedpriorpanic (no previousmarker).
+  User also measured12s beforepassword, beforeJoin. Immutable306780B snapshot
+  b5859b4d:3successfulscans span4.365s, cannotalone explain12s; untimedpriorGETs.
+  Timingreviewmanifest2cfbea42, sourceaudit2cb24748; noattribution/fixclaim.
+  Formatwireauditmanifest a5619562: no provenM2 TXD/Ethernet mismatch vsAndroid;
+  laterEAPOLevents have no subtype, do not claim M1duplicates as observation.
+  Wire preparesknown-DONE negativeTX/cleanup candidate with latePID defenses;
+  format preparessecret-free descriptor/TXS/EAPOL diagnostics; cap prepares
+  boundedrequest/gate/dispatch timing. Allprivate, canonical1134851 unchanged,
+  no newCI/image/flashauthorization. Root toreview/combine/test together.
+
+
 - **2026-10-22 19:53 local: join-options a73ee086 FLASHED; live test running.**
   Human exactboot/RF/conditionald9a/rescue approval call_f0646fc645ca4d96abc9cfccfc4bf655,
   readyfastboot. Single knownNord2 product/bootcapacity/nonuserspace checks PASS;
