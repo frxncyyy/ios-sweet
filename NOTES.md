@@ -4,6 +4,38 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-22: combined join-options image a73ee086 PREPARED/VERIFIED, not authorized.**
+  CI39823157589 attempt1/source1134851 SUCCESS. Builder28170 CLOSED0; independent
+  image review PASS report9ff898d9/manifest a0603159, all filepins checked by root.
+  Target shim/out/nord2-xnu/nord2-ios-wifi-join-options-stop23.img,33464320B;
+  SHA a73ee08664c5eafdc42f1f24163c3feb2167b12f9e44e5f25b9afdc3b9d0eb99.
+  Payload14943520B SHA6854250185d94b18ac1ea81071e61fd882cca7e79a7528a89a1ddbd0cf2d15f6;
+  bootspare90112B. Actual kernel/header/segments/ADT/calibration/rescue verified;
+  ADT identical to executed d9a, removing only chosen MAC restores6e4 ADT.
+  Newstage wifi-ios-join-options/ios source/native/prepared gatesTRUE; humanFALSE,
+  runner unused, no USBcollector. Primary fallback current d9a44316; secondary
+  6e4ce860 and RAMrescue d78 verified. User must approve this exact new image
+  before boot write. No actual native association/key/IP outcome yet.
+  Separate pre-password delay investigation ongoing: user means ~10s after
+  selecting network/list or details Join Network, before credentials dialog.
+  Old SET22/association timings do not address that delay. Cap audits exact path;
+  do not claim this image resolves it. Phone remains d9a iOS, no device changes.
+
+
+- **2026-10-22: user clarified the ~10s delay is BEFORE password entry.**
+  Both tapping a network in the list and tapping Join Network in its details
+  delay opening the password screen. Do not describe this as association or
+  post-submit Join latency. The immediate Unable to Join after submitting is
+  a separate failure. Prior SET22→SET20 gaps do not explain this UI delay.
+  Cap agent now audits the pre-password selection path separately, read-only.
+  Combined join-options CI39823157589 attempt1 SUCCESS at exact1134851 source;
+  kernel17703288B SHA53106c3316652296b8e1ad17c86b6a0eb86e8fd67963e7b716770235d7b1ee00.
+  Root222-file/33compile-unit/ISA checks PASS; linkedreviewb37e9b29 PASS,
+  manifest99b20953. Builder28170 ACTIVE; no finished new-image review yet.
+  Source/schema gates true, prepared/human false. Phone remainsd9a44316;
+  no activeUSBreader, new-image authorization still required after preparation.
+
+
 - **2026-10-22: combined join-options CI39823157589 RUNNING.**
   Runtime/source1134851bf309c06c613b0383842e70a895e46473 committed/pushed tofork;
   exactlyone workflow dispatched. Watcher11139 ACTIVE downloads only successful
