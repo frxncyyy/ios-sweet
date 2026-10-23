@@ -14,6 +14,7 @@ int stc_scan_acquire(struct stc_arbiter*,uint64_t);
 int stc_scan_release(struct stc_arbiter*,uint64_t);
 struct stc_config {
  uint64_t generation,deadline_ms;uint32_t cleanup_timeout_ms;
+ unsigned security; /*SW_SECURITY_*; OPEN never starts the WPA engine*/
  struct sw_assoc assoc;struct sw_channel channel;
  uint8_t group_spare[3]; /* exact source-owned free WTBL slots,0 disables */
  uint8_t sta_wlan,group_wlan; /* source-owned distinct WTBL allocations */
@@ -25,6 +26,7 @@ struct stc_config {
 struct stc_action {uint64_t generation,ticket;unsigned kind,bytes;uint8_t payload[640];};
 struct stc {
  unsigned attempted,phase,outcome,authenticated,associated,channel_held,peer_prepared,ptk_attempted,gtk_attempted;
+ unsigned security;
  unsigned grant_seen,key_event_seen,response_seen,response_bytes;uint16_t aid;uint8_t response[512];
  unsigned cleanup_abort_first,resume_phase,eapol_pending,eapol_bytes;uint8_t queued_eapol[640];
  unsigned auth_attempts,assoc_attempts;uint64_t response_deadline;

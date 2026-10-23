@@ -40,6 +40,7 @@ struct nst_replay {unsigned installed;uint8_t key_id;uint64_t pn[17];};
 struct nst {
  struct nwi_state *init;const struct nct_session *previous;const struct ncr_state *previous_rx;
  unsigned cleanup_started;
+ struct nsb_scan *associated_scan;unsigned associated_scan_published,associated_scan_cancel,associated_scan_canceled;
  unsigned prepared,entered,active,phase,halt,error,mutated,wire_busy,air_pending;
  unsigned credit_capacity,credit_available,credit_reserved,credit_acquired,credit_released;
  unsigned tx_next,base_completed,submitted,dma_completed,rx_current,next_pid;
@@ -48,7 +49,7 @@ struct nst {
  unsigned ofld_drop;
  /* Set only by pure prepare. Ordinary data may use explicit legacy ToDS;
   * EAPOL and management retain their existing descriptor/header contracts. */
- unsigned data_profile;
+ unsigned data_profile,security; /* SW_SECURITY_*; explicit immutable prepare */
  unsigned wire_bytes,wire_cid,wire_sequence,wire_pid,wire_wlan,wire_type;
  unsigned published,dma_done,air_done,air_status,callback_active;
  uint64_t generation,ticket,last,deadline,operation_deadline;
@@ -63,7 +64,7 @@ struct nst {
  struct nst_profile profile;uint8_t ssid[32],rates[12];uint16_t aid,negotiated_rates,basic_rates;
  unsigned link_lost;
  /* Numeric only; raw-data seen/accepted EAPOL/unsupported-or-invalid. */
- unsigned rx_untranslated,rx_untranslated_eapol,rx_untranslated_drop;
+ unsigned rx_untranslated,rx_untranslated_eapol,rx_untranslated_drop,rx_untranslated_data;
  unsigned pm_scheduled,pm_connected;
  unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
  uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
@@ -72,6 +73,11 @@ struct nst {
 };
 /* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
  * no guessed capability indices. peer indices must match retained scan profile. */
+/* Worker-only borrowed slot remains owned until detach after actual scan completion.
+ * Other RX and security/data dispatch keep their normal owner and replay path. */
+int nst_associated_scan(struct nst *,struct nsb_scan *,const uint8_t *,size_t);
+int nst_associated_scan_cancel(struct nst *);
+int nst_associated_scan_detach(struct nst *,struct nsb_scan *);
 int nst_scan_admissible(const struct nsb_scan *);
 int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
  const struct ncr_state *,const struct ncs_cap *,const struct nst_peer *,
@@ -99,8 +105,9 @@ int nst_register_write(const struct nst *,uint32_t,uint32_t);
 /* Install replay state only once after corresponding actual CID07 submission.
  * GTK RSC6 is little endian (EAPOL RSC bytes0..5); bytes6..7 must be0. */
 int nst_replay_install(struct nst *,unsigned pairwise,uint8_t key_id,const uint8_t rsc[8]);
-/* Authorize only after actual STA+PTK ready, GTK replay installed, and no pending
- * key command. No external boolean can supply STA/PTK readiness. */
+/* WPA2 authorizes after actual STA+PTK/GTK replay; OPEN requires explicit
+ * no-privacy association/STA activation, released channel and zero key state.
+ * No external boolean supplies station or keyed readiness. */
 int nst_replay_replace_group(struct nst *,uint8_t key_id,const uint8_t rsc[8]);
 int nst_authorize(struct nst *);
 /* Once per attempt, install the owner's fresh <=30s teardown deadline. Existing

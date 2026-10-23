@@ -23,5 +23,6 @@ int niwe_plan(const struct niwe_view*,uint16_t,uint16_t,struct niwe_space*);
 /* Offline52-byte consumer-compatible event10 formatter. Uninterpreted header
  * bytes4..23 zeroed; no monotonic ID/Apple producer identity is claimed.
  * Native must authenticate actual backend completion before any publication. */
+int niwe_power_changed(uint8_t*,size_t,const uint8_t[16]);
 int niwe_scan_done(uint8_t*,size_t,const uint8_t[16],uint32_t);
 #endif

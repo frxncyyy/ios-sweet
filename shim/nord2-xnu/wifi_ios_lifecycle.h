@@ -1,8 +1,10 @@
 #ifndef PRIVATE_LIFECYCLE_SCAN_H
 #define PRIVATE_LIFECYCLE_SCAN_H
 #include "wifi_ios_age.h"
-/* All state operations require the owning lifecycle gate. Preparation alone
- * runs outside that gate on an immutable retained scan and unique output. */
+/* All state operations require the owning lifecycle gate. Legacy snapshot
+ * preparation may run outside that gate on an immutable scan/unique output.
+ * History preparation and timed reads also mutate shared retention state and
+ * require the same owning gate. */
 struct nils_state {uint64_t generation,serial;unsigned open,inflight;struct niwa_snapshot *cache,*pending;};
 struct nils_ticket {uint64_t generation,serial;struct niwa_snapshot *output;};
 int nils_open(struct nils_state *,uint64_t);
@@ -17,5 +19,8 @@ int nils_finish(struct nils_state *,const struct nils_ticket *,struct niwa_snaps
  * its buffers until matching finish returns2; close must not destroy state. */
 /* Gate-held GET:1 row,0 proven complete EOF,-1 unavailable/stale. */
 int nils_take(struct nils_state *,uint64_t,uint8_t *,size_t);
+int nils_prepare_history(const struct nils_ticket *,struct niwa_history *,const struct nsb_scan *,
+ uint64_t,uint64_t,const struct niwp_rate_map *,size_t,unsigned,struct niwa_snapshot *);
+int nils_take_timed(struct nils_state *,struct niwa_history *,uint64_t,uint64_t,uint8_t *,size_t);
 void nils_close(struct nils_state *);
 #endif

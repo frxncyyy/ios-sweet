@@ -19,17 +19,19 @@ int niwi_set_shape(unsigned selector,const void*v,size_t n,const char name[16],u
  * not require cache reuse. We execute a fresh scan for all three. No probes.
  * Apple110ms rounds up to108 source V2 TU (110592us); firmware default0 stays0.
  * Dwell is a command parameter, not a measured RF duration guarantee.
- * Directed SSID/BSSID, rest, unknown timing/options and DFS remain refused.
+ * Directed SSID/BSSID, rest and unknown timing/options remain refused.
+ * DFS is admitted only from the authenticated owner list, always passively.
  * info must be the authoritative native owner snapshot. Scheduling hints are
  * best effort; no priority, preemption or completion latency is promised. */
 int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct nss_request*out){
  if(!p||n!=5456||!info||!out)return NIWI_ADMIT_ARGUMENT;
- if(!info->count||info->count>NSS_CHANNELS)return NIWI_ADMIT_OWNER;
+ if(!info->count||info->count>NSS_CHANNELS||(info->dfs_mask>>info->count))return NIWI_ADMIT_OWNER;
  uint32_t mode=u32(p+52),count=u32(p+68),options=u32(p+4872);
  if(u32(p)!=1||(u32(p+4)!=2&&u32(p+4)!=3)||u32(p+56)!=1||count>NSS_CHANNELS||
     (mode!=1&&mode!=2&&mode!=3))return NIWI_ADMIT_PROFILE;
  for(unsigned j=0;j<info->count;j++){
-  if((info->channels[j].band!=1&&info->channels[j].band!=2)||!info->channels[j].channel)return NIWI_ADMIT_OWNER;
+  if((info->channels[j].band!=1&&info->channels[j].band!=2)||!info->channels[j].channel||
+     ((info->dfs_mask&(UINT64_C(1)<<j))&&info->channels[j].band!=2))return NIWI_ADMIT_OWNER;
   for(unsigned k=0;k<j;k++)if(info->channels[j].band==info->channels[k].band&&
       info->channels[j].channel==info->channels[k].channel)return NIWI_ADMIT_OWNER;
  }
@@ -54,8 +56,8 @@ int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct n
   const uint8_t*c=p+72+12*j;uint32_t channel=u32(c+4),flags=u32(c+8);unsigned band=0;
   if(u32(c)!=1||!channel||channel>255)return NIWI_ADMIT_CHANNEL;
   /* ACTIVE0x80 grants channel permission; it does not require probe TX.
-   * We remain passive. DFS/other widths and unknown attributes refuse. */
-  flags&=~128u;
+   * We remain passive, including DFS. Other widths/unknown attributes refuse. */
+  unsigned dfs=(flags&0x100u)!=0;flags&=~(128u|0x100u);
   if(flags==8||flags==10)band=1;
   else if(flags==16||flags==18)band=2;
   else if(flags!=0&&flags!=2)return NIWI_ADMIT_CHANNEL_FLAGS;
@@ -65,6 +67,7 @@ int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct n
    if(found!=info->count)return NIWI_ADMIT_ALLOWLIST;found=k;
   }
   if(found==info->count)return NIWI_ADMIT_ALLOWLIST;
+  if(dfs&&!(info->dfs_mask&(UINT64_C(1)<<found)))return NIWI_ADMIT_CHANNEL_FLAGS;
   for(unsigned k=0;k<j;k++)if(result.channels[k].band==info->channels[found].band&&
       result.channels[k].channel==info->channels[found].channel)return NIWI_ADMIT_ALLOWLIST;
   result.channels[j]=info->channels[found];

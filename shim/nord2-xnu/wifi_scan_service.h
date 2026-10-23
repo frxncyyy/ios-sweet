@@ -8,7 +8,7 @@ extern "C" {
 #define NSS_SLOTS 4u
 #define NSS_CHANNELS 39u
 struct nss_request {unsigned count;struct ncs_channel channels[NSS_CHANNELS];uint16_t dwell_tu;}; /*0=actual full allowed list; passive only/default or108TU timing; no SSID/random*/
-struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];unsigned scanning;}; /* running scan transaction, not RF emission */
+struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];unsigned scanning,powered;uint64_t power_epoch;uint64_t dfs_mask;}; /* dfs_mask bits index this authenticated allowed-channel list; passive discovery only. scanning is transaction state, not RF emission. */
 enum nss_status {NSS_COMPLETE=0,NSS_PARTIAL=1,NSS_CANCELED=2,NSS_REFUSED=3,NSS_FATAL=4};
 typedef void (*nss_completion)(void *cookie,uint64_t client_generation,uint64_t ticket,enum nss_status);
 struct nss_view {const struct nsb_scan *scan;uint64_t captured_us,client_generation;enum nss_status status;};
@@ -17,6 +17,9 @@ struct nss_view {const struct nsb_scan *scan;uint64_t captured_us,client_generat
  * bounded/no radio calls, and recheck client generation before event publish.
  * 0 accepted,1 backend unavailable,2 queue full,-1 invalid. Refusal atomic. */
 int nord2_wifi_scan_info(struct nss_info *);
+/* Logical radio admission; no physical SoC power-down claim. OFF revokes data
+ * synchronously and owner drains scans then existing station/key cleanup. */
+int nord2_wifi_power_set(unsigned on);
 int nord2_wifi_scan_enqueue(const struct nss_request *,void *,uint64_t,nss_completion,uint64_t *);
 /* Cancel closes delivery; queued gets canceled callback, inflight radio finishes
  * bounded without abort/reset. Client's gate still rejects late event delivery. */

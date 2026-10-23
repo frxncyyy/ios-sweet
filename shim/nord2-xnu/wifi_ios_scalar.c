@@ -21,20 +21,21 @@ int niws_channels(const struct niw_request*q,const char name[16],
  uint8_t*p=output;unsigned terminated=0;
  if(!q||!name||!info||!p||!used||capacity<NIWS_CHANNEL_BYTES||q->operation!=NIW_GET||
     (q->request!=27&&q->request!=254)||q->value||q->payload_bytes!=NIWS_CHANNEL_BYTES||
-    !info->count||info->count>NSS_CHANNELS||info->band5>1)return -1;
+    !info->count||info->count>NSS_CHANNELS||info->band5>1||(info->dfs_mask>>info->count))return -1;
  for(unsigned j=0;j<16;j++){if(q->interface_name[j]!=name[j])return -1;if(!name[j])terminated=1;}
  if(!name[0]||!terminated)return -1;
  for(unsigned j=0;j<info->count;j++){
   unsigned band=info->channels[j].band,ch=info->channels[j].channel;
   if((band!=1&&band!=2)||!ch||(band==1&&ch>14)||
-     (band==2&&(!info->band5||ch<=14||ch>196)))return -1;
+     (band==2&&(!info->band5||ch<=14||ch>196))||
+     ((info->dfs_mask&(UINT64_C(1)<<j))&&band!=2))return -1;
   for(unsigned k=0;k<j;k++)if(band==info->channels[k].band&&ch==info->channels[k].channel)return -1;
  }
  for(unsigned j=0;j<NIWS_CHANNEL_BYTES;j++)p[j]=0;
  niws_u32(p,1);niws_u32(p+4,info->count);
  for(unsigned j=0;j<info->count;j++){
   uint8_t*ch=p+8+12*j;niws_u32(ch,1);niws_u32(ch+4,info->channels[j].channel);
-  niws_u32(ch+8,2u|(info->channels[j].band==1?8u:16u));
+  niws_u32(ch+8,2u|(info->channels[j].band==1?8u:16u)|((info->dfs_mask&(UINT64_C(1)<<j))?0x100u:0u));
  }
  *used=NIWS_CHANNEL_BYTES;return 0;
 }

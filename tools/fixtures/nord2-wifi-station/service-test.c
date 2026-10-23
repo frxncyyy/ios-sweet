@@ -24,7 +24,9 @@ static void assert_wait_deadline(event_t p,unsigned a,uint64_t b){assert(p&&!a&&
 static void thread_block(unsigned a){assert(!a);}
 static void advance_entropy_clock(void);
 static void read_random(void*p,unsigned n){memset(p,0x41,n);advance_entropy_clock();}
-static struct {IOLock*lock;unsigned failed;struct nss_info info;struct {unsigned state;}slot[NSS_SLOTS];}nss_native;
+/* Same slot/storage shape as NSS; this seam refuses physical scan work. */
+struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
+static struct {IOLock*lock;unsigned failed,powered;uint64_t power_epoch;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct ncs_frames frames;}nss_native;
 static struct {struct ncr_state rx;}ncb_native;
 static struct {struct nst state;unsigned attempted,active;}nst_native;
 /* Actual bounded key metadata helpers; the complete physical rejoin/scan
@@ -49,7 +51,7 @@ static unsigned prepare_success;
 static void advance_entropy_clock(void){clock_us+=entropy_advance_us;}
 static uint64_t njs_test_uptime_us(void){return clock_us;}
 static pthread_mutex_t barrier=PTHREAD_MUTEX_INITIALIZER;static pthread_cond_t barrier_cond=PTHREAD_COND_INITIALIZER;static unsigned block_up,up_entered,release_up,disconnect_started,disconnect_done;
-static unsigned ncd_native;
+static struct {struct ncd_state diag;}ncd_native={.diag={.events=1}};
 static const struct ncd_io ncd_io={0};
 static int nss_available(void){return source_ready;}
 static int ncd_native_now(void*p,uint64_t*out){assert(p==&ncd_native);*out=clock_us;return 0;}
@@ -70,6 +72,16 @@ int nst_authorize(struct nst*t){(void)t;return -1;}
 int nst_cleanup_begin(struct nst*t,uint64_t now,uint64_t deadline){assert(deadline>now);t->deadline=deadline;return 0;}
 void nst_close_port(struct nst*t){t->controlled_port=0;}
 int nst_step(struct nst*t,const struct ncd_io*i,void*c,unsigned b,nst_event_fn f,void*x){(void)t;(void)i;(void)c;(void)b;(void)f;(void)x;return 0;}
+/* No descriptor/radio scan proof is synthesized by service doubles. Actual
+ * associated-scan/DMA/cancel behavior belongs to the lifecycle owner test. */
+static unsigned scan_build_calls,scan_native_calls,scan_delivery_calls;
+int ncs_build(const uint8_t*f,size_t fn,uint8_t seq,const uint8_t mac[6],const struct ncs_channel*c,size_t count,uint8_t scan_type,uint8_t phy,uint8_t scan_seq,unsigned dbdc,uint16_t dwell,uint16_t rest,struct ncs_frames*out){
+ (void)f;(void)fn;(void)seq;(void)mac;(void)c;(void)count;(void)scan_type;(void)phy;(void)scan_seq;(void)dbdc;(void)dwell;(void)rest;(void)out;scan_build_calls++;return -1;
+}
+int nst_associated_scan(struct nst*t,struct nsb_scan*scan,const uint8_t*p,size_t n){(void)t;(void)scan;(void)p;(void)n;scan_native_calls++;return -1;}
+int nst_associated_scan_cancel(struct nst*t){(void)t;scan_native_calls++;return -1;}
+int nst_associated_scan_detach(struct nst*t,struct nsb_scan*scan){(void)t;(void)scan;scan_native_calls++;return -1;}
+static void nss_deliver(struct nss_slot*slot,enum nss_status status){(void)slot;(void)status;scan_delivery_calls++;assert(!"unexpected physical scan delivery in service seam");}
 #include "wifi_station_service_bind.inc"
 static struct niwj_request request(void){struct niwj_request q={0};static const uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};q.ssid_length=4;memcpy(q.ssid,"test",4);memset(q.pmk,0x42,32);memcpy(q.station_rsn,rsn,22);q.security=1;return q;}
 static void complete(void*cookie,uint64_t epoch,uint64_t ticket,enum njs_notice notice){assert(cookie==(void*)1&&epoch==7&&ticket);assert(notice>=1&&notice<=4);notices[notice]++;struct njs_snapshot snap;assert(!nord2_wifi_join_copy_state(&snap));if(notice==NJS_RETIRED){struct niwj_request q=request();uint64_t next=0;assert(nord2_wifi_join_enqueue(&q,(void*)1,7,complete,&next)==(njs_native.used?1:2));release_reentry++;}}
@@ -90,7 +102,7 @@ static void seed_ready(uint64_t g){
  njs_native.snapshot=(struct njs_snapshot){.native_generation=g,.client_epoch=7,.ticket=g,.phase=NJS_SECURING};}
 static void*owner_thread(void*x){(void)x;assert(njs_owner_work()==1);return NULL;}
 static void*disconnect_thread(void*x){(void)x;pthread_mutex_lock(&barrier);disconnect_started=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);assert(!nord2_wifi_join_disconnect());pthread_mutex_lock(&barrier);disconnect_done=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);return NULL;}
-int main(void){nss_native.lock=IOLockAlloc();njs_initialize_locked();assert(njs_native.notice_lock);struct niwj_request q=request();uint64_t ticket=0;
+int main(void){nss_native.powered=1;nss_native.power_epoch=1;nss_native.lock=IOLockAlloc();njs_initialize_locked();assert(njs_native.notice_lock);struct niwj_request q=request();uint64_t ticket=0;
 /* Exact actual binder: successful repeated idle leave is pure, including
  * untouched first-attempt ledger and no ifnet callback or native prepare. */
 static unsigned char idle_service[sizeof njs_native],idle_native[sizeof nst_native];
@@ -142,7 +154,7 @@ printf("PASS256 idle disconnects: byteidentical service/native ledger; unavailab
 assert(!nord2_wifi_join_enqueue(&q,(void*)1,7,complete,&ticket));memset(&q,0,sizeof q);assert(njs_native.request.pmk[0]==0x42&&njs_scan_blocked_locked()&&njs_pending_locked());assert(!nord2_wifi_join_cancel(ticket));assert(njs_owner_work()==1&&!njs_native.queued&&!njs_native.used);assert(notices[NJS_JOIN_FAILED]==1&&notices[NJS_RETIRED]==1&&release_reentry==1&&!prepared_calls);struct niwj_request zero={0};assert(!memcmp(&njs_native.request,&zero,sizeof zero));
 q=request();assert(!nord2_wifi_join_enqueue(&q,(void*)1,7,complete,&ticket));assert(!nord2_wifi_join_disconnect()&&ifnet_down==1);assert(njs_native.snapshot.phase==NJS_LEAVING&&!njs_native.snapshot.data_ready);assert(njs_owner_work()==1&&notices[NJS_RETIRED]==2);
 /* Only completed overflow source scans are cacheable; records remain identical. */
-struct nsb_scan scan={0};scan.entered=scan.done=1;scan.completion.state=7;scan.started=1;scan.last=101;scan.deadline=1000;scan.count=16;scan.frames=17;scan.partial=scan.dropped=1;scan.records[0].bssid[0]=2;unsigned cache_before=njs_native.cache_next;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1&&!memcmp(&scan,&njs_native.cache[cache_before%4],sizeof scan));
+struct nsb_scan scan={0};scan.entered=scan.done=1;scan.completion.state=7;scan.started=1;scan.last=101;scan.deadline=1000;scan.count=NSB_RESULTS;scan.frames=NSB_RESULTS+1;scan.partial=scan.dropped=1;scan.records[0].bssid[0]=2;unsigned cache_before=njs_native.cache_next;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1&&!memcmp(&scan,&njs_native.cache[cache_before%4],sizeof scan));
 scan.timed_out=1;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1);scan.timed_out=0;scan.done=0;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1);
 /* Synthetic authoritative-ready seam tests synchronous revoke, not RF readiness. */
 njs_native.active=njs_native.used=njs_native.linked=1;njs_native.native_generation=3;njs_native.ticket=3;njs_native.epoch=7;njs_native.cookie=(void*)1;njs_native.completion=complete;njs_native.snapshot.phase=NJS_AUTHORIZED;njs_native.snapshot.data_ready=njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=1;njs_native.leave=njs_native.canceled=0;nst_native.state.controlled_port=1;njs_native.driver.owner.transaction.phase=STC_CONNECTED;njs_native.driver.owner.transaction.outcome=STC_AUTHORIZED;
@@ -153,5 +165,5 @@ seed_ready(4);assert(njs_owner_work()==1&&njs_native.linked&&njs_native.snapshot
 seed_ready(5);ifnet_error=1;assert(njs_owner_work()==1&&!njs_native.linked&&!njs_native.tx_admit&&!njs_native.tx_count&&njs_native.snapshot.result!=1&&!nst_native.state.controlled_port);assert(njs_owner_work()==1&&njs_native.cookie_retired&&notices[NJS_JOINED]==1);assert(ifnet_up==2);
 seed_ready(6);ifnet_error=0;block_up=1;pthread_t owner_worker,closer;assert(!pthread_create(&owner_worker,NULL,owner_thread,NULL));pthread_mutex_lock(&barrier);while(!up_entered)pthread_cond_wait(&barrier_cond,&barrier);pthread_mutex_unlock(&barrier);assert(!pthread_create(&closer,NULL,disconnect_thread,NULL));pthread_mutex_lock(&barrier);while(!disconnect_started)pthread_cond_wait(&barrier_cond,&barrier);assert(!disconnect_done);assert(pthread_mutex_trylock(&njs_native.notice_lock->mutex)==EBUSY);release_up=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);assert(!pthread_join(owner_worker,NULL)&&!pthread_join(closer,NULL));assert(disconnect_done&&!njs_native.linked&&!njs_native.tx_admit&&!nst_native.state.controlled_port&&!njs_native.tx_count&&njs_native.snapshot.phase==NJS_LEAVING);/* Typed data retirement never creates an RF-success statistic or authority. */
 unsigned local=njs_native.tx_local,ok=njs_native.tx_ok,results=njs_native.tx_results,failed=njs_native.tx_fail,dropped=njs_native.queued_drop,logs=njs_native.logs;struct nst_event local_event={.kind=NST_DATA_SUBMITTED,.ticket=UINT64_MAX,.generation=njs_native.native_generation};assert(!njs_event(&njs_native,&local_event));assert(njs_native.tx_local==local+1&&njs_native.tx_ok==ok&&njs_native.tx_results==results&&njs_native.tx_fail==failed&&njs_native.logs==logs+1&&!nst_native.state.controlled_port);local_event.status=1;assert(!njs_event(&njs_native,&local_event));assert(njs_native.queued_drop==dropped+1&&njs_native.tx_local==local+1);local_event.generation++;assert(!njs_event(&njs_native,&local_event)&&njs_native.queued_drop==dropped+1);
-assert(refresh_calls&&constructor_commits&&constructor_aborts);
+assert(refresh_calls&&constructor_commits&&constructor_aborts);assert(!scan_build_calls&&!scan_native_calls&&!scan_delivery_calls);
 printf("PASS actual live service binder admission/copy/wipe/reentrant-retire/synchronous-disconnect/authorized-detach; mocked native IO only\n");IOLock*notice=njs_native.notice_lock;assert(!pthread_mutex_destroy(&notice->mutex));free(notice);assert(!pthread_mutex_destroy(&nss_native.lock->mutex));free(nss_native.lock);return 0;}

@@ -19,18 +19,18 @@ int main(){test_current=&owner_task;
  opt=0x55;IOMemoryDescriptor*sentinel=data;assert(c->clientMemoryForType(3,&opt,&sentinel)==kIOReturnBadArgument&&sentinel==data&&opt==0x55);test_current=&other_task;assert(c->clientMemoryForType(1,&opt,&sentinel)==kIOReturnNotPrivileged);test_current=&owner_task;
  OSAsyncReference64 ref={7,0xdeadbeef,0x12345678,4,5,6,7,8};a=args();a.asyncWakePort=7;a.asyncReference=ref;a.asyncReferenceCount=7;rights++;assert(call(c,2,a)==kIOReturnBadArgument&&rights==0);a.asyncReferenceCount=8;rights++;assert(!call(c,2,a)&&rights==1);rights++;assert(call(c,2,a)==kIOReturnNotReady&&rights==1);test_current=&other_task;rights++;assert(call(c,2,a)==kIOReturnNotPrivileged&&rights==1);test_current=&owner_task;
  a=args();assert(!call(c,4,a)&&rights==0&&buffer_count==2);assert(!call(c,4,a));assert(!call(c,3,a)&&buffer_count==4);IOMemoryDescriptor*fresh=nullptr;assert(!c->clientMemoryForType(1,&opt,&fresh)&&fresh!=data);fresh->release();data->release();state->release();assert(buffer_count==2);
- uint8_t carrier[NIW_SMALL_BYTES]={0},output[256];w32(carrier,NIW_GET);std::memcpy(carrier+15368,"en0",4);w32(carrier+15384,43);auto*md=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,0,sizeof carrier,1);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a=args();a.structureInputDescriptor=md;a.structureOutput=output;a.structureOutputSize=256;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&a.structureOutputSize<256&&!std::strcmp((char*)output,"Nord2 MT6893 passive scan controller")&&output[a.structureOutputSize]==0xaa&&malloc_count==2);
+ uint8_t carrier[NIW_SMALL_BYTES]={0},output[256];w32(carrier,NIW_GET);std::memcpy(carrier+15368,"en0",4);w32(carrier+15384,43);auto*md=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,0,sizeof carrier,1);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a=args();a.structureInputDescriptor=md;a.structureOutput=output;a.structureOutputSize=256;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&a.structureOutputSize<256&&!std::strcmp((char*)output,"Nord2 MT6893 passive scan controller")&&output[a.structureOutputSize]==0xaa&&malloc_count==3);
  assert(md->prepares==1&&md->completes==1&&md->reads==1&&!md->depth);
  for(unsigned failure=0;failure<3;failure++){
   unsigned pre=md->prepares,complete=md->completes,read=md->reads;
   md->failPrepare=failure==0;md->failRead=failure==1;md->failComplete=failure==2;
   a.structureOutputSize=256;std::memset(output,0xaa,sizeof output);
-  assert(call(c,0,a)!=kIOReturnSuccess&&a.structureOutputSize==256&&!md->depth&&malloc_count==2);
+  assert(call(c,0,a)!=kIOReturnSuccess&&a.structureOutputSize==256&&!md->depth&&malloc_count==3);
   for(auto byte:output)assert(byte==0xaa);
   assert(md->prepares==pre+1&&md->reads==read+(failure!=0)&&md->completes==complete+(failure!=0));
  }
  md->failPrepare=md->failRead=md->failComplete=false;
- w32(carrier+15384,12);w32(carrier+4,13);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a.structureOutputSize=13;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&output[0]==8&&output[1]==0x40&&a.structureOutputSize==13&&malloc_count==2);md->release();
+ w32(carrier+15384,12);w32(carrier+4,13);std::memcpy(md->getBytesNoCopy(),carrier,sizeof carrier);a.structureOutputSize=13;std::memset(output,0xaa,sizeof output);assert(!call(c,0,a)&&output[0]==8&&output[1]==0x40&&a.structureOutputSize==13&&malloc_count==3);md->release();
  a=args();a.asyncWakePort=7;a.asyncReference=ref;a.asyncReferenceCount=8;rights++;assert(!call(c,2,a)&&rights==1);test_current=&other_task;assert(!c->clientDied()&&rights==0&&buffer_count==0);test_current=&owner_task;assert(!c->clientClose());a=args();assert(call(c,3,a)==kIOReturnNotOpen);c->release();assert(owner_task.refs==1&&locks==0);
  c=client();a=args();assert(!call(c,3,a));std::atomic<unsigned>done{0};std::thread thread([&]{test_current=&owner_task;for(unsigned i=0;i<1000;i++){uint8_t v=0xaa;auto b=args();b.selector=1;b.structureOutput=&v;b.structureOutputSize=1;auto rc=c->externalMethod(1,&b,nullptr,nullptr,nullptr);assert(rc==0||rc==kIOReturnNotOpen);if(!rc)assert(v==1);}done=1;});assert(!c->clientClose());thread.join();assert(done==1&&buffer_count==0);c->release();assert(owner_task.refs==1&&locks==0&&rights==0&&malloc_count==0);checks++;
  /* Close must wait behind the actual gate while an OOL read is prepared. */
@@ -41,7 +41,7 @@ int main(){test_current=&owner_task;
  while(!blocked->enteredRead)std::this_thread::yield();
  std::thread closer([&]{test_current=&owner_task;closeStarted=true;assert(!c->clientClose());closeDone=true;});
  while(!closeStarted)std::this_thread::yield();assert(!closeDone);blocked->releaseRead=true;reader.join();closer.join();
- assert(readResult==kIOReturnSuccess&&closeDone&&blocked->prepares==1&&blocked->completes==1&&!blocked->depth&&malloc_count==2);
+ assert(readResult==kIOReturnSuccess&&closeDone&&blocked->prepares==1&&blocked->completes==1&&!blocked->depth&&malloc_count==3);
  blocked->release();c->release();assert(owner_task.refs==1&&locks==0&&buffer_count==0);checks++;
  for(unsigned i=0;i<32;i++){c=client();a=args();assert(!call(c,3,a));assert(!c->clientClose());c->release();assert(owner_task.refs==1&&locks==0&&buffer_count==0);}checks+=32;
  std::printf("PASS %u actual shell lifecycle/owner/async-right/prepared-OOL/mapping/replay/allocation/close/death checks plus1000 concurrent close-admission probes; host IOKit primitives mocked, no service or backend\n",checks);

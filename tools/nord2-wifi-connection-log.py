@@ -8,6 +8,7 @@ U32=(1<<32)-1
 U64=(1<<64)-1
 STATION='generation ticket service result linked retired transaction action outcome owner_halt native_phase error halt peer_step cid sequence submitted dma air_pending associated sta ptk gtk port event status events tx_accept tx_result tx_ok tx_fail queued_drop rx_delivered rx_raw rx_raw_eapol rx_raw_drop t_ms'.split()
 STATION_LOCAL=STATION[:32]+['tx_local']+STATION[32:]
+STATION_SECURITY=STATION_LOCAL+['security','rx_raw_data']
 STATION_PARTS=[STATION[:7],STATION[7:14],STATION[14:24],STATION[24:32],STATION[32:]]
 def expand_station_parts(text):
  """Only a complete, ordered, boot-unique five-part snapshot can be evidence."""
@@ -30,6 +31,7 @@ def expand_station_parts(text):
    pairs.append((key,value))
   schemas=[STATION_PARTS[part-1]]
   if part==4:schemas.append(STATION_PARTS[3]+['tx_local'])
+  if part==5:schemas.append(STATION_PARTS[4]+['security','rx_raw_data'])
   if not valid or [k for k,v in pairs] not in schemas or not 1<=sample<=112:
    issues.append('invalid station part schema');continue
   if part==1:
@@ -54,7 +56,7 @@ EVENT='event published notified status producer consumer t_ms'.split()
 # Scan EVENT retains its old shape; station EVENT carries actual callback identity.
 EVENT_BOUND='event published notified status producer consumer generation ticket epoch t_ms'.split()
 SCHEMAS={
- 'IOS STATION':[STATION,STATION_LOCAL],
+ 'IOS STATION':[STATION,STATION_LOCAL,STATION_SECURITY],
  'IOS STATIONGUARD':['reason source stage error valid addr raw mask expected'.split()],
  'IOS LINK':['generation up error'.split()],
  'IFNET LINK':['generation authorized changed error'.split()],
@@ -69,7 +71,17 @@ SCHEMAS={
 }
 SIGNED={('IOS LINK','error'),('IFNET LINK','error'),('IOS DISASSOC','reason')}
 def authorized(row):
- return bool(row['service']==6 and row['result']==1 and row['linked']==1 and row['transaction']==15 and row['outcome']==1 and not(row['owner_halt']or row['halt']or row['error'])and all(row[k]==1 for k in ('associated','sta','ptk','gtk','port')))
+ # Legacy receipts describe WPA2 only. OPEN must explicitly identify itself;
+ # absence of keys never silently downgrades an incomplete WPA2 handshake.
+ security=row.get('security',1)
+ keys=(row['ptk']==1 and row['gtk']==1) if security==1 else (row['ptk']==0 and row['gtk']==0) if security==2 else False
+ return bool(keys and row['service']==6 and row['result']==1 and row['linked']==1 and row['transaction']==15 and row['outcome']==1 and not(row['owner_halt']or row['halt']or row['error'])and all(row[k]==1 for k in ('associated','sta','port')))
+def rekey_transition(row):
+ # STC_GTK/REKEY_GTK and STC_EAPOL_TX/TX_GROUP preserve an already opened
+ # controlled port. They are not a new handshake or proof of a new GTK ACK.
+ return bool('tx_local' in row and row.get('security',1)==1 and
+             (row['transaction'],row['action']) in ((13,16),(10,15)) and
+             authorized(dict(row,transaction=15)))
 PREFIXES=('NORD2 WIFI IOS STATION','NORD2 WIFI IOS LINK','NORD2 WIFI IOS JOIN','NORD2 WIFI IOS DISASSOC','NORD2 WIFI IFNET','NORD2 WIFI IOS EVENT')
 def parse(data):
  issues=[];rows=[];counts={}
@@ -110,33 +122,43 @@ def parse(data):
   numeric.update(_kind=kind,_line=index);rows.append(numeric);counts[kind]=counts.get(kind,0)+1
  if sum(counts.get(k,0)for k in ('IOS STATION','IOS STATIONGUARD','IOS LINK'))>112:bad('native trace budget exceeded')
  if counts.get('IFNET LINK',0)>32:bad('ifnet trace budget exceeded')
- attempts={};notices=[];events=[];links=[];join_groups={};join_owner=set();legacy_join=False;station_formats=set()
+ attempts={};notices=[];events=[];links=[];join_groups={};join_owner=set();legacy_join=False;station_formats=set();security_by_attempt={};previous_authorized={}
  for row in rows:
   kind=row['_kind']
   if kind=='IOS STATION':
-   local_format='tx_local' in row;station_formats.add(local_format)
+   local_format='tx_local' in row;station_formats.add((local_format,'security' in row))
    if len(station_formats)>1:bad('mixed station counter formats in one boot')
    if local_format and any(row[k]for k in ('tx_result','tx_ok','tx_fail')):bad('local data producer cannot claim air results')
    if row['event'] in (15,16) and row['status'] not in (0,1):bad('local submission status domain')
    if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>(16 if local_format else 14) or row['outcome']>5 or row['native_phase']>(15 if local_format else 9) or row['event']>(16 if local_format else 14) or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
    if any(row[k]>1 for k in ('linked','retired','owner_halt','halt','air_pending','associated','sta','ptk','gtk','port')):bad('station boolean domain')
-   if row['rx_raw']!=((row['rx_raw_eapol']+row['rx_raw_drop'])&U32):bad('raw RX counters disagree')
+   if 'security' in row:
+    security=row['security'];identity=(row['generation'],row['ticket'])
+    if security not in (0,1,2):bad('station security domain')
+    if security==2 and (row['ptk']or row['gtk']):bad('OPEN station cannot report installed WPA keys')
+    if identity in security_by_attempt and security_by_attempt[identity]!=security:bad('station security changed within attempt')
+    security_by_attempt[identity]=security
+   if row['rx_raw']!=((row['rx_raw_eapol']+row['rx_raw_drop']+row.get('rx_raw_data',0))&U32):bad('raw RX counters disagree')
    if row['tx_result']!=((row['tx_ok']+row['tx_fail'])&U32):bad('data result counters disagree')
    # Bounded residual, not exact outstanding: port closure can discard an
    # already-dequeued unpublished frame without a FRAME_RESULT.
    if ((row['tx_accept']-row['tx_result']-row.get('tx_local',0)-row['queued_drop'])&U32)>9:bad('data queue/residual bound')
    # Fatal closure logs before service snapshot is refreshed: service6/linked0
    # is legitimate transitional metadata, and never an authorization proof.
-   if row['service']==6 and row['linked']and not authorized(row):bad('contradictory authorized station snapshot')
-   key=(row['generation'],row['ticket']);attempts.setdefault(key,dict(rows=[],notices=[],events=[],links=[]))['rows'].append(row)
+   key=(row['generation'],row['ticket'])
+   continued_rekey=rekey_transition(row) and key in previous_authorized and row['t_ms']>=previous_authorized[key]
+   if row['service']==6 and row['linked']and not(authorized(row)or continued_rekey):bad('contradictory authorized station snapshot')
+   if authorized(row):previous_authorized[key]=row['t_ms']
+   elif not continued_rekey:previous_authorized.pop(key,None)
+   attempts.setdefault(key,dict(rows=[],notices=[],events=[],links=[]))['rows'].append(row)
   elif kind=='IOS JOINNOTICE':
    if row['notice']not in (1,2,3,4)or row['current']>1 or row['authorized']>1 or row['phase']>8 or row['result']not in (0,1,2,9,21)or not row['ticket']or not row['epoch']:bad('join notice domain')
    if row['current']and row['notice']!=4 and not row['generation']:bad('current join notice lacks native generation')
    if row['current']and(row['authorized']or row['phase']==6)and not(row['authorized']==1 and row['phase']==6 and row['result']==1):bad('contradictory authorized join notice')
    notices.append(row)
   elif kind=='IOS EVENT':
-   if row['event']not in (2,3,4,9,10)or row['published']!=1 or row['notified']>1 or row['producer']>=4096 or row['consumer']>=4096 or row['producer']%4 or row['consumer']%4 or row['notified']!=int(row['status']==0):bad('event domain')
-   if 'generation'in row and(row['event']==10 or not row['generation']or not row['ticket']or not row['epoch']):bad('bound station event identity')
+   if row['event']not in (1,2,3,4,9,10)or row['published']!=1 or row['notified']>1 or row['producer']>=4096 or row['consumer']>=4096 or row['producer']%4 or row['consumer']%4 or row['notified']!=int(row['status']==0):bad('event domain')
+   if 'generation'in row and(row['event']in(1,10)or not row['generation']or not row['ticket']or not row['epoch']):bad('bound station event identity')
    events.append(row)
   elif kind=='IFNET LINK':
    if not row['generation']or row['authorized']>1 or row['changed']>1:bad('ifnet link domain')
@@ -173,7 +195,9 @@ def parse(data):
   if any(q[k]>1 for k in ('private_present','owner_valid','same_identity'))or q['same_identity']and not(q['private_present']and q['owner_valid']):bad('join identity diagnostic domain')
   if q['bytes']==592 and q['private_present']!=int(bool(q['assoc_flags']&0x800)):bad('join private-address flag correlation')
   if q['reason']==0:
-   profile=(q['bytes']==592 and q['mode']==2 and q['auth_lower']==1 and q['auth_upper']==8 and q['rsn_bytes']in(22,24,28)and q['key_kind']==6 and q['key_bytes']==32 and q['native_flags']in(0,4)and q['assoc_reason']<=2 and not(q['assoc_flags']&~0x4820)and not any(q[k]for k in ('cached_pmk_bytes','blacklist_count','conditional_option','transition_disable','band_preference')))
+   wpa2=q['auth_upper']==8 and q['rsn_bytes']in(22,24,28)and q['key_kind']==6 and q['key_bytes']==32
+   opened=q['auth_upper']==0 and q['rsn_bytes']==0 and q['key_kind']==0 and q['key_bytes']==0 and q['native_flags']==0
+   profile=(q['bytes']==592 and q['mode']==2 and q['auth_lower']==1 and (wpa2 or opened) and q['native_flags']in(0,4)and q['assoc_reason']<=2 and not(q['assoc_flags']&~0x4820)and not any(q[k]for k in ('cached_pmk_bytes','blacklist_count','conditional_option','transition_disable','band_preference')))
    scope=1<=q['scope_bytes']<=36 if q['assoc_flags']&0x4000 else q['scope_bytes']==0
    identity=not q['private_present']or(q['owner_valid']==1 and q['same_identity']==1)
    if not(profile and scope and identity):bad('contradictory admitted join profile')

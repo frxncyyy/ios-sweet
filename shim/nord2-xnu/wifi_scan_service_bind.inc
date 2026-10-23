@@ -9,7 +9,7 @@ extern void nord2_wifi_ios_backend_ready(void);
 #include "wifi_ios_join.h"
 enum {NSS_FREE,NSS_QUEUED,NSS_RUNNING,NSS_DONE};
 struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
-static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
+static struct {IOLock*lock;unsigned ready,failed,powered;uint64_t serial,power_epoch;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
 #if defined(NSS_HOST_TEST) && !defined(NJS_HOST_TEST)
 #define NSS_STATION_TEST_DISABLED 1
 static int njs_scan_blocked_locked(void){return 0;}
@@ -26,18 +26,18 @@ static void njs_initialize_locked(void);
 #endif
 static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC_ACQUIRE)==1;}
 static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
-int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
+int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->powered=nss_native.powered;out->power_epoch=nss_native.power_epoch;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
 int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
  if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS||(q->dwell_tu!=0&&q->dwell_tu!=108))return -1;
  if(!nss_available())return 1;IOLockLock(nss_native.lock);
- if(njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
+ if(!nss_native.powered||njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
  if(nss_native.failed||nss_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
  for(unsigned i=0;i<q->count;i++){unsigned found=0;for(unsigned j=0;j<nss_native.info.count;j++)if(q->channels[i].band==nss_native.info.channels[j].band&&q->channels[i].channel==nss_native.info.channels[j].channel)found=1;
   for(unsigned j=0;j<i;j++)if(q->channels[i].band==q->channels[j].band&&q->channels[i].channel==q->channels[j].channel)found=0;
   if(!found){IOLockUnlock(nss_native.lock);return -1;}}
  struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(!nss_native.slot[k].state){s=&nss_native.slot[k];break;}
  if(!s){IOLockUnlock(nss_native.lock);return 2;}
- *s=(struct nss_slot){0};s->request=*q;s->cookie=cookie;s->generation=generation;s->completion=completion;s->ticket=++nss_native.serial;s->state=NSS_QUEUED;*ticket=s->ticket;
+ memset(s,0,sizeof(*s));s->request=*q;s->cookie=cookie;s->generation=generation;s->completion=completion;s->ticket=++nss_native.serial;s->state=NSS_QUEUED;*ticket=s->ticket;
  IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
 }
 int nord2_wifi_scan_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);struct nss_slot*s=nss_find(ticket);int r=s?0:1;if(s)s->canceled=1;IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
@@ -59,11 +59,17 @@ static int nss_start(void){
  ncfg_channels(&ncb_native.plan.input,&ncb_native.plan.config,channels,39,&count))return 1;
  for(unsigned k=0;k<6;k++)nss_native.info.mac[k]=address.mac[k];
  const struct nrp_caps*c=&ncb_native.plan.input.caps;nss_native.info.band5=c->band5;nss_native.info.nss=c->nss;nss_native.info.max_bw=c->max_bw;nss_native.info.path=c->path;
- for(unsigned k=0;k<count;k++)if(channels[k].allowed&&!channels[k].dfs)nss_native.info.channels[nss_native.info.count++]=(struct ncs_channel){channels[k].band,channels[k].channel};
+ /* Android fgSkipDFS defaults0; DFS exclusion is not a station passive-scan rule.
+  * Keep the authenticated regulatory intersection; no probe/DFS AP operation. */
+ for(unsigned k=0;k<count;k++)if(channels[k].allowed){
+  unsigned index=nss_native.info.count++;
+  nss_native.info.channels[index]=(struct ncs_channel){channels[k].band,channels[k].channel};
+  if(channels[k].dfs)nss_native.info.dfs_mask|=UINT64_C(1)<<index;
+ }
  if(!nss_native.info.count||nss_native.info.count!=ncb_native.plan.channel_count)return 1;
  nss_native.scan_sequence=ncb_native.rx.scan.sequence;
  nss_native.lock=IOLockAlloc();if(!nss_native.lock)return 1;
- njs_initialize_locked();
+ nss_native.powered=1;nss_native.power_epoch=1;njs_initialize_locked();
  __atomic_store_n(&nss_native.ready,1,__ATOMIC_RELEASE);
  printf("NORD2 WIFI IOS OWNER: active=1 retained=1 boot_complete=1 ready=1\n");
  nord2_wifi_ios_backend_ready();return 0;

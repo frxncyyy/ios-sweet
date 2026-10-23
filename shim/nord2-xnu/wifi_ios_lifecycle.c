@@ -27,3 +27,13 @@ int nils_take(struct nils_state*s,uint64_t generation,uint8_t*out,size_t bytes){
  return niwc_take(&s->cache->cursor,generation,out,bytes);
 }
 void nils_close(struct nils_state*s){if(s){s->open=0;s->cache=0;}}
+
+int nils_prepare_history(const struct nils_ticket*t,struct niwa_history*h,const struct nsb_scan*scan,
+ uint64_t captured,uint64_t reference,const struct niwp_rate_map*m,size_t n,unsigned bss,struct niwa_snapshot*out){
+ if(!t||!t->generation||!t->serial||!scan||!out||out!=t->output||out->entered)return -1;
+ return niwa_history_prepare(h,scan,t->generation,captured,reference,m,n,bss,out);
+}
+int nils_take_timed(struct nils_state*s,struct niwa_history*h,uint64_t generation,uint64_t reference,uint8_t*out,size_t bytes){
+ if(!s||!s->open||s->inflight||!s->cache||s->generation!=generation)return -1;
+ return niwa_snapshot_take_timed(s->cache,h,generation,reference,out,bytes);
+}

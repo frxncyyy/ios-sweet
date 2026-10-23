@@ -22,7 +22,7 @@ int nstx_build_profile(uint8_t*out,size_t cap,size_t*used,const struct sw_txd*d,
  if(profile==NSTX_PROFILE_TODS){
   if(sw_data_tods(b+64,sizeof b-64,&payload,peer,f,n))return -1;
   r=sw_tods_data_txd(b,32,&z,d,b+64,payload);
- }else r=security?sw_security_txd(b,32,&z,d,f,n):sw_data_txd(b,32,&z,d,f,n);
+ }else r=security?sw_security_txd(b,32,&z,d,f,n):d->protected_frame?sw_data_txd(b,32,&z,d,f,n):sw_open_data_txd(b,32,&z,d,f,n);
  if(r||z!=32||payload>sizeof b-64)return -1;
  /* Selected AXI soc3_0: formatTXD0, LMAC TC1/AC1 WMM0, VTA1;
   * TX byte count excludes append32; payload is fixed before publication. */

@@ -9,7 +9,7 @@ int ncb_prepare(struct ncb_plan*p,const uint8_t*board,size_t bytes,const uint8_t
  if(nrp_caps_decode(cap,cap_bytes,&p->input.caps)||p->input.caps.sequence!=cap_seq||
     ncfg_prepare(&p->input,&p->config)||ncfg_address(&p->input,&p->config,&address)||
     address.source!=NNI_ADDRESS_BOARD||ncfg_channels(&p->input,&p->config,all,39,&count)||count!=39)return -1;
- for(unsigned k=0;k<count;k++)if(all[k].allowed&&!all[k].dfs)channels[p->channel_count++]=(struct ncs_channel){all[k].band,all[k].channel};
+ for(unsigned k=0;k<count;k++)if(all[k].allowed)channels[p->channel_count++]=(struct ncs_channel){all[k].band,all[k].channel};
  if(!p->channel_count||ncs_build(cap,cap_bytes,cap_seq,address.mac,channels,p->channel_count,
     (uint8_t)(first_seq+NCFG_COMMANDS+4),(uint8_t)(first_seq+NCFG_COMMANDS+5),1,1,0,0,&p->scan_frames))return -1;
  for(unsigned k=0;k<NCFG_COMMANDS;k++){

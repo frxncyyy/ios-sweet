@@ -5,7 +5,8 @@
 extern "C" {
 #endif
 /* Native snapshots only: GET/run/carrier require an actual current lease and
- * authenticated assoc + PTK EID24 + GTK source completion + data-path receipt.
+ * source-configured association plus profile-specific controlled data path.
+ * WPA2 requires PTK EID24/GTK replay completion; explicit OPEN has no keys.
  * Structs are kernel-only; never copy their padding/keys/addresses to logs. */
 enum njs_phase {NJS_UNAVAILABLE=0,NJS_IDLE,NJS_QUEUED,NJS_AUTHENTICATING,
  NJS_ASSOCIATING,NJS_SECURING,NJS_AUTHORIZED,NJS_LEAVING,NJS_FAILED};
@@ -13,6 +14,7 @@ enum njs_notice {NJS_JOINED=1,NJS_JOIN_FAILED,NJS_LEFT,NJS_RETIRED};
 struct njs_snapshot {
  uint64_t native_generation,client_epoch,ticket;
  unsigned phase,result,associated,ptk_ready,gtk_ready,data_ready;
+ unsigned security; /*NIWJ_OPEN or NIWJ_WPA2_PSK_CCMP;0 legacy/unknown, never OPEN*/
  unsigned involuntary;uint32_t reason,subreason;
  struct niwj_target peer;
 };

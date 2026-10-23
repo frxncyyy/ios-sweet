@@ -10,16 +10,19 @@
 enum sw_result { SW_OK=0, SW_INVALID=-1, SW_CAPACITY=-2 };
 enum sw_cid { SW_KEY=0x07, SW_BSS=0x12, SW_STA=0x13, SW_RLM=0x19,
               SW_CHANNEL=0x1c };
+enum sw_security {SW_SECURITY_WPA2=0,SW_SECURITY_OPEN=1};
 struct sw_peer { uint8_t self[6], ap[6]; };
 struct sw_assoc {
     struct sw_peer peer;
     const uint8_t *ssid; size_t ssid_len;
     const uint8_t *rates; size_t rates_len; /* 500 kb/s, basic bit retained */
     uint16_t capability, listen_interval;
+    unsigned security; /* explicit OPEN; default0 preserves WPA2 codec */
 };
 /* Open-system transaction 1, or legacy WPA2-PSK/CCMP association request.
  * Auth sequence-control is zero as selected source leaves HW to assign it.
- * Assoc emits SSID, supported/ext rates and exactly WPA2 PSK/CCMP RSN.
+ * Assoc emits SSID/rates and exactly WPA2 PSK/CCMP RSN, or explicit
+ * OPEN with Privacy clear and no RSN. OPEN is not WEP/shared-key/OWE.
  * No HT/VHT/HE, WMM, PMF, reassociation, vendor IE or enterprise support.
  */
 int sw_auth(uint8_t *, size_t, size_t *, const struct sw_peer *);
@@ -53,6 +56,7 @@ struct sw_bss {
     uint8_t dbdc_band, wmm_set, disconnect_threshold;
     uint16_t rates, basic_rates, fixed_rate;
     uint32_t private_data;
+    unsigned security;
 };
 int sw_bss(uint8_t *, size_t, size_t *, const struct sw_bss *);
 /* Selected cnmStaSendUpdateCmd (cnm_mem.c1141-1142) sends the peer WLAN and
@@ -90,6 +94,7 @@ int sw_management_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
                       const uint8_t *,size_t);
 int sw_security_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
                     const uint8_t *,size_t);
+int sw_open_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
 int sw_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
 /* Controlled legacy data alternative: original Ethernet is admitted first,
  * then copied as protected non-QoS ToDS with AP/self/original-DA and RFC1042

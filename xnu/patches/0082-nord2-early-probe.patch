@@ -11883,7 +11883,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_join.c
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,122 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_join.h"
@@ -11912,16 +11912,24 @@
 +  d->owner_address_valid=owner_mac&&nz(owner_mac,6)&&!(owner_mac[0]&1u);
 +  d->private_address_matches=d->private_address_present&&d->owner_address_valid&&same(p+508,owner_mac,6);}
 + if(j32(p)!=1||!j32(p+12)||j32(p+12)>32||(nz(p+48,6)&&(p[48]&1)))return refuse(d,NIWJ_SHAPE);
-+ if(j16(p+4)!=2||j16(p+6)!=1||j16(p+8)!=8)return refuse(d,NIWJ_PROFILE);
-+ if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
-+ if(!station_rsn_ok(p+206,j16(p+204)))return refuse(d,NIWJ_SECURITY);
++ unsigned open=j16(p+8)==0;
++ if(j16(p+4)!=2||j16(p+6)!=1||(!open&&j16(p+8)!=8))return refuse(d,NIWJ_PROFILE);
++ if(open){
++  /* Selected no-security producer zeros key record56..199 before RawSet;
++   * key storage is inactive, not a zero PMK. No WEP/shared-key/OWE admission. */
++  if(j32(p+56)||j32(p+60)||j32(p+64)||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
++  if(j16(p+204))return refuse(d,NIWJ_SECURITY);
++ }else{
++  if(j32(p+56)!=1||j32(p+60)!=32||j32(p+64)!=6||j16(p+68)||j16(p+70)||j32(p+468))return refuse(d,NIWJ_CREDENTIAL);
++  if(!station_rsn_ok(p+206,j16(p+204)))return refuse(d,NIWJ_SECURITY);
++ }
 + /* Port policy: producer's PMK6 WPA2 profile flags0/4 are handled by our
 +  * host WPA2 engine. No claim of undocumented vendor offload semantics. */
 + /* Exact producer copies a valid LAA to508 and sets bit08; it is not a
 +  * permission to ignore a different requested self address. Existing native
 +  * BSS/TX/ifnet identity is immutable, so require actual retained equality. */
 + if((p[463]&~0x20u)||(p[464]&~0x48u)||p[465]>2||((p[463]&0x20u)&&!nz(p+48,6))||
-+    (j32(p+504)!=0&&j32(p+504)!=4)||p[514]||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
++    (j32(p+504)!=0&&(open||j32(p+504)!=4))||p[514]||j32(p+580)||j32(p+584)||j32(p+588))return refuse(d,NIWJ_OPTIONS);
 + if((p[464]&8u)&&(!owner_mac||!nz(owner_mac,6)||(owner_mac[0]&1u)||
 +    !nz(p+508,6)||(p[508]&3u)!=2u||!same(p+508,owner_mac,6)))return refuse(d,NIWJ_OPTIONS);
 + /* Producer CFStringGetCString(...,37,UTF8), strlen, then stores length536.
@@ -11933,8 +11941,8 @@
 +  for(unsigned i=0;i<scope;i++)if(!p[540+i])return refuse(d,NIWJ_OPTIONS);
 + }else if(scope)return refuse(d,NIWJ_OPTIONS);
 + out->ssid_length=(uint8_t)j32(p+12);copy(out->ssid,p+16,out->ssid_length);
-+ out->has_target=(uint8_t)nz(p+48,6);copy(out->target,p+48,6);copy(out->pmk,p+72,32);
-+ copy(out->station_rsn,station_rsn,22);out->association_reason=p[465];out->security=NIWJ_WPA2_PSK_CCMP;out->native_flags=j32(p+504);return 0;
++ out->has_target=(uint8_t)nz(p+48,6);copy(out->target,p+48,6);if(!open){copy(out->pmk,p+72,32);copy(out->station_rsn,station_rsn,22);}
++ out->association_reason=p[465];out->security=open?NIWJ_OPEN:NIWJ_WPA2_PSK_CCMP;out->native_flags=j32(p+504);return 0;
 +}
 +int niwj_decode(const void*v,size_t n,struct niwj_request*out,struct niwj_diagnostic*d){
 + return niwj_decode_identity(v,n,0,out,d);
@@ -11964,14 +11972,15 @@
 + unsigned seen=0;niwj_clear(a,sizeof(*a));
 + if(!r->ssid_present||r->hidden||r->ssid_len!=q->ssid_length||!same(r->ssid,q->ssid,r->ssid_len)||
 +  !nz(r->bssid,6)||(r->bssid[0]&1)||(q->has_target&&!same(q->target,r->bssid,6))||
-+  !r->privacy||!(r->capability&1)||(r->capability&2)||r->channel_mismatch||!r->channel||r->channel!=r->hw_channel||
++  (q->security==NIWJ_OPEN?(r->privacy||r->rsn_present||(r->capability&16)):(!r->privacy||!r->rsn_present))||!(r->capability&1)||(r->capability&2)||r->channel_mismatch||!r->channel||r->channel!=r->hw_channel||
 +  (r->subtype!=8&&r->subtype!=5)||r->ies_truncated||r->ie_bytes!=r->ie_total||r->ie_bytes>NSB_IE_BYTES||
-+  !r->rsn_present||!r->observed_us||r->observed_us>now||!r->rxv_valid||!(r->group_valid&4))return 0;
++  !r->observed_us||r->observed_us>now||!r->rxv_valid||!(r->group_valid&4))return 0;
 + unsigned band=r->hw_channel<=14?1:2,allowed=0;
 + for(unsigned i=0;i<info->count;i++)if(info->channels[i].band==band&&info->channels[i].channel==r->channel)allowed=1;
 + if(!allowed)return 0;
 + unsigned x=r->rxv[4],y=r->rxv[5];if(x==255&&y==255)return 0;if(x==255)x=0;if(y==255)y=0;x=x>y?x:y;if(x>220)x=220;a->rssi=(int16_t)((int)x/2-110);
 + for(size_t i=0;i<r->ie_bytes;){if(r->ie_bytes-i<2)return 0;unsigned id=r->ies[i],z=r->ies[i+1];size_t body=i+2;if(z>r->ie_bytes-body)return 0;
++  if(q->security==NIWJ_OPEN&&(id==48||(id==221&&z>=4&&!r->ies[body]&&r->ies[body+1]==80&&r->ies[body+2]==242&&r->ies[body+3]==1)))return 0;
 +  if(id==48){if(seen&4||!rsn_ok(r->ies+i,z+2))return 0;seen|=4;a->rsn_at=(unsigned)i;a->rsn_bytes=z+2;}
 +  if(id==1||id==50){unsigned flag=id==1?1:2;if((seen&flag)||!z||(id==1&&z>8))return 0;seen|=flag;
 +   for(unsigned j=0;j<z;j++){unsigned raw=r->ies[body+j],rate=raw&127;if(!legacy_rate(rate)){if(raw&128)return 0;continue;}
@@ -11979,27 +11988,27 @@
 +    unsigned k=0;while(k<a->count&&(a->rates[k]&127)!=rate)k++;if(k==a->count){if(k==12)return 0;a->rates[a->count++]=(uint8_t)raw;}else a->rates[k]|=(uint8_t)(raw&128);}
 +  }i=body+z;
 + }
-+ return (seen&5)==5&&a->count!=0;
++ return (q->security==NIWJ_OPEN?(seen&1)==1:(seen&5)==5)&&a->count!=0;
 +}
 +int niwj_select(const struct niwj_request*q,const struct nsb_scan*s,const struct nss_info*info,uint64_t now,struct niwj_target*out){
 + const struct nsb_record*best=0;struct parsed a,b={0};
-+ if(!q||!s||!info||!out||q->security!=NIWJ_WPA2_PSK_CCMP||!q->ssid_length||q->ssid_length>32||q->association_reason>2||
++ if(!q||!s||!info||!out||(q->security!=NIWJ_WPA2_PSK_CCMP&&q->security!=NIWJ_OPEN)||!q->ssid_length||q->ssid_length>32||q->association_reason>2||
 +  (q->has_target!=0&&q->has_target!=1)||(q->has_target&&(!nz(q->target,6)||(q->target[0]&1)))||
-+  !same(q->station_rsn,station_rsn,22)||!niwj_scan_usable(s)||(q->native_flags!=0&&q->native_flags!=4)||!now||!info->count||info->count>NSS_CHANNELS||info->band5>1)return NIWJ_TARGET;
++  (q->security==NIWJ_OPEN?(nz(q->station_rsn,22)||nz(q->pmk,32)||q->native_flags):!same(q->station_rsn,station_rsn,22))||!niwj_scan_usable(s)||(q->native_flags!=0&&q->native_flags!=4)||!now||!info->count||info->count>NSS_CHANNELS||info->band5>1)return NIWJ_TARGET;
 + for(unsigned i=0;i<info->count;i++){if((info->channels[i].band!=1&&info->channels[i].band!=2)||!info->channels[i].channel||
 +   (info->channels[i].band==1&&info->channels[i].channel>14)||
 +   (info->channels[i].band==2&&(!info->band5||info->channels[i].channel<=14||info->channels[i].channel>196)))return NIWJ_TARGET;
 +  for(unsigned j=0;j<i;j++)if(info->channels[j].band==info->channels[i].band&&info->channels[j].channel==info->channels[i].channel)return NIWJ_TARGET;}
 + for(unsigned i=0;i<s->count;i++)if(candidate(&s->records[i],q,info,now,&a)&&(!best||a.rssi>b.rssi)){best=&s->records[i];b=a;}
 + if(!best)return NIWJ_TARGET;
-+ niwj_clear(out,sizeof(*out));out->record=*best;out->band=best->hw_channel<=14?1:2;out->channel=best->channel;out->rssi_dbm=b.rssi;
++ niwj_clear(out,sizeof(*out));out->security=q->security;out->record=*best;out->band=best->hw_channel<=14?1:2;out->channel=best->channel;out->rssi_dbm=b.rssi;
 + out->rate_count=(uint8_t)b.count;copy(out->rates,b.rates,b.count);out->ap_rsn_bytes=(uint16_t)b.rsn_bytes;copy(out->ap_rsn,best->ies+b.rsn_at,b.rsn_bytes);return 0;
 +}
 +
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_join.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,69 @@
 +#ifndef WIFI_IOS_JOIN_H
 +#define WIFI_IOS_JOIN_H
 +#include <stddef.h>
@@ -12012,9 +12021,11 @@
 +#define NIWJ_ASSOC_BYTES 592u
 +#define NIWJ_AP_RSN_BYTES 257u
 +#define NIWJ_WPA2_PSK_CCMP 1u
++#define NIWJ_OPEN 2u
 +/* Copied kernel-only secret input; never a user pointer or authority receipt.
 + * Framework supplies PMK32 for both ordinary passphrase and ready-PMK input.
-+ * Caller and backend must explicitly clear their copies on every retirement. */
++ * OPEN carries no PMK or RSN; these output arrays stay zero without starting
++ * WPA. Caller/backend explicitly clear all copies on every retirement. */
 +struct niwj_request {
 + uint8_t ssid_length,ssid[32],has_target,target[6],pmk[32],station_rsn[22],association_reason;
 + uint32_t security,native_flags;
@@ -12043,6 +12054,7 @@
 + uint8_t band,channel,rate_count,rates[12]; /*500kbps; basic flags retained*/
 + uint16_t ap_rsn_bytes;uint8_t ap_rsn[NIWJ_AP_RSN_BYTES];
 + int16_t rssi_dbm;
++ uint32_t security; /* copied validated request profile, never scan authority */
 +};
 +/* Pure retained-record eligibility, never native ownership/readiness. Source
 + * nsb_add's full-cache overflow preserves all16 actual records. With matched
@@ -12078,8 +12090,8 @@
 +static void p16(uint8_t*p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
 +static void p32(uint8_t*p,uint32_t v){p16(p,(uint16_t)v);p16(p+2,(uint16_t)(v>>16));}
 +static void cp(void*v,const void*s,size_t n){uint8_t*p=v;const uint8_t*q=s;while(n--)*p++=*q++;}
-+static int valid(const struct njs_snapshot*s){return s&&s->phase<=NJS_FAILED&&s->associated<=1&&s->ptk_ready<=1&&s->gtk_ready<=1&&s->data_ready<=1&&s->involuntary<=1&&(s->result==0||s->result==1||s->result==2||s->result==9||s->result==21);}
-+int niwj_authorized(const struct njs_snapshot*s){return valid(s)&&s->native_generation&&s->ticket&&s->phase==NJS_AUTHORIZED&&s->result==1&&s->associated&&s->ptk_ready&&s->gtk_ready&&s->data_ready;}
++static int valid(const struct njs_snapshot*s){return s&&s->phase<=NJS_FAILED&&s->associated<=1&&s->ptk_ready<=1&&s->gtk_ready<=1&&s->data_ready<=1&&s->security<=NIWJ_OPEN&&s->involuntary<=1&&(s->result==0||s->result==1||s->result==2||s->result==9||s->result==21);}
++int niwj_authorized(const struct njs_snapshot*s){return valid(s)&&s->native_generation&&s->ticket&&s->phase==NJS_AUTHORIZED&&s->result==1&&s->associated&&s->data_ready&&(s->security==NIWJ_OPEN?(!s->ptk_ready&&!s->gtk_ready&&s->peer.security==NIWJ_OPEN&&!s->peer.record.privacy&&!s->peer.record.rsn_present&&!(s->peer.record.capability&16)):(s->ptk_ready&&s->gtk_ready));}
 +int niwj_state_reply(const struct njs_snapshot*s,unsigned request,size_t payload,unsigned scanning,uint64_t now,void*v,size_t cap,size_t*used){
 + uint8_t*p=v;size_t bytes=0;unsigned scalar=0;if(!used)return -1;*used=0;if(!p||!valid(s)||scanning>1)return -1;
 + if(request==13||request==21){if(payload||cap<4)return -1;
@@ -12103,7 +12115,7 @@
 +  if(!now||!s->peer.record.observed_us||s->peer.record.observed_us>now||(now-s->peer.record.observed_us)/1000>UINT32_MAX||
 +   s->peer.record.ie_bytes!=s->peer.record.ie_total||s->peer.record.ies_truncated||
 +   niwp_rates(map,n,s->peer.rates,s->peer.rate_count,r.rates,NIWS_MAX_RATES,&count))return -1;
-+  r.channel=s->peer.channel;r.channel_flags=s->peer.band==1?8:16;r.age=(uint32_t)((now-s->peer.record.observed_us)/1000);
++  r.channel=s->peer.channel;r.channel_flags=(s->peer.band==1?8:16)|((s->peer.band==2&&s->peer.channel>=52&&s->peer.channel<=144)?0x100:0);r.age=(uint32_t)((now-s->peer.record.observed_us)/1000);
 +  r.rssi=s->peer.rssi_dbm;r.beacon_interval=s->peer.record.interval;r.capabilities=s->peer.record.capability;
 +  r.rate_count=(uint8_t)count;r.ssid_bytes=s->peer.record.ssid_len;r.ie_bytes=s->peer.record.ie_bytes;
 +  cp(r.bssid,s->peer.record.bssid,6);cp(r.ssid,s->peer.record.ssid,r.ssid_bytes);cp(r.ie,s->peer.record.ies,r.ie_bytes);
@@ -12112,7 +12124,7 @@
 +  niwj_clear(p,bytes);
 +  if(request==1)cp(p,s->peer.record.ssid,bytes);
 +  else if(request==9)cp(p,s->peer.record.bssid,6);
-+  else if(request==2){p32(p,1);p32(p+4,1);p32(p+8,8);}
++  else if(request==2){p32(p,1);p32(p+4,1);p32(p+8,s->security==NIWJ_OPEN?0:8);}
 +  else if(request==4){p32(p,1);p32(p+4,1);p32(p+8,s->peer.channel);p32(p+12,s->peer.band==1?8:16);}
 +  else{p32(p,1);p32(p+4,1);p32(p+12,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+28,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+32,(uint32_t)(int32_t)s->peer.rssi_dbm);p32(p+48,(uint32_t)(int32_t)s->peer.rssi_dbm);}
 + }
@@ -12161,7 +12173,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_wire.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,241 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_station_wire.h"
@@ -12209,7 +12221,8 @@
 +    uint8_t b[110]={0};size_t i,j,n=28,first;
 +    if(!start(used)||!p||!peer_ok(&p->peer)||!p->ssid||!p->ssid_len||
 +       p->ssid_len>32||!p->rates||!p->rates_len||p->rates_len>12||
-+       !p->listen_interval||(p->capability&0x11)!=0x11||
++       !p->listen_interval||p->security>SW_SECURITY_OPEN||
++       (p->capability&0x11)!=(p->security==SW_SECURITY_OPEN?1u:0x11u)||
 +       (p->capability&~0x0431u))return SW_INVALID;
 +    for(i=0;i<p->rates_len;i++) {
 +        if(!rate_ok(p->rates[i]))return SW_INVALID;
@@ -12221,7 +12234,7 @@
 +    b[n++]=1;b[n++]=(uint8_t)first;memcpy(b+n,p->rates,first);n+=first;
 +    if(p->rates_len>8) {b[n++]=50;b[n++]=(uint8_t)(p->rates_len-8);
 +        memcpy(b+n,p->rates+8,p->rates_len-8);n+=p->rates_len-8;}
-+    memcpy(b+n,rsn,sizeof(rsn));n+=sizeof(rsn);
++    if(p->security!=SW_SECURITY_OPEN){memcpy(b+n,rsn,sizeof(rsn));n+=sizeof(rsn);}
 +    return finish(out,cap,used,b,n);
 +}
 +static int key_ok(const struct sw_key *p) {
@@ -12291,7 +12304,7 @@
 +    uint8_t b[SW_SIZE_CMD_SET_BSS_INFO]={0};
 +    if(!start(used)||!p||!rlm_ok(&p->rlm)||!p->ssid||!p->ssid_len||p->ssid_len>32||
 +       !unicast(p->ap)||p->connected>1||(p->dbdc_band!=0&&p->dbdc_band!=1&&p->dbdc_band!=4)||p->nonht_phy>3||
-+       p->disconnect_threshold||!rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
++       p->security>SW_SECURITY_OPEN||p->disconnect_threshold||!rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
 +    P8(CMD_SET_BSS_INFO,ucBssIndex,p->rlm.bss);
 +    P8(CMD_SET_BSS_INFO,ucConnectionState,p->connected?0:1);
 +    P8(CMD_SET_BSS_INFO,ucSSIDLen,p->ssid_len);CP(CMD_SET_BSS_INFO,aucSSID,p->ssid,p->ssid_len);
@@ -12300,7 +12313,7 @@
 +    P8(CMD_SET_BSS_INFO,ucStaRecIdxOfAP,p->ap_sta);
 +    P16(CMD_SET_BSS_INFO,u2HwDefaultFixedRateCode,p->fixed_rate);
 +    P8(CMD_SET_BSS_INFO,ucNonHTBasicPhyType,p->nonht_phy);
-+    P8(CMD_SET_BSS_INFO,ucAuthMode,7);P8(CMD_SET_BSS_INFO,ucEncStatus,6);
++    P8(CMD_SET_BSS_INFO,ucAuthMode,p->security==SW_SECURITY_OPEN?0:7);P8(CMD_SET_BSS_INFO,ucEncStatus,p->security==SW_SECURITY_OPEN?1:6);
 +    P8(CMD_SET_BSS_INFO,ucPhyTypeSet,p->phy_set);P8(CMD_SET_BSS_INFO,ucBMCWlanIndex,p->bmc_wlan);
 +    P32(CMD_SET_BSS_INFO,u4PrivateData,p->private_data);
 +    rlm(b+OFF(CMD_SET_BSS_INFO,rBssRlmParam),&p->rlm);
@@ -12345,9 +12358,9 @@
 +    } else if(security==1) {
 +        if(len<18||len>1518||frame[12]!=0x88||frame[13]!=0x8e||
 +           (((size_t)frame[16]<<8)|frame[17])!=len-18)return SW_INVALID;
-+    } else if(security==2) {
++    } else if(security==2||security==4) {
 +        if(len<14||len>1514||((unsigned)frame[12]<<8|frame[13])<1536||
-+           (frame[12]==0x88&&frame[13]==0x8e)||!p->protected_frame)return SW_INVALID;
++           (frame[12]==0x88&&frame[13]==0x8e)||p->protected_frame!=(security==2))return SW_INVALID;
 +    } else {
 +        if(len<26||p->protected_frame)return SW_INVALID;
 +        fc=rd16(frame);
@@ -12365,7 +12378,7 @@
 +        (2u<<23)|((uint32_t)p->queue<<25);
 +    d1=p->wlan|(UINT32_C(1)<<31)|((uint32_t)p->own_mac<<24);
 +    if(security==3)d1|=(1u<<10)|(2u<<16)|(12u<<11);
-+    else if(security){d1|=1u<<15;if(security==2)d1|=1u<<10;}
++    else if(security){d1|=1u<<15;if(security==2||security==4)d1|=1u<<10;}
 +    else d1|=(1u<<10)|(2u<<16)|(12u<<11);
 +    d2=(life<<16)|(UINT32_C(1)<<31);
 +    if(!security||security==3) {d2|=((fc>>4)&15u)|(((fc>>2)&3u)<<4);d7=(((uint32_t)(fc>>4)&15u)<<16)|(((uint32_t)(fc>>2)&3u)<<20)|((uint32_t)p->spe_index<<11);}
@@ -12399,10 +12412,12 @@
 +    *used=n+18;return SW_OK;
 +}
 +
++int sw_open_data_txd(uint8_t*o,size_t c,size_t*u,const struct sw_txd*p,const uint8_t*f,size_t n){return txd(o,c,u,p,f,n,4);}
++
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_station_wire.h
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,106 @@
 +#ifndef STATION_WIRE_H
 +#define STATION_WIRE_H
 +#include <stddef.h>
@@ -12415,16 +12430,19 @@
 +enum sw_result { SW_OK=0, SW_INVALID=-1, SW_CAPACITY=-2 };
 +enum sw_cid { SW_KEY=0x07, SW_BSS=0x12, SW_STA=0x13, SW_RLM=0x19,
 +              SW_CHANNEL=0x1c };
++enum sw_security {SW_SECURITY_WPA2=0,SW_SECURITY_OPEN=1};
 +struct sw_peer { uint8_t self[6], ap[6]; };
 +struct sw_assoc {
 +    struct sw_peer peer;
 +    const uint8_t *ssid; size_t ssid_len;
 +    const uint8_t *rates; size_t rates_len; /* 500 kb/s, basic bit retained */
 +    uint16_t capability, listen_interval;
++    unsigned security; /* explicit OPEN; default0 preserves WPA2 codec */
 +};
 +/* Open-system transaction 1, or legacy WPA2-PSK/CCMP association request.
 + * Auth sequence-control is zero as selected source leaves HW to assign it.
-+ * Assoc emits SSID, supported/ext rates and exactly WPA2 PSK/CCMP RSN.
++ * Assoc emits SSID/rates and exactly WPA2 PSK/CCMP RSN, or explicit
++ * OPEN with Privacy clear and no RSN. OPEN is not WEP/shared-key/OWE.
 + * No HT/VHT/HE, WMM, PMF, reassociation, vendor IE or enterprise support.
 + */
 +int sw_auth(uint8_t *, size_t, size_t *, const struct sw_peer *);
@@ -12458,6 +12476,7 @@
 +    uint8_t dbdc_band, wmm_set, disconnect_threshold;
 +    uint16_t rates, basic_rates, fixed_rate;
 +    uint32_t private_data;
++    unsigned security;
 +};
 +int sw_bss(uint8_t *, size_t, size_t *, const struct sw_bss *);
 +/* Selected cnmStaSendUpdateCmd (cnm_mem.c1141-1142) sends the peer WLAN and
@@ -12495,6 +12514,7 @@
 +                      const uint8_t *,size_t);
 +int sw_security_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
 +                    const uint8_t *,size_t);
++int sw_open_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
 +int sw_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
 +/* Controlled legacy data alternative: original Ethernet is admitted first,
 + * then copied as protected non-QoS ToDS with AP/self/original-DA and RFC1042
@@ -12533,7 +12553,7 @@
 + if(profile==NSTX_PROFILE_TODS){
 +  if(sw_data_tods(b+64,sizeof b-64,&payload,peer,f,n))return -1;
 +  r=sw_tods_data_txd(b,32,&z,d,b+64,payload);
-+ }else r=security?sw_security_txd(b,32,&z,d,f,n):sw_data_txd(b,32,&z,d,f,n);
++ }else r=security?sw_security_txd(b,32,&z,d,f,n):d->protected_frame?sw_data_txd(b,32,&z,d,f,n):sw_open_data_txd(b,32,&z,d,f,n);
 + if(r||z!=32||payload>sizeof b-64)return -1;
 + /* Selected AXI soc3_0: formatTXD0, LMAC TC1/AC1 WMM0, VTA1;
 +  * TX byte count excludes append32; payload is fixed before publication. */
@@ -12609,7 +12629,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport.c
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,392 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_station_transport.h"
@@ -12626,7 +12646,7 @@
 +static int fail(struct nst*s,unsigned e){nsdd_summary(&s->data_diag,s->generation);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
 +static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
 +static int lease_window(const struct nst*s,const struct nwi_state*i,unsigned active){
-+ if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||s->active!=active||s->data_profile>NST_DATA_TODS||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed-s->normal.dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
++ if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||s->active!=active||s->security>SW_SECURITY_OPEN||s->data_profile>NST_DATA_TODS||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed-s->normal.dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
 + if(s->normal.credit_available+s->normal.credit_reserved!=1||s->normal.credit_reserved>1||s->normal.credit_released>s->normal.credit_acquired||s->normal.credit_acquired-s->normal.credit_released!=s->normal.credit_reserved)return 0;
 + if(s->normal.next>=1024||s->normal.token_next>=NSTX_TOKEN_COUNT||s->normal.token>=NSTX_TOKEN_COUNT||s->normal.ring!=i->rings[0].descriptors||s->normal.buffer!=i->data_buffer||!s->normal.ring||s->normal.buffer+4096!=i->end||s->normal.completed>s->normal.dma_completed||s->normal.dma_completed>s->normal.submitted||s->normal.submitted-s->normal.completed>1||s->normal.dma_completed>s->dma_completed||s->normal.submitted>s->submitted)return 0;
 + for(unsigned k=0;k<5;k++){const struct ncr_queue*q=&s->queue[k];const struct nwi_ring*r=&i->rings[k+4];if(q->next>=r->count||q->ring.descriptors!=r->descriptors||q->ring.buffers!=r->buffers||q->ring.base!=r->base||q->ring.count!=r->count)return 0;}
@@ -12634,7 +12654,7 @@
 +}
 +int nst_lease_window(const struct nst*s,const struct nwi_state*i){return lease_window(s,i,1);}
 +int nst_idle_window(const struct nst*s,const struct nwi_state*i){
-+ return lease_window(s,i,0)&&!s->error&&s->ptk.installed&&s->phase==NST_IDLE&&!s->callback_active&&!s->wire_busy&&!s->air_pending&&!s->peer_kind&&!s->cleanup_started&&!s->link_lost&&s->controlled_port&&s->sta_active&&s->ptk_ready&&s->gtk.installed&&!s->bss_absent&&!s->pm_pending&&!s->activation_pending&&s->submitted==s->dma_completed&&!s->credit_reserved&&s->credit_available==s->credit_capacity&&nstx_idle(&s->normal)&&!s->normal.credit_reserved&&s->normal.credit_available==1;
++ return lease_window(s,i,0)&&!s->associated_scan&&!s->error&&s->ptk.installed&&s->phase==NST_IDLE&&!s->callback_active&&!s->wire_busy&&!s->air_pending&&!s->peer_kind&&!s->cleanup_started&&!s->link_lost&&s->controlled_port&&s->sta_active&&s->ptk_ready&&s->gtk.installed&&!s->bss_absent&&!s->pm_pending&&!s->activation_pending&&s->submitted==s->dma_completed&&!s->credit_reserved&&s->credit_available==s->credit_capacity&&nstx_idle(&s->normal)&&!s->normal.credit_reserved&&s->normal.credit_available==1;
 +}
 +/* nsb_scan.partial is aggregate: overflow drops whole excess records but never
 + * damages retained rows. Terminal state7 excludes firmware failure; timed_out
@@ -12663,7 +12683,7 @@
 +}
 +static int acceptable(const struct nst*s){return source(s)&&!s->callback_active;}
 +static int busy(const struct nst*s){return s->wire_busy||s->air_pending||s->peer_kind;}
-+static int cid_size(uint8_t cid,size_t n){switch(cid){case 7:return n==64;case 0x0a:return n==68;case 0x11:return n==12;case 0x12:return n==116;case 0x13:return n==200;case 0x14:return n==4;case 0x16:return n==12;case 0x17:return n==4;case 0x19:return n==22;case 0x1c:return n==24;default:return 0;}}
++static int cid_size(uint8_t cid,size_t n){switch(cid){case 3:return n==1188;case 4:return n==4;case 7:return n==64;case 0x0a:return n==68;case 0x11:return n==12;case 0x12:return n==116;case 0x13:return n==200;case 0x14:return n==4;case 0x16:return n==12;case 0x17:return n==4;case 0x19:return n==22;case 0x1c:return n==24;default:return 0;}}
 +static int group_slot(const struct nst*s,unsigned key){
 + if(key>3)return -1;if(s->gtk_mapped&(1u<<key))return s->gtk_wlan[key];
 + if(!s->gtk_mapped)return s->peer.group_wlan;
@@ -12672,6 +12692,8 @@
 +}
 +static int command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n,unsigned internal){
 + if(!acceptable(s)||!ticket||!p||!cid_size(cid,n))return -1;if(s->wire_busy||s->air_pending)return 1;
++ if(cid==7&&s->security==SW_SECURITY_OPEN)return -1;
++ if((cid==3&&internal!=3)||(cid==4&&internal!=4))return -1;
 + if(cid==7&&(p[10]!=s->peer.bss||!eq(p+4,s->peer.ap,6)||p[11]!=(p[0]?4:0)||p[12]>3||p[13]!=(p[0]?16:0)||p[14]!=(p[2]?s->peer.wlan:group_slot(s,p[12]))||p[0]>1||p[2]>1||p[3]||p[1]!=(p[0]?p[2]:0)||(p[2]&&p[12])))return -1;
 + if(cid==7&&!p[2]&&((!p[0]&&!(s->gtk_mapped&(1u<<p[12])))||(p[0]&&s->gtk_submission_serial==UINT32_MAX)))return -1;
 + if(cid==0x1c&&(p[0]!=s->peer.bss||(!p[2]&&(p[3]!=s->peer.channel||p[5]!=s->peer.band))||p[2]>1))return -1;
@@ -12681,12 +12703,24 @@
 + return 0;
 +}
 +int nst_command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n){if(!acceptable(s))return -1;if(busy(s))return 1;return command(s,ticket,cid,p,n,0);}
++/* Like ordinary data, source controlled-port admission is the native proof.
++ * NSS additionally proves nwo_authorized, including the selected security profile. */
++int nst_associated_scan(struct nst*s,struct nsb_scan*scan,const uint8_t*p,size_t n){
++ if(!acceptable(s)||!scan||scan->entered||!p||n!=1188||s->associated_scan||s->cleanup_started||s->link_lost||!s->controlled_port||!s->sta_active||s->channel_held||p[1]!=s->peer.bss||p[2]||p[7]!=1)return -1;
++ if(busy(s))return 1;
++ int r=command(s,UINT64_MAX-1,3,p,n,3);if(!r){s->associated_scan=scan;s->associated_scan_published=s->associated_scan_cancel=s->associated_scan_canceled=0;}return r;
++}
++int nst_associated_scan_cancel(struct nst*s){if(!source(s)||!s->associated_scan)return -1;s->associated_scan_cancel=1;return 0;}
++int nst_associated_scan_detach(struct nst*s,struct nsb_scan*scan){
++ if(!s||!scan||s->associated_scan!=scan||(!scan->done&&!s->associated_scan_canceled)||scan->active||(s->wire_busy&&(s->wire_cid==3||s->wire_cid==4)))return -1;
++ s->associated_scan=0;s->associated_scan_published=s->associated_scan_cancel=s->associated_scan_canceled=0;return 0;
++}
 +static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned type,unsigned protect){
 + if(!acceptable(s)||!ticket||!p||n<2||n>NST_FRAME_BYTES-32)return -1;if(busy(s))return 1;
 + if(s->cleanup_started&&(type!=1||u16(p)!=0xc0))return -1;
 + if(type==1&&(!s->next_pid||s->next_pid>NST_PID_MANAGEMENT_MAX))return -1;
 + struct sw_txd d=s->txd;if(type==1&&(u16(p)==0xb0||u16(p)==0))d.queue=16;d.pid=(uint8_t)(type==1?s->next_pid:NST_PID_HOST);d.protected_frame=(uint8_t)protect;size_t used=0;uint8_t txd[32];int e;
-+ if(type==1)e=sw_management_txd(txd,sizeof txd,&used,&d,p,n);else if(type==2)e=sw_security_txd(txd,sizeof txd,&used,&d,p,n);else e=sw_data_txd(txd,sizeof txd,&used,&d,p,n);
++ if(type==1)e=sw_management_txd(txd,sizeof txd,&used,&d,p,n);else if(type==2)e=sw_security_txd(txd,sizeof txd,&used,&d,p,n);else e=s->security==SW_SECURITY_OPEN?sw_open_data_txd(txd,sizeof txd,&used,&d,p,n):sw_data_txd(txd,sizeof txd,&used,&d,p,n);
 + if(e||used!=32||s->data_profile>NST_DATA_TODS)return -1;
 + if(type==3&&s->data_profile==NST_DATA_TODS){struct sw_peer peer;cp(peer.self,s->peer.self,6);cp(peer.ap,s->peer.ap,6);if(sw_tods_ethernet_valid(&peer,p,n))return -1;}
 + if(type==1){if(n<24||!eq(p+4,s->peer.ap,6)||!eq(p+10,s->peer.self,6)||!eq(p+16,s->peer.ap,6))return -1;}
@@ -12696,8 +12730,8 @@
 + wipe(s->wire,sizeof s->wire);cp(s->wire,txd,32);cp(s->wire+32,p,n);s->wire_bytes=(unsigned)n+32;s->ticket=ticket;s->wire_cid=0;s->wire_type=type;s->wire_pid=d.pid;s->wire_wlan=d.wlan;s->wire_busy=1;s->published=s->dma_done=s->air_done=0;s->internal_wire=0;return 0;
 +}
 +int nst_management(struct nst*s,uint64_t t,const uint8_t*p,size_t n){return frame(s,t,p,n,1,0);}
-+int nst_eapol(struct nst*s,uint64_t t,const uint8_t*p,size_t n,unsigned protect){if(protect>1||!s||(protect&&!s->ptk_ready))return -1;return frame(s,t,p,n,2,protect);}
-+int nst_data(struct nst*s,uint64_t t,const uint8_t*p,size_t n){if(!s||!s->controlled_port||s->bss_absent)return 1;return frame(s,t,p,n,3,1);}
++int nst_eapol(struct nst*s,uint64_t t,const uint8_t*p,size_t n,unsigned protect){if(protect>1||!s||s->security==SW_SECURITY_OPEN||(protect&&!s->ptk_ready))return -1;return frame(s,t,p,n,2,protect);}
++int nst_data(struct nst*s,uint64_t t,const uint8_t*p,size_t n){if(!s||!s->controlled_port||s->bss_absent)return 1;if(s->security==SW_SECURITY_OPEN&&s->data_profile!=NST_DATA_ETHERNET)return -1;return frame(s,t,p,n,3,s->security!=SW_SECURITY_OPEN);}
 +int nst_memory_range(const struct nst*s,uint64_t a,uint32_t n,unsigned write){
 + if(!source(s)||!s->active||!n)return 0;
 + if(a==s->init->transport.command&&n==s->wire_bytes)return write&&s->phase==NST_TX_WRITE;
@@ -12778,6 +12812,7 @@
 +  if(!s->credit_available||s->credit_reserved)return fail(s,35);s->credit_available--;s->credit_reserved=1;s->credit_acquired++;
 +  s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,s->wire_bytes)||sy(s,o,c,s->init->transport.command,s->wire_bytes,1)||mw(s,o,c,a,s->descriptor,16)||sy(s,o,c,a,16,1))return -1;
 +  if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
++  if(s->wire_cid==3&&s->internal_wire==3){if(!s->associated_scan||nsb_begin(s->associated_scan,s->wire[64],s->last,UINT64_C(14000000)))return fail(s,48);s->associated_scan_published=1;}
 +  if(s->wire_type)nsdd_pid_attempt(s->generation,s->wire_pid,s->wire_wlan);
 +  if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;
 +  if(s->wire_type)nsdd_pid_publish(s->generation,s->wire_pid,s->wire_wlan,s->submitted);s->credit_reserved=0;s->credit_available++;s->credit_released++;
@@ -12799,25 +12834,36 @@
 + s->init->transport.tx_index=(s->tx_next+1)%1024;s->tx_next=s->init->transport.tx_index;s->init->transport.completed++;if(!s->wire_type)s->init->transport.next_sequence++;s->init->transport.submit_attempted=0;s->dma_completed++;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
 + if(s->wire_type==1)nsdd_pid_local(s->generation,s->wire_pid,s->wire_wlan);
 + if(channel_release){s->channel_held=0;s->grant_deadline=0;struct nst_event released={.kind=NST_CHANNEL_RELEASED,.ticket=s->ticket,.token=s->channel_token};if(emit(s,fn,ctx,&released))return -1;}
-+ if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;return 0;}struct nst_event e={.kind=NST_COMMAND_DMA,.ticket=s->ticket,.cid=(uint8_t)s->wire_cid,.sequence=(uint8_t)s->wire_sequence};return emit(s,fn,ctx,&e);}return 0;
++ if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;
++ if(s->internal_wire==4){if(!s->associated_scan)return fail(s,49);s->associated_scan_canceled=1;s->associated_scan->active=0;s->associated_scan->partial=1;}
++ return 0;}struct nst_event e={.kind=NST_COMMAND_DMA,.ticket=s->ticket,.cid=(uint8_t)s->wire_cid,.sequence=(uint8_t)s->wire_sequence};return emit(s,fn,ctx,&e);}return 0;
 +}
 +static uint64_t pn48(const uint8_t*p){uint64_t n=0;for(unsigned k=0;k<6;k++)n|=(uint64_t)p[k]<<(8*k);return n;}
 +static int group_replay(struct nst*s,uint8_t key,const uint8_t rsc[8],unsigned replace){
-+ if(!source(s)||s->cleanup_started||s->link_lost||s->wire_type||s->wire_cid!=7||!s->dma_done||!s->gtk_command_added||key>3||!rsc||rsc[6]||rsc[7]||!s->gtk_submitted||key!=s->gtk_command_index||!(s->gtk_mapped&(1u<<key))||s->wire_busy||s->air_pending||s->gtk_submission_serial<=s->gtk_replay_serial)return -1;
++ if(!source(s)||s->security==SW_SECURITY_OPEN||s->cleanup_started||s->link_lost||s->wire_type||s->wire_cid!=7||!s->dma_done||!s->gtk_command_added||key>3||!rsc||rsc[6]||rsc[7]||!s->gtk_submitted||key!=s->gtk_command_index||!(s->gtk_mapped&(1u<<key))||s->wire_busy||s->air_pending||s->gtk_submission_serial<=s->gtk_replay_serial)return -1;
 + struct nst_replay*r=&s->gtk_keys[key];if(r->installed&&!replace)return -1;
 + r->installed=1;r->key_id=key;for(unsigned k=0;k<17;k++)r->pn[k]=pn48(rsc);s->gtk=*r;s->gtk_replay_serial=s->gtk_submission_serial;return 0;
 +}
 +int nst_replay_install(struct nst*s,unsigned pair,uint8_t key,const uint8_t rsc[8]){
 + if(!pair)return group_replay(s,key,rsc,0);
-+ if(!source(s)||pair!=1||key||!rsc||rsc[6]||rsc[7]||!s->ptk_submitted||s->ptk.installed)return -1;
++ if(!source(s)||s->security==SW_SECURITY_OPEN||pair!=1||key||!rsc||rsc[6]||rsc[7]||!s->ptk_submitted||s->ptk.installed)return -1;
 + s->ptk.installed=1;s->ptk.key_id=0;for(unsigned k=0;k<17;k++)s->ptk.pn[k]=pn48(rsc);return 0;
 +}
 +int nst_replay_replace_group(struct nst*s,uint8_t key,const uint8_t rsc[8]){return group_replay(s,key,rsc,1);}
-+int nst_authorize(struct nst*s){if(!source(s)||s->link_lost||s->cleanup_started||!s->sta_active||!s->ptk_ready||!s->ptk.installed||!s->gtk.installed||s->wire_busy||s->air_pending||s->peer_kind)return -1;s->controlled_port=1;return 0;}
++int nst_authorize(struct nst*s){
++ if(!source(s)||s->link_lost||s->cleanup_started||!s->sta_active||s->wire_busy||s->air_pending||s->peer_kind)return -1;
++ if(s->security==SW_SECURITY_OPEN){if(!s->aid||s->profile.assoc.security!=SW_SECURITY_OPEN||(s->profile.assoc.capability&16)||s->channel_held||s->data_profile!=NST_DATA_ETHERNET||s->ptk_ready||s->ptk.installed||s->gtk.installed||s->ptk_command||s->ptk_submitted||s->gtk_submitted||s->gtk_mapped)return -1;}
++ else if(s->security!=SW_SECURITY_WPA2||!s->ptk_ready||!s->ptk.installed||!s->gtk.installed)return -1;
++ s->controlled_port=1;return 0;
++}
 +/* Deferred RX event uses owned rx_frame until descriptor is safely rearmed. */
 +static int decode(struct nst*s){
 + const uint8_t*p=s->rx_frame;size_t n=s->rx_bytes;struct nst_event*e=&s->deferred;*e=(struct nst_event){0};if(n<4){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_EXTENT);return 0;}
 + unsigned type=(u16(p+2)>>11)&31;
++ if(s->associated_scan&&s->associated_scan->active){
++  if(type==7&&(u16(p+2)&0x380f)==0x3801)(void)nsb_add(s->associated_scan,p,n,s->last);
++  else if(type==7&&(u16(p+2)&0x380f)==0x3800&&n>=36&&p[28]==0x0d)(void)nsb_complete_event(s->associated_scan,p,n,s->last);
++ }
 + if(type==6){nstx_report(&s->normal,p,n);return 0;}
 + if(n<24){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_EXTENT);return 0;}
 + if(type==0){struct nstd_record record={.generation=s->generation,.ticket=s->ticket,.kind=6,.v={0,(uint32_t)n,u16(p)}};nstd_log(&record);}
@@ -12851,6 +12897,20 @@
 +   * No CCMP bytes, A-MSDU, four-address, fragment or arbitrary LLC fallback. */
 +  if(type==2&&len>=2&&(u16(m)&12)==8){
 +   s->rx_untranslated++;
++   if(s->security==SW_SECURITY_OPEN){
++    /* Selected normal RX also admits untranslated DATA. OPEN has no cipher
++     * or PN proof; retain exact source AP/FromDS, bounded non-QoS SNAP and
++     * actual pairwise/BSS-group WLAN ownership plus the opened native port. */
++    unsigned ether=len>=32?((unsigned)m[30]<<8|m[31]):0;
++    if(!s->controlled_port||!s->sta_active||len<32||len-18>NST_MAX_ETHERNET||((d2>>8)&31)!=12||sec||
++       (u16(m)&0xc7ff)!=0x0208||(u16(m+22)&15)||!eq(m+10,s->peer.ap,6)||
++       !((m[4]&1)||eq(m+4,s->peer.self,6))||!mac(m+16)||
++       (wlan!=s->peer.wlan&&(!(m[4]&1)||wlan!=s->peer.group_wlan))||
++       !eq(m+24,"\xaa\xaa\x03\x00\x00\x00",6)||ether<1536||ether==0x888e||ether==0x80f3||ether==0x8137){
++     s->rx_untranslated_drop++;nsdd_reject(&s->data_diag,s->generation,NSDD_RX_RAW_HEADER);return 0;}
++    uint8_t da[6],sa[6];cp(da,m+4,6);cp(sa,m+16,6);uint8_t*ethernet=s->rx_frame+off+18;cp(ethernet,da,6);cp(ethernet+6,sa,6);
++    s->rx_untranslated_data++;e->kind=NST_ETHERNET;e->body=ethernet;e->bytes=len-18;e->wlan=(uint8_t)wlan;return 0;
++   }
 +   if(len<36||len-18>NST_MAX_ETHERNET||((d2>>8)&31)!=12||sec||
 +      (u16(m)&0xc7ff)!=0x0208||(u16(m+22)&15)||wlan!=s->peer.wlan||
 +      !eq(m+4,s->peer.self,6)||!eq(m+10,s->peer.ap,6)||!eq(m+16,s->peer.ap,6)||
@@ -12872,7 +12932,9 @@
 + int eapol=m[12]==0x88&&m[13]==0x8e;
 + if(eapol){if(!eq(m+6,s->peer.ap,6)||!eq(m,s->peer.self,6)||len<18||((size_t)m[16]<<8|m[17])!=len-18){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_EAPOL);return 0;}}
 + else if(!s->controlled_port||(unsigned)(m[12]<<8|m[13])<1536){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_PORT);return 0;}
-+ if(sec){
++ if(s->security==SW_SECURITY_OPEN){
++  if(eapol||sec||(fc&0x4000)||(wlan!=s->peer.wlan&&(!(m[0]&1)||wlan!=s->peer.group_wlan))){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_PLAINTEXT);return 0;}
++ }else if(sec){
 +  if(sec!=4||!g1||g1+16>bytes||!(fc&0x4000)){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_CIPHER);return 0;}struct nst_replay*r=(m[0]&1)?&s->gtk_keys[key]:&s->ptk;
 +  if(!r->installed||key!=r->key_id||(wlan!=s->peer.wlan&&(!(m[0]&1)||wlan!=s->gtk_wlan[key]))){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_KEY);return 0;}
 +  unsigned lane=(fc&0x0080)?tid:16;uint64_t pn=pn48(p+g1);if(!pn||pn<=r->pn[lane]){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_REPLAY);return 0;}r->pn[lane]=pn;if((m[0]&1)&&s->gtk.key_id==key)s->gtk=*r;
@@ -12891,7 +12953,9 @@
 +static int peer_progress(struct nst*,nst_event_fn,void*);
 +int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event_fn fn,void*ctx){
 + if(!source(s)||s->active||s->callback_active||!o||!o->bus||!o->now_us||!o->bus->owner||!o->bus->reg_read||!o->bus->reg_write||!o->bus->mem_read||!o->bus->mem_write||!o->bus->sync||!budget||budget>16)return -1;
-+ s->active=1;s->entered=1;s->phase=NST_IDLE;if(before(s,o,c)||coherent(s,o,c)||transmit(s,o,c,fn,ctx))return -1;
++ s->active=1;s->entered=1;s->phase=NST_IDLE;
++ if(s->associated_scan&&s->associated_scan_cancel&&!s->associated_scan->done&&!s->associated_scan_canceled&&!s->wire_busy&&!s->air_pending){uint8_t cancel[4]={s->associated_scan->sequence,0,0,0};if(command(s,UINT64_MAX-2,4,cancel,sizeof cancel,4))return fail(s,49);}
++ if(before(s,o,c)||coherent(s,o,c)||transmit(s,o,c,fn,ctx))return -1;
 + static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
 + if(s->air_pending&&s->dma_done&&(s->air_done||(retired_air_failure(s)&&s->last>=s->operation_deadline))){
 +  /*0x100 is explicitly local timeout, outside every firmware8-bit status.
@@ -12904,7 +12968,8 @@
 +  if(emit(s,fn,ctx,&e))return -1;
 + }
 + if(s->wire_busy&&s->normal.published&&(s->wire_type==2||s->wire_type==3)&&data_transmit(s,o,c,fn,ctx))return -1;
-+ if(peer_progress(s,fn,ctx))return -1;s->phase=NST_IDLE;s->active=0;return 0;
++ if(peer_progress(s,fn,ctx))return -1;
++ if(s->associated_scan&&s->associated_scan_published&&!s->associated_scan->done&&!s->associated_scan_canceled&&(!s->associated_scan->active||nsb_expire(s->associated_scan,s->last)))s->associated_scan_cancel=1;s->phase=NST_IDLE;s->active=0;return 0;
 +}
 +/* Original legacy policy: bit4/5 are unsupported22/33Mbps, not OFDM6/9. */
 +static int rate_index(unsigned v){static const uint8_t rates[14]={2,4,11,22,44,66,12,18,24,36,48,72,96,108};for(unsigned k=0;k<14;k++)if(rates[k]==v)return (k==4||k==5)?-1:(int)k;return -1;}
@@ -12915,14 +12980,14 @@
 +int nst_peer_begin(struct nst*s,uint64_t ticket,unsigned kind,const struct nst_profile*p,const uint8_t*response,size_t n){
 + if(!acceptable(s)||!ticket||kind<1||kind>3)return -1;if(busy(s))return 1;
 + if(kind==NST_PREPARE_PEER){
-+  if(!p||!p->assoc.ssid||!p->assoc.ssid_len||p->assoc.ssid_len>32||!p->assoc.rates||!p->assoc.rates_len||p->assoc.rates_len>12||p->sta_version>1||!p->assoc.listen_interval||!p->beacon_interval||!eq(p->assoc.peer.self,s->peer.self,6)||!eq(p->assoc.peer.ap,s->peer.ap,6)||rate_sets(p->assoc.rates,p->assoc.rates_len,&s->negotiated_rates,&s->basic_rates))return -1;
++  if(!p||!p->assoc.ssid||!p->assoc.ssid_len||p->assoc.ssid_len>32||!p->assoc.rates||!p->assoc.rates_len||p->assoc.rates_len>12||p->sta_version>1||p->assoc.security!=s->security||!p->assoc.listen_interval||!p->beacon_interval||!eq(p->assoc.peer.self,s->peer.self,6)||!eq(p->assoc.peer.ap,s->peer.ap,6)||rate_sets(p->assoc.rates,p->assoc.rates_len,&s->negotiated_rates,&s->basic_rates))return -1;
 +  s->profile=*p;cp(s->ssid,p->assoc.ssid,p->assoc.ssid_len);cp(s->rates,p->assoc.rates,p->assoc.rates_len);s->profile.assoc.ssid=s->ssid;s->profile.assoc.rates=s->rates;s->txd.fixed_rate=lowest(s->basic_rates);
 + }else if(kind==NST_CONFIGURE_PEER){
-+  if(!response||n<30||n>512||(u16(response)&~0x0800u)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||!(u16(response+24)&16))return -1;
++  if(!response||n<30||n>512||(u16(response)&~0x0800u)!=0x10||!eq(response+4,s->peer.self,6)||!eq(response+10,s->peer.ap,6)||!eq(response+16,s->peer.ap,6)||u16(response+26)||!(u16(response+24)&1)||((u16(response+24)&16)!=0)!=(s->security!=SW_SECURITY_OPEN))return -1;
 +  uint16_t aid=u16(response+28)&0x3fff;if(!aid||aid>2007)return -1;uint8_t rates[12];size_t count=0;unsigned seen1=0,seen50=0;
-+  for(size_t off=30;off<n;){if(n-off<2||response[off+1]>n-off-2)return -1;unsigned id=response[off],bytes=response[off+1];off+=2;if(id==1||id==50){if(!bytes||(id==1&&(seen1++||bytes>8))||(id==50&&seen50++)||bytes>12-count)return -1;cp(rates+count,response+off,bytes);count+=bytes;}off+=bytes;}
++  for(size_t off=30;off<n;){if(n-off<2||response[off+1]>n-off-2)return -1;unsigned id=response[off],bytes=response[off+1];off+=2;if(s->security==SW_SECURITY_OPEN&&(id==48||(id==221&&bytes>=4&&!response[off]&&response[off+1]==80&&response[off+2]==242&&response[off+3]==1)))return -1;if(id==1||id==50){if(!bytes||(id==1&&(seen1++||bytes>8))||(id==50&&seen50++)||bytes>12-count)return -1;cp(rates+count,response+off,bytes);count+=bytes;}off+=bytes;}
 +  uint16_t all=0,basic=0;if(!seen1||rate_sets(rates,count,&all,&basic)||basic&~s->negotiated_rates)return -1;
-+  all&=s->negotiated_rates;if(!all||basic&~all)return -1;s->negotiated_rates=all;s->basic_rates=basic;s->aid=aid;s->txd.fixed_rate=lowest(basic);s->profile.assoc.capability&=(uint16_t)(u16(response+24)|0x11);
++  all&=s->negotiated_rates;if(!all||basic&~all)return -1;s->negotiated_rates=all;s->basic_rates=basic;s->aid=aid;s->txd.fixed_rate=lowest(basic);s->profile.assoc.capability&=(uint16_t)(u16(response+24)|(s->security==SW_SECURITY_OPEN?1u:0x11u));
 + }else nst_close_port(s);
 + s->peer_ticket=ticket;s->peer_kind=kind;s->peer_step=0;return 0;
 +}
@@ -12935,7 +13000,7 @@
 + }
 + unsigned kind=s->peer_kind,step=s->peer_step;uint8_t payload[200];size_t used=0;uint8_t cid=0;
 + struct sw_rlm r={s->peer.bss,s->peer.band,s->peer.channel,s->profile.erp_protect,(uint8_t)!!(s->profile.assoc.capability&32),(uint8_t)!!(s->profile.assoc.capability&1024),1,1};
-+ struct sw_bss b={.rlm=r,.ssid=s->ssid,.ssid_len=s->profile.assoc.ssid_len,.connected=(uint8_t)(kind==NST_CONFIGURE_PEER),.ap_sta=s->peer.sta,.bmc_wlan=s->peer.group_wlan,.nonht_phy=(uint8_t)(s->peer.band==2?3:(phy(s)==1?0:1)),.phy_set=(uint8_t)phy(s),.dbdc_band=4,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(b.ap,s->peer.ap,6);
++ struct sw_bss b={.rlm=r,.ssid=s->ssid,.ssid_len=s->profile.assoc.ssid_len,.connected=(uint8_t)(kind==NST_CONFIGURE_PEER),.ap_sta=s->peer.sta,.bmc_wlan=s->peer.group_wlan,.nonht_phy=(uint8_t)(s->peer.band==2?3:(phy(s)==1?0:1)),.phy_set=(uint8_t)phy(s),.dbdc_band=4,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate,.security=s->security};cp(b.ap,s->peer.ap,6);
 + /* cnm_mem.c1141-1142: STA-record BMC is WTBL_RESERVED_ENTRY; BSS b above keeps real BMC. */
 + struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=SW_WTBL_RESERVED_ENTRY,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?SW_STA_CLASS_3:SW_STA_CLASS_1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
 + if(kind==NST_PREPARE_PEER&&step==0){wipe(payload,68);p32(payload,13);return command(s,s->peer_ticket,0x0a,payload,68,1);}
@@ -12959,7 +13024,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport.h
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,118 @@
 +#ifndef NORD2_STATION_TRANSPORT_H
 +#define NORD2_STATION_TRANSPORT_H
 +#include <stddef.h>
@@ -13002,6 +13067,7 @@
 +struct nst {
 + struct nwi_state *init;const struct nct_session *previous;const struct ncr_state *previous_rx;
 + unsigned cleanup_started;
++ struct nsb_scan *associated_scan;unsigned associated_scan_published,associated_scan_cancel,associated_scan_canceled;
 + unsigned prepared,entered,active,phase,halt,error,mutated,wire_busy,air_pending;
 + unsigned credit_capacity,credit_available,credit_reserved,credit_acquired,credit_released;
 + unsigned tx_next,base_completed,submitted,dma_completed,rx_current,next_pid;
@@ -13010,7 +13076,7 @@
 + unsigned ofld_drop;
 + /* Set only by pure prepare. Ordinary data may use explicit legacy ToDS;
 +  * EAPOL and management retain their existing descriptor/header contracts. */
-+ unsigned data_profile;
++ unsigned data_profile,security; /* SW_SECURITY_*; explicit immutable prepare */
 + unsigned wire_bytes,wire_cid,wire_sequence,wire_pid,wire_wlan,wire_type;
 + unsigned published,dma_done,air_done,air_status,callback_active;
 + uint64_t generation,ticket,last,deadline,operation_deadline;
@@ -13025,7 +13091,7 @@
 + struct nst_profile profile;uint8_t ssid[32],rates[12];uint16_t aid,negotiated_rates,basic_rates;
 + unsigned link_lost;
 + /* Numeric only; raw-data seen/accepted EAPOL/unsupported-or-invalid. */
-+ unsigned rx_untranslated,rx_untranslated_eapol,rx_untranslated_drop;
++ unsigned rx_untranslated,rx_untranslated_eapol,rx_untranslated_drop,rx_untranslated_data;
 + unsigned pm_scheduled,pm_connected;
 + unsigned pm_pending,dtim_period,bss_absent;uint8_t gtk_command_index;
 + uint8_t descriptor[16],wire[4096],rx_descriptor[16],rx_frame[NST_RX_BYTES];
@@ -13034,6 +13100,11 @@
 +};
 +/* Adopt exact terminal scan transport and preserved RX cursors; no allocation,
 + * no guessed capability indices. peer indices must match retained scan profile. */
++/* Worker-only borrowed slot remains owned until detach after actual scan completion.
++ * Other RX and security/data dispatch keep their normal owner and replay path. */
++int nst_associated_scan(struct nst *,struct nsb_scan *,const uint8_t *,size_t);
++int nst_associated_scan_cancel(struct nst *);
++int nst_associated_scan_detach(struct nst *,struct nsb_scan *);
 +int nst_scan_admissible(const struct nsb_scan *);
 +int nst_prepare(struct nst *,struct nwi_state *,const struct nct_session *,
 + const struct ncr_state *,const struct ncs_cap *,const struct nst_peer *,
@@ -13061,8 +13132,9 @@
 +/* Install replay state only once after corresponding actual CID07 submission.
 + * GTK RSC6 is little endian (EAPOL RSC bytes0..5); bytes6..7 must be0. */
 +int nst_replay_install(struct nst *,unsigned pairwise,uint8_t key_id,const uint8_t rsc[8]);
-+/* Authorize only after actual STA+PTK ready, GTK replay installed, and no pending
-+ * key command. No external boolean can supply STA/PTK readiness. */
++/* WPA2 authorizes after actual STA+PTK/GTK replay; OPEN requires explicit
++ * no-privacy association/STA activation, released channel and zero key state.
++ * No external boolean supplies station or keyed readiness. */
 +int nst_replay_replace_group(struct nst *,uint8_t key_id,const uint8_t rsc[8]);
 +int nst_authorize(struct nst *);
 +/* Once per attempt, install the owner's fresh <=30s teardown deadline. Existing
@@ -13378,7 +13450,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transaction.c
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,187 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* New private transaction model. No kernel IO, waits, publication or secrets log. */
@@ -13460,11 +13532,13 @@
 + unsigned before=s->phase;if(stc_tick(s,now)<0||s->phase!=before)return 0;return 1;
 +}
 +int stc_begin(struct stc*s,struct stc_arbiter*a,const struct stc_config*c,uint64_t now){
-+ if(!s||!a||!c||s->attempted||a->mode||a->connection_used||!c->generation||c->deadline_ms<=now||!c->cleanup_timeout_ms||c->sta_wlan==255||c->group_wlan==255||c->sta_wlan==c->group_wlan)return -1;
++ if(!s||!a||!c||s->attempted||a->mode||a->connection_used||!c->generation||c->deadline_ms<=now||!c->cleanup_timeout_ms||c->security>SW_SECURITY_OPEN||c->assoc.security!=c->security||c->sta_wlan==255||c->group_wlan==255||c->sta_wlan==c->group_wlan)return -1;
 + uint8_t preflight[640];size_t used;
 + if(sw_auth(preflight,sizeof preflight,&used,&c->assoc.peer)||sw_assoc(preflight,sizeof preflight,&used,&c->assoc)||sw_channel(preflight,sizeof preflight,&used,&c->channel)||c->channel.abort)return -1;
 + memset(s,0,sizeof *s);s->attempted=1;s->generation=c->generation;s->last_ms=now;s->deadline=c->deadline_ms;s->cleanup_timeout_ms=c->cleanup_timeout_ms;
-+ if(nwp_begin_ap(&s->wpa,c->generation,c->pmk,c->assoc.peer.self,c->assoc.peer.ap,c->station_rsn,c->ap_rsn,c->ap_rsn_bytes?c->ap_rsn_bytes:22,c->rng,c->rng_context)||nwp_copy_ap_rsnxe(&s->wpa,c->ap_ies,c->ap_ies_bytes)){erase(s,sizeof *s);s->attempted=1;return -1;}
++ s->security=c->security;
++ if(c->security==SW_SECURITY_OPEN){if(c->pmk||c->station_rsn||c->ap_rsn||c->ap_rsn_bytes||c->rng){erase(s,sizeof *s);s->attempted=1;return -1;}}
++ else if(nwp_begin_ap(&s->wpa,c->generation,c->pmk,c->assoc.peer.self,c->assoc.peer.ap,c->station_rsn,c->ap_rsn,c->ap_rsn_bytes?c->ap_rsn_bytes:22,c->rng,c->rng_context)||nwp_copy_ap_rsnxe(&s->wpa,c->ap_ies,c->ap_ies_bytes)){erase(s,sizeof *s);s->attempted=1;return -1;}
 + for(unsigned k=0;k<3;k++){unsigned x=c->group_spare[k];if(x&&(x<6||x==c->sta_wlan||x==c->group_wlan)){erase(s,sizeof *s);s->attempted=1;return -1;}for(unsigned j=0;j<k;j++)if(x&&x==c->group_spare[j]){erase(s,sizeof *s);s->attempted=1;return -1;}s->group_spare[k]=(uint8_t)x;}
 + s->arbiter=a;a->mode=2;a->connection_used=1;a->generation=c->generation;s->peer=c->assoc.peer;s->channel=c->channel;s->sta_wlan=c->sta_wlan;s->group_wlan=c->group_wlan;s->assoc=c->assoc;
 + memcpy(s->ssid,c->assoc.ssid,c->assoc.ssid_len);memcpy(s->rates,c->assoc.rates,c->assoc.rates_len);s->assoc.ssid=s->ssid;s->assoc.rates=s->rates;s->peer_prepared=1;return emit(s,STC_PREPARE,STC_PREPARE_PEER);
@@ -13511,11 +13585,11 @@
 + case STC_CHANNEL:s->phase=STC_GRANT;if(s->grant_seen)return stc_grant(s,gen,s->channel.bss,s->channel.token,s->channel.band,s->channel.channel,1,now);return 1;
 + case STC_AUTH_TX:s->phase=STC_AUTH_RX;s->response_deadline=now>UINT64_MAX-524?UINT64_MAX:now+524;return response_done(s);
 + case STC_ASSOC_TX:s->phase=STC_ASSOC_RX;s->response_deadline=now>UINT64_MAX-524?UINT64_MAX:now+524;return response_done(s);
-+ case STC_CONFIGURE:/* Actual peer/BSS/RLM and station-activation receipt, no invented grant release. */s->phase=STC_EAPOL;return consume_eapol(s,now);
++ case STC_CONFIGURE:/* Actual peer/BSS/RLM and station-activation receipt, no invented grant release. */if(s->security==SW_SECURITY_OPEN)return emit(s,STC_DATA,STC_INSTALL_DATA_PATH);s->phase=STC_EAPOL;return consume_eapol(s,now);
 + case STC_EAPOL_TX:{int r=nwp_security_submitted(&s->wpa,gen,s->wpa_tx_ticket,1);s->wpa_tx_ticket=0;if(r==NWP_INSTALL){s->gtk_index=s->wpa.gtk_index;return command_key(s,0,0);}if(r<0)return stop(s,STC_FAILED);if(s->group_active){s->group_active=0;s->group_deadline=0;}s->phase=s->resume_phase;s->resume_phase=0;if(s->phase==STC_PTK_READY&&s->key_event_seen){if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);}return consume_eapol(s,now);}
 + case STC_PTK:s->phase=STC_PTK_READY;if(s->key_event_seen){if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);}return consume_eapol(s,now); /* submission, not key-ready */
 + case STC_GTK:if(s->group_active){struct nwp_result r;int v=nwp_group_ready(&s->wpa,gen,s->wpa.group_ticket,1,&r);if(v!=NWP_TX){erase(&r,sizeof r);return stop(s,STC_FAILED);}return group_tx(s,&r);}/* Source no-response host completion/replay initialization, NOT firmware ACK. */if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,2,1)<0)return stop(s,STC_FAILED);return emit(s,STC_DATA,STC_INSTALL_DATA_PATH);
-+ case STC_DATA:if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,4,1)!=NWP_AUTH)return stop(s,STC_FAILED);s->phase=STC_CONNECTED;s->outcome=STC_AUTHORIZED;return consume_eapol(s,now);
++ case STC_DATA:if(s->security==SW_SECURITY_OPEN){s->phase=STC_CONNECTED;s->outcome=STC_AUTHORIZED;return 1;}if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,4,1)!=NWP_AUTH)return stop(s,STC_FAILED);s->phase=STC_CONNECTED;s->outcome=STC_AUTHORIZED;return consume_eapol(s,now);
 + case STC_DEAUTH:case STC_REMOVE_PTK:case STC_REMOVE_GTK:case STC_RETIRE:case STC_RELEASE:return cleanup_next(s);
 + default:return halt(s);
 + }
@@ -13532,11 +13606,11 @@
 + if((!auth&&!assoc)||s->response_seen)return 0;
 + if(n<30||n>sizeof s->response||(fc&0xfc)!=(auth?0xb0u:0x10u))return 0;
 + if(auth){if(le16(p+24)!=0||le16(p+26)!=2)return 0;for(size_t i=30;i<n;){if(n-i<2||p[i+1]>n-i-2)return 0;i+=2+p[i+1];}if(le16(p+28))return stop(s,STC_FAILED);}
-+ else{if(le16(p+26))return stop(s,STC_FAILED);unsigned aid=le16(p+28)&0x3fff;if(!aid||aid>2007)return stop(s,STC_FAILED);for(size_t i=30;i<n;){if(n-i<2||p[i+1]>n-i-2)return stop(s,STC_FAILED);i+=2+p[i+1];}s->aid=(uint16_t)aid;}
++ else{if(le16(p+26)||(s->security==SW_SECURITY_OPEN&&(!(le16(p+24)&1)||(le16(p+24)&16))))return stop(s,STC_FAILED);unsigned aid=le16(p+28)&0x3fff;if(!aid||aid>2007)return stop(s,STC_FAILED);for(size_t i=30;i<n;){if(n-i<2||p[i+1]>n-i-2)return stop(s,STC_FAILED);i+=2+p[i+1];}s->aid=(uint16_t)aid;}
 + memcpy(s->response,p,n);s->response_bytes=(unsigned)n;s->response_seen=1;return response_done(s);
 +}
 +int stc_eapol(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
-+ if(!current(s,gen,now)||s->phase<STC_CONFIGURE||s->phase>=STC_DEAUTH)return 0;
++ if(!current(s,gen,now)||s->security==SW_SECURITY_OPEN||s->phase<STC_CONFIGURE||s->phase>=STC_DEAUTH)return 0;
 + if(!p||!n||n>640){nwpd_gate_observe(gen,s->action.ticket,s->wpa.state,p!=0,n);return stop(s,STC_FAILED);}
 + if(s->phase!=STC_EAPOL&&s->phase!=STC_PTK_READY&&s->phase!=STC_CONNECTED){
 +  if(s->eapol_pending)return s->eapol_bytes==n&&!memcmp(s->queued_eapol,p,n)?0:2;
@@ -13554,7 +13628,7 @@
 + if(emit(s,STC_EAPOL_TX,STC_TX_EAPOL)<0){erase(&r,sizeof r);return -1;}s->resume_phase=resume;s->wpa_tx_ticket=r.ticket;memcpy(s->action.payload,r.frame,r.bytes);s->action.bytes=r.bytes;erase(&r,sizeof r);return 1;
 +}
 +int stc_key_event(struct stc*s,uint64_t gen,const uint8_t*p,size_t n,uint64_t now){
-+ if(!current(s,gen,now)||(s->phase!=STC_PTK_READY&&s->phase!=STC_PTK&&!(s->phase==STC_EAPOL_TX&&s->resume_phase==STC_PTK_READY))||!p||n!=8||p[0]!=s->channel.bss||memcmp(p+2,s->peer.ap,6))return 0;
++ if(!current(s,gen,now)||s->security==SW_SECURITY_OPEN||(s->phase!=STC_PTK_READY&&s->phase!=STC_PTK&&!(s->phase==STC_EAPOL_TX&&s->resume_phase==STC_PTK_READY))||!p||n!=8||p[0]!=s->channel.bss||memcmp(p+2,s->peer.ap,6))return 0;
 + s->key_event_seen=1;if(s->phase!=STC_PTK_READY)return 1;
 + if(nwp_keys_ready(&s->wpa,gen,s->wpa.install_ticket,1,1)<0)return stop(s,STC_FAILED);return command_key(s,1,0);
 +}
@@ -13566,7 +13640,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transaction.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,61 @@
 +#ifndef STC_TRANSACTION_H
 +#define STC_TRANSACTION_H
 +#include <stdint.h>
@@ -13583,6 +13657,7 @@
 +int stc_scan_release(struct stc_arbiter*,uint64_t);
 +struct stc_config {
 + uint64_t generation,deadline_ms;uint32_t cleanup_timeout_ms;
++ unsigned security; /*SW_SECURITY_*; OPEN never starts the WPA engine*/
 + struct sw_assoc assoc;struct sw_channel channel;
 + uint8_t group_spare[3]; /* exact source-owned free WTBL slots,0 disables */
 + uint8_t sta_wlan,group_wlan; /* source-owned distinct WTBL allocations */
@@ -13594,6 +13669,7 @@
 +struct stc_action {uint64_t generation,ticket;unsigned kind,bytes;uint8_t payload[640];};
 +struct stc {
 + unsigned attempted,phase,outcome,authenticated,associated,channel_held,peer_prepared,ptk_attempted,gtk_attempted;
++ unsigned security;
 + unsigned grant_seen,key_event_seen,response_seen,response_bytes;uint16_t aid;uint8_t response[512];
 + unsigned cleanup_abort_first,resume_phase,eapol_pending,eapol_bytes;uint8_t queued_eapol[640];
 + unsigned auth_attempts,assoc_attempts;uint64_t response_deadline;
@@ -14223,7 +14299,7 @@
 + }
 +}
 +int nwn_begin(struct nwn*s,struct nst*t,struct stc_arbiter*a,const struct stc_config*c,nwn_peer_submit peer,void*ctx,uint64_t now){
-+ if(!s||!t||!c||!peer||!t->prepared||t->halt||t->generation!=c->generation||t->peer.bss!=c->channel.bss||t->peer.wlan!=c->sta_wlan||t->peer.group_wlan!=c->group_wlan||memcmp(t->peer.ap,c->assoc.peer.ap,6)||memcmp(t->peer.self,c->assoc.peer.self,6))return -1;
++ if(!s||!t||!c||!peer||!t->prepared||t->halt||t->security!=c->security||t->generation!=c->generation||t->peer.bss!=c->channel.bss||t->peer.wlan!=c->sta_wlan||t->peer.group_wlan!=c->group_wlan||memcmp(t->peer.ap,c->assoc.peer.ap,6)||memcmp(t->peer.self,c->assoc.peer.self,6))return -1;
 + for(unsigned k=0;k<3;k++)if(c->group_spare[k]&&c->group_spare[k]!=t->group_spare[k])return -1;
 + s->overall_deadline=c->deadline_ms;s->transport=t;s->peer_submit=peer;s->peer_context=ctx;s->now_ms=now;
 + const struct nwo_ops ops={submit_native,close_native};return nwo_begin(&s->owner,a,c,&ops,s,now);
@@ -14286,7 +14362,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_scalar.c
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,45 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_scalar.h"
@@ -14312,20 +14388,21 @@
 + uint8_t*p=output;unsigned terminated=0;
 + if(!q||!name||!info||!p||!used||capacity<NIWS_CHANNEL_BYTES||q->operation!=NIW_GET||
 +    (q->request!=27&&q->request!=254)||q->value||q->payload_bytes!=NIWS_CHANNEL_BYTES||
-+    !info->count||info->count>NSS_CHANNELS||info->band5>1)return -1;
++    !info->count||info->count>NSS_CHANNELS||info->band5>1||(info->dfs_mask>>info->count))return -1;
 + for(unsigned j=0;j<16;j++){if(q->interface_name[j]!=name[j])return -1;if(!name[j])terminated=1;}
 + if(!name[0]||!terminated)return -1;
 + for(unsigned j=0;j<info->count;j++){
 +  unsigned band=info->channels[j].band,ch=info->channels[j].channel;
 +  if((band!=1&&band!=2)||!ch||(band==1&&ch>14)||
-+     (band==2&&(!info->band5||ch<=14||ch>196)))return -1;
++     (band==2&&(!info->band5||ch<=14||ch>196))||
++     ((info->dfs_mask&(UINT64_C(1)<<j))&&band!=2))return -1;
 +  for(unsigned k=0;k<j;k++)if(band==info->channels[k].band&&ch==info->channels[k].channel)return -1;
 + }
 + for(unsigned j=0;j<NIWS_CHANNEL_BYTES;j++)p[j]=0;
 + niws_u32(p,1);niws_u32(p+4,info->count);
 + for(unsigned j=0;j<info->count;j++){
 +  uint8_t*ch=p+8+12*j;niws_u32(ch,1);niws_u32(ch+4,info->channels[j].channel);
-+  niws_u32(ch+8,2u|(info->channels[j].band==1?8u:16u));
++  niws_u32(ch+8,2u|(info->channels[j].band==1?8u:16u)|((info->dfs_mask&(UINT64_C(1)<<j))?0x100u:0u));
 + }
 + *used=NIWS_CHANNEL_BYTES;return 0;
 +}
@@ -14682,7 +14759,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_event.c
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,53 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_event.h"
@@ -14728,10 +14805,17 @@
 + for(unsigned i=0;i<16;i++)p[32+i]=name[i];p32(p+48,status);return 0;
 +}
 +
++/* Same no-primary kind87 event shape as other source-supported notifications.
++ * Event1 is POWER_CHANGED; receiver refreshes GET19, not physical power proof. */
++int niwe_power_changed(uint8_t*out,size_t n,const uint8_t name[16]){
++ unsigned end=0;if(!out||n<48||!name||!name[0])return -1;for(unsigned k=0;k<16;k++)if(!name[k])end=1;if(!end)return -1;
++ for(unsigned k=0;k<48;k++)out[k]=0;out[0]=87;out[28]=1;for(unsigned k=0;k<16&&name[k];k++)out[32+k]=name[k];return 0;
++}
++
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_event.h
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,28 @@
 +#ifndef PRIVATE_NIWE_PIPE_H
 +#define PRIVATE_NIWE_PIPE_H
 +#include <stdint.h>
@@ -14757,11 +14841,12 @@
 +/* Offline52-byte consumer-compatible event10 formatter. Uninterpreted header
 + * bytes4..23 zeroed; no monotonic ID/Apple producer identity is claimed.
 + * Native must authenticate actual backend completion before any publication. */
++int niwe_power_changed(uint8_t*,size_t,const uint8_t[16]);
 +int niwe_scan_done(uint8_t*,size_t,const uint8_t[16],uint32_t);
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_lifecycle.c
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,43 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_lifecycle.h"
@@ -14794,15 +14879,27 @@
 +}
 +void nils_close(struct nils_state*s){if(s){s->open=0;s->cache=0;}}
 +
++int nils_prepare_history(const struct nils_ticket*t,struct niwa_history*h,const struct nsb_scan*scan,
++ uint64_t captured,uint64_t reference,const struct niwp_rate_map*m,size_t n,unsigned bss,struct niwa_snapshot*out){
++ if(!t||!t->generation||!t->serial||!scan||!out||out!=t->output||out->entered)return -1;
++ return niwa_history_prepare(h,scan,t->generation,captured,reference,m,n,bss,out);
++}
++int nils_take_timed(struct nils_state*s,struct niwa_history*h,uint64_t generation,uint64_t reference,uint8_t*out,size_t bytes){
++ if(!s||!s->open||s->inflight||!s->cache||s->generation!=generation)return -1;
++ return niwa_snapshot_take_timed(s->cache,h,generation,reference,out,bytes);
++}
++
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_lifecycle.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,26 @@
 +#ifndef PRIVATE_LIFECYCLE_SCAN_H
 +#define PRIVATE_LIFECYCLE_SCAN_H
 +#include "wifi_ios_age.h"
-+/* All state operations require the owning lifecycle gate. Preparation alone
-+ * runs outside that gate on an immutable retained scan and unique output. */
++/* All state operations require the owning lifecycle gate. Legacy snapshot
++ * preparation may run outside that gate on an immutable scan/unique output.
++ * History preparation and timed reads also mutate shared retention state and
++ * require the same owning gate. */
 +struct nils_state {uint64_t generation,serial;unsigned open,inflight;struct niwa_snapshot *cache,*pending;};
 +struct nils_ticket {uint64_t generation,serial;struct niwa_snapshot *output;};
 +int nils_open(struct nils_state *,uint64_t);
@@ -14817,6 +14914,9 @@
 + * its buffers until matching finish returns2; close must not destroy state. */
 +/* Gate-held GET:1 row,0 proven complete EOF,-1 unavailable/stale. */
 +int nils_take(struct nils_state *,uint64_t,uint8_t *,size_t);
++int nils_prepare_history(const struct nils_ticket *,struct niwa_history *,const struct nsb_scan *,
++ uint64_t,uint64_t,const struct niwp_rate_map *,size_t,unsigned,struct niwa_snapshot *);
++int nils_take_timed(struct nils_state *,struct niwa_history *,uint64_t,uint64_t,uint8_t *,size_t);
 +void nils_close(struct nils_state *);
 +#endif
 --- /dev/null
@@ -14868,7 +14968,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_policy.c
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,86 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_policy.h"
@@ -14892,17 +14992,19 @@
 + * not require cache reuse. We execute a fresh scan for all three. No probes.
 + * Apple110ms rounds up to108 source V2 TU (110592us); firmware default0 stays0.
 + * Dwell is a command parameter, not a measured RF duration guarantee.
-+ * Directed SSID/BSSID, rest, unknown timing/options and DFS remain refused.
++ * Directed SSID/BSSID, rest and unknown timing/options remain refused.
++ * DFS is admitted only from the authenticated owner list, always passively.
 + * info must be the authoritative native owner snapshot. Scheduling hints are
 + * best effort; no priority, preemption or completion latency is promised. */
 +int niwi_scan_admit(const uint8_t*p,size_t n,const struct nss_info*info,struct nss_request*out){
 + if(!p||n!=5456||!info||!out)return NIWI_ADMIT_ARGUMENT;
-+ if(!info->count||info->count>NSS_CHANNELS)return NIWI_ADMIT_OWNER;
++ if(!info->count||info->count>NSS_CHANNELS||(info->dfs_mask>>info->count))return NIWI_ADMIT_OWNER;
 + uint32_t mode=u32(p+52),count=u32(p+68),options=u32(p+4872);
 + if(u32(p)!=1||(u32(p+4)!=2&&u32(p+4)!=3)||u32(p+56)!=1||count>NSS_CHANNELS||
 +    (mode!=1&&mode!=2&&mode!=3))return NIWI_ADMIT_PROFILE;
 + for(unsigned j=0;j<info->count;j++){
-+  if((info->channels[j].band!=1&&info->channels[j].band!=2)||!info->channels[j].channel)return NIWI_ADMIT_OWNER;
++  if((info->channels[j].band!=1&&info->channels[j].band!=2)||!info->channels[j].channel||
++     ((info->dfs_mask&(UINT64_C(1)<<j))&&info->channels[j].band!=2))return NIWI_ADMIT_OWNER;
 +  for(unsigned k=0;k<j;k++)if(info->channels[j].band==info->channels[k].band&&
 +      info->channels[j].channel==info->channels[k].channel)return NIWI_ADMIT_OWNER;
 + }
@@ -14927,8 +15029,8 @@
 +  const uint8_t*c=p+72+12*j;uint32_t channel=u32(c+4),flags=u32(c+8);unsigned band=0;
 +  if(u32(c)!=1||!channel||channel>255)return NIWI_ADMIT_CHANNEL;
 +  /* ACTIVE0x80 grants channel permission; it does not require probe TX.
-+   * We remain passive. DFS/other widths and unknown attributes refuse. */
-+  flags&=~128u;
++   * We remain passive, including DFS. Other widths/unknown attributes refuse. */
++  unsigned dfs=(flags&0x100u)!=0;flags&=~(128u|0x100u);
 +  if(flags==8||flags==10)band=1;
 +  else if(flags==16||flags==18)band=2;
 +  else if(flags!=0&&flags!=2)return NIWI_ADMIT_CHANNEL_FLAGS;
@@ -14938,6 +15040,7 @@
 +   if(found!=info->count)return NIWI_ADMIT_ALLOWLIST;found=k;
 +  }
 +  if(found==info->count)return NIWI_ADMIT_ALLOWLIST;
++  if(dfs&&!(info->dfs_mask&(UINT64_C(1)<<found)))return NIWI_ADMIT_CHANNEL_FLAGS;
 +  for(unsigned k=0;k<j;k++)if(result.channels[k].band==info->channels[found].band&&
 +      result.channels[k].channel==info->channels[found].channel)return NIWI_ADMIT_ALLOWLIST;
 +  result.channels[j]=info->channels[found];
@@ -15113,7 +15216,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_snapshot.c
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,158 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_ios_snapshot.h"
@@ -15129,7 +15232,7 @@
 + if(niwb_bss_metadata(s,&b))return NIWA_OMIT_OTHER;
 + if(!b.rssi_valid)return NIWA_OMIT_RSSI;
 + if(b.rate_count>NIWS_MAX_RATES||(b.rate_count&&niwp_rates(m,n,b.ie_rates,b.rate_count,r.rates,NIWS_MAX_RATES,&rates)))return NIWA_OMIT_RATES;
-+ r.channel=b.channel;r.channel_flags=b.band==1?8u:16u;r.age=age;r.rssi=b.rssi_dbm;
++ r.channel=b.channel;r.channel_flags=(b.band==1?8u:16u)|((b.band==2&&b.channel>=52&&b.channel<=144)?0x100u:0u);r.age=age;r.rssi=b.rssi_dbm;
 + r.beacon_interval=b.interval;r.capabilities=b.capabilities;r.rate_count=(uint8_t)rates;
 + r.ssid_bytes=b.ssid_bytes;r.ie_bytes=b.ie_bytes;
 + for(unsigned i=0;i<6;i++)r.bssid[i]=b.bssid[i];
@@ -15153,6 +15256,7 @@
 +  }
 + }
 + out->count=out->omitted=out->omit_mask=0;
++ out->retained_view=out->source_overflow=0;
 + out->entered=1;out->status=state;out->generation=generation;out->backend_count=s->count;out->dropped=s->dropped;
 + out->completion_state=s->completion.state;out->completed_channels=s->completion.completed_channels;
 + if(state!=NIWA_COMPLETE)return 1; /* never mark partial/timeout/pending cache READY */
@@ -15173,17 +15277,107 @@
 + for(unsigned i=0;i<s->count;i++){
 +  unsigned cap=s->rows[i][26]|(unsigned)s->rows[i][27]<<8;
 +  if((cap&3u)!=1u){s->omitted++;s->omit_mask|=NIWA_OMIT_BSS;continue;}
-+  if(kept!=i)for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[kept][j]=s->rows[i][j];
++  if(kept!=i){for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[kept][j]=s->rows[i][j];s->observed_us[kept]=s->observed_us[i];}
 +  kept++;
 + }
-+ for(unsigned i=kept;i<s->count;i++)for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[i][j]=0;
++ for(unsigned i=kept;i<s->count;i++){s->observed_us[i]=0;for(unsigned j=0;j<NIWS_SCAN_RESULT_BYTES;j++)s->rows[i][j]=0;}
 + s->count=kept;s->cursor.count=kept;return 0;
++}
++
++_Static_assert(NSB_RESULTS==NIWC_MAX_RECORDS,"raw/display bounds must agree");
++static void hist_copy(void*d,const void*s,size_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
++static void hist_zero(void*v,size_t n){uint8_t*p=v;while(n--)*p++=0;}
++static void hist_put32(uint8_t*p,uint32_t n){for(unsigned j=0;j<4;j++)p[j]=(uint8_t)(n>>(8*j));}
++static int hist_key(const uint8_t*a,const uint8_t*b){
++ if(a[96]!=b[96])return 0;
++ for(unsigned j=28;j<34;j++)if(a[j]!=b[j])return 0;
++ for(unsigned j=0;j<a[96];j++)if(a[97+j]!=b[97+j])return 0;
++ return 1;
++}
++void niwa_history_clear(struct niwa_history*h){if(h)hist_zero(h,sizeof(*h));}
++static int hist_scan(const struct nsb_scan*s){
++ /* Same exact overflow-only proof as niwj_scan_usable, without introducing
++  * station-service dependencies or mutating any native completion metadata. */
++ return s&&s->entered&&s->done&&!s->active&&!s->timed_out&&s->completion.state==7&&
++  s->completion.sequence==s->sequence&&s->count<=NSB_RESULTS&&s->count<=s->frames&&
++  s->dropped<=s->frames-s->count&&s->last>=s->started&&s->last<s->deadline&&s->deadline>s->started&&
++  (s->partial?(s->dropped&&s->count==NSB_RESULTS):!s->dropped);
++}
++static void hist_remove(struct niwa_history*h,unsigned index){
++ for(unsigned j=index+1;j<h->count;j++){
++  h->observed_us[j-1]=h->observed_us[j];hist_copy(h->rows[j-1],h->rows[j],NIWS_SCAN_RESULT_BYTES);
++ }
++ --h->count;h->observed_us[h->count]=0;hist_zero(h->rows[h->count],NIWS_SCAN_RESULT_BYTES);
++}
++int niwa_history_prepare(struct niwa_history*h,const struct nsb_scan*s,uint64_t generation,
++ uint64_t captured,uint64_t reference,const struct niwp_rate_map*m,size_t n,unsigned bss,struct niwa_snapshot*out){
++ struct niws_result decoded;
++ if(!h||!out||out->entered||out->cursor.phase!=NIWC_NEW||!generation||generation<=h->generation||
++  h->count>NIWC_MAX_RECORDS||!hist_scan(s)||captured<s->last||reference<captured||
++  reference<h->reference_us||(bss!=2&&bss!=3)||!m||!n||n>128)return -1;
++ for(size_t j=0;j<n;j++){
++  if(!m[j].ie_rate||m[j].ie_rate>127)return -1;
++  for(size_t k=0;k<j;k++)if(m[j].ie_rate==m[k].ie_rate)return -1;
++ }
++ for(unsigned j=0;j<h->count;j++){
++  if(h->observed_us[j]>h->reference_us||niws_decode_result(h->rows[j],NIWS_SCAN_RESULT_BYTES,&decoded))return -1;
++  for(unsigned k=0;k<j;k++)if(hist_key(h->rows[j],h->rows[k]))return -1;
++ }
++ for(unsigned j=0;j<s->count;j++)if(s->records[j].observed_us<s->started||s->records[j].observed_us>s->last)return -1;
++ /* Every fallible input check precedes mutation; no full scan/history local. */
++ for(unsigned j=0;j<h->count;)if(reference-h->observed_us[j]>=NIWA_HISTORY_TTL_US)hist_remove(h,j);else j++;
++ out->count=out->omitted=out->omit_mask=0;
++ for(unsigned j=0;j<s->count;j++){
++  uint8_t encoded[NIWS_SCAN_RESULT_BYTES];uint64_t observed=s->records[j].observed_us;
++  if(reference-observed>=NIWA_HISTORY_TTL_US)continue;
++  unsigned why=row(&s->records[j],(uint32_t)((reference-observed)/1000),m,n,encoded);
++  if(why){out->omitted++;out->omit_mask|=why;continue;}
++  unsigned at=h->count;
++  for(unsigned k=0;k<h->count;k++)if(hist_key(h->rows[k],encoded)){at=k;break;}
++  if(at<h->count){if(observed<h->observed_us[at])continue;}
++  else if(h->count<NIWC_MAX_RECORDS)h->count++;
++  else{
++   at=0;for(unsigned k=1;k<h->count;k++)if(h->observed_us[k]<h->observed_us[at])at=k;
++   if(observed<h->observed_us[at])continue;
++  }
++  hist_copy(h->rows[at],encoded,sizeof(encoded));h->observed_us[at]=observed;
++ }
++ h->generation=generation;h->reference_us=reference;
++ for(unsigned j=0;j<h->count;j++){
++  unsigned capabilities=h->rows[j][26]|(unsigned)h->rows[j][27]<<8;
++  if(bss==2&&(capabilities&3u)!=1u){out->omitted++;out->omit_mask|=NIWA_OMIT_BSS;continue;}
++  unsigned at=out->count++;hist_copy(out->rows[at],h->rows[j],NIWS_SCAN_RESULT_BYTES);out->observed_us[at]=h->observed_us[j];
++  hist_put32(out->rows[at]+132,(uint32_t)((reference-h->observed_us[j])/1000));
++ }
++ out->entered=out->retained_view=1;out->status=NIWA_COMPLETE;out->generation=generation;out->reference_us=reference;
++ out->backend_count=s->count;out->dropped=s->dropped;out->source_overflow=s->partial;
++ out->completion_state=s->completion.state;out->completed_channels=s->completion.completed_channels;
++ /* All rows were validated before retention or just encoded above; these calls
++  * can only fail on an internal programming error, never grant native state. */
++ if(niwc_begin(&out->cursor,generation)||niwc_complete(&out->cursor,generation,&out->rows[0][0],
++    (size_t)out->count*NIWS_SCAN_RESULT_BYTES,out->count))return -1;
++ return 0;
++}
++int niwa_snapshot_take_timed(struct niwa_snapshot*s,struct niwa_history*h,uint64_t generation,uint64_t reference,uint8_t*out,size_t bytes){
++ if(!h||h->generation!=generation||reference<h->reference_us||!s||s->retained_view!=1||s->status!=NIWA_COMPLETE||!s->entered||s->generation!=generation||
++  s->cursor.phase!=NIWC_READY||s->cursor.generation!=generation||s->cursor.records!=&s->rows[0][0]||
++  s->cursor.count!=s->count||s->count>NIWC_MAX_RECORDS||s->cursor.next>s->count||reference<s->reference_us||
++  !out||bytes!=NIWS_SCAN_RESULT_BYTES)return -1;
++ for(unsigned j=s->cursor.next;j<s->count;j++)if(s->observed_us[j]>s->reference_us)return -1;
++ while(s->cursor.next<s->count&&reference-s->observed_us[s->cursor.next]>=NIWA_HISTORY_TTL_US)s->cursor.next++;
++ unsigned at=s->cursor.next;int result=niwc_take(&s->cursor,generation,out,bytes);
++ if(result==1)hist_put32(out+132,(uint32_t)((reference-s->observed_us[at])/1000));
++ if(result>=0){
++  s->reference_us=reference;h->reference_us=reference;
++  for(unsigned j=0;j<h->count;)if(reference-h->observed_us[j]>=NIWA_HISTORY_TTL_US)hist_remove(h,j);else j++;
++ }
++ return result;
 +}
 +
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_ios_snapshot.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,47 @@
 +#ifndef PRIVATE_NIWA_SNAPSHOT_H
 +#define PRIVATE_NIWA_SNAPSHOT_H
 +#include "wifi_scan_bss.h"
@@ -15194,7 +15388,8 @@
 +enum {NIWA_OMIT_RSSI=1u,NIWA_OMIT_CHANNEL=2u,NIWA_OMIT_IES=4u,NIWA_OMIT_RATES=8u,NIWA_OMIT_OTHER=16u,NIWA_OMIT_BSS=32u};
 +struct niwa_snapshot {enum niwa_status status;unsigned entered,count,backend_count,dropped,omitted,omit_mask;
 + uint8_t completion_state,completed_channels;uint64_t generation;
-+ struct niwc_cursor cursor;uint8_t rows[NSB_RESULTS][NIWS_SCAN_RESULT_BYTES];};
++ struct niwc_cursor cursor;uint64_t observed_us[NSB_RESULTS],reference_us;
++ unsigned retained_view,source_overflow;uint8_t rows[NSB_RESULTS][NIWS_SCAN_RESULT_BYTES];};
 +/* Copied immutable scan input + caller-owned zeroed output retained through
 + * cursor lifetime. Caller serializes actual backend owner/generation and must
 + * not relocate/copy this object once prepared. No runtime authority granted.
@@ -15204,11 +15399,31 @@
 + * that individual row; a completed all-omitted scan is a real empty cache.
 + * Malformed scan/map/cursor state still refuses globally. Original IEs remain
 + * byte-exact; known membership selectors are not fabricated numeric rates.
-+ * Channel flags contain only proven band; width/DFS stay unspecified. */
++ * Channel flags contain proven band and selected gen4m RADAR-channel DFS
++ * metadata (52..64/100..144); width stays unspecified. No TX permission. */
 +int niwa_snapshot_prepare(const struct nsb_scan *,uint64_t,
 + const uint32_t *,size_t,const struct niwp_rate_map *,size_t,struct niwa_snapshot *);
 +/* Before publication only: filter a freshly prepared complete cursor, never a consumed cache. */
 +int niwa_snapshot_bss_filter(struct niwa_snapshot *,unsigned);
++/* Port display-cache policy, not a proprietary Apple timing claim. Native
++ * scan provenance/connection authority stays separate. Caller owns both heap
++ * objects under its gate; they must be disjoint and not relocated while read. */
++#define NIWA_HISTORY_TTL_US UINT64_C(30000000)
++struct niwa_history {
++ unsigned count;uint64_t generation,reference_us;
++ uint64_t observed_us[NIWC_MAX_RECORDS];
++ uint8_t rows[NIWC_MAX_RECORDS][NIWS_SCAN_RESULT_BYTES];
++};
++void niwa_history_clear(struct niwa_history *);
++/* Only actual state7 complete or exact full-cache-overflow completion; no
++ * failed/timed-out/canceled completion. Captured/reference share native uptime
++ * microseconds. Keeps BSSID+SSID keys and original observation times. Atomic
++ * refusal; per-row metadata omissions never refresh earlier observations. */
++int niwa_history_prepare(struct niwa_history *,const struct nsb_scan *,uint64_t,
++ uint64_t,uint64_t,const struct niwp_rate_map *,size_t,unsigned,struct niwa_snapshot *);
++/* Gate-held1 copied row/0 exhausted/-1 refusal. Expired rows are skipped,
++ * original timestamp ages recomputed per read; TTL is never refreshed by GET. */
++int niwa_snapshot_take_timed(struct niwa_snapshot *,struct niwa_history *,uint64_t,uint64_t,uint8_t *,size_t);
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_vcn33.c
@@ -16060,7 +16275,7 @@
 +#include <stdint.h>
 +#include <stddef.h>
 +#define NSB_IE_BYTES 1024u /* Exact maximum IE room of the Apple1164-byte scan result. */
-+#define NSB_RESULTS 16u
++#define NSB_RESULTS 64u /* matches existing bounded Apple cursor capacity; owner storage is static */
 +#define NSB_SCAN_DONE_BYTES 476u
 +struct nsb_record {
 + uint8_t bssid[6],transmitter[6],ssid[32],ssid_len,ssid_present,hidden;
@@ -16600,7 +16815,7 @@
 + if(nrp_caps_decode(cap,cap_bytes,&p->input.caps)||p->input.caps.sequence!=cap_seq||
 +    ncfg_prepare(&p->input,&p->config)||ncfg_address(&p->input,&p->config,&address)||
 +    address.source!=NNI_ADDRESS_BOARD||ncfg_channels(&p->input,&p->config,all,39,&count)||count!=39)return -1;
-+ for(unsigned k=0;k<count;k++)if(all[k].allowed&&!all[k].dfs)channels[p->channel_count++]=(struct ncs_channel){all[k].band,all[k].channel};
++ for(unsigned k=0;k<count;k++)if(all[k].allowed)channels[p->channel_count++]=(struct ncs_channel){all[k].band,all[k].channel};
 + if(!p->channel_count||ncs_build(cap,cap_bytes,cap_seq,address.mac,channels,p->channel_count,
 +    (uint8_t)(first_seq+NCFG_COMMANDS+4),(uint8_t)(first_seq+NCFG_COMMANDS+5),1,1,0,0,&p->scan_frames))return -1;
 + for(unsigned k=0;k<NCFG_COMMANDS;k++){
@@ -18836,8 +19051,8 @@
 + * its key-bearing command buffer, and consumed only on that command's actual
 + * DDONE event. No keys, peer addresses or passwords are retained here. */
 +struct nsr_ledger {
-+ uint64_t closed_generation,closed_us,scan_ticket,pending_ticket,admitted_generation;
-+ unsigned hw0_next,token_next,next_pid,scan_state,scan_ready;
++ uint64_t refresh_requested_us,closed_generation,closed_us,scan_ticket,pending_ticket,admitted_generation;
++ unsigned hw0_next,token_next,next_pid,scan_state,scan_ready,refresh_after_scan;
 + unsigned ptk,gtk,pending,bad,key_pair,key_index,key_add;
 +};
 +static void nsr_key_capture(struct nsr_ledger*l,const struct nst*s){
@@ -18856,7 +19071,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_station_service.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,53 @@
 +#ifndef WIFI_STATION_SERVICE_H
 +#define WIFI_STATION_SERVICE_H
 +#include "wifi_ios_join.h"
@@ -18864,7 +19079,8 @@
 +extern "C" {
 +#endif
 +/* Native snapshots only: GET/run/carrier require an actual current lease and
-+ * authenticated assoc + PTK EID24 + GTK source completion + data-path receipt.
++ * source-configured association plus profile-specific controlled data path.
++ * WPA2 requires PTK EID24/GTK replay completion; explicit OPEN has no keys.
 + * Structs are kernel-only; never copy their padding/keys/addresses to logs. */
 +enum njs_phase {NJS_UNAVAILABLE=0,NJS_IDLE,NJS_QUEUED,NJS_AUTHENTICATING,
 + NJS_ASSOCIATING,NJS_SECURING,NJS_AUTHORIZED,NJS_LEAVING,NJS_FAILED};
@@ -18872,6 +19088,7 @@
 +struct njs_snapshot {
 + uint64_t native_generation,client_epoch,ticket;
 + unsigned phase,result,associated,ptk_ready,gtk_ready,data_ready;
++ unsigned security; /*NIWJ_OPEN or NIWJ_WPA2_PSK_CCMP;0 legacy/unknown, never OPEN*/
 + unsigned involuntary;uint32_t reason,subreason;
 + struct niwj_target peer;
 +};
@@ -18999,7 +19216,7 @@
 +static int nst_native_rx_write(const struct nwfn_native *,uint32_t,uint32_t);
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport_bind.inc
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,99 @@
 +/* Include after NSS globals/functions and before station_service_bind. Authority
 + * is the existing retained worker and existing DMA claim, never this API alone. */
 +#include "wifi_station_transport.h"
@@ -19045,7 +19262,7 @@
 +static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t bytes,unsigned write){return nst_native_owner_window(n)&&nst_memory_range(&nst_native.state,a,bytes,write);}
 +static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){return nst_native_owner_window(n)&&nst_register_write(&nst_native.state,a,v);}
 +static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uint64_t now,uint64_t deadline,struct nst_profile*out){
-+ if(nst_native.probe||nst_native.next_data_profile>NST_DATA_TODS||!t||!out||!generation||generation>255||(nst_native.attempted&&(!nsr_native.scan_ready||nsr_native.admitted_generation!=generation||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nst_native.active))||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
++ if(nst_native.probe||nst_native.next_data_profile>NST_DATA_TODS||!t||!out||(t->security!=NIWJ_WPA2_PSK_CCMP&&t->security!=NIWJ_OPEN)||(t->security==NIWJ_OPEN&&nst_native.next_data_profile!=NST_DATA_ETHERNET)||!generation||generation>255||(nst_native.attempted&&(!nsr_native.scan_ready||nsr_native.admitted_generation!=generation||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nst_native.active))||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
 + for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)return 1;
 + struct ncs_cap cap;if(!ncd_native.diag.events||ncd_native.diag.events>sizeof(ncd_native.diag.history)/sizeof(ncd_native.diag.history[0])||ncs_cap_mac(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,&cap)||cap.bmc!=4||cap.wtbl<7)return -1;
 + unsigned allowed=0;for(unsigned k=0;k<nss_native.info.count;k++)if(nss_native.info.channels[k].band==t->band&&nss_native.info.channels[k].channel==t->channel)allowed=1;
@@ -19058,7 +19275,8 @@
 + memcpy(peer.self,nss_native.info.mac,6);memcpy(peer.ap,t->record.bssid,6);
 + memcpy(profile.assoc.peer.self,peer.self,6);memcpy(profile.assoc.peer.ap,peer.ap,6);
 + profile.assoc.ssid=t->record.ssid;profile.assoc.ssid_len=t->record.ssid_len;profile.assoc.rates=t->rates;profile.assoc.rates_len=t->rate_count;
-+ profile.assoc.listen_interval=10;profile.assoc.capability=0x11;
++ profile.assoc.security=t->security==NIWJ_OPEN?SW_SECURITY_OPEN:SW_SECURITY_WPA2;
++ profile.assoc.listen_interval=10;profile.assoc.capability=t->security==NIWJ_OPEN?1:0x11;
 + /* Implemented legacy PHY attributes: HRDSSS short preamble, ERP short
 +  * preamble/slot, 5GHz OFDM neither. No copied HT/PMF/spectrum capability. */
 + if(t->band==1){profile.assoc.capability|=t->record.capability&32;if(all&0x3fc0)profile.assoc.capability|=1024;}
@@ -19075,7 +19293,7 @@
 + if(again&&(generation<=nsr_native.closed_generation||generation>255||nsr_native.next_pid>NST_PID_MANAGEMENT_MAX-4))return -1;
 + memset(&nst_native.staging,0,sizeof nst_native.staging);
 + if(nst_prepare(&nst_native.staging,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
-+ nst_native.staging.data_profile=nst_native.next_data_profile;
++ nst_native.staging.data_profile=nst_native.next_data_profile;nst_native.staging.security=profile.assoc.security;
 + if(again){nst_native.staging.normal.next=nsr_native.hw0_next;nst_native.staging.normal.token_next=nsr_native.token_next;nst_native.staging.next_pid=nsr_native.next_pid;}
 + nst_native.saved=nst_native.state;nst_native.saved_ledger=nsr_native;nst_native.saved_attempted=nst_native.attempted;nst_native.saved_active=nst_native.active;
 + nst_native.saved_return[0]=nss_return.attempted;nst_native.saved_return[1]=nss_return.ready;nst_native.saved_return[2]=nss_return.consumed;nst_native.undo=1;
@@ -19100,7 +19318,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_station_service_bind.inc
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,324 @@
 +/* Included after NSS declarations/delivery and authenticated NST native binder.
 + * Same actual retained CAP worker, same admission lock. No second worker. */
 +#include "wifi_station_service.h"
@@ -19162,11 +19380,12 @@
 + printf("NORD2 WIFI IOS STATIONPART: sample=%u part=2 action=%u outcome=%u owner_halt=%u native_phase=%u error=%u halt=%u peer_step=%u\n",njs_native.logs,t->action.kind,t->outcome,njs_native.driver.owner.halted,n->phase,n->error,n->halt,n->peer_step);
 + printf("NORD2 WIFI IOS STATIONPART: sample=%u part=3 cid=%u sequence=%u submitted=%u dma=%u air_pending=%u associated=%u sta=%u ptk=%u gtk=%u port=%u\n",njs_native.logs,n->wire_cid,n->wire_sequence,n->submitted,n->dma_completed,n->air_pending,t->associated,n->sta_active,n->ptk_ready,n->gtk.installed,n->controlled_port);
 + printf("NORD2 WIFI IOS STATIONPART: sample=%u part=4 event=%u status=%u events=%u tx_accept=%u tx_result=%u tx_ok=%u tx_fail=%u queued_drop=%u tx_local=%u\n",njs_native.logs,njs_native.last_event,njs_native.last_status,njs_native.event_count,njs_native.tx_accepted,njs_native.tx_results,njs_native.tx_ok,njs_native.tx_fail,njs_native.queued_drop,njs_native.tx_local);
-+ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=5 rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu\n",njs_native.logs,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms);
++ printf("NORD2 WIFI IOS STATIONPART: sample=%u part=5 rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu security=%u rx_raw_data=%u\n",njs_native.logs,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms,njs_native.snapshot.security,n->rx_untranslated_data);
 +}
 +static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
 +static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
-+static int njs_scan_blocked_locked(void){return njs_native.queued||njs_native.active||(njs_native.used&&!njs_native.scan_returned);}
++static int njs_associated_scan_ready_locked(void){return njs_native.active&&njs_native.linked&&!njs_native.queued&&!njs_native.leave&&!njs_native.canceled&&nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!nst_native.state.cleanup_started;}
++static int njs_scan_blocked_locked(void){return !nss_native.powered||njs_native.queued||(njs_native.active&&!njs_associated_scan_ready_locked())||(njs_native.used&&!njs_native.active&&!njs_native.scan_returned);}
 +static void njs_cache_scan_locked(const struct nsb_scan*s){
 + if(!niwj_scan_usable(s))return;
 + njs_native.cache[njs_native.cache_next++%NJS_CACHE_SLOTS]=*s;
@@ -19181,26 +19400,26 @@
 +static void njs_initialize_locked(void){njs_native.notice_lock=IOLockAlloc();njs_cache_scan_locked(&ncb_native.rx.scan);njs_native.snapshot.phase=NJS_IDLE;}
 +static int njs_request_ok(const struct niwj_request*q){
 + static const uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
-+ return q&&q->ssid_length&&q->ssid_length<=32&&q->has_target<=1&&q->association_reason<=2&&q->security==NIWJ_WPA2_PSK_CCMP&&(q->native_flags==0||q->native_flags==4)&&!memcmp(q->station_rsn,rsn,22)&&(!q->has_target||(!(q->target[0]&1)&&(q->target[0]|q->target[1]|q->target[2]|q->target[3]|q->target[4]|q->target[5])));
++ return q&&q->ssid_length&&q->ssid_length<=32&&q->has_target<=1&&q->association_reason<=2&&((q->security==NIWJ_WPA2_PSK_CCMP&&(q->native_flags==0||q->native_flags==4)&&!memcmp(q->station_rsn,rsn,22))||
++ (q->security==NIWJ_OPEN&&!q->native_flags&&!memcmp(q->station_rsn,(const uint8_t[22]){0},22)&&!memcmp(q->pmk,(const uint8_t[32]){0},32)))&&(!q->has_target||(!(q->target[0]&1)&&(q->target[0]|q->target[1]|q->target[2]|q->target[3]|q->target[4]|q->target[5])));
 +}
 +int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
 + if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
 + if(!nss_available())return 1;uint64_t now_us=njs_uptime_us();if(now_us>UINT64_MAX-NJS_JOIN_BUDGET_US)return 1;IOLockLock(nss_native.lock);
-+ if(!njs_native.notice_lock||nss_native.failed||(njs_native.used&&!njs_rejoin_ready_locked())||njs_native.serial>=255){IOLockUnlock(nss_native.lock);return 1;}
++ if(!nss_native.powered||!njs_native.notice_lock||nss_native.failed||(njs_native.used&&!njs_rejoin_ready_locked())||njs_native.serial>=255){IOLockUnlock(nss_native.lock);return 1;}
 + unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
 + if(busy){IOLockUnlock(nss_native.lock);return 2;}
 + njs_native.admitted_us=now_us;njs_native.deadline_us=(now_us/1000+8000)*1000;
 + njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=++njs_native.serial;njs_native.native_generation=njs_native.ticket;
 + if(njs_native.used)nsr_native.admitted_generation=njs_native.native_generation;
 + njs_native.epoch=epoch;njs_native.cookie=cookie;njs_native.completion=completion;njs_native.queued=1;njs_native.canceled=njs_native.leave=njs_native.detach=njs_native.terminal=njs_native.joined=njs_native.retiring=0;
-+ njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED};
++ njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED,.security=q->security};
 + *ticket=njs_native.ticket;IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
 +}
 +int nord2_wifi_join_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);int r=1;if(ticket==njs_native.ticket&&(njs_native.queued||njs_native.active)){if(njs_native.linked&&njs_native.snapshot.phase==NJS_AUTHORIZED)njs_native.detach=1;else njs_native.canceled=1;r=0;}IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
 +static void njs_drop_tx_locked(void);
-+int nord2_wifi_join_disconnect(void){
-+ if(!nss_available()||!njs_native.notice_lock)return 1;
-+ IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
++static int njs_disconnect_notice_locked(void){
++ IOLockLock(nss_native.lock);
 + int r=1;unsigned changed=0;uint64_t generation=0;
 + if(njs_native.queued||njs_native.active){changed=1;njs_native.leave=1;generation=njs_native.native_generation;
 +  if(njs_native.active)nst_close_port(&nst_native.state);
@@ -19211,7 +19430,43 @@
 + else if(!nss_native.failed&&njs_native.snapshot.phase==NJS_IDLE&&!njs_native.used&&!nst_native.attempted&&!nst_native.active&&!njs_native.retiring&&!njs_native.completion&&!njs_native.cookie&&!njs_native.linked&&!njs_native.tx_admit)r=0;
 + IOLockUnlock(nss_native.lock);
 + if(changed&&nord2_wifi_ifnet_link(generation,0))r=-1;
-+ IOLockUnlock(njs_native.notice_lock);if(changed)thread_wakeup((event_t)&nss_native);return r;
++ if(changed)thread_wakeup((event_t)&nss_native);return r;
++}
++int nord2_wifi_join_disconnect(void){
++ if(!nss_available()||!njs_native.notice_lock)return 1;
++ IOLockLock(njs_native.notice_lock);int r=njs_disconnect_notice_locked();IOLockUnlock(njs_native.notice_lock);return r;
++}
++int nord2_wifi_power_set(unsigned on){
++ if(on>1||!nss_available()||!njs_native.notice_lock)return 1;
++ /* Serialize rapid power requests with existing revoke/link-up notices.
++  * Never hold NSS across the synchronous BSD callback. */
++ IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
++ if(nss_native.failed||(nss_native.powered!=on&&nss_native.power_epoch==UINT64_MAX)){IOLockUnlock(nss_native.lock);IOLockUnlock(njs_native.notice_lock);return 1;}
++ unsigned was_on=nss_native.powered;
++ if(was_on!=on)nss_native.power_epoch++;nss_native.powered=on;
++ if(on&&!was_on&&njs_native.used&&njs_native.scan_returned&&!njs_native.active&&!njs_native.queued&&!nsr_native.scan_ready){
++  nsr_native.refresh_requested_us=njs_uptime_us();
++  if(nsr_native.scan_state==2)nsr_native.refresh_after_scan=1;
++  else{nsr_native.scan_state=1;nsr_native.refresh_after_scan=0;}
++ }
++ if(!on)for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)nss_native.slot[k].canceled=1;
++ IOLockUnlock(nss_native.lock);
++ int r=on?0:njs_disconnect_notice_locked();IOLockUnlock(njs_native.notice_lock);
++ thread_wakeup((event_t)&nss_native);return r<0?-1:0;
++}
++/* Only owner calls this under admission lock; never borrows NCT while linked. */
++static int njs_associated_scan_start_locked(void){
++ if(!nss_native.powered||!njs_associated_scan_ready_locked()||nst_native.state.associated_scan||nst_native.state.wire_busy||nst_native.state.air_pending||nst_native.state.peer_kind)return 0;
++ struct nss_slot*slot=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED&&!nss_native.slot[k].canceled&&(!slot||nss_native.slot[k].ticket<slot->ticket))slot=&nss_native.slot[k];if(!slot)return 0;
++ const struct ncs_channel*channels=slot->request.count?slot->request.channels:nss_native.info.channels;size_t count=slot->request.count?slot->request.count:nss_native.info.count;
++ uint8_t sequence=(uint8_t)(nss_native.scan_sequence+1);
++ if(ncs_build(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,nss_native.info.mac,channels,count,1,2,sequence,1,slot->request.dwell_tu,0,&nss_native.frames))return -1;
++ int r=nst_associated_scan(&nst_native.state,&slot->scan,nss_native.frames.scan+64,NCS_SCAN_BYTES-64);if(r)return r<0?-1:0;
++ nss_native.scan_sequence=sequence;slot->state=NSS_RUNNING;return 0;
++}
++static struct nss_slot*njs_associated_scan_done_locked(void){
++ struct nsb_scan*scan=nst_native.state.associated_scan;if(!scan||(!scan->done&&!nst_native.state.associated_scan_canceled)||scan->active||(nst_native.state.wire_busy&&(nst_native.state.wire_cid==3||nst_native.state.wire_cid==4)))return 0;
++ for(unsigned k=0;k<NSS_SLOTS;k++)if(&nss_native.slot[k].scan==scan){if(nst_associated_scan_detach(&nst_native.state,scan))return 0;nss_native.slot[k].captured=scan->last;return &nss_native.slot[k];}return 0;
 +}
 +/* Compiled native module implements all six operations for this checked
 + * WPA2-PSK/CCMP profile. Bits describe installed handlers, not reached keys,
@@ -19231,7 +19486,7 @@
 + if(!nss_available())return NWIL_SEND_NOT_READY;IOLockLock(nss_native.lock);
 + if((((unsigned)p[12]<<8)|p[13])<1536||memcmp(p+6,nss_native.info.mac,6)){IOLockUnlock(nss_native.lock);return NWIL_SEND_INVALID;}
 + int r=NWIL_SEND_NOT_READY;
-+ if(!nss_native.failed&&njs_native.active&&!njs_native.canceled&&!njs_native.leave&&(njs_native.linked||njs_native.tx_admit)&&njs_native.native_generation==generation&&nwo_authorized(&njs_native.driver.owner)){
++ if(nss_native.powered&&!nss_native.failed&&njs_native.active&&!njs_native.canceled&&!njs_native.leave&&(njs_native.linked||njs_native.tx_admit)&&njs_native.native_generation==generation&&nwo_authorized(&njs_native.driver.owner)){
 +  if(njs_native.tx_count==NJS_TX_SLOTS)r=NWIL_SEND_BUSY;
 +  else{unsigned k=(njs_native.tx_head+njs_native.tx_count)%NJS_TX_SLOTS;memcpy(njs_native.tx[k],p,n);njs_native.tx_bytes[k]=(unsigned)n;njs_native.tx_count++;njs_native.tx_accepted++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}r=NWIL_SEND_ACCEPTED;}}
 + IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;
@@ -19252,8 +19507,9 @@
 +static void njs_snapshot_locked(void){
 + struct stc*s=&njs_native.driver.owner.transaction;struct njs_snapshot*v=&njs_native.snapshot;
 + unsigned current=s->phase<STC_DEAUTH&&!njs_native.canceled&&!njs_native.leave;
-+ v->peer=njs_native.target;v->associated=current&&s->associated;v->ptk_ready=current&&nst_native.state.ptk_ready&&nst_native.state.ptk.installed;v->gtk_ready=current&&nst_native.state.gtk.installed;v->data_ready=current&&njs_native.linked&&nst_native.state.controlled_port&&nwo_authorized(&njs_native.driver.owner);
-+ if(v->data_ready)v->phase=NJS_AUTHORIZED;
++ v->security=njs_native.target.security;v->peer=njs_native.target;v->associated=current&&s->associated;v->ptk_ready=current&&nst_native.state.ptk_ready&&nst_native.state.ptk.installed;v->gtk_ready=current&&nst_native.state.gtk.installed;v->data_ready=current&&njs_native.linked&&nst_native.state.controlled_port&&nwo_authorized(&njs_native.driver.owner);
++ if((njs_native.leave||njs_native.canceled)&&s->phase<STC_DEAUTH)v->phase=NJS_LEAVING;
++ else if(v->data_ready)v->phase=NJS_AUTHORIZED;
 + else if(s->phase>=STC_DEAUTH)v->phase=s->phase==STC_DONE||s->phase==STC_HALTED?NJS_FAILED:NJS_LEAVING;
 + else if(s->phase>=STC_CONFIGURE)v->phase=NJS_SECURING;
 + else if(s->phase>=STC_ASSOC_TX)v->phase=NJS_ASSOCIATING;
@@ -19264,6 +19520,7 @@
 + * never client callback/ifnet invocation/recursive transport publication. */
 +static int njs_event(void*ctx,const struct nst_event*e){
 + if(ctx!=&njs_native||e->generation!=njs_native.native_generation)return 0;
++ if(!nss_native.powered&&e->kind==NST_EAPOL)return 0;
 + if(e->kind==NST_COMMAND_DMA&&e->cid==7&&nsr_key_complete(&nsr_native,e))return -1;
 + njs_native.last_event=e->kind;njs_native.last_status=e->status;njs_native.event_count++;if(e->kind==NST_FRAME_RESULT&&e->ticket==UINT64_MAX){njs_native.tx_results++;if(e->status==0)njs_native.tx_ok++;else njs_native.tx_fail++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}}
 + if(e->kind==NST_DATA_SUBMITTED&&e->ticket==UINT64_MAX){if(e->status==0)njs_native.tx_local++;else njs_native.queued_drop++;if(njs_native.data_retire_logs<8){njs_native.data_retire_logs++;njs_trace_locked(1);}return 0;} /* local retirement, not tx_ok */
@@ -19298,9 +19555,9 @@
 +  int undo=nst_native_abort_prepare(njs_native.native_generation);njs_native.used=old_used;njs_native.scan_returned=old_returned;
 +  njs_native.driver=njs_native.constructor_saved;njs_native.arbiter=njs_native.arbiter_saved;niwj_clear(&njs_native.constructor_saved,sizeof njs_native.constructor_saved);niwj_clear(&njs_native.arbiter_saved,sizeof njs_native.arbiter_saved);
 +  IOLockUnlock(nss_native.lock);njs_early_finish(fresh_us>=njs_native.deadline_us?9:2);return undo?-1:0;}
-+ struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=njs_native.deadline_us/1000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
++ struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=njs_native.deadline_us/1000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;config.security=config.assoc.security;
 + config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=(uint8_t)njs_native.native_generation,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
-+ memcpy(config.group_spare,nst_native.state.group_spare,sizeof config.group_spare);config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
++ memcpy(config.group_spare,nst_native.state.group_spare,sizeof config.group_spare);config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;if(config.security!=SW_SECURITY_OPEN){config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;}
 + config.ap_ies=njs_native.target.record.ies;config.ap_ies_bytes=njs_native.target.record.ie_bytes;
 + int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,fresh_us/1000);
 + niwj_clear(&config,sizeof config);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;
@@ -19340,20 +19597,26 @@
 + unsigned notify_join=0,notify_terminal=0,retire=0,detach=0,link_up=0,link_down=0;
 + IOLockLock(nss_native.lock);
 + if(njs_native.detach){njs_native.detach=0;detach=1;}
-+ if(njs_native.canceled||njs_native.leave){(void)nwn_cancel(&njs_native.driver,njs_native.native_generation,now_us/1000);njs_drop_tx_locked();}
-+ int result=nwn_pump(&njs_native.driver,now_us/1000);
++ if(nst_native.state.associated_scan&&(njs_native.canceled||njs_native.leave||nst_native.state.link_lost))(void)nst_associated_scan_cancel(&nst_native.state);
++ if((njs_native.canceled||njs_native.leave)&&!nst_native.state.associated_scan){(void)nwn_cancel(&njs_native.driver,njs_native.native_generation,now_us/1000);njs_drop_tx_locked();}
++ if(njs_associated_scan_start_locked()<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
++ int result=(njs_native.canceled||njs_native.leave)&&nst_native.state.associated_scan?0:nwn_pump(&njs_native.driver,now_us/1000);
 + if(result<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
 + if(!njs_native.canceled&&!njs_native.leave&&nwo_authorized(&njs_native.driver.owner)&&!nst_native.state.wire_busy&&!nst_native.state.air_pending&&njs_native.tx_count){
 +  unsigned k=njs_native.tx_head;int sent=nst_data(&nst_native.state,UINT64_MAX,njs_native.tx[k],njs_native.tx_bytes[k]);
 +  if(sent<=0){if(sent<0)njs_native.queued_drop++;niwj_clear(njs_native.tx[k],sizeof njs_native.tx[k]);njs_native.tx_bytes[k]=0;njs_native.tx_head=(k+1)%NJS_TX_SLOTS;njs_native.tx_count--;}}
 + nsr_key_capture(&nsr_native,&nst_native.state);
 + if(nst_native.state.halt||nst_step(&nst_native.state,&ncd_io,&ncd_native,16,njs_event,&njs_native)<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
++ struct nss_slot*scan_done=njs_associated_scan_done_locked();
 + njs_snapshot_locked();njs_trace_locked(0);
 + if(nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!njs_native.canceled&&!njs_native.leave&&!njs_native.linked)link_up=1;
 + if((!njs_native.snapshot.data_ready||njs_native.canceled||njs_native.leave)&&njs_native.linked){njs_native.linked=njs_native.tx_admit=0;link_down=1;njs_drop_tx_locked();}
-+ unsigned terminal=njs_native.driver.owner.transaction.phase==STC_DONE||njs_native.driver.owner.transaction.phase==STC_HALTED;
++ unsigned terminal=(njs_native.driver.owner.transaction.phase==STC_DONE||njs_native.driver.owner.transaction.phase==STC_HALTED)&&!nst_native.state.associated_scan;
 + if(terminal){if(!njs_native.terminal){njs_native.terminal=1;notify_terminal=1;}njs_native.active=0;njs_native.retiring=1;retire=1;niwj_clear(&njs_native.driver.owner.transaction.wpa,sizeof njs_native.driver.owner.transaction.wpa);njs_drop_tx_locked();}
 + IOLockUnlock(nss_native.lock);
++ if(scan_done)nss_deliver(scan_done,!scan_done->scan.done?NSS_REFUSED:scan_done->scan.completion.state==7&&!scan_done->scan.partial&&!scan_done->scan.dropped?NSS_COMPLETE:NSS_PARTIAL);
++ /* Canceled queued slots must retire even while station owns the loop. */
++ for(unsigned k=0;k<NSS_SLOTS;k++){IOLockLock(nss_native.lock);unsigned cancel_scan=nss_native.slot[k].state==NSS_QUEUED&&nss_native.slot[k].canceled;IOLockUnlock(nss_native.lock);if(cancel_scan)nss_deliver(&nss_native.slot[k],NSS_CANCELED);}
 + if(link_down){IOLockLock(njs_native.notice_lock);int down_error=nord2_wifi_ifnet_link(njs_native.native_generation,0);IOLockUnlock(njs_native.notice_lock);if(down_error)njs_link_error(0,down_error);}
 + if(link_up){
 +  IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
@@ -19624,7 +19887,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_scan_service.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,36 @@
 +#ifndef PRIVATE_WIFI_SCAN_SERVICE_H
 +#define PRIVATE_WIFI_SCAN_SERVICE_H
 +#include "wifi_scan_plan.h"
@@ -19635,7 +19898,7 @@
 +#define NSS_SLOTS 4u
 +#define NSS_CHANNELS 39u
 +struct nss_request {unsigned count;struct ncs_channel channels[NSS_CHANNELS];uint16_t dwell_tu;}; /*0=actual full allowed list; passive only/default or108TU timing; no SSID/random*/
-+struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];unsigned scanning;}; /* running scan transaction, not RF emission */
++struct nss_info {uint8_t mac[6],band5,nss,max_bw,path;unsigned count;struct ncs_channel channels[NSS_CHANNELS];unsigned scanning,powered;uint64_t power_epoch;uint64_t dfs_mask;}; /* dfs_mask bits index this authenticated allowed-channel list; passive discovery only. scanning is transaction state, not RF emission. */
 +enum nss_status {NSS_COMPLETE=0,NSS_PARTIAL=1,NSS_CANCELED=2,NSS_REFUSED=3,NSS_FATAL=4};
 +typedef void (*nss_completion)(void *cookie,uint64_t client_generation,uint64_t ticket,enum nss_status);
 +struct nss_view {const struct nsb_scan *scan;uint64_t captured_us,client_generation;enum nss_status status;};
@@ -19644,6 +19907,9 @@
 + * bounded/no radio calls, and recheck client generation before event publish.
 + * 0 accepted,1 backend unavailable,2 queue full,-1 invalid. Refusal atomic. */
 +int nord2_wifi_scan_info(struct nss_info *);
++/* Logical radio admission; no physical SoC power-down claim. OFF revokes data
++ * synchronously and owner drains scans then existing station/key cleanup. */
++int nord2_wifi_power_set(unsigned on);
 +int nord2_wifi_scan_enqueue(const struct nss_request *,void *,uint64_t,nss_completion,uint64_t *);
 +/* Cancel closes delivery; queued gets canceled callback, inflight radio finishes
 + * bounded without abort/reset. Client's gate still rejects late event delivery. */
@@ -19660,7 +19926,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/wifi_scan_service_bind.inc
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,160 @@
 +/* Include at end of normal backend binder, before actual CAP worker. */
 +#ifdef NSS_HOST_TEST
 +#include "nss_host.h"
@@ -19672,7 +19938,7 @@
 +#include "wifi_ios_join.h"
 +enum {NSS_FREE,NSS_QUEUED,NSS_RUNNING,NSS_DONE};
 +struct nss_slot {unsigned state,canceled,callback_busy,retire;uint64_t ticket,generation,captured;void*cookie;nss_completion completion;enum nss_status status;struct nss_request request;struct nsb_scan scan;};
-+static struct {IOLock*lock;unsigned ready,failed;uint64_t serial;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
++static struct {IOLock*lock;unsigned ready,failed,powered;uint64_t serial,power_epoch;uint8_t scan_sequence;struct nss_info info;struct nss_slot slot[NSS_SLOTS];struct nct_session previous;struct ncr_state previous_rx;struct ncs_frames frames;}nss_native;
 +#if defined(NSS_HOST_TEST) && !defined(NJS_HOST_TEST)
 +#define NSS_STATION_TEST_DISABLED 1
 +static int njs_scan_blocked_locked(void){return 0;}
@@ -19689,18 +19955,18 @@
 +#endif
 +static int nss_available(void){return __atomic_load_n(&nss_native.ready,__ATOMIC_ACQUIRE)==1;}
 +static struct nss_slot*nss_find(uint64_t ticket){for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state&&nss_native.slot[k].ticket==ticket)return &nss_native.slot[k];return 0;}
-+int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
++int nord2_wifi_scan_info(struct nss_info*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);int r=nss_native.failed?1:0;if(!r){*out=nss_native.info;out->powered=nss_native.powered;out->power_epoch=nss_native.power_epoch;out->scanning=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_RUNNING&&!nss_native.slot[k].canceled)out->scanning=1;}IOLockUnlock(nss_native.lock);return r;}
 +int nord2_wifi_scan_enqueue(const struct nss_request*q,void*cookie,uint64_t generation,nss_completion completion,uint64_t*ticket){
 + if(!q||!cookie||!generation||!completion||!ticket||q->count>NSS_CHANNELS||(q->dwell_tu!=0&&q->dwell_tu!=108))return -1;
 + if(!nss_available())return 1;IOLockLock(nss_native.lock);
-+ if(njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
++ if(!nss_native.powered||njs_scan_blocked_locked()){IOLockUnlock(nss_native.lock);return 2;}
 + if(nss_native.failed||nss_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
 + for(unsigned i=0;i<q->count;i++){unsigned found=0;for(unsigned j=0;j<nss_native.info.count;j++)if(q->channels[i].band==nss_native.info.channels[j].band&&q->channels[i].channel==nss_native.info.channels[j].channel)found=1;
 +  for(unsigned j=0;j<i;j++)if(q->channels[i].band==q->channels[j].band&&q->channels[i].channel==q->channels[j].channel)found=0;
 +  if(!found){IOLockUnlock(nss_native.lock);return -1;}}
 + struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(!nss_native.slot[k].state){s=&nss_native.slot[k];break;}
 + if(!s){IOLockUnlock(nss_native.lock);return 2;}
-+ *s=(struct nss_slot){0};s->request=*q;s->cookie=cookie;s->generation=generation;s->completion=completion;s->ticket=++nss_native.serial;s->state=NSS_QUEUED;*ticket=s->ticket;
++ memset(s,0,sizeof(*s));s->request=*q;s->cookie=cookie;s->generation=generation;s->completion=completion;s->ticket=++nss_native.serial;s->state=NSS_QUEUED;*ticket=s->ticket;
 + IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
 +}
 +int nord2_wifi_scan_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);struct nss_slot*s=nss_find(ticket);int r=s?0:1;if(s)s->canceled=1;IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
@@ -19722,11 +19988,17 @@
 + ncfg_channels(&ncb_native.plan.input,&ncb_native.plan.config,channels,39,&count))return 1;
 + for(unsigned k=0;k<6;k++)nss_native.info.mac[k]=address.mac[k];
 + const struct nrp_caps*c=&ncb_native.plan.input.caps;nss_native.info.band5=c->band5;nss_native.info.nss=c->nss;nss_native.info.max_bw=c->max_bw;nss_native.info.path=c->path;
-+ for(unsigned k=0;k<count;k++)if(channels[k].allowed&&!channels[k].dfs)nss_native.info.channels[nss_native.info.count++]=(struct ncs_channel){channels[k].band,channels[k].channel};
++ /* Android fgSkipDFS defaults0; DFS exclusion is not a station passive-scan rule.
++  * Keep the authenticated regulatory intersection; no probe/DFS AP operation. */
++ for(unsigned k=0;k<count;k++)if(channels[k].allowed){
++  unsigned index=nss_native.info.count++;
++  nss_native.info.channels[index]=(struct ncs_channel){channels[k].band,channels[k].channel};
++  if(channels[k].dfs)nss_native.info.dfs_mask|=UINT64_C(1)<<index;
++ }
 + if(!nss_native.info.count||nss_native.info.count!=ncb_native.plan.channel_count)return 1;
 + nss_native.scan_sequence=ncb_native.rx.scan.sequence;
 + nss_native.lock=IOLockAlloc();if(!nss_native.lock)return 1;
-+ njs_initialize_locked();
++ nss_native.powered=1;nss_native.power_epoch=1;njs_initialize_locked();
 + __atomic_store_n(&nss_native.ready,1,__ATOMIC_RELEASE);
 + printf("NORD2 WIFI IOS OWNER: active=1 retained=1 boot_complete=1 ready=1\n");
 + nord2_wifi_ios_backend_ready();return 0;
@@ -19880,7 +20152,7 @@
 + nss_return.origin=(struct nct_scan_return){.basic=&nbc_native.state,.cap=&ncd_native.diag,.init=&nwfn_native.init,.firmware=&nfp_native,
 +  .sealed=1,.completed=w->completed,.tx_index=w->tx_index,.pse_total=nbc_native.state.plan.pse_cmd,.capacity=n->credit_capacity,.next_sequence=w->next_sequence,.generation=n->generation};
 + for(unsigned k=0;k<5;k++)nss_return.queue[k]=n->queue[k];
-+ nsr_native.closed_generation=n->generation;nsr_native.closed_us=n->last;
++ nsr_native.closed_generation=n->generation;nsr_native.closed_us=n->last;nsr_native.refresh_requested_us=n->last;nsr_native.refresh_after_scan=0;
 + nsr_native.hw0_next=n->normal.next;nsr_native.token_next=n->normal.token_next;nsr_native.next_pid=n->next_pid;
 + nsr_native.scan_ticket=0;nsr_native.scan_ready=0;nsr_native.scan_state=1;
 + niwj_clear(njs_native.cache,sizeof njs_native.cache);njs_native.cache_next=0;
@@ -19906,18 +20178,18 @@
 +  nsr_native.scan_ready=usable&&(status==NSS_COMPLETE||status==NSS_PARTIAL)&&v.client_generation==generation&&
 +   v.captured_us>=nsr_native.closed_us&&v.scan->started>=nsr_native.closed_us&&nss_return.consumed&&
 +   !nct_native.active&&nct_done_receipt(&nct_native.session)&&!ncb_native.rx.active&&!ncb_native.rx.halt&&!ncb_native.rx.error;
-+  nsr_native.scan_state=3;
++  nsr_native.scan_state=!nsr_native.scan_ready&&nsr_native.refresh_after_scan?1:3;nsr_native.refresh_after_scan=0;
 + }
 + IOLockUnlock(nss_native.lock);(void)nord2_wifi_scan_release(ticket);
 +}
 +static void njs_rejoin_refresh(void){
 + if(ncd_native.worker!=current_thread()||!nss_available())return;
 + IOLockLock(nss_native.lock);
-+ unsigned run=nsr_native.scan_state==1&&!nss_native.failed&&!njs_native.queued&&!njs_native.active;
++ unsigned run=nss_native.powered&&nsr_native.scan_state==1&&!nss_native.failed&&!njs_native.queued&&!njs_native.active;
 + uint64_t generation=nsr_native.closed_generation;
 + /* One finite publication attempt; queue-full may retry only inside30s. */
 + uint64_t now=njs_uptime_us();
-+ if(run&&(now<nsr_native.closed_us||now-nsr_native.closed_us>=UINT64_C(30000000))){nsr_native.scan_state=3;run=0;}
++ if(run&&(now<nsr_native.refresh_requested_us||now-nsr_native.refresh_requested_us>=UINT64_C(30000000))){nsr_native.scan_state=3;run=0;}
 + IOLockUnlock(nss_native.lock);if(!run)return;
 + struct nss_request q={0};uint64_t ticket=0;
 + int r=nord2_wifi_scan_enqueue(&q,&nsr_native,generation,njs_rejoin_scan_done,&ticket);
@@ -23273,7 +23545,7 @@
 +static struct {unsigned mode,windows,pending,peer_attempts;
 + uintptr_t peer_selector,peer_entry;} nwl_native;
 +static unsigned nwl_join_ready_locked(void){
-+ return !!(njs_native.notice_lock&&!nss_native.failed&&
++ return !!(nss_native.powered&&njs_native.notice_lock&&!nss_native.failed&&
 +  !njs_native.active&&!njs_native.queued&&!njs_native.retiring&&!njs_native.completion&&
 +  njs_native.serial<255&&(!njs_native.used||njs_rejoin_ready_locked()));
 +}
@@ -23398,7 +23670,7 @@
 +}
 --- /dev/null
 +++ b/iokit/Kernel/arm/wifi_ios_client.cpp
-@@ -0,0 +1,486 @@
+@@ -0,0 +1,515 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Native owned IOUC: scan and bounded WPA2 join bridge. Native station owner
@@ -23438,6 +23710,18 @@
 +#endif
 +#else
 + uint64_t now=0,ns=0;clock_get_uptime(&now);absolutetime_to_nanoseconds(now,&ns);return ns/1000000u;
++#endif
++}
++/* Same uptime microsecond domain as ncd_native_now/nsb observations. */
++static uint64_t niw_us(void){
++#ifdef NIWL_HOST_TEST
++#ifdef NIWL_SCAN_TEST_NOW
++ return NIWL_SCAN_TEST_NOW();
++#else
++ return 0; /* A host scan fixture must provide its actual synthetic clock. */
++#endif
++#else
++ uint64_t now=0,ns=0;clock_get_uptime(&now);absolutetime_to_nanoseconds(now,&ns);return ns/1000u;
 +#endif
 +}
 +static int niw_root_busy(void){
@@ -23499,16 +23783,18 @@
 + uint64_t generation,scanGeneration,pendingTicket,pendingEpoch;unsigned pendingBss,unsupportedLogs,pipeLogs,scanLogs,queueLogs,completionLogs,eventLogs,resultLogs,outputLogs;
 + struct {uint32_t request,operation,count;} controlTrace[40];
 + char interfaceName[16];struct nils_state cacheLife;struct nils_ticket cacheTicket;
-+ struct njs_snapshot *station;uint64_t joinTicket,joinEpoch;unsigned joinLogs;
-+ struct niwa_snapshot *snapshot;uint32_t producer;IOReturn lastScanError;
++ struct njs_snapshot *station;uint64_t joinTicket,joinEpoch,powerEpoch,pendingPowerEpoch;unsigned joinLogs;
++ struct niwa_history *history;struct niwa_snapshot *snapshot;uint32_t producer;IOReturn lastScanError;
 + static void completed(void*,uint64_t,uint64_t,enum nss_status);
 + static void joinCompleted(void*,uint64_t,uint64_t,enum njs_notice);
 + IOReturn joinLocked(const uint8_t*,size_t);
 + bool stationEventLocked(unsigned);
++ bool powerEventLocked();
 + IOReturn scanLocked(const uint8_t*,size_t);
 + IOReturn getLocked(const niw_request*,const void*,size_t,IOExternalMethodArguments*);
 + bool eventLocked(uint32_t);
 +
++ void clearScanLocked(void);
 + void discardLocked(void);
 + void closeOwned(void);
 + IOReturn dispatchLocked(uint32_t,IOExternalMethodArguments *,bool *);
@@ -23526,7 +23812,7 @@
 +};
 +OSDefineMetaClassAndStructors(NiwlLifecycleClient,IOUserClient)
 +bool NiwlLifecycleClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *props){
-+ station=nullptr;joinTicket=joinEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);snapshot=nullptr;pendingTicket=0;pendingEpoch=0;pendingBss=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
++ station=nullptr;joinTicket=joinEpoch=powerEpoch=pendingPowerEpoch=0;joinLogs=0;pipeLogs=scanLogs=queueLogs=completionLogs=eventLogs=resultLogs=outputLogs=unsupportedLogs=0;bzero(controlTrace,sizeof controlTrace);history=nullptr;snapshot=nullptr;pendingTicket=0;pendingEpoch=0;pendingBss=0;scanGeneration=0;producer=0;lastScanError=kIOReturnNotReady;bzero(&cacheLife,sizeof cacheLife);bzero(interfaceName,sizeof interfaceName);
 + timingClient=0;timingCalls=timingRequest=timingNormal=timingSlow=0;
 + owner=TASK_NULL;gate=nullptr;phase=Closed;data=state=nullptr;ownsReference=false;generation=0;bzero(reference,sizeof reference);
 + if(!task||current_task()!=task||type)return false;
@@ -23536,14 +23822,20 @@
 + if(!authorized||!IOUserClient::initWithTask(task,security,type,props))return false;
 + gate=IOLockAlloc();if(!gate)return false;
 + snapshot=(niwa_snapshot*)IOMalloc(sizeof(*snapshot));if(!snapshot)return false;bzero(snapshot,sizeof(*snapshot));
++ history=(niwa_history*)IOMalloc(sizeof(*history));if(!history)return false;niwa_history_clear(history);
 + station=(njs_snapshot*)IOMalloc(sizeof(*station));if(!station)return false;bzero(station,sizeof(*station));
 + task_reference(task);owner=task;generation=1;phase=Open;timingClient=niwt_client_id();return true;
++}
++void NiwlLifecycleClient::clearScanLocked(void){
++ nils_close(&cacheLife);if(scanGeneration!=UINT64_MAX)scanGeneration++;
++ if(snapshot)bzero(snapshot,sizeof(*snapshot));if(history)niwa_history_clear(history);
++ lastScanError=kIOReturnNotReady;
 +}
 +void NiwlLifecycleClient::discardLocked(void){
 + /* All cache/event publication and reference sending is under gate. Close
 +  * invalidates scan generation first; pending callback retains this client and
 +  * stable snapshot until retirement. Mappings own descriptor refs independently. */
-+ nils_close(&cacheLife);
++ clearScanLocked();
 + if(ownsReference){IOUserClient::releaseAsyncReference64(reference);ownsReference=false;bzero(reference,sizeof reference);}
 + if(data){data->release();data=nullptr;}if(state){state->release();state=nullptr;}
 +}
@@ -23594,10 +23886,11 @@
 +    if(copy)niwj_free(copy,bytes);return result;
 +   }
 +   if(unsupportedSet==19&&niw_u32((const uint8_t*)carrier+4)==24&&traceControl(19,0))printf("NORD2 WIFI IOS POWERSET: version=%u radios=%u state=%u\n",niw_u32(power),niw_u32(power+4),niw_u32(power+8));
-+   if(unsupportedSet==19&&!a->structureOutputSize&&niw_u32((const uint8_t*)carrier+4)==24&&!niw_u32((const uint8_t*)carrier+tail+20)&&!niwi_power_on_admit(power,24)){
-+    nss_info info={};result=nord2_wifi_scan_info(&info)?kIOReturnNotReady:kIOReturnSuccess;
++   if(unsupportedSet==19&&!a->structureOutputSize&&niw_u32((const uint8_t*)carrier+4)==24&&!niw_u32((const uint8_t*)carrier+tail+20)&&niw_u32(power)==1&&niw_u32(power+4)==1&&niw_u32(power+8)<=1){
++    unsigned on=niw_u32(power+8);result=nord2_wifi_power_set(on)?kIOReturnNotReady:kIOReturnSuccess;
++    if(result==kIOReturnSuccess){if(!on){if(pendingTicket)(void)nord2_wifi_scan_cancel(pendingTicket);clearScanLocked();}powerEventLocked();}
 +    if(traceControl(19,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=19 operation=0x802869c8 bytes=24 status=%#x\n",selector,(unsigned)result);
-+    if(copy)niwj_free(copy,bytes);return result; /* already physically retained ON; no event/write */
++    if(copy)niwj_free(copy,bytes);return result; /* Logical admission change; native owner drains existing firmware work. */
 +   }
 +   if(traceControl(unsupportedSet,0x802869c8))printf("NORD2 WIFI IOS CONTROL: selector=%u request=%u operation=0x802869c8 unsupported=1\n",selector,unsupportedSet);
 +   if(copy)niwj_free(copy,bytes);return kIOReturnUnsupported;
@@ -23711,7 +24004,7 @@
 +IOReturn NiwlLifecycleClient::clientClose(void){closeOwned();terminate();return kIOReturnSuccess;}
 +IOReturn NiwlLifecycleClient::clientDied(void){closeOwned();terminate();return kIOReturnSuccess;}
 +void NiwlLifecycleClient::stop(IOService*p){closeOwned();IOUserClient::stop(p);}
-+void NiwlLifecycleClient::free(void){closeOwned();if(owner){task_deallocate(owner);owner=TASK_NULL;}if(gate){IOLockFree(gate);gate=nullptr;}if(snapshot){IOFree(snapshot,sizeof(*snapshot));snapshot=nullptr;}if(station){niwj_free(station,sizeof(*station));station=nullptr;}IOUserClient::free();}
++void NiwlLifecycleClient::free(void){closeOwned();if(owner){task_deallocate(owner);owner=TASK_NULL;}if(gate){IOLockFree(gate);gate=nullptr;}if(snapshot){IOFree(snapshot,sizeof(*snapshot));snapshot=nullptr;}if(history){niwa_history_clear(history);IOFree(history,sizeof(*history));history=nullptr;}if(station){niwj_free(station,sizeof(*station));station=nullptr;}IOUserClient::free();}
 +#ifdef NIWL_HOST_TEST
 +class NiwlLifecycleService : public IOService {
 + OSDeclareDefaultStructors(NiwlLifecycleService)
@@ -23743,6 +24036,13 @@
 + if(!c->start(provider)){c->detach(provider);c->release();return kIOReturnNotReady;}
 + *handler=c;printf("NORD2 WIFI IOS CLIENT: opened=1 type=0 root_busy=%d t_ms=%llu\n",niw_root_busy(),niw_ms());return kIOReturnSuccess;
 +}
++bool NiwlLifecycleClient::powerEventLocked(){
++ if(phase!=Armed||!ownsReference||!data||!state)return false;
++ uint32_t*indices=(uint32_t*)state->getBytesNoCopy();uint32_t consumer=__atomic_load_n(indices,__ATOMIC_ACQUIRE);niwe_view view={consumer,producer,4096};niwe_space space={};if(niwe_plan(&view,0,0,&space)!=1)return false;
++ uint8_t record[48];if(niwe_power_changed(record,sizeof record,(const uint8_t*)interfaceName))return false;
++ uint8_t*ring=(uint8_t*)data->getBytesNoCopy();for(uint32_t i=0;i<space.padding;i+=4){uint32_t pad=80;memcpy(ring+producer+i,&pad,4);}for(unsigned i=0;i<48;i++)ring[(space.record_offset+i)%4096]=record[i];producer=space.next;__atomic_store_n(indices+1,producer,__ATOMIC_RELEASE);IOReturn status=sendAsyncResult64(reference,kIOReturnSuccess,nullptr,0);
++ if(eventLogs++<128)printf("NORD2 WIFI IOS EVENT: event=1 published=1 notified=%u status=%#x producer=%u consumer=%u t_ms=%llu\n",(unsigned)(status==kIOReturnSuccess),(unsigned)status,producer,consumer,niw_ms());return true;
++}
 +IOReturn NiwlLifecycleClient::scanLocked(const uint8_t*p,size_t n){
 + bool trace=scanLogs++<64;
 + unsigned peer=0;if(n>=14){bool zero=true,broadcast=true;for(unsigned i=8;i<14;i++){zero=zero&&!p[i];broadcast=broadcast&&p[i]==255;}peer=zero?0:broadcast?1:2;}
@@ -23750,7 +24050,7 @@
 + if(phase!=Armed||!ownsReference)return kIOReturnNotReady;
 + if(scanGeneration==UINT64_MAX)return kIOReturnNoResources;
 + if(pendingTicket)return kNiwScanBusy;
-+ nss_info info={};nss_request request={};if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;
++ nss_info info={};nss_request request={};if(nord2_wifi_scan_info(&info)||!info.powered)return kIOReturnNotReady;if(powerEpoch&&powerEpoch!=info.power_epoch)clearScanLocked();powerEpoch=info.power_epoch;
 + int admission=niwi_scan_admit(p,n,&info,&request);
 + if(trace){
 +  uint32_t listed=n>=72?niw_u32(p+68):0,flags=0,low=0,high=0;
@@ -23762,27 +24062,28 @@
 +  printf("NORD2 WIFI IOS ADMISSION: status=%d owner_channels=%u requested_channels=%u channel_flags_or=%#x channel_min=%u channel_max=%u t_ms=%llu\n",admission,(unsigned)info.count,admission?0:(unsigned)request.count,flags,low,high,niw_ms());
 + }
 + if(admission)return kIOReturnUnsupported;
++ if(scanGeneration==UINT64_MAX)return kIOReturnNoResources;
 + nils_close(&cacheLife);bzero(snapshot,sizeof(*snapshot));scanGeneration++;
 + if(nils_open(&cacheLife,scanGeneration)||nils_begin(&cacheLife,&cacheTicket,snapshot))return kIOReturnNotReady;
 + retain();uint64_t ticket=0;int result=nord2_wifi_scan_enqueue(&request,this,scanGeneration,completed,&ticket);
 + if(result){nils_finish(&cacheLife,&cacheTicket,nullptr);release();return result==2?kNiwScanBusy:kIOReturnNotReady;}
 + if(queueLogs++<64)printf("NORD2 WIFI IOS ENQUEUE: status=%d generation=%llu ticket=%llu t_ms=%llu\n",result,(unsigned long long)scanGeneration,(unsigned long long)ticket,niw_ms());
-+ pendingTicket=ticket;pendingEpoch=generation;pendingBss=p[4];lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
++ pendingPowerEpoch=info.power_epoch;pendingTicket=ticket;pendingEpoch=generation;pendingBss=p[4];lastScanError=kIOReturnNotReady;return kIOReturnSuccess;
 +}
 +void NiwlLifecycleClient::completed(void*cookie,uint64_t gen,uint64_t ticket,enum nss_status status){
 + NiwlLifecycleClient*c=(NiwlLifecycleClient*)cookie;
-+ IOLockLock(c->gate);nss_view view={};bool current=c->phase==Armed&&c->scanGeneration==gen&&c->pendingTicket==ticket&&c->pendingEpoch==c->generation;
++ IOLockLock(c->gate);nss_info currentPower={};bool radioCurrent=!nord2_wifi_scan_info(&currentPower)&&currentPower.powered&&currentPower.power_epoch==c->pendingPowerEpoch;nss_view view={};bool current=radioCurrent&&c->phase==Armed&&c->scanGeneration==gen&&c->pendingTicket==ticket&&c->pendingEpoch==c->generation;
 + if(current){
 +  int result=-1;
-+  if(status==NSS_COMPLETE&&!nord2_wifi_scan_view(ticket,&view)&&view.client_generation==gen){
++  if((status==NSS_COMPLETE||status==NSS_PARTIAL)&&!nord2_wifi_scan_view(ticket,&view)&&view.client_generation==gen){
 +   size_t count=0;const niwp_rate_map*map=niwi_rate_map(&count);
-+   result=nils_prepare(&c->cacheTicket,view.scan,view.captured_us,view.captured_us,map,count,c->snapshot);
-+   if(!result)result=niwa_snapshot_bss_filter(c->snapshot,c->pendingBss);
++   result=nils_prepare_history(&c->cacheTicket,c->history,view.scan,view.captured_us,niw_us(),map,count,c->pendingBss,c->snapshot);
 +  }
 +  if(result==0&&nils_finish(&c->cacheLife,&c->cacheTicket,c->snapshot)==0)c->lastScanError=kIOReturnSuccess;
 +  else{nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);c->lastScanError=kIOReturnNotReady;}
 +  if(!c->eventLocked(c->lastScanError==kIOReturnSuccess?0:5)){nils_close(&c->cacheLife);c->lastScanError=kIOReturnNoResources;}
 + }else if(c->cacheLife.inflight)nils_finish(&c->cacheLife,&c->cacheTicket,nullptr);
++ if(current&&c->snapshot->retained_view&&c->completionLogs<64)printf("NORD2 WIFI IOS SCANHISTORY: generation=%llu source_rows=%u display_rows=%u retained_rows=%u overflow=%u dropped=%u ttl_ms=30000\n",(unsigned long long)gen,c->snapshot->backend_count,c->snapshot->count,c->history->count,c->snapshot->source_overflow,c->snapshot->dropped);
 + if(c->completionLogs++<64)printf("NORD2 WIFI IOS COMPLETE: generation=%llu ticket=%llu backend=%u current=%u cache_status=%#x rows=%u omitted=%u omit_mask=%#x t_ms=%llu\n",(unsigned long long)gen,(unsigned long long)ticket,(unsigned)status,(unsigned)current,(unsigned)c->lastScanError,current?c->snapshot->count:0,current?c->snapshot->omitted:0,current?c->snapshot->omit_mask:0,niw_ms());
 + if(c->pendingTicket==ticket)c->pendingTicket=0;
 + IOLockUnlock(c->gate);
@@ -23828,8 +24129,8 @@
 +  if(traceControl(12,0))printf("NORD2 WIFI IOS CARD: bytes=%u features=%u byte0=%#x byte1=%#x\n",(unsigned)used,installed.count,(unsigned)((uint8_t*)a->structureOutput)[0],(unsigned)((uint8_t*)a->structureOutput)[1]);
 +  return kIOReturnSuccess;
 + }
-+ if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;int result=nils_take(&cacheLife,scanGeneration,(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
-+ if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,1};memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
++ if(q->request==11){if(q->payload_bytes!=1164||a->structureOutputSize<1164)return kIOReturnBadArgument;nss_info info={};if(nord2_wifi_scan_info(&info))return kIOReturnNotReady;if(!info.powered||(powerEpoch&&powerEpoch!=info.power_epoch)){clearScanLocked();powerEpoch=info.power_epoch;return (IOReturn)0xe0820446;}powerEpoch=info.power_epoch;int result=nils_take_timed(&cacheLife,history,scanGeneration,niw_us(),(uint8_t*)a->structureOutput,a->structureOutputSize);if(resultLogs++<256)printf("NORD2 WIFI IOS RESULT: status=%d next=%u count=%u generation=%llu\n",result,snapshot->cursor.next,snapshot->cursor.count,(unsigned long long)scanGeneration);if(result==0)return (IOReturn)0xe0820446;if(result<0)return lastScanError==kIOReturnSuccess?kIOReturnNotReady:lastScanError;a->structureOutputSize=1164;return kIOReturnSuccess;}
++ if(q->request==19){nss_info info={};if(q->payload_bytes!=24||a->structureOutputSize<24||nord2_wifi_scan_info(&info))return kIOReturnNotReady;uint8_t power[24]={1,0,0,0,1,0,0,0,0};power[8]=(uint8_t)!!info.powered;memcpy(a->structureOutput,power,sizeof power);a->structureOutputSize=sizeof power;return kIOReturnSuccess;}
 + if(unsupportedLogs++<64)printf("NORD2 WIFI IOS REQUEST: request=%u bytes=%u unsupported=1\n",q->request,q->payload_bytes);
 + return kIOReturnUnsupported;
 +}

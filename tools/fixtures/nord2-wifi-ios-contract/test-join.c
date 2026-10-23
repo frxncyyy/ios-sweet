@@ -48,6 +48,6 @@ int main(void){uint8_t p[593];struct niwj_request q;struct niwj_diagnostic d;wir
  info.count=1;info.channels[0].band=info.channels[0].channel=1;s=(struct nsb_scan){0};s.entered=s.done=1;s.completion.state=7;s.started=1;s.last=101;s.deadline=1000;s.count=NSB_RESULTS;s.frames=NSB_RESULTS+1;s.partial=s.dropped=1;record(&s.records[0],1,80);
  C(niwj_scan_usable(&s));C(!niwj_select(&q,&s,&info,200,&out));
  s.records[0].ies[27]=32;C(!niwj_select(&q,&s,&info,200,&out));C(out.ap_rsn[21]==32&&out.ap_rsn_bytes==22); /* AP optionalExtendedKeyID; station remainscaps0. */
- s.dropped=0;absent(&q,&s,&info);s.dropped=1;s.count=15;absent(&q,&s,&info);s.count=16;s.timed_out=1;absent(&q,&s,&info);s.timed_out=0;s.active=1;absent(&q,&s,&info);s.active=0;s.done=0;absent(&q,&s,&info);s.done=1;s.last=s.deadline;absent(&q,&s,&info);s.last=101;s.dropped=2;absent(&q,&s,&info);s.dropped=1;s.completion.sequence=1;absent(&q,&s,&info);
+ s.dropped=0;absent(&q,&s,&info);s.dropped=1;s.count=NSB_RESULTS-1;absent(&q,&s,&info);s.count=NSB_RESULTS;s.timed_out=1;absent(&q,&s,&info);s.timed_out=0;s.active=1;absent(&q,&s,&info);s.active=0;s.done=0;absent(&q,&s,&info);s.done=1;s.last=s.deadline;absent(&q,&s,&info);s.last=101;s.dropped=2;absent(&q,&s,&info);s.dropped=1;s.completion.sequence=1;absent(&q,&s,&info);
  trailer_tests();
  niwj_clear(&q,sizeof q);struct niwj_request zero={0};C(!memcmp(&q,&zero,sizeof q));printf("join-policy: %u checks PASS (synthetic; no native readiness)\n",checks);return 0;}

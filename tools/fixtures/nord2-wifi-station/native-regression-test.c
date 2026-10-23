@@ -20,8 +20,8 @@ static void actual_scan_overflow(void){
  put16(m,0x80);m[10]=m[16]=2;put16(m+32,100);m[36]=0;m[37]=3;memcpy(m+38,"lab",3);
  for(unsigned k=0;k<NSB_RESULTS;k++){m[15]=m[21]=(uint8_t)(k+1);C(!nsb_add(&s,p,sizeof p,101+k));}
  struct nsb_record retained[NSB_RESULTS];memcpy(retained,s.records,sizeof retained);
- m[15]=m[21]=99;C(nsb_add(&s,p,sizeof p,120)==1);C(s.partial&&s.dropped==1&&s.count==NSB_RESULTS);C(!memcmp(retained,s.records,sizeof retained));
- C(!nst_scan_admissible(&s));done[0]=42;done[5]=7;C(!nsb_complete(&s,done,sizeof done,130));C(nst_scan_admissible(&s));
+ m[15]=m[21]=99;C(nsb_add(&s,p,sizeof p,102+NSB_RESULTS)==1);C(s.partial&&s.dropped==1&&s.count==NSB_RESULTS);C(!memcmp(retained,s.records,sizeof retained));
+ C(!nst_scan_admissible(&s));done[0]=42;done[5]=7;C(!nsb_complete(&s,done,sizeof done,103+NSB_RESULTS));C(nst_scan_admissible(&s));
  s.completion.state=6;C(!nst_scan_admissible(&s));s.completion.state=7;s.timed_out=1;C(!nst_scan_admissible(&s));
 }
 static unsigned raw_eapol(struct test*t,uint8_t*p,unsigned payload){

@@ -3,10 +3,14 @@
 #include <thread>
 static task ownerTask,otherTask;
 static nss_completion callback;static nss_request capturedRequest;static void*cookie;static uint64_t ticket=1,gen;static bool canceled,active;static unsigned releases;static nsb_scan scan;
-extern "C" int nord2_wifi_scan_info(nss_info*out){*out={};out->mac[0]=2;out->count=1;out->channels[0]={1,6};return 0;}
-extern "C" int nord2_wifi_scan_enqueue(const nss_request*r,void*c,uint64_t g,nss_completion f,uint64_t*t){assert(!r->count&&!active);capturedRequest=*r;active=true;canceled=false;cookie=c;gen=g;callback=f;*t=++ticket;return 0;}
+/* Shared by ordinary and lifecycle fixtures, including the extracted lifetime
+ * stub. Power changes invalidate old scan epochs without inventing completion. */
+static unsigned logical_power=1,power_calls;static uint64_t logical_epoch=1;
+extern "C" int nord2_wifi_power_set(unsigned on){assert(on<=1&&power_calls!=~0u);power_calls++;if(on!=logical_power)logical_epoch++;logical_power=on;return 0;}
+extern "C" int nord2_wifi_scan_info(nss_info*out){*out={};out->powered=logical_power;out->power_epoch=logical_epoch;out->mac[0]=2;out->count=1;out->channels[0]={1,6};if(niwl_scan_extended){out->band5=1;out->count=2;out->channels[1]={2,100};out->dfs_mask=2;}return 0;}
+extern "C" int nord2_wifi_scan_enqueue(const nss_request*r,void*c,uint64_t g,nss_completion f,uint64_t*t){assert((!r->count||niwl_scan_extended)&&!active);capturedRequest=*r;active=true;canceled=false;cookie=c;gen=g;callback=f;*t=++ticket;return 0;}
 extern "C" int nord2_wifi_scan_cancel(uint64_t t){assert(t==ticket);canceled=true;return 0;}
-extern "C" int nord2_wifi_scan_view(uint64_t t,nss_view*out){assert(t==ticket);if(canceled)return 1;*out={&scan,400,gen,NSS_COMPLETE};return 0;}
+extern "C" int nord2_wifi_scan_view(uint64_t t,nss_view*out){assert(t==ticket);if(canceled)return 1;*out={&scan,niwl_scan_extended?scan.last+10:400,gen,scan.partial?NSS_PARTIAL:NSS_COMPLETE};return 0;}
 extern "C" int nord2_wifi_scan_release(uint64_t t){assert(t==ticket);releases++;return 0;}
 static void finish(nss_status status=NSS_COMPLETE){assert(active);callback(cookie,gen,ticket,status);active=false;}
 static void put(uint8_t*p,uint32_t n){for(unsigned i=0;i<4;i++)p[i]=(uint8_t)(n>>(8*i));}

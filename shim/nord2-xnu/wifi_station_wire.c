@@ -43,7 +43,8 @@ int sw_assoc(uint8_t *out,size_t cap,size_t *used,const struct sw_assoc *p) {
     uint8_t b[110]={0};size_t i,j,n=28,first;
     if(!start(used)||!p||!peer_ok(&p->peer)||!p->ssid||!p->ssid_len||
        p->ssid_len>32||!p->rates||!p->rates_len||p->rates_len>12||
-       !p->listen_interval||(p->capability&0x11)!=0x11||
+       !p->listen_interval||p->security>SW_SECURITY_OPEN||
+       (p->capability&0x11)!=(p->security==SW_SECURITY_OPEN?1u:0x11u)||
        (p->capability&~0x0431u))return SW_INVALID;
     for(i=0;i<p->rates_len;i++) {
         if(!rate_ok(p->rates[i]))return SW_INVALID;
@@ -55,7 +56,7 @@ int sw_assoc(uint8_t *out,size_t cap,size_t *used,const struct sw_assoc *p) {
     b[n++]=1;b[n++]=(uint8_t)first;memcpy(b+n,p->rates,first);n+=first;
     if(p->rates_len>8) {b[n++]=50;b[n++]=(uint8_t)(p->rates_len-8);
         memcpy(b+n,p->rates+8,p->rates_len-8);n+=p->rates_len-8;}
-    memcpy(b+n,rsn,sizeof(rsn));n+=sizeof(rsn);
+    if(p->security!=SW_SECURITY_OPEN){memcpy(b+n,rsn,sizeof(rsn));n+=sizeof(rsn);}
     return finish(out,cap,used,b,n);
 }
 static int key_ok(const struct sw_key *p) {
@@ -125,7 +126,7 @@ int sw_bss(uint8_t *out,size_t cap,size_t *used,const struct sw_bss *p) {
     uint8_t b[SW_SIZE_CMD_SET_BSS_INFO]={0};
     if(!start(used)||!p||!rlm_ok(&p->rlm)||!p->ssid||!p->ssid_len||p->ssid_len>32||
        !unicast(p->ap)||p->connected>1||(p->dbdc_band!=0&&p->dbdc_band!=1&&p->dbdc_band!=4)||p->nonht_phy>3||
-       p->disconnect_threshold||!rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
+       p->security>SW_SECURITY_OPEN||p->disconnect_threshold||!rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
     P8(CMD_SET_BSS_INFO,ucBssIndex,p->rlm.bss);
     P8(CMD_SET_BSS_INFO,ucConnectionState,p->connected?0:1);
     P8(CMD_SET_BSS_INFO,ucSSIDLen,p->ssid_len);CP(CMD_SET_BSS_INFO,aucSSID,p->ssid,p->ssid_len);
@@ -134,7 +135,7 @@ int sw_bss(uint8_t *out,size_t cap,size_t *used,const struct sw_bss *p) {
     P8(CMD_SET_BSS_INFO,ucStaRecIdxOfAP,p->ap_sta);
     P16(CMD_SET_BSS_INFO,u2HwDefaultFixedRateCode,p->fixed_rate);
     P8(CMD_SET_BSS_INFO,ucNonHTBasicPhyType,p->nonht_phy);
-    P8(CMD_SET_BSS_INFO,ucAuthMode,7);P8(CMD_SET_BSS_INFO,ucEncStatus,6);
+    P8(CMD_SET_BSS_INFO,ucAuthMode,p->security==SW_SECURITY_OPEN?0:7);P8(CMD_SET_BSS_INFO,ucEncStatus,p->security==SW_SECURITY_OPEN?1:6);
     P8(CMD_SET_BSS_INFO,ucPhyTypeSet,p->phy_set);P8(CMD_SET_BSS_INFO,ucBMCWlanIndex,p->bmc_wlan);
     P32(CMD_SET_BSS_INFO,u4PrivateData,p->private_data);
     rlm(b+OFF(CMD_SET_BSS_INFO,rBssRlmParam),&p->rlm);
@@ -179,9 +180,9 @@ static int txd(uint8_t *out,size_t cap,size_t *used,const struct sw_txd *p,
     } else if(security==1) {
         if(len<18||len>1518||frame[12]!=0x88||frame[13]!=0x8e||
            (((size_t)frame[16]<<8)|frame[17])!=len-18)return SW_INVALID;
-    } else if(security==2) {
+    } else if(security==2||security==4) {
         if(len<14||len>1514||((unsigned)frame[12]<<8|frame[13])<1536||
-           (frame[12]==0x88&&frame[13]==0x8e)||!p->protected_frame)return SW_INVALID;
+           (frame[12]==0x88&&frame[13]==0x8e)||p->protected_frame!=(security==2))return SW_INVALID;
     } else {
         if(len<26||p->protected_frame)return SW_INVALID;
         fc=rd16(frame);
@@ -199,7 +200,7 @@ static int txd(uint8_t *out,size_t cap,size_t *used,const struct sw_txd *p,
         (2u<<23)|((uint32_t)p->queue<<25);
     d1=p->wlan|(UINT32_C(1)<<31)|((uint32_t)p->own_mac<<24);
     if(security==3)d1|=(1u<<10)|(2u<<16)|(12u<<11);
-    else if(security){d1|=1u<<15;if(security==2)d1|=1u<<10;}
+    else if(security){d1|=1u<<15;if(security==2||security==4)d1|=1u<<10;}
     else d1|=(1u<<10)|(2u<<16)|(12u<<11);
     d2=(life<<16)|(UINT32_C(1)<<31);
     if(!security||security==3) {d2|=((fc>>4)&15u)|(((fc>>2)&3u)<<4);d7=(((uint32_t)(fc>>4)&15u)<<16)|(((uint32_t)(fc>>2)&3u)<<20)|((uint32_t)p->spe_index<<11);}
@@ -232,3 +233,5 @@ int sw_data_tods(uint8_t*out,size_t cap,size_t*used,const struct sw_peer*p,const
     memcpy(out+24,(const uint8_t *)"\xaa\xaa\x03\x00\x00\x00",6);
     *used=n+18;return SW_OK;
 }
+
+int sw_open_data_txd(uint8_t*o,size_t c,size_t*u,const struct sw_txd*p,const uint8_t*f,size_t n){return txd(o,c,u,p,f,n,4);}

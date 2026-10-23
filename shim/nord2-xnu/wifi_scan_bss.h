@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define NSB_IE_BYTES 1024u /* Exact maximum IE room of the Apple1164-byte scan result. */
-#define NSB_RESULTS 16u
+#define NSB_RESULTS 64u /* matches existing bounded Apple cursor capacity; owner storage is static */
 #define NSB_SCAN_DONE_BYTES 476u
 struct nsb_record {
  uint8_t bssid[6],transmitter[6],ssid[32],ssid_len,ssid_present,hidden;

@@ -60,7 +60,7 @@ restore:
  nss_return.origin=(struct nct_scan_return){.basic=&nbc_native.state,.cap=&ncd_native.diag,.init=&nwfn_native.init,.firmware=&nfp_native,
   .sealed=1,.completed=w->completed,.tx_index=w->tx_index,.pse_total=nbc_native.state.plan.pse_cmd,.capacity=n->credit_capacity,.next_sequence=w->next_sequence,.generation=n->generation};
  for(unsigned k=0;k<5;k++)nss_return.queue[k]=n->queue[k];
- nsr_native.closed_generation=n->generation;nsr_native.closed_us=n->last;
+ nsr_native.closed_generation=n->generation;nsr_native.closed_us=n->last;nsr_native.refresh_requested_us=n->last;nsr_native.refresh_after_scan=0;
  nsr_native.hw0_next=n->normal.next;nsr_native.token_next=n->normal.token_next;nsr_native.next_pid=n->next_pid;
  nsr_native.scan_ticket=0;nsr_native.scan_ready=0;nsr_native.scan_state=1;
  niwj_clear(njs_native.cache,sizeof njs_native.cache);njs_native.cache_next=0;
@@ -86,18 +86,18 @@ static void njs_rejoin_scan_done(void*cookie,uint64_t generation,uint64_t ticket
   nsr_native.scan_ready=usable&&(status==NSS_COMPLETE||status==NSS_PARTIAL)&&v.client_generation==generation&&
    v.captured_us>=nsr_native.closed_us&&v.scan->started>=nsr_native.closed_us&&nss_return.consumed&&
    !nct_native.active&&nct_done_receipt(&nct_native.session)&&!ncb_native.rx.active&&!ncb_native.rx.halt&&!ncb_native.rx.error;
-  nsr_native.scan_state=3;
+  nsr_native.scan_state=!nsr_native.scan_ready&&nsr_native.refresh_after_scan?1:3;nsr_native.refresh_after_scan=0;
  }
  IOLockUnlock(nss_native.lock);(void)nord2_wifi_scan_release(ticket);
 }
 static void njs_rejoin_refresh(void){
  if(ncd_native.worker!=current_thread()||!nss_available())return;
  IOLockLock(nss_native.lock);
- unsigned run=nsr_native.scan_state==1&&!nss_native.failed&&!njs_native.queued&&!njs_native.active;
+ unsigned run=nss_native.powered&&nsr_native.scan_state==1&&!nss_native.failed&&!njs_native.queued&&!njs_native.active;
  uint64_t generation=nsr_native.closed_generation;
  /* One finite publication attempt; queue-full may retry only inside30s. */
  uint64_t now=njs_uptime_us();
- if(run&&(now<nsr_native.closed_us||now-nsr_native.closed_us>=UINT64_C(30000000))){nsr_native.scan_state=3;run=0;}
+ if(run&&(now<nsr_native.refresh_requested_us||now-nsr_native.refresh_requested_us>=UINT64_C(30000000))){nsr_native.scan_state=3;run=0;}
  IOLockUnlock(nss_native.lock);if(!run)return;
  struct nss_request q={0};uint64_t ticket=0;
  int r=nord2_wifi_scan_enqueue(&q,&nsr_native,generation,njs_rejoin_scan_done,&ticket);

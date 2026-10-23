@@ -4,8 +4,8 @@
  * its key-bearing command buffer, and consumed only on that command's actual
  * DDONE event. No keys, peer addresses or passwords are retained here. */
 struct nsr_ledger {
- uint64_t closed_generation,closed_us,scan_ticket,pending_ticket,admitted_generation;
- unsigned hw0_next,token_next,next_pid,scan_state,scan_ready;
+ uint64_t refresh_requested_us,closed_generation,closed_us,scan_ticket,pending_ticket,admitted_generation;
+ unsigned hw0_next,token_next,next_pid,scan_state,scan_ready,refresh_after_scan;
  unsigned ptk,gtk,pending,bad,key_pair,key_index,key_add;
 };
 static void nsr_key_capture(struct nsr_ledger*l,const struct nst*s){

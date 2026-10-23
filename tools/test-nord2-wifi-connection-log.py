@@ -55,6 +55,8 @@ yes(complete()+row('IOS JOINNOTICE',notice(current=0,generation=0,epoch=1)),'cur
 yes(complete()+row('IOS JOINNOTICE',notice(current=0,epoch=1)),'current_authorized_link_observed')
 # Missing trace identity does not manufacture an attribution across clients.
 event_unbound={k:event()[k]for k in m.EVENT};r=yes(complete(e=event_unbound),'join_notification_observed',False);assert r['uncorrelated_station_events']==1
+yes(row('IOS EVENT',dict(event_unbound,event=1)),'authorized_link_observed',False)
+no(row('IOS EVENT',event(event=1))) # power notification has no station identity
 for omission in ('IFNET LINK','IOS EVENT','IOS JOINNOTICE','IOS STATION'):
  text=''.join(x for x in complete().splitlines(keepends=True)if not x.startswith('NORD2 WIFI '+omission+':'))
  r=yes(text);assert not(r['authorized_link_observed']and r['join_notification_observed'])
@@ -237,6 +239,46 @@ q=local_station(tx_accept=1,tx_local=1)
 no(local_parts(q).replace(' tx_local=1',' tx_local=1 tx_local=1'))
 no(local_parts(q).replace(' tx_local=1',' tx_local=-1'))
 no(local_parts(q).replace(' tx_local=1',' local_tx=1'))
+# Explicit OPEN receipt keeps WPA key fields false; legacy keyless receipts
+# remain invalid. Mixed or changing security cannot manufacture authorization.
+def security_station(security=2,**kw):
+ d=ready(ptk=0,gtk=0) if security==2 else ready()
+ d.update(tx_local=0,security=security,rx_raw_data=0);d.update(kw)
+ return {k:d[k]for k in m.STATION_SECURITY}
+def security_parts(d,sample=1):
+ fields=[part+(['tx_local']if i==3 else ['security','rx_raw_data']if i==4 else [])for i,part in enumerate(m.STATION_PARTS)]
+ return ''.join(row('IOS STATIONPART',dict(sample=sample,part=i+1,**{k:d[k]for k in part}))for i,part in enumerate(fields))
+prefix=complete().split('NORD2 WIFI IOS STATION:')[0]
+for sec in (1,2):
+ d=security_station(sec)
+ yes(prefix+security_parts(d),'current_authorized_link_observed')
+ yes(complete(d),'current_authorized_link_observed')
+ for key in ('associated','sta','port'):
+  q=d.copy();q[key]=0;no(complete(q))
+for sec in (0,3,m.U32):no(complete(security_station(sec)))
+for key in ('ptk','gtk'):
+ no(complete(security_station(**{key:1})))
+ no(complete(security_station(1,**{key:0})))
+no(complete(ready(ptk=0,gtk=0)))
+no(prefix+security_parts(security_station())+security_parts(security_station(1),2))
+no(prefix+security_parts(security_station())+local_parts(local_station(),2))
+yes(prefix+security_parts(security_station(rx_raw=3,rx_raw_eapol=1,rx_raw_drop=1,rx_raw_data=1)),'current_authorized_link_observed')
+no(complete(security_station(rx_raw_data=1)))
+no(complete(security_station(rx_raw_data=m.U32+1)))
+yes(bundle(auth_upper=0,rsn_bytes=0,key_kind=0,key_bytes=0,native_flags=0),'authorized_link_observed',False)
+for key,value in (('auth_upper',1),('rsn_bytes',22),('key_kind',6),('key_bytes',32),('native_flags',4)):
+ q=dict(auth_upper=0,rsn_bytes=0,key_kind=0,key_bytes=0,native_flags=0);q[key]=value;no(bundle(**q))
+# Actual healthy runtime emits these two bounded group-rekey transitions.
+# Accept their continuation only after a stable authorization in that attempt;
+# a prefix or keyless/OPEN transition still cannot prove a handshake.
+for phase,action in ((13,16),(10,15)):
+ d=security_station(1,transaction=phase,action=action,t_ms=400)
+ text=prefix+security_parts(security_station(1))+security_parts(d,2)
+ yes(text,'current_authorized_link_observed',False)
+ yes(text+security_parts(security_station(1,t_ms=500),3),'current_authorized_link_observed')
+ no(prefix+security_parts(d))
+ for change in ({'security':2,'ptk':0,'gtk':0},{'ptk':0},{'gtk':0},{'port':0},{'ticket':2},{'generation':2},{'t_ms':299}):
+  no(prefix+security_parts(security_station(1))+security_parts(dict(d,**change),2))
 # Source-literal format strings, compiled with actual C printf at maximal
 # declared integer widths, reproduce kernel formatting without private data.
 formats=[];source_pins={}

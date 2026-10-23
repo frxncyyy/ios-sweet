@@ -10,9 +10,11 @@ extern "C" {
 #define NIWJ_ASSOC_BYTES 592u
 #define NIWJ_AP_RSN_BYTES 257u
 #define NIWJ_WPA2_PSK_CCMP 1u
+#define NIWJ_OPEN 2u
 /* Copied kernel-only secret input; never a user pointer or authority receipt.
  * Framework supplies PMK32 for both ordinary passphrase and ready-PMK input.
- * Caller and backend must explicitly clear their copies on every retirement. */
+ * OPEN carries no PMK or RSN; these output arrays stay zero without starting
+ * WPA. Caller/backend explicitly clear all copies on every retirement. */
 struct niwj_request {
  uint8_t ssid_length,ssid[32],has_target,target[6],pmk[32],station_rsn[22],association_reason;
  uint32_t security,native_flags;
@@ -41,6 +43,7 @@ struct niwj_target {
  uint8_t band,channel,rate_count,rates[12]; /*500kbps; basic flags retained*/
  uint16_t ap_rsn_bytes;uint8_t ap_rsn[NIWJ_AP_RSN_BYTES];
  int16_t rssi_dbm;
+ uint32_t security; /* copied validated request profile, never scan authority */
 };
 /* Pure retained-record eligibility, never native ownership/readiness. Source
  * nsb_add's full-cache overflow preserves all16 actual records. With matched

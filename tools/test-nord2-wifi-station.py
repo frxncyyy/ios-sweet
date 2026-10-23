@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='wifi-station-') as td:
     if f.suffix in ('.c','.h','.inc'):(d/f.name).write_bytes(f.read_bytes())
  for name,(fixture,extra) in plan.items():
   if args.only and name!=args.only:continue
+  if 'wifi_station_transport' in extra and 'wifi_scan_bss' not in extra:extra=extra+['wifi_scan_bss']
   files=[P/fixture]+[d/(n+'.c') for n in base+extra]+[B/'src'/x for x in ['hash/sha1.c','codec/dec32be.c','codec/enc32be.c','symcipher/aes_ct.c','symcipher/aes_ct_dec.c','symcipher/aes_ct_cbcdec.c']]
   cmd=['clang','-std=c11','-O1','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-unused-const-variable','-Wno-unused-function','-fsanitize=address,undefined','-fno-sanitize-recover=all','-pthread','-I'+str(d),'-I'+str(P),'-I'+str(B/'inc'),'-I'+str(B/'src'),*map(str,files),'-o',str(d/name)]
   subprocess.run(cmd,check=True);result=subprocess.run([str(d/name)],text=True,capture_output=True);print(name,result.returncode,result.stdout.splitlines()[-1:] if result.stdout else result.stderr[-1000:])

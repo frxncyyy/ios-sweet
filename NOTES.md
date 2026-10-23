@@ -4,6 +4,47 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: cohesive lifecycle runtime frozen; local native compile PASS.**
+  CID4 pending lifetime now remains held until DMA retires, including a real
+  SCAN_DONE arriving first; actual-owner hostile regression passes. LongOFF
+  refresh uses a separate request timestamp, preserving original closed_us;
+ 31sOFF->ON->freshscan->nextOPEN/WPA2 connection passes in both orders.
+  Retention+power merged C++ review found no blocker. Root regenerated0082
+  (24509lines, pristine apply and exact buildtree equality PASS), compiled all15
+  changed/owning ARMv8.2 generic TUs including actualIOUC C++, all PASS. Six
+  established iOS contract suites pass on combined sources; OPEN actual2552,
+  pure518 channels/233 history, full lifecycle owner PASS. Existing station/client
+  regression compatibility updates are complete: all11stationgroups and full
+  actualIOUC/retention/power/lifetime/concurrency suites PASS. Fresh strict
+  hardware readers pass10positive/38negative cases. Freeze
+  and commands under wifi-ios-lifecycle/ios. Installed phone remains618e62b5;
+  no new image, flash or hardware success claimed yet.
+
+- **2026-10-23: integrated Wi-Fi lifecycle candidate; healthy618e62b5 stays installed.**
+  User requests connected scans, effective OFF/ON, stable5GHz and OPEN/no-password
+  networks (not keyedWEP). No new flash/device mutation. Previous600s collector
+  exited0; verified618 recovery retained. Claude Opus session76a77f05 was rejected
+  immediately for quota; no Claude work is claimed. Native agents provided the
+  reviewed candidates; root integrated DFS8, OPEN14, lifecycleV2 ninefiles and
+  retention17paths contextually. Private pinned manifests: wifi/five-ghz-20261023,
+  wifi/open-network-20261023, wifi/lifecycle-20261023/v2, and five-ghz/retention.
+  Authenticated37-channel policy includes15passiveDFS, excludes14/144. NSB64;
+  per-client64-row history uses original observation age and30sTTL; no repeated
+  GET rejuvenation, no fabricated native scan/connection authority. OFF invalidates
+  history across client power epochs. OPEN uses actual disabled-cipher1 and
+  STA0/2, no PTK/GTK/RNG; plain traffic remains bound to current peer. Associated
+  scans retain NST owner and continue data/EAPOL; CID4 cancels safely. Root merged
+  lifecycle power state with retention-aware clear/GET; independent wire review
+  caught CID4 pending-pointer lifetime and long-OFF auto-refresh gaps, format agent
+  is fixing/testing both before build. Hardware claims remain baseline only.
+  Combined pure518 channel/233 retention checks PASS; OPEN ownerbothorders PASS;
+  final merged host/native compile pending. Strict connection reader supports
+  explicit OPEN receipts and existing healthy WPA2 GTK-rekey observations;
+  real618 log now parses valid without claiming DHCP from authorization alone.
+  Fresh offline stage research/nord2/wifi-ios-lifecycle/ios. No generatedpatch,
+  CI or newimage yet; exactimageapproval still required. Preserve kmod/.
+
+
 - **2026-10-23: Wi-Fi/DHCP WORKING; user confirms the IP/router/Safari test.**
   User replied FUNZIONA to call_bb34ad358ebe43719dbddf12be7a7a72 after first
   WPA2 Join on618e62b5, privateaddressoff. Corrected zero-based STA0/2 fixed

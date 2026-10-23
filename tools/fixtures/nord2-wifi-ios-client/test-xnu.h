@@ -1,5 +1,8 @@
 #ifndef NIWL_TEST_XNU_H
 #define NIWL_TEST_XNU_H
+static unsigned long long niwl_scan_test_us=400;
+static bool niwl_scan_extended=false;
+#define NIWL_SCAN_TEST_NOW() niwl_scan_test_us
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
@@ -21,7 +24,8 @@ constexpr int kIOReturnSuccess=0,kIOReturnNotReady=-1,kIOReturnNotOpen=-2,kIORet
 constexpr uint32_t kIODirectionOut=2;
 constexpr uint32_t kIOMemoryKernelUserShared=1,kIOMapReadOnly=0x1000,kIOExternalMethodArgumentsCurrentVersion=2;
 struct IOLock {std::mutex m;};static IOLock*IOLockAlloc(){if(fail_lock)return nullptr;locks++;return new IOLock;}static void IOLockFree(IOLock*p){locks--;delete p;}static void IOLockLock(IOLock*p){p->m.lock();}static void IOLockUnlock(IOLock*p){p->m.unlock();}
-static void*IOMalloc(size_t n){malloc_count++;return std::malloc(n);}static void IOFree(void*p,size_t){malloc_count--;std::free(p);}
+static unsigned niwl_malloc_calls,niwl_malloc_fail;
+static void*IOMalloc(size_t n){if(++niwl_malloc_calls==niwl_malloc_fail)return nullptr;void*p=std::malloc(n);if(p)malloc_count++;return p;}static void IOFree(void*p,size_t){malloc_count--;std::free(p);}
 class OSObject {std::atomic<int> refs{1};public:virtual ~OSObject()=default;virtual void free(){};void retain(){refs++;}void release(){assert(refs>0);if(!--refs){free();delete this;}}};
 class OSBoolean:public OSObject {bool value;public:explicit OSBoolean(bool v):value(v){}bool isTrue(){return value;}};
 #define OSDynamicCast(t,p) dynamic_cast<t*>(p)

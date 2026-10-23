@@ -40,3 +40,10 @@ int niwe_scan_done(uint8_t*p,size_t n,const uint8_t name[16],uint32_t status){
  for(unsigned i=0;i<52;i++)p[i]=0;p32(p,87);p[24]=4;p32(p+28,10);
  for(unsigned i=0;i<16;i++)p[32+i]=name[i];p32(p+48,status);return 0;
 }
+
+/* Same no-primary kind87 event shape as other source-supported notifications.
+ * Event1 is POWER_CHANGED; receiver refreshes GET19, not physical power proof. */
+int niwe_power_changed(uint8_t*out,size_t n,const uint8_t name[16]){
+ unsigned end=0;if(!out||n<48||!name||!name[0])return -1;for(unsigned k=0;k<16;k++)if(!name[k])end=1;if(!end)return -1;
+ for(unsigned k=0;k<48;k++)out[k]=0;out[0]=87;out[28]=1;for(unsigned k=0;k<16&&name[k];k++)out[32+k]=name[k];return 0;
+}
