@@ -3,6 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: complete audio parity images VERIFIED; exact approval pending.**
+  Source `23ebee50313dea81c3c1da8c6a1ee84484cec87a`, CI `40015584829`
+  attempt 1 SUCCESS. All 261 generated targets match the reviewed source;
+  kernel SHA-256 `5332742257fa86fe17ad17f96e7548f6b84c01e6f2f27f238eae9d4b4f31a3fd`.
+  Full sanitizer suite, native compiles and three source reviews PASS.
+  HAL package is byte-identical to the installed package. Both independent
+  image reviews PASS; `ios-parity/prepared.json` verifies images, reports,
+  runner, test plan and fallback hashes. No new device action or authorization.
+  Playback: `shim/out/nord2-xnu/nord2-ios-audio-parity-playback-stop23.img`,
+  33,540,096 bytes, 14,336 spare, SHA-256
+  `d0677caa0147dd1d999e93b75daf22541c225dfea5f875e4202e5ba58adb3a0c`.
+  Rollback: `nord2-ios-audio-parity-rollback-stop23.img`, 33,529,856 bytes,
+  24,576 spare, SHA-256
+  `ba954be4b73e22d4457ccbf2891420a2368c57eed0cbe04c216e965e3c39ad25`.
+  Next after exact human approval: boot-only guarded runner once, confirm HAL
+  reuse and clean amp initialization, STOP, one silent DMA test, one quiet
+  one-second tone, then HAL media/volume/pause/resume and UI/Wi-Fi regression.
+  Physical amplifier ACK/revision, clock lock, DMA and audible output remain
+  unverified. Microphone/telephony and speaker-protection DSP are out of scope.
+  Conditional recovery uses the new HAL-aware rollback above or tested RAM ADB;
+  an old Wi-Fi kernel alone does not undo the HAL. Never boot stock Android.
+  Phone remains healthy on `62a89dcc`, audio disabled. The partial
+  `ios-i2c-legacy` candidate is permanently superseded; never test it.
+
+
 - **2026-10-23: complete audio parity candidate validated; CI next.**
   Integrated Android I2C order/mask129+readonlyGICguard/W1Cverification,
   amplifier I2CR+containerkeys,100msstop/resetbounds, both-outputmute-first,
