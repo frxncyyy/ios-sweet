@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: parity audio initialization and silent/tone DMA PASS.**
+  Current image `d0677caa…adb3a0c`; user confirms UI/touch/buttons healthy.
+  HAL reuse mode1 phase2 error0. Both physical TFA9874 revisions are `0c74`;
+  initialized1, gate0, error0, uncertain0, stop_error0. STOP token2 disabled
+  automatic HAL audio. Silent token3 completed 431 ticks / 47,904 silent frames,
+  max gap 2,369 us, stopped cleanly. Tone token5 completed 48,000 generated frames,
+  47,848 PCM frames serviced, cumulative 808 ticks, max gap 3,711 us, stopped
+  cleanly. STATUS token6: enabled0/running0/error0/uncertain0/stop_error0.
+  No tone retry. Human audibility reply pending; then HAL media/volume and
+  pause/resume tests remain. Immutable initial and DMA/tone log/JSON receipts
+  saved in `ios-parity/hardware-review`. Collector rootexec83639 still running.
+
+
+- **2026-10-23: complete parity image flashed; USB collection running.**
+  Human `call_6fe9f2dbf54743acb8ff04db0116ccbf:0` authorized playback
+  `d0677caa…adb3a0c`, HAL reuse, quiet live tests and conditional recovery
+  `ba954be4…3c39ad25` / tested RAM ADB. Guarded `ios-parity` runner flashed
+  boot and rebooted OKAY. Root exec 83639 collects USB for 600 seconds after
+  enumeration. Runner is consumed: never rerun playback. No audio command sent
+  yet; wait for HAL reuse and complete audio initialization before live tests.
+  Preserve logs in `ios-parity/hardware-review`. UI confirmation still pending.
+
+
 - **2026-10-23: complete audio parity images VERIFIED; exact approval pending.**
   Source `23ebee50313dea81c3c1da8c6a1ee84484cec87a`, CI `40015584829`
   attempt 1 SUCCESS. All 261 generated targets match the reviewed source;
