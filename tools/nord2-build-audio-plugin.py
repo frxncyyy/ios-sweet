@@ -24,7 +24,7 @@ def main():
   '-bundle','-framework','CoreFoundation','-Wl,-no_uuid','-o',str(bundle/'RedwoodAudio'),str(src/'audio_plugin.c')],check=True)
  (bundle/'Info.plist').write_bytes((src/'audio_plugin.plist').read_bytes())
  subprocess.run(['plutil','-lint',str(bundle/'Info.plist')],check=True)
- checks=[('architecture',['xcrun','lipo','-verify_arch','arm64',str(bundle/'RedwoodAudio')],None),
+ checks=[('architecture',['xcrun','lipo',str(bundle/'RedwoodAudio'),'-verify_arch','arm64'],None),
  ('platform',['xcrun','vtool','-show-build',str(bundle/'RedwoodAudio')],'platform IOS'),
  ('factory',['xcrun','nm','-gU',str(bundle/'RedwoodAudio')],' _RedwoodAudio_Create'),
  ('type',['xcrun','otool','-hv',str(bundle/'RedwoodAudio')],'BUNDLE'),

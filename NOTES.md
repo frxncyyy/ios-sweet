@@ -3,6 +3,13 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: first audio CI reached HAL compilation, verifier invocation fixed.**
+  Source e7ed63229c8e3accc5c1fca4f3778e427e1d7d34, run39968346901 failed
+  before kernel build: HAL compiled and plist lint passed, but lipo interpreted
+  the trailing input filename as another -verify_arch argument. Move filename
+  before the command; preserve all checks. Secondary missing KDK artifacts were
+  consequences, not the root failure. No phone changes; retry complete CI next.
+
 
 - **2026-10-23: complete speaker candidate integrated; local checks PASS, CI next.**
   Canonical audio_{device,stream,live,hw,afe,amp,i2c8,id,board,install} now
