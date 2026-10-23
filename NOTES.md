@@ -4,6 +4,43 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: gainrange images VERIFIED; exact approval pending.**
+  Independent playback/rollback reviewsPASS; prepared.json complete in
+  ios-gainrange, runner/testplan/host/CI/reviews pinned. Source7ed29f2d,
+  CI40031037519 success. Playbackb60647f1…0d27130; rollback53e61d49…81710e0d
+  (full hashes below). PinnedHAL remains byte-identical; route3b8cb873
+  preferredfallback verifiedbefore/aftereachreview, RAMADB alsoverified.
+  Request exactauthorization, thenfastboot, oneguardedflashonly. First
+  cleaninit/UI, silentDMA/repeatedquietrestart, thenSTOPped perchannelgain
+  adjustment fromtested256/1024 in <=6dB steps withlisteningfeedback.
+  Max32768is digitalunity only, not calibratedspeaker-protection limit;
+  no analoggain/DSPprotection change. NormalAndroidvolume remainsunproven.
+  Currentphone oldbalance d0b18b64, audioSTOPped/sticky-11, UIpreviously
+  healthy. No moreenable/tone onoldfault. No backgroundcollector/pipeline.
+
+
+
+- **2026-10-24: gainrange images built; independent image review running.**
+  Pipeline85220 complete exit0, CI40031037519/7ed29f2d verified.
+  nord2-ios-audio-gainrange-playback-stop23.img33542144B/spare12288,
+  SHA256b60647f157091171f98ad2bd4a3d8dcb62836856f1dae83f0138be7f40d27130.
+  Rollback33531904B/spare22528,
+  SHA25653e61d498aed71c51e246b1da0d4b68f103ba867a7118e416fb4b41281710e0d.
+  GenericchecksPASS; profileagent nowruns independent reviews. No exact
+  authorization/flash yet. Currentoldkernel STATUS17 read-only confirms
+  enabled0/running0/error-11/stop0/uncertain0; no audio restarted.
+
+
+
+- **2026-10-24: gainrange CI succeeded and artifacts verified; packing images.**
+  CI40031037519 success on7ed29f2d; all261generatedtargets match.
+  Kernel17893416B SHA25664944a53f3fe79357094deba7cb42e00264919242242d97c1a629548fc962119.
+  PinnedHAL unchanged, independentfinalsource receipt allhashesmatch.
+  Pipeline85220 nowpacks playback/rollback inios-gainrange; no newimage
+  authorization or phonewrite. Next independentimageverification andapproval.
+
+
+
 - **2026-10-24: gainrange/startup CI40031037519 running.**
   Source7ed29f2d5c8cf44d02eb50cdad4a133bb3011791 pushedfork; independent
   review no concreteblocker (profile-sol/gainrange-review/REVIEW.md).
