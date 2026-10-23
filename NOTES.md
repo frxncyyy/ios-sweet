@@ -4,6 +4,56 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: complete speaker candidate integrated; local checks PASS, CI next.**
+  Canonical audio_{device,stream,live,hw,afe,amp,i2c8,id,board,install} now
+  implement HAL PCM48k/S16 stereo, I2S3 32-bit slots, both TFA9874 amplifiers,
+  source-backed clocks/reset/profile, bounded streaming and retained USB control.
+  Hardware owns one worker and never touches DDR/UFS rail slaves; uncertain
+  I2C holds the two local amps in reset before digital shutdown. Input/haptics
+  are NOT implemented by these output changes. Normal hardware gain capped
+  at256/32768 pending measured speaker-protection support; no sound proven yet.
+  Raw board blob remains private, pinned4163B SHA635300fb...038692 and decoded
+  from ADT only; no firmware values/blobs committed. HAL downloaded at pinned
+  HackiOS userland commit in CI, unmodified source, with MIT license preserved.
+  New prelaunch HAL installer/repair runs every boot; mode2 performs rollback
+  without package; original Apple HAL preserved intact. New rollback-capable
+  image must be built alongside playback; old55 alone cannot reverse HAL install.
+  `tools/nord2-audio-check.py --board <private cnt>` PASS:144 transaction failure/
+  crash scenarios, PCM wrap/volume/mute/overflow,USB token tests,5 real-C/fakeUSB
+  CLI tests, continuous/stalled DMA tests and2009 amp transfers across3 modeled
+  playback lifecycles plus injected bus fault. All13 changed/generated native
+  translation units compile with actualNORD2 headers andWall/Wextra/Werror.
+  Independent reviews found/fixed truncation on lastclose, logging during DMA,
+  unsigned timestamp sampling race; actual HFS API/dirent/runtime paths reviewed.
+  Local original HFSX root prerequisites verified read-only (22paths180224Breads).
+  Native /product/audio flags absent from both currentNord2 and Topaz builder;
+  optional identity-only addition deferred because not established as a blocker.
+  Evidence/reviews/native receipts in research/nord2/audio/playback-20261023.
+  No audio image exists/authorized/flashed yet; phone healthy55c65bc7 unchanged.
+
+
+- **2026-10-23: audio playback implementation active; phone remains healthy55c65bc7.**
+  User requests complete speaker attempt with minimum reflashes, reusing prior
+  Claude/DeepSeek and latest HackiOS/Topaz. Current private workspace
+  research/nord2/audio/playback-20261023. Upstream pins: Topaz e4772911e116ab4ab6c4ac1f38e6106fefe8b483;
+  HackiOS kernel8e61187098f2c26c5daee8f9f72b6416aa64b9ab, userland
+  a79ff0772a3454fd1ef127e181e5b3bce6c9ce18. Topaz/HackiOS HAL source byte-identical.
+  Claude Opus resumed restricted hardware audit but hit quota before implementation;
+  stream/session receipt saved in claude-hardware. Sol hardware/install/profile
+  agents prepared private candidates. New hardware includes continuous SRAM DMA,
+  source-backed cold clocks/reset/I2C8, TFA9874 configuration, conservative gain,
+  worker ownership and clean stop; host tests are NOT hardware success.
+  Pinned stock Nord2 A16 TFA container found in oneplus-mt6893-devs vendor repo;
+  exact physical phone container identity unverified, only0a74/0b74/0c74 accepted.
+  Blob remains private; boot ADT supplies hash-checked board data, not Git firmware.
+  Installer stages verified HAL and restores VirtualAudio with durable journal,
+  prelaunch repair and package-independent rollback. Separate rollback-capable
+  image is required: old55 does NOT undo persistent HAL changes.
+  Parent integrates devfs/PCM/USB live and tests all components before CI.
+  No new image authorization, no USB/device writes, no new flash. No microphone,
+  earpiece or haptics success claimed. Current Wi-Fi recovery copy55 unchanged.
+
+
 - **2026-10-23: scan-cancel OFF/ON hardware SUCCESS; new recovery copy saved.**
   Human call_a8eff3e5704f41afa1596de23a52ddb8 says "perfetto, funziona" to the
   OFF/5s/ON, fresh networks/reconnection/Safari and two-minute responsiveness task.

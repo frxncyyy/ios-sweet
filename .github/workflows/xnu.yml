@@ -67,6 +67,15 @@ jobs:
           xcodebuild -version
           xcrun --find iig
 
+      - name: Build pinned Nord2 iOS audio HAL
+        run: python3 tools/nord2-build-audio-plugin.py nord2-audio-hal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nord2-audio-hal
+          path: nord2-audio-hal/
+          retention-days: 7
+
       - name: Build
         working-directory: dxb
         env:

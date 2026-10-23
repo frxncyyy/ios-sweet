@@ -2690,7 +2690,7 @@
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-@@ -648,3 +666,69 @@
+@@ -648,3 +666,81 @@
  bsd/skywalk/packet/pbufpool.c			optional skywalk
  bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
  bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
@@ -2760,6 +2760,18 @@
 +bsd/dev/wifi_wpa_diag.c			standard
 +bsd/dev/wifi_wpa_owner.c			standard
 +bsd/dev/wifi_wpa_nst.c			standard
++
++# Nord 2 speaker HAL, exclusive audio worker and fixed deployment transaction.
++bsd/dev/audio_device.c standard
++bsd/dev/audio_stream.c standard
++bsd/dev/audio_live.c standard
++bsd/dev/audio_id.c standard
++bsd/dev/audio_i2c8.c standard
++bsd/dev/audio_amp.c standard
++bsd/dev/audio_afe.c standard
++bsd/dev/audio_hw.c standard
++bsd/dev/audio_board.c standard
++bsd/dev/audio_install.c standard
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -79,6 +79,12 @@
@@ -2830,19 +2842,37 @@
  #if CONFIG_NETBOOT
  		netboot = (mountroot == netboot_mountroot);
  #endif
-@@ -1098,6 +1125,11 @@
+@@ -1098,6 +1125,29 @@
  
  	bsd_init_kprintf("bsd_do_post - done");
  
 +#if defined(NORD2)
 +	/* Exact opt-in preference repair after root mount, before userland. */
 +	nord2_zoom_reset();
++#if defined(NORD2)
++	/* Repair an interrupted HAL transaction before any userspace audio server.
++	 * Recovery image uses nord2audioinstall=2 and needs no package. */
++	extern int nord2_audio_install(void);
++	extern void nord2_audio_initialize(void);
++	int audio_install_error = nord2_audio_install();
++	if (audio_install_error) {
++		printf("NORD2 AUDIO: HAL recovery required error=%d; USB remains available\n", audio_install_error);
++		/* Keep USB responsive for diagnosis; no launchd against a partial HAL. */
++		for (;;) {
++			uint64_t deadline;
++			clock_interval_to_deadline(1000, NSEC_PER_MSEC, &deadline);
++			assert_wait_deadline((event_t)&audio_install_error, THREAD_UNINT, deadline);
++			thread_block(THREAD_CONTINUE_NULL);
++		}
++	}
++	nord2_audio_initialize();
++#endif
 +#endif
 +
  	load_init_program(p);
  	lock_trace = 1;
  }
-@@ -1119,7 +1151,13 @@
+@@ -1119,7 +1169,13 @@
  		}
  	}
  
@@ -4199,7 +4229,7 @@
  #include <kern/sched_prim.h>
  #include <machine/machine_routines.h>
  #include <arm/caches_internal.h>
-@@ -37,6 +39,628 @@
+@@ -37,6 +39,630 @@
  #include <net/dlil.h>
  #include <sys/kern_event.h>
  
@@ -4207,6 +4237,7 @@
 +
 +#if defined(NORD2)
 +#include "wifi_live_control.h"
++#include "audio_live.h"
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 +extern kern_return_t thread_terminate(thread_t);
 +/* sched_prim.h exposes this only to the osfmk compilation unit. */
@@ -4433,6 +4464,7 @@
 +	*address = *configuration = -1;
 +	*length = 0;
 +	int live_response = nwl_usb(setup, data, 1024, length);
++	if (live_response == -1) live_response = nal_usb(setup, data, 1024, length);
 +	if (live_response >= 0) { return live_response; }
 +	if (type == 0xc0 && request == 0x51 && index == 0) {
 +		n = nord2_log_read(value, data, MIN((uint32_t)wanted, 1024u));
@@ -4828,7 +4860,7 @@
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  void sweet_usb_probe(void);
  static void sweet_usb_gadget_start(vm_offset_t dwc);
-@@ -928,4 +1552,5 @@
+@@ -928,4 +1554,5 @@
  		thread_deallocate(thread);
  	}
  }
@@ -5753,11 +5785,16 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1571,4 @@
+@@ -658,3 +1571,9 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 +#endif /* NORD2 */
++
++#if defined(NORD2)
++#define NAH_NATIVE_DEFINE_PREPARE 1
++#include "audio_hw_native.inc"
++#endif
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1867,6 +1867,12 @@
@@ -19061,6 +19098,3277 @@
 +int nwl_usb(const uint8_t setup[8],uint8_t*,size_t,uint32_t*length);
 +#endif
 --- /dev/null
++++ b/bsd/dev/audio_device.c
+@@ -0,0 +1,207 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
++ * Userspace only queues S16LE48k stereo. One retained worker exclusively owns
++ * AFE, amplifier I2C, start/stop and the live command consumer. */
++#include <kern/clock.h>
++#include <kern/locks.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <libkern/libkern.h>
++#include <miscfs/devfs/devfs.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <libkern/crypto/sha2.h>
++#include <sys/conf.h>
++#include <sys/errno.h>
++#include <sys/proc.h>
++#include <sys/random.h>
++#include <sys/systm.h>
++#include <sys/uio.h>
++#include <sys/ioccom.h>
++#include "audio_device.h"
++#include "audio_stream.h"
++#include "audio_live.h"
++#include "audio_hw.h"
++#include "audio_native.h"
++#include "audio_board.h"
++
++#define NSA_CHUNK 256u
++#define NSA_SET_VOLUME _IOW('r', 1, struct nsa_volume_ioctl)
++struct nsa_volume_ioctl { uint32_t below, muted; };
++static LCK_GRP_DECLARE(nsa_group, "nord2-audio");
++static LCK_MTX_DECLARE(nsa_lock, &nsa_group);
++static struct nsa_stream stream;
++static struct nau_hw hardware;
++static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
++ unsigned tone_active, hal_status; uint64_t report_us; } device;
++static uint64_t now_us(void) {
++ uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
++}
++static void notify_worker(void) { thread_wakeup((event_t)&device); }
++static int audio_open(__unused dev_t d,__unused int f,__unused int t,__unused struct proc *p) {
++ if (!device.ready) return ENXIO;
++ lck_mtx_lock(&nsa_lock); stream.opens++; device.opens++; lck_mtx_unlock(&nsa_lock);
++ return 0;
++}
++static int audio_close(__unused dev_t d,__unused int f,__unused int t,__unused struct proc *p) {
++ lck_mtx_lock(&nsa_lock);
++ if (device.opens) device.opens--; /* Drain accepted tail before idle stop. */
++ lck_mtx_unlock(&nsa_lock); notify_worker(); return 0;
++}
++static int audio_write(__unused dev_t d,struct uio *u,__unused int flags) {
++ int16_t pcm[NSA_CHUNK*2]; user_ssize_t total=uio_resid(u);
++ if (total<0 || total%NSA_FRAME_BYTES) return EINVAL;
++ if (total>262144) return E2BIG;
++ while (uio_resid(u)) {
++  unsigned n=(unsigned)uio_resid(u); if(n>sizeof pcm)n=sizeof pcm;
++  int e=uiomove((caddr_t)pcm,(int)n,u); if(e)return e;
++  lck_mtx_lock(&nsa_lock); (void)nsa_enqueue(&stream,pcm,n/4,now_us());
++  lck_mtx_unlock(&nsa_lock);
++ }
++ notify_worker(); return 0;
++}
++static int audio_ioctl(__unused dev_t d,u_long cmd,caddr_t data,
++ __unused int flags,__unused struct proc *p) {
++ if(cmd!=NSA_SET_VOLUME)return ENOTTY;
++ const struct nsa_volume_ioctl *v=(const void*)data;
++ if(v->muted>1)return EINVAL;
++ lck_mtx_lock(&nsa_lock);nsa_volume(&stream,v->below,v->muted);
++ if(v->muted)device.stop=1;
++ lck_mtx_unlock(&nsa_lock);notify_worker();return 0;
++}
++static const struct cdevsw audio_cdev={
++ .d_open=audio_open,.d_close=audio_close,.d_read=eno_rdwrt,.d_write=audio_write,
++ .d_ioctl=audio_ioctl,.d_stop=eno_stop,.d_reset=eno_reset,.d_select=eno_select,
++ .d_mmap=eno_mmap,.d_strategy=eno_strat,.d_type=0
++};
++static void snapshot(struct nal_snapshot *out) {
++ *out=(struct nal_snapshot){0};uint32_t *w=out->word;
++ struct nah_status h;nau_hw_status(&hardware,&h);uint64_t t=now_us()/1000;
++ w[NAL_F_INITIALIZED]=h.initialized;w[NAL_F_RUNNING]=h.running;
++ w[NAL_F_SILENT]=h.silent_only;w[NAL_F_UNCERTAIN]=h.uncertain;
++ w[NAL_F_ERROR]=(uint32_t)h.error;w[NAL_F_STOP_ERROR]=(uint32_t)h.stop_error;
++ w[NAL_F_GATE]=h.gate;
++ w[NAL_F_AMP0]=h.amp_revision[0];w[NAL_F_AMP1]=h.amp_revision[1];
++ w[NAL_F_STATUS0]=h.amp_status[0];w[NAL_F_STATUS1]=h.amp_status[1];
++ w[NAL_F_PCM]=h.pcm_frames;w[NAL_F_SILENCE]=h.silence_frames;
++ w[NAL_F_UNDERRUNS]=h.underruns;w[NAL_F_TICKS]=h.ticks;
++ w[NAL_F_MAX_GAP]=h.max_tick_gap_us;w[NAL_F_TIME_LO]=(uint32_t)t;w[NAL_F_TIME_HI]=(uint32_t)(t>>32);
++ w[NAL_F_STREAM_STARTS]=device.starts;w[NAL_F_TONE_FRAMES]=device.tone_frames;
++ w[NAL_F_HAL_STATUS]=device.hal_status;w[NAL_F_BOARD_STATUS]=nah_board_profile()!=NULL;
++ lck_mtx_lock(&nsa_lock);
++ w[NAL_F_ENABLED]=stream.enabled;w[NAL_F_WRITTEN_LO]=(uint32_t)stream.written;
++ w[NAL_F_WRITTEN_HI]=(uint32_t)(stream.written>>32);w[NAL_F_QUEUED]=stream.count;
++ w[NAL_F_DROPPED_LO]=(uint32_t)stream.dropped;w[NAL_F_DROPPED_HI]=(uint32_t)(stream.dropped>>32);
++ w[NAL_F_PEAK]=stream.peak;w[NAL_F_VOLUME]=stream.below;w[NAL_F_MUTED]=stream.muted;
++ w[NAL_F_OPENS]=stream.opens;w[NAL_F_WRITES]=stream.writes;
++ lck_mtx_unlock(&nsa_lock);
++}
++static int start(unsigned silent,unsigned duration) {
++ int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,now_us());
++ if(!e)device.starts++;
++ printf("NORD2 AUDIO: start=%d silent=%u duration=%u gate=%u amp=%04x/%04x\n",
++ e,silent,duration,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
++ return e;
++}
++static void commands(void) {
++ struct nal_request q;if(!nal_take(&q))return;
++ unsigned result=NAL_OK;
++ if(q.op==NAL_ENABLE) {
++  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.stop_error)result=NAL_UNAVAILABLE;
++  else {lck_mtx_lock(&nsa_lock);nsa_enable(&stream,1);lck_mtx_unlock(&nsa_lock);}
++ } else if(q.op==NAL_STOP) {
++  lck_mtx_lock(&nsa_lock);nsa_enable(&stream,0);lck_mtx_unlock(&nsa_lock);
++  device.tone_active=0;
++  if(hardware.status.running && nau_hw_stop(&hardware))result=NAL_REFUSED;
++ } else if(q.op==NAL_TONE || q.op==NAL_SILENT_TEST) {
++  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.running)result=NAL_REFUSED;
++  else {
++   lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);
++   if(start(q.op==NAL_SILENT_TEST,1000000))result=NAL_REFUSED;
++   else {device.tone_active=1;device.tone_frames=device.tone_phase=0;}
++  }
++ }
++ struct nal_snapshot s;snapshot(&s);(void)nal_complete(&q,result,&s);
++ if(!hardware.status.running || q.op!=NAL_STATUS)printf("NORD2 AUDIO LIVE: token=%u op=%u result=%u error=%d\n",q.token,q.op,result,hardware.status.error);
++}
++static void feed_tone(void) {
++ /* Fixed1kHz sine, half scale BEFORE the independent hardware ceiling. */
++ static const int16_t wave[48]={0,2139,4240,6270,8192,9974,11585,12998,14189,15137,15826,16244,
++ 16384,16244,15826,15137,14189,12998,11585,9974,8192,6270,4240,2139,0,-2139,-4240,-6270,-8192,-9974,
++ -11585,-12998,-14189,-15137,-15826,-16244,-16384,-16244,-15826,-15137,-14189,-12998,-11585,-9974,-8192,-6270,-4240,-2139};
++ int16_t pcm[NSA_CHUNK*2];unsigned n=NAH_QUEUE_FRAMES-hardware.status.queued_frames;
++ if(n>NSA_CHUNK)n=NSA_CHUNK;
++ if(n>NSA_RATE-device.tone_frames)n=NSA_RATE-device.tone_frames;
++ for(unsigned i=0;i<n;i++){int16_t v=wave[device.tone_phase++%48];pcm[2*i]=pcm[2*i+1]=v;}
++ if(n){int r=nau_hw_feed(&hardware,pcm,n);if(r>0)device.tone_frames+=(unsigned)r;}
++}
++static int load_board(void) {
++ DTEntry chosen;const void *data=NULL;unsigned n=0;unsigned char hash[32];
++ if(SecureDTLookupEntry(NULL,"/chosen",&chosen)!=kSuccess ||
++    SecureDTGetProperty(chosen,"nord2-audio-board",&data,&n)!=kSuccess || n!=4163)return -1;
++ SHA256_CTX ctx;SHA256_Init(&ctx);SHA256_Update(&ctx,data,n);SHA256_Final(hash,&ctx);
++ return nah_board_load(data,n,hash);
++}
++static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
++ struct nah_io io;void *cookie=NULL;
++ int e=load_board()?NAH_E_BOARD_CONFIG:0;
++ if(!e)e=nah_native_prepare(&io,&cookie);
++ if(!e)e=nau_hw_init(&hardware,&io,cookie,nah_board_profile());
++ if(e)hardware.status.error=e;
++ uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
++ printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
++ hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
++ for(;;) {
++  commands();
++  unsigned stop=0,enabled=0,queued=0;uint64_t last_sound=0,t;
++  lck_mtx_lock(&nsa_lock);stop=device.stop;device.stop=0;enabled=stream.enabled;
++  queued=stream.count;last_sound=stream.last_sound_us;lck_mtx_unlock(&nsa_lock);t=now_us();
++  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || !last_sound || t-last_sound>=750000)))) {
++   device.tone_active=0;(void)nau_hw_stop(&hardware);
++   lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);queued=0;
++  }
++  /* No amp power for an idle HAL's zero-filled writes. Errors remain visible
++   * and do not spin restarting hardware. Live ENABLE after a clean stop can
++   * accept subsequent playback; uncertain bus state is never retried. */
++  if(!hardware.status.running && !hardware.status.error && enabled && queued &&
++     last_sound && t-last_sound<750000 && !device.tone_active)(void)start(0,0);
++  if(hardware.status.running) {
++   if(device.tone_active)feed_tone();
++   else {
++    int16_t pcm[NSA_CHUNK*2];unsigned room=NAH_QUEUE_FRAMES-hardware.status.queued_frames;
++    if(room>NSA_CHUNK)room=NSA_CHUNK;
++    lck_mtx_lock(&nsa_lock);unsigned n=nsa_dequeue(&stream,pcm,room);lck_mtx_unlock(&nsa_lock);
++    if(n)(void)nau_hw_feed(&hardware,pcm,n);
++   }
++   e=nau_hw_tick(&hardware,now_us());
++   if(!hardware.status.running){device.tone_active=0;
++    if(e==NAH_E_IDLE && !hardware.status.uncertain && !hardware.status.stop_error)hardware.status.error=0;
++    printf("NORD2 AUDIO: stopped=%d error=%d uncertain=%u pcm=%u silence=%u\n",e,hardware.status.error,
++     hardware.status.uncertain,hardware.status.pcm_frames,hardware.status.silence_frames);}
++  } else {lck_mtx_lock(&nsa_lock);if(!last_sound || t-last_sound>=750000)nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);}
++  if(!hardware.status.running && t-device.report_us>=5000000) {
++   struct nal_snapshot s;snapshot(&s);device.report_us=t;
++   printf("NORD2 AUDIO PCM: opens=%u writes=%u queued=%u peak=%u running=%u error=%d pcm=%u\n",
++    s.word[NAL_F_OPENS],s.word[NAL_F_WRITES],s.word[NAL_F_QUEUED],s.word[NAL_F_PEAK],
++    s.word[NAL_F_RUNNING],(int32_t)s.word[NAL_F_ERROR],s.word[NAL_F_PCM]);
++  }
++  uint64_t deadline;clock_interval_to_deadline(2,NSEC_PER_MSEC,&deadline);
++  assert_wait_deadline((event_t)&device,THREAD_UNINT,deadline);thread_block(THREAD_CONTINUE_NULL);
++ }
++}
++void nord2_audio_initialize(void) {
++ unsigned mode=0;PE_parse_boot_argn("nord2audio",&mode,sizeof mode);if(mode!=1 || device.ready)return;
++ nsa_initialize(&stream,1);
++ int major=cdevsw_add(-1,&audio_cdev);
++ if(major<0){printf("NORD2 AUDIO: no device major\n");return;}
++ if(!devfs_make_node(makedev(major,0),DEVFS_CHAR,UID_ROOT,GID_WHEEL,0666,"redwood-audio")){
++  (void)cdevsw_remove(major,&audio_cdev);printf("NORD2 AUDIO: devfs failed\n");return;
++ }
++ thread_t thread=THREAD_NULL;
++ if(kernel_thread_start(audio_worker,NULL,&thread)!=KERN_SUCCESS){printf("NORD2 AUDIO: worker failed\n");return;}
++ thread_deallocate(thread);device.ready=1;device.hal_status=1;
++ printf("NORD2 AUDIO: devfs redwood-audio rate=48000 channels=2 bits=16\n");
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_device.h
+@@ -0,0 +1,4 @@
++#ifndef NORD2_AUDIO_DEVICE_H
++#define NORD2_AUDIO_DEVICE_H
++void nord2_audio_initialize(void);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_stream.c
+@@ -0,0 +1,69 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "audio_stream.h"
++/* 10^(-0.125/20), Q30. Exponentiation keeps attenuation error below one
++ * sample-scale LSB; no floating point in the kernel or approximation in dB. */
++unsigned nsa_gain(unsigned below) {
++ if (below >= 768u) return 0;
++ uint64_t result = UINT64_C(1) << 30, base = 1058400094u;
++ while (below) {
++  if (below & 1u) result = (result * base + (UINT64_C(1) << 29)) >> 30;
++  base = (base * base + (UINT64_C(1) << 29)) >> 30;
++  below >>= 1;
++ }
++ return (unsigned)((result + (1u << 14)) >> 15);
++}
++void nsa_initialize(struct nsa_stream *s, unsigned enabled) {
++ if (!s) return;
++ *s = (struct nsa_stream){0}; s->enabled = !!enabled; s->gain_q15 = 32768;
++}
++void nsa_flush(struct nsa_stream *s) {
++ if (!s) return;
++ s->read = s->write = s->count = 0; s->flushes++;
++}
++void nsa_enable(struct nsa_stream *s, unsigned enabled) {
++ if (!s) return;
++ s->enabled = !!enabled;
++ if (!s->enabled) nsa_flush(s);
++}
++void nsa_volume(struct nsa_stream *s, unsigned below, unsigned muted) {
++ if (!s) return;
++ s->below = below; s->muted = !!muted;
++ s->gain_q15 = muted ? 0 : nsa_gain(below); s->volume_generation++;
++ /* Samples queued at the old volume must not play after an immediate mute. */
++ if (s->muted) nsa_flush(s);
++}
++unsigned nsa_enqueue(struct nsa_stream *s, const int16_t *p, unsigned n, uint64_t now) {
++ if (!s || (!p && n) || n > NSA_QUEUE_FRAMES) return 0;
++ unsigned take = n, peak = 0;
++ if (!s->enabled || s->muted) take = 0;
++ else if (take > NSA_QUEUE_FRAMES - s->count) take = NSA_QUEUE_FRAMES - s->count;
++ s->writes++; s->written += n; s->accepted += take; s->dropped += n - take;
++ for (unsigned i = 0; i < take; i++) {
++  for (unsigned c = 0; c < 2; c++) {
++   int32_t x = p[i * 2 + c]; unsigned level = x < 0 ? (unsigned)-x : (unsigned)x;
++   if (level > peak) peak = level;
++   s->pcm[s->write * 2 + c] = (int16_t)x;
++  }
++  s->write = (s->write + 1u) % NSA_QUEUE_FRAMES;
++ }
++ s->count += take;
++ if (peak > 8u) { s->nonzero += take; s->last_sound_us = now; }
++ if (peak > s->peak) s->peak = peak;
++ return take;
++}
++unsigned nsa_dequeue(struct nsa_stream *s, int16_t *out, unsigned cap) {
++ if (!s || !out) return 0;
++ unsigned n = cap < s->count ? cap : s->count;
++ for (unsigned i = 0; i < n; i++) {
++  for (unsigned c = 0; c < 2; c++) {
++   int32_t x = s->pcm[s->read * 2 + c];
++   /* Division rounds negative samples towards zero, just as positive ones. */
++   out[i * 2 + c] = (int16_t)((x * (int32_t)s->gain_q15) / 32768);
++  }
++  s->read = (s->read + 1u) % NSA_QUEUE_FRAMES;
++ }
++ s->count -= n; s->delivered += n; return n;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_stream.h
+@@ -0,0 +1,23 @@
++#ifndef NORD2_AUDIO_STREAM_H
++#define NORD2_AUDIO_STREAM_H
++#include <stdint.h>
++#define NSA_RATE 48000u
++#define NSA_CHANNELS 2u
++#define NSA_FRAME_BYTES 4u
++#define NSA_QUEUE_FRAMES 8192u
++/* The native wrapper serializes these operations with one short mutex. No
++ * allocation, hardware access or blocking operation belongs in this queue. */
++struct nsa_stream {
++ int16_t pcm[NSA_QUEUE_FRAMES * NSA_CHANNELS];
++ uint32_t read, write, count, enabled, below, muted, gain_q15;
++ uint64_t written, accepted, dropped, delivered, nonzero, last_sound_us;
++ uint32_t peak, opens, writes, volume_generation, flushes;
++};
++void nsa_initialize(struct nsa_stream *, unsigned enabled);
++unsigned nsa_enqueue(struct nsa_stream *, const int16_t *, unsigned frames, uint64_t now_us);
++unsigned nsa_dequeue(struct nsa_stream *, int16_t *, unsigned capacity);
++void nsa_enable(struct nsa_stream *, unsigned enabled);
++void nsa_volume(struct nsa_stream *, unsigned eighth_db_below, unsigned muted);
++void nsa_flush(struct nsa_stream *);
++unsigned nsa_gain(unsigned eighth_db_below);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_live.c
+@@ -0,0 +1,72 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#include "audio_live.h"
++/* Single USB producer / single audio worker. No allocator, wait, lock,
++ * logging, MMIO, driver invocation or secret storage in this transport. */
++static struct {
++ uint32_t enabled,boot[2],pending,token,op,generation,sequence,reply[NAL_WORDS];
++} live;
++static uint32_t get(const uint32_t*p){return __atomic_load_n(p,__ATOMIC_ACQUIRE);}
++static void put(uint32_t*p,uint32_t n){__atomic_store_n(p,n,__ATOMIC_RELEASE);}
++static void le32(uint8_t*p,uint32_t n){for(unsigned k=0;k<4;k++)p[k]=(uint8_t)(n>>(k*8));}
++static uint32_t le16(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8;}
++int nal_enabled(void){return get(&live.enabled)==1;}
++int nal_initialize(uint64_t nonce){
++ if(!nonce||get(&live.enabled))return -1;
++ put(&live.boot[0],(uint32_t)nonce);put(&live.boot[1],(uint32_t)(nonce>>32));
++ put(&live.enabled,1);return 0;
++}
++int nal_submit(unsigned value,unsigned index){
++ if(!nal_enabled()||value>65535||index!=0)return 0;
++ unsigned token=value&NAL_MAX_TOKEN,op=value>>12;
++ if(!token||op<NAL_STATUS||op>NAL_SILENT_TEST||(op==NAL_STATUS&&index))return 0;
++ unsigned previous=get(&live.token);
++ if(token==previous)return op==get(&live.op)&&index==get(&live.generation);
++ if(previous==NAL_MAX_TOKEN||token!=previous+1||get(&live.pending))return 0;
++ put(&live.op,op);put(&live.generation,index);put(&live.token,token);
++ put(&live.pending,1);return 1;
++}
++int nal_take(struct nal_request*q){
++ if(!q||!nal_enabled()||get(&live.pending)!=1)return 0;
++ *q=(struct nal_request){get(&live.token),get(&live.op),get(&live.generation)};
++ put(&live.pending,2);return 1;
++}
++int nal_complete(const struct nal_request*q,unsigned result,const struct nal_snapshot*s){
++ if(!q||!s||result>NAL_LIMIT||get(&live.pending)!=2||
++ q->token!=get(&live.token)||q->op!=get(&live.op)||q->generation!=get(&live.generation))return -1;
++ uint32_t version=get(&live.sequence);put(&live.sequence,version+1);
++ /* Strong word ordering also prevents reader loads crossing the version
++  * checks; no plain concurrent memcpy or unbounded seqlock retry. */
++ for(unsigned k=0;k<NAL_WORDS;k++)__atomic_store_n(&live.reply[k],s->word[k],__ATOMIC_SEQ_CST);
++ const uint32_t prefix[]={NAL_MAGIC,NAL_VERSION,NAL_BYTES,get(&live.boot[0]),get(&live.boot[1]),q->token,q->op,q->generation,result};
++ for(unsigned k=0;k<sizeof prefix/sizeof prefix[0];k++)__atomic_store_n(&live.reply[k],prefix[k],__ATOMIC_SEQ_CST);
++ __atomic_store_n(&live.sequence,version+2,__ATOMIC_SEQ_CST);
++ put(&live.pending,0);return 0;
++}
++size_t nal_caps(uint8_t*out,size_t size){
++ if(!out||size<NAL_CAP_BYTES)return 0;
++ uint32_t v[NAL_CAP_WORDS]={NAL_MAGIC,NAL_VERSION,NAL_CAP_BYTES,NAL_BYTES,
++ NAL_COMMANDS,NAL_MAX_TOKEN,0u,0,0,0,0,0,0,0,0,0};
++ v[9]=nal_enabled();if(v[9]){v[7]=get(&live.boot[0]);v[8]=get(&live.boot[1]);
++ v[10]=get(&live.pending);v[11]=get(&live.token);v[12]=get(&live.op);v[13]=get(&live.generation);}
++ for(unsigned k=0;k<NAL_CAP_WORDS;k++)le32(out+k*4,v[k]);return NAL_CAP_BYTES;
++}
++size_t nal_reply(uint8_t*out,size_t size){
++ if(!out||size<NAL_BYTES||!nal_enabled())return 0;
++ uint32_t before=__atomic_load_n(&live.sequence,__ATOMIC_SEQ_CST);
++ if(!before||(before&1))return 0;
++ uint32_t v[NAL_WORDS];for(unsigned k=0;k<NAL_WORDS;k++)v[k]=__atomic_load_n(&live.reply[k],__ATOMIC_SEQ_CST);
++ if(before!=__atomic_load_n(&live.sequence,__ATOMIC_SEQ_CST))return 0;
++ for(unsigned k=0;k<NAL_WORDS;k++)le32(out+k*4,v[k]);return NAL_BYTES;
++}
++int nal_usb(const uint8_t setup[8],uint8_t*out,size_t capacity,uint32_t*length){
++ if(!setup||!out||!length)return 0;unsigned code=setup[1];
++ if(code<NAL_USB_CAP||code>NAL_USB_REPLY)return -1;
++ *length=0;unsigned value=le16(setup+2),index=le16(setup+4),wanted=le16(setup+6);
++ if(code==NAL_USB_COMMAND){if(setup[0]!=0x40||wanted)return 0;return nal_submit(value,index)?2:0;}
++ if(setup[0]!=0xc0||value||index||!wanted)return 0;
++ size_t n=code==NAL_USB_CAP?nal_caps(out,capacity):nal_reply(out,capacity);
++ if(!n)return 0;*length=(uint32_t)(n<wanted?n:wanted);return 1;
++}
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_live.h
+@@ -0,0 +1,42 @@
++#ifndef NORD2_AUDIO_LIVE_H
++#define NORD2_AUDIO_LIVE_H
++#include <stddef.h>
++#include <stdint.h>
++#define NAL_MAGIC UINT32_C(0x4c41444e)
++#define NAL_VERSION 1u
++#define NAL_CAP_WORDS 16u
++#define NAL_WORDS 48u
++#define NAL_CAP_BYTES (NAL_CAP_WORDS*4u)
++#define NAL_BYTES (NAL_WORDS*4u)
++#define NAL_MAX_TOKEN 4095u
++#define NAL_USB_CAP 0x64u
++#define NAL_USB_COMMAND 0x65u
++#define NAL_USB_REPLY 0x66u
++enum nal_op {NAL_STATUS=1,NAL_ENABLE,NAL_STOP,NAL_TONE,NAL_SILENT_TEST};
++#define NAL_COMMANDS UINT32_C(0x3e)
++enum nal_result {NAL_OK,NAL_UNAVAILABLE,NAL_STALE,NAL_REFUSED,NAL_LIMIT};
++enum nal_field {
++ NAL_F_MAGIC,NAL_F_VERSION,NAL_F_BYTES,NAL_F_BOOT_LO,NAL_F_BOOT_HI,
++ NAL_F_TOKEN,NAL_F_OP,NAL_F_RESERVED,NAL_F_RESULT,
++ NAL_F_ENABLED,NAL_F_INITIALIZED,NAL_F_RUNNING,NAL_F_SILENT,NAL_F_UNCERTAIN,
++ NAL_F_ERROR,NAL_F_STOP_ERROR,NAL_F_GATE,NAL_F_AMP0,NAL_F_AMP1,
++ NAL_F_STATUS0,NAL_F_STATUS1,NAL_F_WRITTEN_LO,NAL_F_WRITTEN_HI,
++ NAL_F_QUEUED,NAL_F_DROPPED_LO,NAL_F_DROPPED_HI,NAL_F_PCM,NAL_F_SILENCE,
++ NAL_F_UNDERRUNS,NAL_F_TICKS,NAL_F_MAX_GAP,NAL_F_PEAK,NAL_F_VOLUME,NAL_F_MUTED,
++ NAL_F_OPENS,NAL_F_WRITES,NAL_F_TIME_LO,NAL_F_TIME_HI,NAL_F_STREAM_STARTS,
++ NAL_F_TONE_FRAMES,NAL_F_HAL_STATUS,NAL_F_BOARD_STATUS,NAL_F_END
++};
++struct nal_request {uint32_t token,op,generation;};
++struct nal_snapshot {uint32_t word[NAL_WORDS];};
++/* EP0 is single producer; a dedicated audio worker consumes commands. ACK
++ * means queued, never that sound reached a speaker. No raw addresses, arbitrary
++ * writes, executable upload, I2C commands or PCM leave/enter through USB. */
++int nal_initialize(uint64_t nonce);
++int nal_enabled(void);
++int nal_submit(unsigned value,unsigned index);
++int nal_take(struct nal_request *);
++int nal_complete(const struct nal_request *,unsigned,const struct nal_snapshot *);
++size_t nal_caps(uint8_t *,size_t);
++size_t nal_reply(uint8_t *,size_t);
++int nal_usb(const uint8_t setup[8],uint8_t *,size_t,uint32_t *length);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_id.c
+@@ -0,0 +1,312 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++#include "audio_id.h"
++
++/*
++ * Register sources (Android tree 04d00c2565764c3922c9b4826b5acff1106e533f,
++ * CONFIG_COMMON_CLK_MT6893 -> clk-mt6885*.c, CONFIG_SND_SOC_MT6885):
++ * drivers/clk/mediatek/clk-mt6885-pg.c, clk-mt6885.c, clk-mt6885-audsys.c,
++ * clk-mt6885-i2c.c, drivers/pinctrl/mediatek/pinctrl-mt6885.c,
++ * drivers/i2c/busses/i2c-mtk.h, sound/soc/mediatek/mt6885/mt6885-reg.h.
++ */
++const uint32_t nau_snapshot_pa[NAU_SNAP_COUNT] = {
++	[NAU_S_PWR_STATUS] = 0x1000616c,  /* AUDIO bit21, CAM bit23 */
++	[NAU_S_PWR_STATUS_2ND] = 0x10006170,
++	[NAU_S_AUDIO_PWR_CON] = 0x10006354,
++	[NAU_S_ADSP_PWR_CON] = 0x10006358,
++	[NAU_S_IFR1_CG] = 0x10001094,     /* ifrao_audio bit25, ifrao_ap_dma_ps bit18 (1 = gated) */
++	[NAU_S_IFR2_CG] = 0x100010d8,     /* ifrao_apdma bit31 */
++	[NAU_S_IFR3_CG] = 0x100010ac,     /* ifrao_audio26m bit4 */
++	[NAU_S_PROT2_STA1] = 0x10001724,  /* AUDIO_PROT_STEP1_0 ack bit4 */
++	[NAU_S_CLK_CFG_7] = 0x10000080,   /* audio_sel [25:24], pdn31 */
++	[NAU_S_CLK_CFG_8] = 0x10000090,   /* aud_intbus_sel [1:0], pdn7 */
++	[NAU_S_CLK_CFG_10] = 0x100000b0,  /* i2c_sel [9:8], pdn15 */
++	[NAU_S_CLK_CFG_11] = 0x100000c0,  /* aud_engen1_sel [25:24], pdn31 */
++	[NAU_S_CLK_CFG_12] = 0x100000d0,  /* aud_engen2_sel [1:0] pdn7; aud_1_sel 24, pdn31 */
++	[NAU_S_CLK_CFG_13] = 0x100000e0,  /* aud_2_sel 0, pdn7 */
++	[NAU_S_CLK_CFG_15] = 0x10000100,  /* audio_h_sel [1:0], pdn7 */
++	[NAU_S_AUDDIV_0] = 0x10000320,
++	[NAU_S_AUDDIV_1] = 0x10000324,
++	[NAU_S_AUDDIV_2] = 0x10000328,
++	[NAU_S_AUDDIV_3] = 0x10000334,
++	[NAU_S_AUDDIV_4] = 0x10000338,
++	[NAU_S_AP_PLL_CON3] = 0x1000c00c,
++	[NAU_S_APLL1_TUNER] = 0x1000c040,
++	[NAU_S_APLL2_TUNER] = 0x1000c044,
++	[NAU_S_APLL1_CON0] = 0x1000c318,
++	[NAU_S_APLL1_CON1] = 0x1000c31c,
++	[NAU_S_APLL1_CON2] = 0x1000c320,
++	[NAU_S_APLL1_CON3] = 0x1000c324,
++	[NAU_S_APLL1_CON4] = 0x1000c328,
++	[NAU_S_APLL2_CON0] = 0x1000c32c,
++	[NAU_S_APLL2_CON1] = 0x1000c330,
++	[NAU_S_APLL2_CON2] = 0x1000c334,
++	[NAU_S_APLL2_CON3] = 0x1000c338,
++	[NAU_S_APLL2_CON4] = 0x1000c33c,
++	[NAU_S_MAINPLL_CON0] = 0x1000c340,
++	[NAU_S_MAINPLL_CON1] = 0x1000c344,
++	[NAU_S_MAINPLL_CON3] = 0x1000c34c,
++	[NAU_S_UNIVPLL_CON0] = 0x1000c308,
++	[NAU_S_UNIVPLL_CON1] = 0x1000c30c,
++	[NAU_S_UNIVPLL_CON3] = 0x1000c314,
++	[NAU_S_IMPS_CG] = 0x11d05e00,     /* I2C7 bit3, I2C8 bit4 (1 = gated) */
++	[NAU_S_MODE_32] = 0x10005340,
++	[NAU_S_MODE_104] = 0x100053d0,
++	[NAU_S_MODE_120] = 0x100053f0,
++	[NAU_S_MODE_144] = 0x10005420,
++	[NAU_S_DIR_32] = 0x10005010,
++	[NAU_S_DIR_96] = 0x10005030,
++	[NAU_S_DIR_128] = 0x10005040,
++	[NAU_S_DOUT_32] = 0x10005110,
++	[NAU_S_DOUT_96] = 0x10005130,
++	[NAU_S_DOUT_128] = 0x10005140,
++	[NAU_S_DIN_32] = 0x10005210,
++	[NAU_S_DIN_96] = 0x10005230,
++	[NAU_S_DIN_128] = 0x10005240,
++	[NAU_S_BM_EH122] = 0x11d10040,
++	[NAU_S_BM_EH123] = 0x11d10050,
++	[NAU_S_BM_IES111] = 0x11d10060,
++	[NAU_S_BM_IES122] = 0x11d10070,
++	[NAU_S_BM_PD111] = 0x11d10080,
++	[NAU_S_BM_PD122] = 0x11d10090,
++	[NAU_S_BM_PU111] = 0x11d100a0,
++	[NAU_S_BM_PU122] = 0x11d100b0,
++	[NAU_S_BM_RSEL] = 0x11d100e0,
++	[NAU_S_RM_IES148] = 0x11c20020,
++	[NAU_S_RM_PD148] = 0x11c20030,
++	[NAU_S_RM_PU148] = 0x11c20050,
++	[NAU_S_LT_IES32] = 0x11f20040,
++	[NAU_S_LT_PD32] = 0x11f20060,
++	[NAU_S_LT_PU32] = 0x11f20080,
++	[NAU_S_SPM_POWERON] = 0x10006000, /* POWERON_CONFIG_EN; read only here */
++};
++
++const uint32_t nau_afe_pa[NAU_AFE_COUNT] = {
++	[NAU_A_TOP_CON0] = 0x11210000,
++	[NAU_A_TOP_CON1] = 0x11210004,
++	[NAU_A_TOP_CON2] = 0x11210008,
++	[NAU_A_TOP_CON3] = 0x1121000c,
++	[NAU_A_DAC_CON0] = 0x11210010,
++	[NAU_A_I2S_CON3] = 0x11210040,    /* DAI I2S3 uses the I2S4_* fields */
++	[NAU_A_DL1_CON0] = 0x1121004c,
++	[NAU_A_CONN28] = 0x112104bc,
++	[NAU_A_CONN29] = 0x112104c0,
++};
++
++const uint32_t nau_dma_pa[NAU_DMA_COUNT] = {
++	[NAU_D_INT_FLAG] = 0x11000780,
++	[NAU_D_INT_EN] = 0x11000784,
++	[NAU_D_EN] = 0x11000788,
++	[NAU_D_CON] = 0x11000798,
++};
++
++static const uint16_t nau_i2c8_off[NAU_C_PER_CH] = {0x08, 0x0c, 0x10, 0x24, 0xf4};
++
++uint32_t
++nau_i2c8_pa(unsigned index)
++{
++	if (index >= NAU_I2C8_COUNT) { return 0; }
++	return 0x11d04000u + 0x100u * (index / NAU_C_PER_CH) + nau_i2c8_off[index % NAU_C_PER_CH];
++}
++
++const unsigned nau_pin_list[NAU_PIN_COUNT] = {32, 33, 34, 35, 111, 122, 123, 148};
++
++static const struct {
++	uint8_t mode, gpio, ies, pd, pu, bit;
++} nau_pin_loc[NAU_PIN_COUNT] = {
++	{NAU_S_MODE_32, 0, NAU_S_LT_IES32, NAU_S_LT_PD32, NAU_S_LT_PU32, 3},
++	{NAU_S_MODE_32, 0, NAU_S_LT_IES32, NAU_S_LT_PD32, NAU_S_LT_PU32, 5},
++	{NAU_S_MODE_32, 0, NAU_S_LT_IES32, NAU_S_LT_PD32, NAU_S_LT_PU32, 2},
++	{NAU_S_MODE_32, 0, NAU_S_LT_IES32, NAU_S_LT_PD32, NAU_S_LT_PU32, 4},
++	{NAU_S_MODE_104, 1, NAU_S_BM_IES111, NAU_S_BM_PD111, NAU_S_BM_PU111, 24},
++	{NAU_S_MODE_120, 1, NAU_S_BM_IES122, NAU_S_BM_PD122, NAU_S_BM_PU122, 3},
++	{NAU_S_MODE_120, 1, NAU_S_BM_IES122, NAU_S_BM_PD122, NAU_S_BM_PU122, 13},
++	{NAU_S_MODE_144, 2, NAU_S_RM_IES148, NAU_S_RM_PD148, NAU_S_RM_PU148, 5},
++};
++static const uint8_t nau_gpio_word[3][3] = {
++	{NAU_S_DIR_32, NAU_S_DOUT_32, NAU_S_DIN_32},
++	{NAU_S_DIR_96, NAU_S_DOUT_96, NAU_S_DIN_96},
++	{NAU_S_DIR_128, NAU_S_DOUT_128, NAU_S_DIN_128},
++};
++
++void
++nau_pin_decode(const uint32_t s[NAU_SNAP_COUNT], struct nau_pin out[NAU_PIN_COUNT])
++{
++	for (unsigned i = 0; i < NAU_PIN_COUNT; i++) {
++		unsigned pin = nau_pin_list[i], g = nau_pin_loc[i].gpio, b = nau_pin_loc[i].bit;
++		out[i].pin = pin;
++		out[i].mode = (s[nau_pin_loc[i].mode] >> (pin % 8 * 4)) & 0xf;
++		out[i].dir = (s[nau_gpio_word[g][0]] >> (pin % 32)) & 1;
++		out[i].dout = (s[nau_gpio_word[g][1]] >> (pin % 32)) & 1;
++		out[i].din = (s[nau_gpio_word[g][2]] >> (pin % 32)) & 1;
++		out[i].ies = (s[nau_pin_loc[i].ies] >> b) & 1;
++		out[i].pd = (s[nau_pin_loc[i].pd] >> b) & 1;
++		out[i].pu = (s[nau_pin_loc[i].pu] >> b) & 1;
++	}
++}
++
++int
++nau_amp_reset(const struct nau_pin p[NAU_PIN_COUNT], unsigned amp)
++{
++	if (amp >= 2) { return -1; }
++	const struct nau_pin *r = &p[amp ? 7 : 4];
++	if (r->mode != 0) { return -1; }
++	return r->dir ? (int)r->dout : (r->ies ? (int)r->din : -1);
++}
++
++unsigned
++nau_afe_block(const uint32_t s[NAU_SNAP_COUNT], unsigned snap_read)
++{
++	if (snap_read != NAU_SNAP_COUNT) { return NAU_AFE_BLOCK_SNAPSHOT; }
++	unsigned block = 0;
++	/* AUDIO_PWR_STA_MASK and the power-on sequence: clk-mt6885-pg.c:3314-3355. */
++	if (!(s[NAU_S_PWR_STATUS] & (1u << 21)) || !(s[NAU_S_PWR_STATUS_2ND] & (1u << 21))) {
++		block |= NAU_AFE_BLOCK_STATUS;
++	}
++	if ((s[NAU_S_AUDIO_PWR_CON] & 0x111fu) != 0x000du) { block |= NAU_AFE_BLOCK_PWR_CON; }
++	if ((s[NAU_S_IFR1_CG] & (1u << 25)) || (s[NAU_S_IFR3_CG] & (1u << 4))) {
++		block |= NAU_AFE_BLOCK_INFRA;
++	}
++	if (s[NAU_S_PROT2_STA1] & (1u << 4)) { block |= NAU_AFE_BLOCK_PROTECT; }
++	if ((s[NAU_S_CLK_CFG_7] & (1u << 31)) || (s[NAU_S_CLK_CFG_8] & (1u << 7))) {
++		block |= NAU_AFE_BLOCK_MUX;
++	}
++	return block;
++}
++
++unsigned
++nau_i2c8_block(const uint32_t s[NAU_SNAP_COUNT], unsigned snap_read)
++{
++	if (snap_read != NAU_SNAP_COUNT) { return NAU_I2C8_BLOCK_SNAPSHOT; }
++	unsigned block = 0;
++	if (s[NAU_S_CLK_CFG_10] & (1u << 15)) { block |= NAU_I2C8_BLOCK_MUX; }
++	if (s[NAU_S_IMPS_CG] & (1u << 4)) { block |= NAU_I2C8_BLOCK_GATED; }
++	/* Same parent predicate as reviewed mtk_i2c_read.c:29-32: en bit0,
++	 * rstb bit23, CON3 power on/iso off. */
++	unsigned select = (s[NAU_S_CLK_CFG_10] >> 8) & 3;
++	if (select == 3) { block |= NAU_I2C8_BLOCK_PLL; }
++	if (select == 1 || select == 2) {
++		uint32_t con = s[select == 1 ? NAU_S_MAINPLL_CON0 : NAU_S_UNIVPLL_CON0];
++		uint32_t pwr = s[select == 1 ? NAU_S_MAINPLL_CON3 : NAU_S_UNIVPLL_CON3];
++		if (!(con & 1) || !(con & 0x800000) || (pwr & 3) != 1) { block |= NAU_I2C8_BLOCK_PLL; }
++	}
++	return block;
++}
++
++unsigned
++nau_dma_block(const uint32_t s[NAU_SNAP_COUNT], unsigned snap_read)
++{
++	if (snap_read != NAU_SNAP_COUNT) { return NAU_DMA_BLOCK_SNAPSHOT; }
++	unsigned block = 0;
++	if (s[NAU_S_IFR1_CG] & (1u << 18)) { block |= NAU_DMA_BLOCK_PS; }
++	if (s[NAU_S_IFR2_CG] & (1u << 31)) { block |= NAU_DMA_BLOCK_APDMA; }
++	return block;
++}
++
++unsigned
++nau_i2c8_ready(const struct nau_state *st)
++{
++	if (!st || st->failed || st->snap_read != NAU_SNAP_COUNT) { return NAU_READY_SNAPSHOT; }
++	const uint32_t *s = st->snap;
++	unsigned r = 0, b = nau_i2c8_block(s, st->snap_read);
++	if (b & (NAU_I2C8_BLOCK_MUX | NAU_I2C8_BLOCK_PLL)) { r |= NAU_READY_MUX; }
++	if (b & NAU_I2C8_BLOCK_GATED) { r |= NAU_READY_GATED; }
++	if ((s[NAU_S_MODE_120] & 0xff00) != 0x1100) { r |= NAU_READY_PINMUX; }
++	if ((s[NAU_S_PWR_STATUS] | s[NAU_S_PWR_STATUS_2ND]) & (1u << 23)) { r |= NAU_READY_CAM; }
++	if (st->i2c8_read != NAU_I2C8_COUNT) { return r | NAU_READY_UNREAD; }
++	const uint32_t *c = st->i2c8;
++	for (unsigned ch = 0; ch < NAU_CH_COUNT; ch++) {
++		if (c[NAU_I2C8_INDEX(ch, NAU_C_START)] & 3) { r |= NAU_READY_START; }
++	}
++	if ((c[NAU_I2C8_INDEX(NAU_CH_SHADOW, NAU_C_CTRL)] | c[NAU_I2C8_INDEX(NAU_CH_AP, NAU_C_CTRL)] | c[NAU_I2C8_INDEX(NAU_CH_CCU, NAU_C_CTRL)]) & 4) {
++		r |= NAU_READY_DMA;
++	}
++	if (st->dma_read == NAU_DMA_COUNT && st->dma[NAU_D_EN]) { r |= NAU_READY_DMA; }
++	uint32_t irq = c[NAU_I2C8_INDEX(NAU_CH_AP, NAU_C_STAT)];
++	if (irq != 0 && irq != 1) { r |= NAU_READY_IRQ; }
++	for(unsigned ch=0;ch<NAU_CH_COUNT;ch++)if(c[NAU_I2C8_INDEX(ch,NAU_C_FIFO)])r|=NAU_READY_FIFO;
++ if((s[NAU_S_BM_IES122]&0x2008u)!=0x2008u || (s[NAU_S_DIN_96]&0x0c000000u)!=0x0c000000u)r|=NAU_READY_LINES;
++	return r;
++}
++
++int
++nau_read_allowed(uint32_t pa, unsigned width)
++{
++	if (width == 4) {
++		for (unsigned i = 0; i < NAU_SNAP_COUNT; i++) {
++			if (nau_snapshot_pa[i] == pa) { return 1; }
++		}
++		for (unsigned i = 0; i < NAU_AFE_COUNT; i++) {
++			if (nau_afe_pa[i] == pa) { return 1; }
++		}
++		for (unsigned i = 0; i < NAU_DMA_COUNT; i++) {
++			if (nau_dma_pa[i] == pa) { return 1; }
++		}
++		return 0;
++	}
++	if (width == 2) {
++		for (unsigned i = 0; i < NAU_I2C8_COUNT; i++) {
++			if (nau_i2c8_pa(i) == pa) { return 1; }
++		}
++	}
++	return 0;
++}
++
++static int
++nau_read(const struct nau_ops *o, void *c, struct nau_state *s, uint32_t pa, unsigned w, uint32_t *v)
++{
++	s->callbacks++;
++	if (o->read(c, pa, w, v)) {
++		s->failed = 1;
++		s->error = -4;
++		s->stage = NAU_DONE;
++		return -1;
++	}
++	return 0;
++}
++
++int
++nau_run(const struct nau_ops *o, void *c, unsigned optin, struct nau_state *s)
++{
++	if (optin != 1 || !o || !s) { return -1; }
++	if (s->entered) { return -2; }
++	*s = (struct nau_state){0};
++	s->entered = 1;
++	if (!o->read) {
++		s->failed = 1;
++		s->error = -3;
++		return -3;
++	}
++	s->stage = NAU_SNAPSHOT;
++	for (unsigned i = 0; i < NAU_SNAP_COUNT; i++) {
++		if (nau_read(o, c, s, nau_snapshot_pa[i], 4, &s->snap[i])) { return -4; }
++		s->snap_read++;
++	}
++	s->stage = NAU_AFE;
++	s->afe_block = nau_afe_block(s->snap, s->snap_read);
++	for (unsigned i = 0; !s->afe_block && i < NAU_AFE_COUNT; i++) {
++		if (nau_read(o, c, s, nau_afe_pa[i], 4, &s->afe[i])) { return -4; }
++		s->afe_read++;
++	}
++	s->stage = NAU_I2C8;
++	s->i2c8_block = nau_i2c8_block(s->snap, s->snap_read);
++	for (unsigned i = 0; !s->i2c8_block && i < NAU_I2C8_COUNT; i++) {
++		if (nau_read(o, c, s, nau_i2c8_pa(i), 2, &s->i2c8[i])) { return -4; }
++		s->i2c8_read++;
++	}
++	s->stage = NAU_DMA;
++	s->dma_block = nau_dma_block(s->snap, s->snap_read);
++	for (unsigned i = 0; !s->dma_block && i < NAU_DMA_COUNT; i++) {
++		if (nau_read(o, c, s, nau_dma_pa[i], 4, &s->dma[i])) { return -4; }
++		s->dma_read++;
++	}
++	s->stage = NAU_DONE;
++	return 0;
++}
++#endif /* NORD2 */
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_id.h
+@@ -0,0 +1,159 @@
++#ifndef NORD2_AUDIO_ID_H
++#define NORD2_AUDIO_ID_H
++#include <stdint.h>
++
++/*
++ * Nord2 speaker path, milestone 1a: NON-MUTATING snapshot (revision 3).
++ *
++ * Every access is an MMIO read through ops->read of an address in one of the
++ * tables below; this module has no write path at all. The GPIO bit-bang I2C8
++ * takeover of revision 1 was removed (parent review A1/A2): pin state does not
++ * prove I2C8 controller/DMA idle, and I2C8 carries the DDR/UFS rail bucks.
++ *
++ * Conditional apertures, read only when the snapshot proves their clocks on:
++ * - AFE (0x11210000): AUDIO MTCMOS on, unisolated, clocked, unprotected;
++ * - I2C8 controller shadow/AP/CCU channels (16-bit): i2c_sel not powered down
++ *   and the controller gate CLK_IMPS_AP_I2C8_RO ungated. DATA_PORT is never
++ *   read (it pops the FIFO);
++ * - APDMA I2C8 channel (0x11000780): ap_dma_ps and apdma both ungated.
++ * The first read callback failure is sticky: no further callback is made.
++ *
++ * Revision 3 keeps that snapshot contract and changes only milestone 1b
++ * (audio_i2c8.c): a clean completed NACK is a bounded result rather than an
++ * uncertain fault, the source V2 HW timeout is programmed/restored, and an
++ * AP-channel I3C mode is refused. None of this is hardware-authorized.
++ */
++
++enum nau_snap {
++	/* SPM 0x10006000 (clk-mt6885-pg.c:166-192) */
++	NAU_S_PWR_STATUS, NAU_S_PWR_STATUS_2ND, NAU_S_AUDIO_PWR_CON, NAU_S_ADSP_PWR_CON,
++	/* infracfg_ao 0x10001000 (clk-mt6885.c:2109-2136, clk-mt6885-pg.c:235) */
++	NAU_S_IFR1_CG, NAU_S_IFR2_CG, NAU_S_IFR3_CG, NAU_S_PROT2_STA1,
++	/* topckgen 0x10000000 (clk-mt6885.c:57-89, 1834-1989, 2017-2089) */
++	NAU_S_CLK_CFG_7, NAU_S_CLK_CFG_8, NAU_S_CLK_CFG_10, NAU_S_CLK_CFG_11, NAU_S_CLK_CFG_12,
++	NAU_S_CLK_CFG_13, NAU_S_CLK_CFG_15,
++	NAU_S_AUDDIV_0, NAU_S_AUDDIV_1, NAU_S_AUDDIV_2, NAU_S_AUDDIV_3, NAU_S_AUDDIV_4,
++	/* apmixedsys 0x1000c000 (clk-mt6885.c:167-231, 2523-2534) */
++	NAU_S_AP_PLL_CON3, NAU_S_APLL1_TUNER, NAU_S_APLL2_TUNER,
++	NAU_S_APLL1_CON0, NAU_S_APLL1_CON1, NAU_S_APLL1_CON2, NAU_S_APLL1_CON3, NAU_S_APLL1_CON4,
++	NAU_S_APLL2_CON0, NAU_S_APLL2_CON1, NAU_S_APLL2_CON2, NAU_S_APLL2_CON3, NAU_S_APLL2_CON4,
++	/* i2c_sel parents mainpll_d4_d8 / univpll_d5_d4 (clk-mt6885.c:194-201, 1102-1106) */
++	NAU_S_MAINPLL_CON0, NAU_S_MAINPLL_CON1, NAU_S_MAINPLL_CON3,
++	NAU_S_UNIVPLL_CON0, NAU_S_UNIVPLL_CON1, NAU_S_UNIVPLL_CON3,
++	/* imp_iic_wrap_s 0x11d05000 gate status (clk-mt6885-i2c.c:110-135) */
++	NAU_S_IMPS_CG,
++	/* GPIO 0x10005000 (pinctrl-mt6885.c:26-85) */
++	NAU_S_MODE_32, NAU_S_MODE_104, NAU_S_MODE_120, NAU_S_MODE_144,
++	NAU_S_DIR_32, NAU_S_DIR_96, NAU_S_DIR_128,
++	NAU_S_DOUT_32, NAU_S_DOUT_96, NAU_S_DOUT_128,
++	NAU_S_DIN_32, NAU_S_DIN_96, NAU_S_DIN_128,
++	/* IOCFG_BM 0x11d10000: GPIO111/122/123 (pinctrl-mt6885.c:223-235,333-345,429-441,527-528,615-705) */
++	NAU_S_BM_EH122, NAU_S_BM_EH123, NAU_S_BM_IES111, NAU_S_BM_IES122,
++	NAU_S_BM_PD111, NAU_S_BM_PD122, NAU_S_BM_PU111, NAU_S_BM_PU122, NAU_S_BM_RSEL,
++	/* IOCFG_RM 0x11c20000: GPIO148 (pinctrl-mt6885.c:247,357,453) */
++	NAU_S_RM_IES148, NAU_S_RM_PD148, NAU_S_RM_PU148,
++	/* IOCFG_LT 0x11f20000: GPIO32..35 (pinctrl-mt6885.c:179-182,299-302,395-398) */
++	NAU_S_LT_IES32, NAU_S_LT_PD32, NAU_S_LT_PU32,
++	/* Revision5: SPM POWERON_CONFIG_EN, read only, for the audio_afe.c gate
++	 * (clk-mt6885-pg.c:166, 263, 3267). */
++	NAU_S_SPM_POWERON,
++	NAU_SNAP_COUNT
++};
++
++enum nau_afe {
++	/* AFE 0x11210000 (mt6885-reg.h:2355-2377, 2564-2565) */
++	NAU_A_TOP_CON0, NAU_A_TOP_CON1, NAU_A_TOP_CON2, NAU_A_TOP_CON3,
++	NAU_A_DAC_CON0, NAU_A_I2S_CON3, NAU_A_DL1_CON0, NAU_A_CONN28, NAU_A_CONN29,
++	NAU_AFE_COUNT
++};
++
++/* I2C8 16-bit registers; channel c at 0x11d04000 + 0x100*c (0 shadow, 1 AP,
++ * 2 CCU). V2 offsets i2c-mtk.h:252-277: INTR_MASK 08, INTR_STAT 0c,
++ * CONTROL 10, START 24, FIFO_STAT f4. */
++enum { NAU_C_MASK, NAU_C_STAT, NAU_C_CTRL, NAU_C_START, NAU_C_FIFO, NAU_C_PER_CH };
++enum { NAU_CH_SHADOW, NAU_CH_AP, NAU_CH_CCU, NAU_CH_COUNT };
++#define NAU_I2C8_COUNT (NAU_C_PER_CH * NAU_CH_COUNT)
++#define NAU_I2C8_INDEX(ch, reg) ((ch) * NAU_C_PER_CH + (reg))
++
++/* APDMA I2C8 channel 32-bit registers (i2c-mtk.h:145-152). */
++enum { NAU_D_INT_FLAG, NAU_D_INT_EN, NAU_D_EN, NAU_D_CON, NAU_DMA_COUNT };
++
++/* Reasons an aperture was not read; 0 means it was read. */
++enum {
++	NAU_AFE_BLOCK_SNAPSHOT = 1u << 0,
++	NAU_AFE_BLOCK_STATUS = 1u << 1,   /* PWR_STATUS/2ND bit21 not both set */
++	NAU_AFE_BLOCK_PWR_CON = 1u << 2,  /* ON/ON_2ND/RST_B, ISO/CLK_DIS/SRAM_PDN */
++	NAU_AFE_BLOCK_INFRA = 1u << 3,    /* ifrao_audio or ifrao_audio26m gated */
++	NAU_AFE_BLOCK_PROTECT = 1u << 4,  /* AUDIO bus protection step1 set */
++	NAU_AFE_BLOCK_MUX = 1u << 5,      /* audio_sel or aud_intbus_sel pdn */
++};
++enum {
++	NAU_I2C8_BLOCK_SNAPSHOT = 1u << 0,
++	NAU_I2C8_BLOCK_MUX = 1u << 1,     /* i2c_sel pdn (CLK_CFG_10 bit15) */
++	NAU_I2C8_BLOCK_GATED = 1u << 2,   /* CLK_IMPS_AP_I2C8_RO gated (sta bit4) */
++	NAU_I2C8_BLOCK_PLL = 1u << 3,     /* select 3, or selected PLL not on/powered */
++};
++enum {
++	NAU_DMA_BLOCK_SNAPSHOT = 1u << 0,
++	NAU_DMA_BLOCK_PS = 1u << 1,       /* ifrao_ap_dma_ps gated (IFRAO1 bit18) */
++	NAU_DMA_BLOCK_APDMA = 1u << 2,    /* ifrao_apdma gated (IFRAO2 bit31) */
++};
++/* Why milestone 1b (audio_i2c8.c) would refuse, from snapshot data alone.
++ * 1b repeats every check itself; this is only the report/level-2 gate. */
++enum {
++	NAU_READY_SNAPSHOT = 1u << 0, NAU_READY_MUX = 1u << 1, NAU_READY_PINMUX = 1u << 2,
++	NAU_READY_CAM = 1u << 3, NAU_READY_GATED = 1u << 4, NAU_READY_START = 1u << 5,
++	NAU_READY_DMA = 1u << 6, NAU_READY_IRQ = 1u << 7, NAU_READY_FIFO = 1u << 8,
++	NAU_READY_LINES = 1u << 10, /* existing input enable + pads high required */
++	NAU_READY_UNREAD = 1u << 9,       /* controller registers not observed */
++};
++
++struct nau_ops {
++	/* Read one allowlisted physical register of width 2 or 4. 0 on success. */
++	int (*read)(void *, uint32_t, unsigned, uint32_t *);
++};
++
++enum nau_stage { NAU_IDLE = 0, NAU_SNAPSHOT = 1, NAU_AFE = 2, NAU_I2C8 = 3, NAU_DMA = 4, NAU_DONE = 5 };
++
++struct nau_state {
++	unsigned entered, stage, failed, callbacks;
++	int error;
++	unsigned snap_read;
++	uint32_t snap[NAU_SNAP_COUNT];
++	unsigned afe_block, afe_read;
++	uint32_t afe[NAU_AFE_COUNT];
++	unsigned i2c8_block, i2c8_read;
++	uint32_t i2c8[NAU_I2C8_COUNT];
++	unsigned dma_block, dma_read;
++	uint32_t dma[NAU_DMA_COUNT];
++};
++
++#define NAU_PIN_COUNT 8
++struct nau_pin {
++	unsigned pin, mode, dir, dout, din, ies, pu, pd;
++};
++extern const unsigned nau_pin_list[NAU_PIN_COUNT]; /* 32,33,34,35,111,122,123,148 */
++void nau_pin_decode(const uint32_t snap[NAU_SNAP_COUNT], struct nau_pin out[NAU_PIN_COUNT]);
++/* Active-high TFA reset (tfa98xx.c:4740-4749) on GPIO111 (amp 0) / GPIO148
++ * (amp 1): 1 asserted, 0 released, -1 unknown (not GPIO mode, input disabled). */
++int nau_amp_reset(const struct nau_pin pins[NAU_PIN_COUNT], unsigned amp);
++
++extern const uint32_t nau_snapshot_pa[NAU_SNAP_COUNT];
++extern const uint32_t nau_afe_pa[NAU_AFE_COUNT];
++extern const uint32_t nau_dma_pa[NAU_DMA_COUNT];
++uint32_t nau_i2c8_pa(unsigned index);
++
++unsigned nau_afe_block(const uint32_t snap[NAU_SNAP_COUNT], unsigned snap_read);
++unsigned nau_i2c8_block(const uint32_t snap[NAU_SNAP_COUNT], unsigned snap_read);
++unsigned nau_dma_block(const uint32_t snap[NAU_SNAP_COUNT], unsigned snap_read);
++unsigned nau_i2c8_ready(const struct nau_state *);
++/* 1 if (pa, width) may be passed to ops->read. */
++int nau_read_allowed(uint32_t pa, unsigned width);
++
++/*
++ * optin must equal 1; any other value, a NULL argument or a second call
++ * performs no callback. Returns 0 when every enabled aperture was read;
++ * -1 disabled, -2 reentry, -3 bad ops, -4 read callback failed (sticky).
++ */
++int nau_run(const struct nau_ops *, void *, unsigned optin, struct nau_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_i2c8.c
+@@ -0,0 +1,467 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++/* Selected MT6893 I2Cv2 PIO derivative for multi-channel I2C8 (GPL-2.0
++ * source contract documented in AUDIO-REPORT.md section 5). */
++#include "audio_i2c8.h"
++#include "audio_board.h"
++
++#define NA8_SH 0x11d04000u
++#define NA8_CH 0x11d04100u
++#define NA8_CCU 0x11d04200u
++#define NA8_GATE 0x11d05000u
++#define NA8_DMA 0x11000780u
++#define NA8_GATE_BIT (1u << 4)
++#define NA8_I3C_EN (1u << 15)
++
++static const uint8_t na8_slave[2] = {0x34, 0x37};
++
++static int na8_silicon_value(unsigned reg, uint16_t value)
++{
++ if (reg==0x0f) return value==0x5a6b || value==0;
++ if (reg==0xa0) return 1; /* only volatile lock key, never MTP row */
++ if (reg==0xa1) return value==0x5a || value==0;
++ if (reg==0x02 && value==0x0628) return 1;
++ if (reg==0x02 && value==0x22a8) return 1;
++ if (reg==0x02 && value==0x22c8) return 1;
++ if (reg==0x4c && value==0x00e9) return 1;
++ if (reg==0x51 && value==0x0020) return 1;
++ if (reg==0x52 && value==0x17d0) return 1;
++ if (reg==0x52 && value==0x57dc) return 1;
++ if (reg==0x53 && value==0x003e) return 1;
++ if (reg==0x56 && value==0x0011) return 1;
++ if (reg==0x56 && value==0x0400) return 1;
++ if (reg==0x58 && value==0x0200) return 1;
++ if (reg==0x58 && value==0x16a4) return 1;
++ if (reg==0x59 && value==0x0001) return 1;
++ if (reg==0x5f && value==0x0180) return 1;
++ if (reg==0x61 && value==0x0110) return 1;
++ if (reg==0x61 && value==0x0183) return 1;
++ if (reg==0x63 && value==0x005a) return 1;
++ if (reg==0x63 && value==0x055a) return 1;
++ if (reg==0x65 && value==0x0542) return 1;
++ if (reg==0x66 && value==0x0701) return 1;
++ if (reg==0x6f && value==0x0082) return 1;
++ if (reg==0x6f && value==0x00a3) return 1;
++ if (reg==0x6f && value==0x00a5) return 1;
++ if (reg==0x70 && value==0x07f8) return 1;
++ if (reg==0x70 && value==0xa3eb) return 1;
++ if (reg==0x70 && value==0xa3fb) return 1;
++ if (reg==0x71 && value==0x007e) return 1;
++ if (reg==0x71 && value==0x107e) return 1;
++ if (reg==0x73 && value==0x0007) return 1;
++ if (reg==0x73 && value==0x0047) return 1;
++ if (reg==0x73 && value==0x0187) return 1;
++ if (reg==0x74 && value==0x5068) return 1;
++ if (reg==0x74 && value==0x5098) return 1;
++ if (reg==0x75 && value==0x0d28) return 1;
++ if (reg==0x75 && value==0x8d28) return 1;
++ if (reg==0x80 && value==0x0000) return 1;
++ if (reg==0x83 && value==0x009a) return 1;
++ if (reg==0x83 && value==0x0594) return 1;
++ if (reg==0x83 && value==0x0595) return 1;
++ if (reg==0x83 && value==0x071c) return 1;
++ if (reg==0x83 && value==0x0799) return 1;
++ if (reg==0x84 && value==0x0001) return 1;
++ if (reg==0x84 && value==0x0081) return 1;
++ if (reg==0x84 && value==0x0211) return 1;
++ if (reg==0x85 && value==0x0001) return 1;
++ if (reg==0x85 && value==0x0380) return 1;
++ if (reg==0x85 && value==0x0382) return 1;
++ if (reg==0x88 && value==0x0000) return 1;
++ if (reg==0x8c && value==0x0210) return 1;
++ if (reg==0xc4 && value==0x2001) return 1;
++ if (reg==0xd5 && value==0x0000) return 1;
++ if (reg==0xd5 && value==0x004d) return 1;
++ return 0;
++}
++
++static int
++na8_allowed(unsigned slave, unsigned reg)
++{
++	return (slave == 0x34 || slave == 0x37) &&
++        (reg == 0x03 || reg == 0x00 || reg == 0x01 || reg == 0x02 ||
++         reg == 0x04 || nah_board_register_allowed(reg) || reg == 0xfb || na8_silicon_value(reg,0) || reg == 0x10 || reg == 0x11 || reg == 0x14 ||
++         (reg >= 0x20 && reg <= 0x27) || reg == 0x5f);
++}
++
++static void
++na8_fresh(struct na8_state *s)
++{
++	s->entered = 1;
++	s->polls = 0;
++	s->error = -1;
++	s->stage = 1;
++	s->failure = s->last_valid = s->last_write = s->last_width = 0;
++	s->nack = s->i3c = s->restoring = 0;
++	s->last_addr = s->last_value = 0;
++	s->mux = s->parent_hz = s->pinmux = s->gate = s->pwr = s->pwr2 = 0;
++	s->ifr1 = s->ifr2 = s->dma_en = s->sh_start = s->ccu_start = s->ccu_ctrl = 0;
++	s->prior_irq = s->prior_ack = s->completion_irq = 0;
++	s->dma_checked = 0;
++}
++
++int
++na8_return_ok(const struct na8_state *s)
++{
++	return s && !s->inflight && !s->uncertain;
++}
++
++static int
++na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
++    unsigned slave, unsigned reg, uint16_t *value, unsigned writing)
++{
++	if (!s || s->offline || s->inflight) { return -1; }
++	if (!o || !o->read || !o->write || !o->delay_us || !value || (!na8_allowed(slave, reg) && !(writing && (slave==0x34 || slave==0x37) && na8_silicon_value(reg,*value)))) {
++		s->offline = 1;
++		s->failure = 19;
++		return -1;
++	}
++	if (writing && !(reg == 0x00 || reg == 0x01 || reg == 0x02 || reg == 0x04 ||
++        (reg >= 0x20 && reg <= 0x27) || reg == 0x5f || nah_board_register_allowed(reg) || na8_silicon_value(reg,*value))) {
++        s->failure = 19; return -1;
++    }
++    na8_fresh(s);
++	uint32_t v = 0;
++	uint32_t old[15];
++	unsigned touched = 0, wrote = 0;
++	/* Channel-relative V2 offsets written by mt_i2c_do_transfer(): SLAVE_ADDR,
++	 * INTR_MASK, CONTROL, TRANSFER_LEN, TRANSAC_LEN, DELAY_LEN, TIMING,
++	 * EXT_CONF, LTIMING, HS, IO_CONFIG, MCU_INTR, TRANSFER_LEN_AUX, CLOCK_DIV,
++	 * HW_TIMEOUT (i2c-mtk.h:252-282, i2c-mtk.c:963-1055, 978-1203). */
++	static const uint32_t offs[15] = {4, 8, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x28, 0x2c,
++	    0x30, 0x34, 0x40, 0x44, 0x48, 0x4c};
++	/* mask 0 (polled), CONTROL ACKERR_DET|CLK_EXT|DIR_CHANGE|RS = 0x3a, write 1,
++	 * transac 2, DELAY_LEN 0x0a, ST start 0x8001, HS 0, open drain 3, MCU_INTR 1,
++	 * aux read 2, clock-div 5 -> 0x404 (DT:9466-9488, i2c-mtk.c:983-1203).
++	 * INTR_MASK=0 is deliberate: this diagnostic polls and must not assert the
++	 * controller IRQ; the source's own IRQ handler masks all interrupts and
++	 * then reads INTR_STAT, so status latching does not depend on the mask
++	 * (i2c-mtk.c:1697-1701). HW_TIMEOUT is filled in below. */
++	uint32_t next[15] = {(uint32_t)slave << 1, 0, 0x3a, 1, 2, 10, 0, 0x8001, 0,
++	    0, 3, 1, 2, 0x404, 0};
++	/* Standard source ST_OP write: CONTROL ACKERR_DET|CLK_EXT (0x28),
++     * one transaction, three payload bytes. No DIR_CHANGE/repeated-start. */
++    if (writing) { next[2] = 0x28; next[3] = 3; next[4] = 1; next[12] = 0; }
++    s->calls++;
++#define R(pa, w, out) do { s->last_addr = (pa); s->last_width = (w); s->last_write = 0; \
++	s->last_valid = 0; s->last_value = 0; \
++	if (o->read(c, (pa), (w), (out))) { s->failure = 10; goto fail; } \
++	s->last_value = *(out); s->last_valid = 1; } while (0)
++#define W(pa, w, val) do { s->last_addr = (pa); s->last_width = (w); s->last_write = 1; \
++	s->last_value = (val); s->last_valid = 1; s->mutated = 1; wrote = 1; \
++	if (o->write(c, (pa), (w), (val))) { s->failure = 11; goto uncertain; } } while (0)
++#define REFUSE(code) do { s->failure = (code); goto fail; } while (0)
++
++	/* 1-3: clock source and timing, as reviewed in mtk_i2c_read.c:24-49
++	 * (i2c_sel CLK_CFG_10 [9:8], pdn15, clk-mt6885.c:1886-1890, 1102-1106). */
++	uint32_t mux = 0, mux_after = 0, parent = 26000000;
++	R(0x100000b0, 4, &mux);
++	s->mux = mux;
++	if (mux & 0x8000) { REFUSE(1); }
++	unsigned select = (mux >> 8) & 3;
++	if (select == 3) { REFUSE(1); }
++	s->stage = 2;
++	if (select) {
++		uint32_t pll = select == 1 ? 0x1000c340 : 0x1000c308, con = 0, pcw = 0, again = 0, power = 0;
++		R(pll, 4, &con);
++		R(pll + 4, 4, &pcw);
++		R(pll + 12, 4, &power);
++		R(pll + 4, 4, &again);
++		if (pcw != again || !(con & 1) || !(con & 0x800000) || (power & 3) != 1) { REFUSE(2); }
++		unsigned div = 1u << ((pcw >> 24) & 7);
++		uint64_t hz = ((uint64_t)26000000 * (pcw & 0x3fffff) + 16383) >> 14;
++		hz = (hz + div - 1) / div;
++		hz /= select == 1 ? 32 : 20;
++		if (hz < 1000000 || hz > 250000000) { REFUSE(2); }
++		parent = (uint32_t)hz;
++	}
++	s->parent_hz = parent;
++	R(0x100000b0, 4, &mux_after);
++	if (mux != mux_after) { REFUSE(1); }
++	s->stage = 3;
++	unsigned hclk = (parent / 5) / 1000, min_div = ((hclk >> 1) + 99) / 100, best = 512, sample = 0, step = 0;
++	for (unsigned a = 1; a <= 8; a++) {
++		unsigned b = (min_div + a - 1) / a;
++		if (!b || b > 64) { continue; }
++		if (a * b < best) {
++			best = a * b;
++			sample = a;
++			step = b;
++			if (best == min_div) { break; }
++		}
++	}
++	if (!sample || !step || hclk / (2 * sample * step) > 100) { REFUSE(3); }
++	sample--;
++	if (sample) { step--; }
++	next[6] = (sample << 8) | step | 1; /* I2C_TIMEOUT_EN, i2c-mtk.c:1051 */
++	next[8] = (sample << 6) | step;
++	/* Same HW timeout value as i2c-mtk.c:963-977: 2 ms at hclk, in ltiming
++	 * step units. The source writes it on every V2 transfer. */
++	unsigned tv2 = ((next[8] & 0x3f) + 1) * (((next[8] & 0x1c0) >> 6) + 1);
++	next[14] = ((hclk * 2) + tv2 - 1) / tv2;
++
++	/* 4: GPIO122/123 must already be SCL8/SDA8 (pinctrl-mtk-mt6885.h:1283-1295). */
++	s->stage = 4;
++	R(0x100053f0, 4, &v);
++	s->pinmux = v;
++	if ((v & 0xff00) != 0x1100) { REFUSE(4); }
++ /* Observe only existing input-enable state; never enable pads to claim idle. */
++ R(0x11d10070,4,&v);if((v&0x2008u)!=0x2008u){REFUSE(20);}
++ R(0x10005230,4,&v);if((v&0x0c000000u)!=0x0c000000u){REFUSE(20);}
++
++	/* 5: the CCU master needs CAM MTCMOS (DT ccu clocks CAM_PWR = SCP_SYS_CAM;
++	 * CAM_PWR_STA_MASK bit23, clk-mt6885-pg.c:565). */
++	s->stage = 5;
++	R(0x1000616c, 4, &s->pwr);
++	R(0x10006170, 4, &s->pwr2);
++	if ((s->pwr | s->pwr2) & (1u << 23)) { REFUSE(16); }
++
++	/* 6: never ungate an unknown controller to inspect it. */
++	s->stage = 6;
++	R(NA8_GATE + 0xe00, 4, &s->gate);
++	if (s->gate & NA8_GATE_BIT) { REFUSE(5); }
++
++	/* 7: APDMA (ap_dma_ps IFRAO1 bit18, apdma IFRAO2 bit31; clk-mt6885.c:2115-2125,
++	 * 2304-2305, 2317-2318). Registers only read when both clocks are ungated. */
++	s->stage = 7;
++	R(0x10001094, 4, &s->ifr1);
++	R(0x100010d8, 4, &s->ifr2);
++	if (!(s->ifr1 & (1u << 18)) && !(s->ifr2 & (1u << 31))) {
++		R(NA8_DMA + 0x08, 4, &s->dma_en); /* OFFSET_EN, i2c-mtk.h:148 */
++		s->dma_checked = 1;
++		if (s->dma_en) { REFUSE(7); }
++	}
++
++	/* 8: all three channels idle; START bit0 TRANSAC_START, bit1 RESUME_ARBIT
++	 * (i2c-mtk.h:55-56, i2c-mtk.c:1253-1256). The source reads bit15 I3C_EN
++	 * from V2 DMA_FSM_DEBUG at 0xec, not DEBUGSTAT at 0xe4
++	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). Refuse that separate mode. */
++	s->stage = 8;
++	R(NA8_SH + 0x24, 2, &s->sh_start);
++	if (s->sh_start & 3) { REFUSE(18); }
++	R(NA8_CCU + 0x24, 2, &s->ccu_start);
++	if (s->ccu_start & 3) { REFUSE(17); }
++	R(NA8_CCU + 0x10, 2, &s->ccu_ctrl);
++	if (s->ccu_ctrl & 4) { REFUSE(17); }
++ R(NA8_SH+0x10,2,&v);if(v&4){REFUSE(7);}
++ R(NA8_SH+0xf4,2,&v);if(v){REFUSE(9);}
++ R(NA8_CCU+0xf4,2,&v);if(v){REFUSE(9);}
++	R(NA8_CH + 0x24, 2, &v);
++	if (v & 3) { REFUSE(6); }
++	R(NA8_CH + 0x10, 2, &v);
++	if (v & 4) { REFUSE(7); } /* I2C_CONTROL_DMA_EN */
++	R(NA8_CH + 0x0c, 2, &v);
++	s->prior_irq = v;
++	if (v != 0 && v != 1) { REFUSE(8); }
++	R(NA8_CH + 0xf4, 2, &v);
++	if (v) { REFUSE(9); }
++	R(NA8_CH + 0xec, 2, &s->i3c);
++	if (s->i3c & NA8_I3C_EN) { REFUSE(21); }
++	if (s->prior_irq == 1) {
++		/* Same exact-completion adoption as the reviewed battery handoff;
++		 * every idle condition is re-read before the single W1C. */
++		R(NA8_SH + 0x24, 2, &v);
++		if (v & 3) { REFUSE(18); }
++		R(NA8_CCU + 0x24, 2, &v);
++		if (v & 3) { REFUSE(17); }
++		R(NA8_CH + 0x24, 2, &v);
++		if (v & 3) { REFUSE(6); }
++		R(NA8_CH + 0x10, 2, &v);
++		if (v & 4) { REFUSE(7); }
++		R(NA8_CH + 0xf4, 2, &v);
++		if (v) { REFUSE(9); }
++		R(NA8_CH + 0x0c, 2, &v);
++		if (v != 1) { REFUSE(8); }
++		W(NA8_CH + 0x0c, 2, 1);
++		s->prior_ack = 1;
++		R(NA8_CH + 0x0c, 2, &v);
++		if (v) { s->failure = 8; goto uncertain; }
++	}
++
++	s->stage = 9;
++	for (unsigned i = 0; i < 15; i++) { R(NA8_CH + offs[i], 2, &old[i]); }
++	/* Source clears the multi-channel FIFO before programming a new transfer
++	 * (i2c-mtk.c:1071-1077). */
++	W(NA8_CH + 0x38, 2, 5); /* FIFO_ADDR_CLR_MCH|FIFO_ADDR_CLR */
++	s->stage = 10;
++	for (unsigned i = 0; i < 15; i++) {
++		touched = i + 1;
++		W(NA8_CH + offs[i], 2, next[i]);
++	}
++	s->stage = 11;
++	W(NA8_CH + 0x00, 1, reg);
++    if (writing) {
++        W(NA8_CH + 0x00, 1, (unsigned)(*value >> 8));
++        W(NA8_CH + 0x00, 1, (unsigned)(*value & 255));
++    }
++	s->inflight = 1;
++	W(NA8_CH + 0x24, 2, 1);
++	s->stage = 12;
++	unsigned poll_limit=s->poll_limit && s->poll_limit<2000 ? s->poll_limit:2000;
++	for (unsigned i = 0; i < poll_limit; i++) {
++		R(NA8_CH + 0x0c, 2, &v);
++		s->polls++;
++		s->completion_irq = v;
++		if (v & 0x1ff) { break; }
++		if (o->delay_us(c, 10)) { s->failure = 12; goto uncertain; }
++	}
++	/* Exact completion only. ACKERR is reported with TRANSAC_COMP on a
++	 * multi-channel bus (i2c-mtk.c:1326-1330). A completed transfer with only
++	 * ACKERR is the source's bounded multi-channel NACK path, which returns
++	 * -EREMOTEIO without init_hw/RESUME_ARBIT; it is handled below. Every
++	 * other non-clean status is uncertain and is never repaired here. */
++	if (v == 3) {
++		s->stage = 13;
++		R(NA8_CH + 0x24, 2, &v);
++		if (v & 3) { s->failure = 6; goto uncertain; }
++		s->inflight = 0;
++		s->nack = 1; /* also selects the binding's W1C allowlist */
++		s->nacks++;
++		W(NA8_CH + 0x0c, 2, 3); /* clear exactly our completion + ACKERR */
++		R(NA8_CH + 0x0c, 2, &v);
++		if (v) { s->failure = 8; goto uncertain; }
++		W(NA8_CH + 0x38, 2, 5);
++		goto restore;
++	}
++	if (v != 1) { s->failure = v ? 14 : 13; goto uncertain; }
++	s->stage = 13;
++	R(NA8_CH + 0x24, 2, &v);
++	if (v & 3) { s->failure = 6; goto uncertain; }
++	if (!writing) {
++	uint32_t hi = 0, lo = 0;
++	R(NA8_CH + 0x00, 1, &hi);
++	R(NA8_CH + 0x00, 1, &lo);
++	if (hi > 255 || lo > 255) { s->failure = 15; goto uncertain; }
++	*value = (uint16_t)((hi << 8) | lo);
++    }
++	s->inflight = 0;
++	s->stage = 14;
++	W(NA8_CH + 0x0c, 2, 1);
++	W(NA8_CH + 0x38, 2, 5);
++restore:
++	s->stage = 15;
++	s->restoring = 1;
++	while (touched) {
++		unsigned i = --touched;
++		W(NA8_CH + offs[i], 2, old[i]);
++	}
++	s->restoring = 0;
++	s->stage = 16;
++	s->error = 0;
++	return s->nack ? 1 : 0;
++fail:
++	/* A read failure or refusal. Before any write in this call the
++	 * controller is as an earlier clean call (or boot) left it; after one,
++	 * the outcome is uncertain. */
++	s->offline = 1;
++	if (wrote) { s->uncertain = 1; s->error = -2; return -2; }
++	s->error = -1;
++	return -1;
++uncertain:
++	/* A failed write may still have committed: keep setup, no cleanup. */
++	s->offline = 1;
++	s->uncertain = 1;
++	s->error = -2;
++	return -2;
++#undef R
++#undef W
++#undef REFUSE
++}
++
++int na8_read16(const struct na8_io *o, void *c, struct na8_state *s,
++    unsigned slave, unsigned reg, uint16_t *value)
++{
++ int rc=na8_transfer16(o,c,s,slave,reg,value,0);
++ if (s) {
++  s->prior_amp_valid=rc==0;
++  if (!rc) { s->prior_amp_slave=slave; s->prior_amp_reg=reg; s->prior_amp_value=*value; }
++ }
++ return rc;
++}
++int na8_write16(const struct na8_io *o, void *c, struct na8_state *s,
++    unsigned slave, unsigned reg, uint16_t value)
++{
++ if (!s || s->offline || s->inflight) return -1;
++ /* Every runtime/profile RMW must preserve unrelated bits of the immediately
++  * preceding same-slave/register read. Silicon errata and volatile key
++  * writes are separate exact-value allowlisted source operations. */
++ int allowed=na8_silicon_value(reg,value);
++ if (!allowed && s->prior_amp_valid && s->prior_amp_slave==slave && s->prior_amp_reg==reg) {
++  uint16_t old=s->prior_amp_value;
++  allowed=nah_board_change_allowed(reg,old,value) ||
++   (reg==0x00 && !((old^value)&~9u)) ||
++   (reg==0x01 && !((old^value)&~4u)) ||
++   (reg==0x02 && !((old^value)&~15u) && (value&15)==8) ||
++   (reg==0x04 && !((old^value)&~256u) && !(value&256));
++ }
++ s->prior_amp_valid=0;
++ if (!allowed) { s->failure=19; return -1; }
++ return na8_transfer16(o,c,s,slave,reg,&value,1);
++}
++
++unsigned
++na8_classify(uint16_t rev)
++{
++	/* Exact revisions with init tables: tfa_init.c:903-961 (9874), 807-847 (9873). */
++	static const uint16_t exact[] = {0x0a74, 0x0b74, 0x0c74, 0x0a73, 0x0b73, 0x1a73};
++	/* Low bytes dispatched by the selected probe, tfa98xx.c:5076-5143. */
++	static const uint8_t family[] = {0x72, 0x73, 0x74, 0x88, 0x13, 0x94, 0x80, 0x81,
++	    0x92, 0x12, 0x97, 0x96};
++	for (unsigned i = 0; i < sizeof(exact) / sizeof(exact[0]); i++) {
++		if (rev == exact[i]) { return NA8_SUPPORTED; }
++	}
++	unsigned low = rev & 0xff;
++	if (low == 0x73 || low == 0x74) { return NA8_UNLISTED_REV; }
++	for (unsigned i = 0; i < sizeof(family); i++) {
++		if (low == family[i]) { return NA8_OTHER_FAMILY; }
++	}
++	return NA8_UNKNOWN;
++}
++
++int
++na8_probe(const struct na8_io *o, void *c, struct na8_state *s, struct na8_amp amp[2])
++{
++	if (!s || !amp) { return -1; }
++	for (unsigned i = 0; i < 2; i++) {
++		amp[i] = (struct na8_amp){0};
++		amp[i].addr = na8_slave[i];
++	}
++	for (unsigned i = 0; i < 2; i++) {
++		struct na8_amp *a = &amp[i];
++		uint16_t v = 0;
++		a->rc = na8_read16(o, c, s, a->addr, 0x03, &v);
++		if (a->rc == 1) {
++			/* Clean NACK: no REV value, no further pointer on this amp. The
++			 * controller is idle and its config restored, so the other
++			 * amplifier may still be identified. */
++			a->cls = NA8_NACK;
++			continue;
++		}
++		if (a->rc) { a->cls = NA8_FAILED; return a->rc; }
++		a->reads = 1;
++		a->rev = v;
++		a->cls = na8_classify(v);
++		if (a->cls != NA8_SUPPORTED) { continue; } /* raw REV kept, nothing else read */
++		/* PWDN 0x0000, AMPE 0x0030, MANSTATE 0x1433 in tfa9874_tfafieldnames.h,
++		 * tfa9873_tfafieldnames.h and tfa9873_tfafieldnames_B0.h alike. */
++		a->rc = na8_read16(o, c, s, a->addr, 0x00, &a->sys0);
++		if (a->rc == 1) { a->cls = NA8_PARTIAL; continue; } /* clean, amp-local */
++		if (a->rc) { a->cls = NA8_FAILED; return a->rc; }
++		a->reads = 2;
++		a->rc = na8_read16(o, c, s, a->addr, 0x14, &a->status14);
++		if (a->rc == 1) { a->cls = NA8_PARTIAL; continue; }
++		if (a->rc) { a->cls = NA8_FAILED; return a->rc; }
++		a->reads = 3;
++		a->pwdn = a->sys0 & 1;
++		a->ampe = (a->sys0 >> 3) & 1;
++		a->manstate = (a->status14 >> 3) & 0xf;
++	}
++	return 0;
++}
++#endif /* NORD2 */
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_i2c8.h
+@@ -0,0 +1,89 @@
++#ifndef NORD2_AUDIO_I2C8_H
++#define NORD2_AUDIO_I2C8_H
++#include <stdint.h>
++
++/* MT6893 I2C8 multi-channel I2Cv2 PIO transport. Only amp slaves34/37.
++ * Read16 uses registerpointer + WRRD(two BE bytes); write16 uses exactly
++ * three bytes (register, MSB, LSB), no controller reset/bitbang/APDMA writes.
++ * Board-profile RMW requires an immediately preceding same-register read
++ * and a source-backed masked change from the SHA-validated runtime plan.
++ * Silicon errata writes and volatile key latches use exact selected-source
++ * values. No MTP programming commands or rail slaves51/56 are admitted.
++ * AP configuration is saved/restored on clean completion/cleanNACK; failure
++ * after mutation is sticky uncertain, with no reset/retry/next-slave access.
++ * Shared clock enabling, amp reset and the AP lease belong to audio_hw.c.
++ * Every transfer rechecks clocks, pinmux, CAM/CCU/shadow/AP idle, DMA/FIFO,
++ * and V2 I3C_EN at0xec. Source references: SOURCE-AUDIT.md.
++ */
++struct na8_io {
++	int (*read)(void *, uint32_t, unsigned, uint32_t *);   /* width 1/2/4 */
++	int (*write)(void *, uint32_t, unsigned, uint32_t);
++	int (*delay_us)(void *, unsigned);
++};
++
++/* failure: 1 mux, 2 PLL, 3 timing, 4 pinmux, 5 controller gated, 6 AP START,
++ * 7 DMA, 8 inherited IRQ, 9 FIFO, 10 read callback, 11 write callback,
++ * 12 delay, 13 timeout, 14 completion error, 15 byte bounds,
++ * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
++ * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
++ * 21 AP-channel I3C mode enabled. */
++struct na8_state {
++	unsigned entered, inflight, offline, mutated, uncertain, polls, calls;
++ unsigned poll_limit; /* 0=2000, streaming monitor uses200 (2ms); maximum2000 */
++	unsigned nack, nacks, i3c, restoring;
++ unsigned prior_amp_valid, prior_amp_slave, prior_amp_reg;
++ uint16_t prior_amp_value;
++	int error;
++	unsigned stage, failure, last_width, last_write, last_valid;
++	uint32_t last_addr, last_value, mux, parent_hz, pinmux, gate, pwr, pwr2;
++	uint32_t ifr1, ifr2, dma_en, sh_start, ccu_start, ccu_ctrl, prior_irq, prior_ack;
++	uint32_t completion_irq;
++	unsigned dma_checked;
++};
++
++/* One read of a 16-bit big-endian TFA register (tfa98xx.c:4705-4709).
++ *  0 success (value valid)
++ *  1 clean NACK: transaction completed, status/FIFO cleared, config restored,
++ *    no data byte was read, nothing is uncertain, Linux return may proceed
++ * -1 refused before any write (offline, hardware untouched)
++ * -2 uncertain after a write (offline, Linux return must be refused) */
++int na8_read16(const struct na8_io *, void *, struct na8_state *,
++    unsigned slave, unsigned reg, uint16_t *value);
++
++/* 1 if Linux return may proceed: nothing in flight and no write was
++ * followed by a non-clean outcome. Pure: performs no callback. A clean NACK
++ * does not refuse return. */
++int na8_return_ok(const struct na8_state *);
++
++enum na8_class {
++	NA8_UNPROBED = 0,
++	NA8_FAILED = 1,        /* transport refused/uncertain; sequence stopped */
++	NA8_UNKNOWN = 2,       /* REV low byte not handled by tfa98xx.c probe */
++	NA8_OTHER_FAMILY = 3,  /* handled by the driver but not a 9873/9874 */
++	NA8_UNLISTED_REV = 4,  /* 0x73/0x74 family, revision not in tfa_init.c */
++	NA8_SUPPORTED = 5,     /* exact revision with a source init table */
++	NA8_NACK = 6,          /* clean address/data NACK; no REV value read */
++	NA8_PARTIAL = 7,       /* revision5: supported REV read, then a clean NACK on
++	                        * 0x00/0x14; nothing further on that amp */
++};
++
++struct na8_amp {
++	uint8_t addr;
++	unsigned cls, reads;
++	uint16_t rev, sys0, status14;
++	unsigned pwdn, ampe, manstate;
++	int rc;
++};
++
++/* REV (0x03) first. Only an exact supported revision may be followed by
++ * 0x00 and 0x14 on that slave. A clean NACK (on REV, or revision5: on 0x00/
++ * 0x14 after a supported REV -> NA8_PARTIAL) stops only that amplifier; no
++ * register pointer is invented or retried; the other amplifier is still
++ * probed because the controller is verified idle and restored again. Any
++ * uncertain/refused transport outcome stops the whole sequence; the second
++ * amplifier is probed only after clean completions. */
++int na8_probe(const struct na8_io *, void *, struct na8_state *, struct na8_amp amp[2]);
++unsigned na8_classify(uint16_t rev);
++int na8_write16(const struct na8_io *, void *, struct na8_state *,
++    unsigned slave, unsigned reg, uint16_t value);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_amp.c
+@@ -0,0 +1,57 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++#include "audio_amp.h"
++/* Android04d00c2 sound/soc/codecs/audio/tfa98xx/tfa_init.c:791-969,
++ * generated directly from exact revision cases (not board tuning). */
++struct setting { uint8_t reg; uint16_t value; };
++static const struct setting ra73[]={{0x02,0x0628},{0x4c,0x00e9},{0x52,0x17d0},{0x56,0x0011},{0x58,0x0200},{0x59,0x0001},{0x5f,0x0180},{0x61,0x0183},{0x63,0x055a},{0x65,0x0542},{0x6f,0x00a3},{0x70,0xa3fb},{0x71,0x007e},{0x83,0x009a},{0x84,0x0211},{0x85,0x0382},{0x8c,0x0210},{0xd5,0x0000}};
++static const struct setting rb73[]={{0x02,0x0628},{0x61,0x0183},{0x63,0x005a},{0x6f,0x0082},{0x70,0xa3eb},{0x71,0x107e},{0x73,0x0187},{0x83,0x071c},{0x85,0x0380},{0xd5,0x004d}};
++static const struct setting ra74[]={{0x02,0x22a8},{0x51,0x0020},{0x52,0x57dc},{0x58,0x16a4},{0x61,0x0110},{0x66,0x0701},{0x6f,0x00a3},{0x70,0x07f8},{0x73,0x0007},{0x74,0x5068},{0x75,0x0d28},{0x83,0x0594},{0x84,0x0001},{0x85,0x0001},{0x88,0x0000},{0xc4,0x2001}};
++static const struct setting rb74[]={{0x02,0x22a8},{0x51,0x0020},{0x52,0x57dc},{0x58,0x16a4},{0x61,0x0110},{0x66,0x0701},{0x6f,0x00a3},{0x70,0x07f8},{0x73,0x0047},{0x74,0x5068},{0x75,0x0d28},{0x83,0x0595},{0x84,0x0001},{0x85,0x0001},{0x88,0x0000},{0xc4,0x2001}};
++static const struct setting rc74[]={{0x02,0x22c8},{0x52,0x57dc},{0x53,0x003e},{0x56,0x0400},{0x61,0x0110},{0x6f,0x00a5},{0x70,0x07f8},{0x73,0x0047},{0x74,0x5098},{0x75,0x8d28},{0x80,0x0000},{0x83,0x0799},{0x84,0x0081}};
++int nah_amp_cold_init(const struct na8_io *io,void *cookie,struct na8_state *bus,
++ unsigned slave,uint16_t rev)
++{
++ const struct setting *table=0; unsigned count=0;
++ if (slave!=0x34 && slave!=0x37) return -1;
++ switch (rev) {
++ case 0x0a73: table=ra73; count=sizeof(ra73)/sizeof(ra73[0]); break;
++ case 0x0b73: table=rb73; count=sizeof(rb73)/sizeof(rb73[0]); break;
++ case 0x1a73: break;
++ case 0x0a74: table=ra74; count=sizeof(ra74)/sizeof(ra74[0]); break;
++ case 0x0b74: table=rb74; count=sizeof(rb74)/sizeof(rb74[0]); break;
++ case 0x0c74: table=rc74; count=sizeof(rc74)/sizeof(rc74[0]); break;
++ default: return -1;
++ }
++ uint16_t system=0,key=0;
++ if (na8_read16(io,cookie,bus,slave,0x00,&system) || (system&9)!=1) return -1;
++ #define WRITE(r,v) do { if (na8_write16(io,cookie,bus,slave,(r),(v))) return -2; } while (0)
++ WRITE(0x0f,0x5a6b);
++ if (na8_read16(io,cookie,bus,slave,0xfb,&key)) return -2;
++ WRITE(0xa0,key^0x005a);
++ /* tfa98xx_key2(tfa,0), tfa_dsp.c:819-830; closes unhide window. */
++ WRITE(0x0f,0x5a6b); WRITE(0xa1,0x005a); WRITE(0x0f,0);
++ for (unsigned i=0;i<count;i++) WRITE(table[i].reg,table[i].value);
++ if ((rev&255)==0x73) {
++  uint16_t v=0;
++  if (na8_read16(io,cookie,bus,slave,0x04,&v)) return -2;
++  WRITE(0x04,v & ~(1u<<8)); /* FSSYNCEN0, tfa_init.c:852 */
++ }
++ /* Keep key2 unlocked until board profile analog settings are applied. */
++ #undef WRITE
++ return 0;
++}
++int nah_amp_lock(const struct na8_io *io,void *cookie,struct na8_state *bus,unsigned slave)
++{
++ if (na8_write16(io,cookie,bus,slave,0x0f,0x5a6b) ||
++     na8_write16(io,cookie,bus,slave,0xa1,0) ||
++     na8_write16(io,cookie,bus,slave,0x0f,0)) return -1;
++ return 0;
++}
++#endif
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_amp.h
+@@ -0,0 +1,12 @@
++#ifndef NORD2_AUDIO_AMP_H
++#define NORD2_AUDIO_AMP_H
++#include "audio_i2c8.h"
++/* Selected tfa_init.c silicon errata only. This does NOT replace the board
++ * container/profile. Must run PWDN1/AMPE0, shared I2C8 lease held, sole worker.
++ * Protected volatile settings require source key unlock0f/fb/a0/a1; a1 is
++ * a volatile key latch, not OTP programming. Never writes a3/a7/a8 or any
++ * MTP row/copy/start register. Caller must close key2 after board application using nah_amp_lock(). */
++int nah_amp_cold_init(const struct na8_io *, void *, struct na8_state *,
++ unsigned slave, uint16_t revision);
++int nah_amp_lock(const struct na8_io *, void *, struct na8_state *, unsigned slave);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_afe.c
+@@ -0,0 +1,683 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++/* Nord2 milestone 2 AFE silent-stream programme (revision5). GPL-2.0 source
++ * contract and line references in audio_afe.h and AUDIO-RESUME-REPORT.md. */
++#include "audio_afe.h"
++
++/* ---- PLL arithmetic: clk-pll.c:118-142, 289-325; clk-mt6885.c:2407-2442 ---- */
++#define NAF_FIN 26000000u
++#define NAF_FMIN 1500000000ull
++#define NAF_FMAX 3800000000ull
++#define NAF_PCWBITS 32u
++#define NAF_IBITS 8u
++
++uint32_t
++naf_pll_pcw(uint32_t freq, uint32_t *postdiv_code)
++{
++	uint64_t f = freq;
++	unsigned val;
++	if (f > NAF_FMAX) { f = NAF_FMAX; }
++	/* Exactly the source loop, including its val==5 fall-through quirk. */
++	uint32_t postdiv = 1;
++	for (val = 0; val < 5; val++) {
++		postdiv = 1u << val;
++		if (f * postdiv >= NAF_FMIN) { break; }
++	}
++	uint64_t pcw = (f << val) << (NAF_PCWBITS - NAF_IBITS);
++	pcw /= NAF_FIN;
++	if (postdiv_code) {
++		unsigned code = 0;
++		while ((1u << code) < postdiv) { code++; } /* ffs(postdiv) - 1 */
++		*postdiv_code = code;
++	}
++	return (uint32_t)pcw;
++}
++
++uint32_t
++naf_pll_rate(uint32_t pcw, uint32_t postdiv_code)
++{
++	unsigned fbits = NAF_PCWBITS - NAF_IBITS;
++	uint64_t vco = (uint64_t)NAF_FIN * pcw;
++	unsigned c = (vco & ((1ull << fbits) - 1)) ? 1 : 0;
++	vco >>= fbits;
++	vco += c;
++	uint64_t postdiv = 1ull << (postdiv_code & 7);
++	return (uint32_t)((vco + postdiv - 1) / postdiv);
++}
++
++/* ---- gate ---- */
++/* Pins 32, 33, 35 (I2S3 BCK/LRCK/DO; GPIO34 = I2S0_DI is not touched). */
++#define NAF_PIN_MODE_MASK 0x0000f0ffu
++#define NAF_PIN_MODE_I2S3 0x00001011u
++#define NAF_PIN_DIR_MASK ((1u << 0) | (1u << 1) | (1u << 3))
++#define NAF_PIN_LT_MASK ((1u << 3) | (1u << 5) | (1u << 4)) /* pinctrl-mt6885.c:299-302,395-398 */
++
++static int
++naf_amp_ok(const struct naf_amp_evidence *a)
++{
++	return a->measured && a->supported && a->pwdn == 1 && a->ampe == 0 && a->manstate == 0;
++}
++
++static unsigned
++naf_gate_words(const uint32_t *s, const struct naf_amp_evidence amp[2])
++{
++	unsigned g = 0;
++	/* The PG path writes the entire keyed register. Refuse if that would
++	 * replace a distinct inherited high half. */
++	if (s[NAU_S_SPM_POWERON] != ((NAF_SPM_PROJECT_CODE << 16) | 1u)) {
++		/* Source keyed write is performed for each power transition. */
++	}
++	/* Cold MTCMOS: status bit21 clear; ON/ON_2ND/RST_B clear; ISO, CLK_DIS,
++	 * SRAM_PDN and its ack set (the power-down end state, pg.c:3282-3311). */
++	if (((s[NAU_S_PWR_STATUS] | s[NAU_S_PWR_STATUS_2ND]) & (1u << 21)) ||
++	    (s[NAU_S_AUDIO_PWR_CON] & 0x111fu) != 0x1112u) {
++		g |= NAF_G_AUDIO_ON;
++	}
++	/* pg.c:3370-3416 finishes ADSP off with CKISO/ISO/CLK_DIS set,
++	 * ISOINT_B/SLEEP_B/ACK/ON/ON_2ND/RST_B clear. Status alone can still
++	 * be zero while a power transition is in progress. */
++	if (((s[NAU_S_PWR_STATUS] | s[NAU_S_PWR_STATUS_2ND]) & (1u << 22)) ||
++	    (s[NAU_S_ADSP_PWR_CON] & 0x227fu) != 0x0032u) {
++		g |= NAF_G_ADSP_ON;
++	}
++	if (!(s[NAU_S_PROT2_STA1] & (1u << 4))) { g |= NAF_G_PROTECT; }
++	if (!(s[NAU_S_IFR1_CG] & (1u << 25)) || !(s[NAU_S_IFR3_CG] & (1u << 4))) { g |= NAF_G_INFRA; }
++	/* audio_sel pdn31 sel[25:24]; aud_intbus pdn7 [1:0]; engen2 pdn7 [1:0];
++	 * aud_2 pdn7 [0]: all gated and on parent 0 (26 MHz). */
++	if ((s[NAU_S_CLK_CFG_7] & ((1u << 31) | (3u << 24))) != (1u << 31) ||
++	    (s[NAU_S_CLK_CFG_8] & ((1u << 7) | 3u)) != (1u << 7) ||
++	    (s[NAU_S_CLK_CFG_12] & ((1u << 7) | 3u)) != (1u << 7) ||
++	    (s[NAU_S_CLK_CFG_13] & ((1u << 7) | 1u)) != (1u << 7)) {
++		g |= NAF_G_MUX;
++	}
++	/* APLL2 unprepared end state: CON0 en clear, CON4 ISO set/PWR_ON clear,
++	 * tuner enable (AP_PLL_CON3 bit5) clear (clk-pll.c:524-551). */
++	if ((s[NAU_S_APLL2_CON0] & 1u) || (s[NAU_S_APLL2_CON4] & 3u) != 2u ||
++	    (s[NAU_S_AP_PLL_CON3] & (1u << 5))) {
++		g |= NAF_G_APLL2_ON;
++	}
++	uint32_t code = 0, pcw = naf_pll_pcw(NAF_APLL2_HZ, &code);
++	if (((s[NAU_S_APLL2_CON1] >> 24) & 7u) != code || s[NAU_S_APLL2_CON2] != pcw) {
++		/* Program cold APLL2 rather than requiring bootloader rate. */
++	}
++	if (s[NAU_S_APLL2_TUNER] != s[NAU_S_APLL2_CON2] + 1u) { /* Reprogram tuner along with PCW. */ }
++	if ((s[NAU_S_MODE_32] & NAF_PIN_MODE_MASK) || (s[NAU_S_DIR_32] & NAF_PIN_DIR_MASK)) {
++		g |= NAF_G_PINS;
++	}
++	if (!amp || !naf_amp_ok(&amp[0]) || !naf_amp_ok(&amp[1])) { g |= NAF_G_AMPS; }
++	return g;
++}
++
++unsigned
++naf_gate(const struct nau_state *st, const struct naf_amp_evidence amp[2])
++{
++	if (!st || st->failed || st->snap_read != NAU_SNAP_COUNT) {
++		return NAF_G_SNAPSHOT | ((!amp || !naf_amp_ok(&amp[0]) || !naf_amp_ok(&amp[1])) ? NAF_G_AMPS : 0);
++	}
++	unsigned g = naf_gate_words(st->snap, amp);
++	if (st->afe_read) { g |= NAF_G_AFE_SEEN; }
++	return g;
++}
++
++/* Gate/verify registers and the fields this component may change. */
++static const struct {
++	uint8_t idx;
++	uint32_t mask;
++} naf_watch[] = {
++	{NAU_S_SPM_POWERON, 1u},
++	{NAU_S_PWR_STATUS, (1u << 21) | (1u << 22)},
++	{NAU_S_PWR_STATUS_2ND, (1u << 21) | (1u << 22)},
++	{NAU_S_ADSP_PWR_CON, 0x227fu},
++	{NAU_S_AUDIO_PWR_CON, 0x111fu},
++	{NAU_S_IFR1_CG, 1u << 25},
++	{NAU_S_IFR3_CG, 1u << 4},
++	{NAU_S_PROT2_STA1, 1u << 4},
++	{NAU_S_CLK_CFG_7, (1u << 31) | (3u << 24)},
++	{NAU_S_CLK_CFG_8, (1u << 7) | 3u},
++	{NAU_S_CLK_CFG_12, (1u << 7) | 3u},
++	{NAU_S_CLK_CFG_13, (1u << 7) | 1u},
++	{NAU_S_AP_PLL_CON3, 1u << 5},
++	{NAU_S_APLL2_TUNER, 0xffffffffu},
++	{NAU_S_APLL2_CON0, 1u},
++	{NAU_S_APLL2_CON1, 7u << 24},
++	{NAU_S_APLL2_CON2, 0xffffffffu},
++	{NAU_S_APLL2_CON4, 3u},
++	{NAU_S_MODE_32, NAF_PIN_MODE_MASK},
++	{NAU_S_DIR_32, NAF_PIN_DIR_MASK},
++	{NAU_S_LT_PD32, NAF_PIN_LT_MASK},
++	{NAU_S_LT_PU32, NAF_PIN_LT_MASK},
++};
++#define NAF_WATCH (sizeof(naf_watch) / sizeof(naf_watch[0]))
++
++/* ---- allowlists ---- */
++int
++naf_write_allowed(uint32_t pa)
++{
++	switch (pa) {
++	case NAF_SPM_POWERON: case NAF_SPM_AUDIO_PWR:
++	case NAF_IFR_CG1_SET: case NAF_IFR_CG1_CLR: case NAF_IFR_CG3_SET: case NAF_IFR_CG3_CLR:
++	case NAF_IFR_PROT2_SET: case NAF_IFR_PROT2_CLR:
++	case NAF_TOP_UPDATE1:
++	case NAF_TOP_SET(NAF_TOP_CFG7): case NAF_TOP_CLR(NAF_TOP_CFG7):
++	case NAF_TOP_SET(NAF_TOP_CFG8): case NAF_TOP_CLR(NAF_TOP_CFG8):
++	case NAF_TOP_SET(NAF_TOP_CFG12): case NAF_TOP_CLR(NAF_TOP_CFG12):
++	case NAF_TOP_SET(NAF_TOP_CFG13): case NAF_TOP_CLR(NAF_TOP_CFG13):
++	case NAF_APM_AP_PLL_CON3: case NAF_APM_APLL2_CON0: case NAF_APM_APLL2_CON4:
++	case NAF_APM_APLL2_CON1: case NAF_APM_APLL2_CON2: case NAF_APM_APLL2_TUNER:
++	case NAF_GPIO_MODE_32: case NAF_LT_PD: case NAF_LT_PU:
++	case NAF_AFE_TOP_CON0: case NAF_AFE_DAC_CON0: case NAF_AFE_I2S_CON3:
++	case NAF_AFE_CONN_24BIT: case NAF_AFE_DL1_CON0: case NAF_AFE_DL1_BASE_MSB:
++	case NAF_AFE_DL1_BASE: case NAF_AFE_DL1_END_MSB: case NAF_AFE_DL1_END:
++	case NAF_AFE_APLL2_TCFG: case NAF_AFE_CONN28: case NAF_AFE_CONN29:
++	case NAF_AFE_MEMIF_CON0: case NAF_AFE_CONN_24BIT_1: case NAF_AFE_HD_ENGEN:
++		return 1;
++	default:
++		return pa >= NAF_SRAM && pa < NAF_SRAM + NAF_SRAM_BYTES && !(pa & 3u);
++	}
++}
++
++static int naf_write_only(uint32_t pa);
++
++static int
++naf_read_allowed(uint32_t pa)
++{
++	if (pa == NAF_SPM_PWR_STATUS || pa == NAF_SPM_PWR_STATUS2 || pa == NAF_IFR_PROT2_STA1 ||
++	    pa == NAF_AFE_DAC_MON || pa == NAF_AFE_DL1_CUR) {
++		return 1;
++	}
++	for (unsigned i = 0; i < NAF_WATCH; i++) {
++		if (nau_snapshot_pa[naf_watch[i].idx] == pa) { return 1; }
++	}
++	/* RMW targets are read before they are written; aliases are never read. */
++	return naf_write_allowed(pa) && !naf_write_only(pa) &&
++	    (pa < NAF_SRAM || pa >= NAF_SRAM + NAF_SRAM_BYTES);
++}
++
++/* ---- plan ---- */
++struct naf_builder {
++	struct naf_op *list;
++	unsigned n, overflow;
++};
++
++static void
++naf_emit(struct naf_builder *b, unsigned kind, unsigned phase, uint32_t pa, uint32_t mask,
++    uint32_t value, uint32_t arg, unsigned step)
++{
++	if (b->n >= NAF_MAX_OPS) { b->overflow = 1; return; }
++	struct naf_op *o = &b->list[b->n++];
++	o->kind = (uint8_t)kind;
++	o->phase = (uint8_t)phase;
++	o->step_us = (uint16_t)step;
++	o->pa = pa;
++	o->mask = mask;
++	o->value = value;
++	o->arg = arg;
++}
++#define RMW(ph, pa, m, v) naf_emit(b, NAF_RMW, (ph), (pa), (m), (v), 0, 0)
++#define WR(ph, pa, v) naf_emit(b, NAF_W, (ph), (pa), 0xffffffffu, (v), 0, 0)
++#define POLL(ph, pa, m, v, n, us) naf_emit(b, NAF_POLL, (ph), (pa), (m), (v), (n), (us))
++#define DLY(ph, us) naf_emit(b, NAF_DELAY, (ph), 0, 0, 0, (us), 0)
++
++static void
++naf_build_up(struct naf_builder *b)
++{
++	const uint32_t poweron = (NAF_SPM_PROJECT_CODE << 16) | 1u;
++	/* 1. PG_AUDIO parents (pg.c:5001-5003), then MTCMOS on (pg.c:3314-3355).
++	 * Mux enable writes the CLR alias (clk-mux.c:78-98); infra CG enable
++	 * writes the CLR alias (clk-mt6885.c:2115-2131). */
++	WR(NAF_PH_POWER, NAF_TOP_CLR(NAF_TOP_CFG8), 1u << 7);   /* aud_intbus_sel */
++	WR(NAF_PH_POWER, NAF_IFR_CG3_CLR, 1u << 4);             /* ifrao_audio26m */
++	WR(NAF_PH_POWER, NAF_IFR_CG1_CLR, 1u << 25);            /* ifrao_audio */
++	WR(NAF_PH_POWER, NAF_SPM_POWERON, poweron);
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 2, 1u << 2); /* PWR_ON */
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 3, 1u << 3); /* PWR_ON_2ND */
++	POLL(NAF_PH_POWER, NAF_SPM_PWR_STATUS, 1u << 21, 1u << 21, 1000, 10);
++	POLL(NAF_PH_POWER, NAF_SPM_PWR_STATUS2, 1u << 21, 1u << 21, 1000, 10);
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 4, 0);        /* CLK_DIS */
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 1, 0);        /* ISO */
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 0, 1u << 0);  /* RST_B */
++	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 8, 0);        /* SRAM_PDN */
++	POLL(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 12, 0, 1000, 10);
++	WR(NAF_PH_POWER, NAF_IFR_PROT2_CLR, 1u << 4);
++	/* Source ignores this ack (pg.c:3351-3353); waiting is strictly safer. */
++	POLL(NAF_PH_POWER, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
++
++	/* 2. mt6885_afe_enable_clock (afe-clk.c:212-279): audio_sel on (parent
++	 * already 26 MHz per gate), aud_afe gate (audsys no_setclr, bit2). */
++	WR(NAF_PH_AFECLK, NAF_TOP_CLR(NAF_TOP_CFG7), 1u << 31);
++	RMW(NAF_PH_AFECLK, NAF_AFE_TOP_CON0, 1u << 2, 0);
++	/* 3. runtime resume (pcm.c:3466-3474): CPU_HD_ALIGN 0, 24-bit ports, AFE_ON. */
++	RMW(NAF_PH_AFE, NAF_AFE_MEMIF_CON0, 1u << 1, 0);
++	WR(NAF_PH_AFE, NAF_AFE_CONN_24BIT, 0xffffffffu);
++	WR(NAF_PH_AFE, NAF_AFE_CONN_24BIT_1, 0xffffffffu);
++	RMW(NAF_PH_AFE, NAF_AFE_DAC_CON0, 1u << 0, 1u << 0);
++
++	/* 4. I2S3 BE hw_params: 48 kHz, I2S format, 16-bit (dai-i2s.c:1803-1808). */
++	RMW(NAF_PH_I2S_CFG, NAF_AFE_I2S_CON3, 0xffffeffeu,
++	    (NAF_RATE_48K << 8) | (1u << 3) | (1u << 1));
++
++	/* 5. DL1 FE: disabled check (fe-dai.c:789-795), addr (:802-823), stereo,
++	 * 48 kHz, S16 (hd 0), pbuf/minlen 32 B (pcm.c:300-308), SRAM normal mode
++	 * (pcm.c:3500-3508, 3591-3595), then zero the ring. */
++	POLL(NAF_PH_DL1_CFG, NAF_AFE_DAC_CON0, 1u << 4, 0, 1, 0);
++	WR(NAF_PH_DL1_CFG, NAF_AFE_DL1_BASE, NAF_SRAM);
++	WR(NAF_PH_DL1_CFG, NAF_AFE_DL1_END, NAF_SRAM + NAF_SRAM_BYTES - 1u);
++	WR(NAF_PH_DL1_CFG, NAF_AFE_DL1_BASE_MSB, 0);
++	WR(NAF_PH_DL1_CFG, NAF_AFE_DL1_END_MSB, 0);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 1u << 8, 0);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 0xfu << 24, NAF_RATE_48K << 24);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 3u, 0);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 3u << 12, 0);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 0xfu << 20, 0);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_DL1_CON0, 1u << 5, 1u << 5);
++	RMW(NAF_PH_DL1_CFG, NAF_AFE_MEMIF_CON0, 1u << 2, 0);
++	naf_emit(b, NAF_FILL, NAF_PH_DL1_CFG, NAF_SRAM, 0, 0, NAF_SRAM_BYTES, 0);
++
++	/* 6. APLL2 supply = mt6885_apll2_enable (afe-clk.c:421-451):
++	 * aud_2_sel enable, PLL prepare (clk-pll.c:426-459: CON4 PWR_ON, 1 us,
++	 * ISO off, 1 us, CON0 en + EN_BIT_CTRL bit0, tuner en AP_PLL_CON3 bit5,
++	 * 20 us; no RST_BAR flag), reparent to apll2_ck (clk-mux.c:178-216),
++	 * aud_engen2 on apll2_d4, aud_24m/aud_apll2_tuner gates, AFE tuner cfg,
++	 * 24M engine. No PCW/postdiv/tuner-value write: gate checked them. */
++	/* clk-pll.c:245-279 set_rate_regs, cold ownership required by gate.
++	 * APLL2 pcw_chg_addr defaults to base+CON1 (line613), bit31.
++	 * Tuner is disabled during all three writes and enabled at prepare. */
++	uint32_t pd = 0, pcw = naf_pll_pcw(NAF_APLL2_HZ, &pd);
++	RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
++	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24);
++	WR(NAF_PH_APLL2, NAF_APM_APLL2_CON2, pcw);
++	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
++	WR(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, pcw + 1u);
++	DLY(NAF_PH_APLL2, 20);
++	POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24, 1, 0);
++	POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON2, 0xffffffffu, pcw, 1, 0);
++	POLL(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, 0xffffffffu, pcw + 1u, 1, 0);
++	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 7);
++	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 0, 1u << 0);
++	DLY(NAF_PH_APLL2, 1);
++	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 1, 0);
++	DLY(NAF_PH_APLL2, 1);
++	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON0, 1u << 0, 1u << 0);
++	RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 1u << 5);
++	DLY(NAF_PH_APLL2, 20);
++	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
++	WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 0); /* index 1 apll2_ck */
++	WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 21);           /* TOP_MUX_AUD_2_SHIFT */
++	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 1u << 7);
++	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
++	WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG12), 2u);      /* index 2 apll2_d4 */
++	WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 17);           /* TOP_MUX_AUD_ENGEN2_SHIFT */
++	RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 9, 0);        /* aud_24m */
++	RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 18, 0);       /* aud_apll2_tuner */
++	RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 0x0000fff7u, 0x00000374u);
++	RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 1u, 1u);
++	RMW(NAF_PH_APLL2, NAF_AFE_HD_ENGEN, 1u << 1, 1u << 1);  /* AFE_24M_ON */
++
++	/* 7. I2S3_HD_EN (Oplus connects it: dai-i2s.c:1036-1056, 908-911), pins
++	 * to function 1 with bias disabled (DT:1737-1757; SMT group skipped),
++	 * then the I2S3_EN supply bit (dai-i2s.c:871-874, PRE_PMU gpio first). */
++	RMW(NAF_PH_I2S_ON, NAF_AFE_I2S_CON3, 1u << 12, 1u << 12);
++	RMW(NAF_PH_I2S_ON, NAF_GPIO_MODE_32, NAF_PIN_MODE_MASK, NAF_PIN_MODE_I2S3);
++	RMW(NAF_PH_I2S_ON, NAF_LT_PU, NAF_PIN_LT_MASK, 0);
++	RMW(NAF_PH_I2S_ON, NAF_LT_PD, NAF_PIN_LT_MASK, 0);
++	RMW(NAF_PH_I2S_ON, NAF_AFE_I2S_CON3, 1u << 0, 1u << 0);
++
++	/* 8. DL1_CH1/2 -> I2S3_CH1/2 (I_DL1_CH1 5, I_DL1_CH2 6), DL1 on. */
++	RMW(NAF_PH_STREAM, NAF_AFE_CONN28, 1u << 5, 1u << 5);
++	RMW(NAF_PH_STREAM, NAF_AFE_CONN29, 1u << 6, 1u << 6);
++	RMW(NAF_PH_STREAM, NAF_AFE_DAC_CON0, 1u << 4, 1u << 4);
++
++	/* 9. Observe the DMA pointer only: <= 400 x 50 us. */
++	naf_emit(b, NAF_OBSERVE, NAF_PH_OBSERVE, NAF_AFE_DL1_CUR, NAF_SRAM,
++	    NAF_SRAM + NAF_SRAM_BYTES - 1u, 400, 50);
++}
++
++static void
++naf_build_down(struct naf_builder *b, const uint32_t *s)
++{
++	const uint32_t poweron = (NAF_SPM_PROJECT_CODE << 16) | 1u;
++	/* DL1 off (fe-dai.c:631-644), interconnect off. */
++	RMW(NAF_PH_STOP, NAF_AFE_DAC_CON0, 1u << 4, 0);
++	RMW(NAF_PH_STOP, NAF_AFE_CONN28, 1u << 5, 0);
++	RMW(NAF_PH_STOP, NAF_AFE_CONN29, 1u << 6, 0);
++	/* DAPM POST_PMD in reverse supply order: I2S_EN, gpio, HD_EN, APLL. Pins
++	 * return to the measured snapshot fields, not to an assumed value. */
++	RMW(NAF_PH_I2S_OFF, NAF_AFE_I2S_CON3, 1u << 0, 0);
++	RMW(NAF_PH_I2S_OFF, NAF_GPIO_MODE_32, NAF_PIN_MODE_MASK, s[NAU_S_MODE_32]);
++	RMW(NAF_PH_I2S_OFF, NAF_LT_PU, NAF_PIN_LT_MASK, s[NAU_S_LT_PU32]);
++	RMW(NAF_PH_I2S_OFF, NAF_LT_PD, NAF_PIN_LT_MASK, s[NAU_S_LT_PD32]);
++	RMW(NAF_PH_I2S_OFF, NAF_AFE_I2S_CON3, 1u << 12, 0);
++	/* mt6885_apll2_disable (afe-clk.c:463-477), apll2_mux_setting(false)
++	 * (:185-205), PLL unprepare (clk-pll.c:524-551). */
++	RMW(NAF_PH_APLL2_OFF, NAF_AFE_HD_ENGEN, 1u << 1, 0);
++	RMW(NAF_PH_APLL2_OFF, NAF_AFE_APLL2_TCFG, 1u, 0);
++	RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 18, 1u << 18);
++	RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 9, 1u << 9);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 0);    /* index 0, as source writes */
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 17);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 1u << 7);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 0);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 21);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON0, 1u << 0, 0);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 1, 1u << 1);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 0, 0);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 7u << 24, s[NAU_S_APLL2_CON1]);
++	WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON2, s[NAU_S_APLL2_CON2]);
++	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
++	WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_TUNER, s[NAU_S_APLL2_TUNER]);
++	DLY(NAF_PH_APLL2_OFF, 20);
++	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 7);
++	/* runtime suspend (pcm.c:3411-3421), then disable_clock (afe-clk.c:300-314). */
++	RMW(NAF_PH_AFE_OFF, NAF_AFE_DAC_CON0, 1u << 0, 0);
++	POLL(NAF_PH_AFE_OFF, NAF_AFE_DAC_MON, 1u << 0, 0, 500, 20);
++	RMW(NAF_PH_AFE_OFF, NAF_AFE_TOP_CON0, 1u << 2, 1u << 2);
++	WR(NAF_PH_AFE_OFF, NAF_TOP_SET(NAF_TOP_CFG7), 1u << 31);
++	/* MTCMOS off (pg.c:3267-3313), then the PG parents in reverse. */
++	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, poweron);
++	WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_SET, 1u << 4);
++	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 1u << 4, 1000, 10);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 8, 1u << 8);
++	POLL(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 12, 1u << 12, 1000, 10);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 1, 1u << 1);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 4, 1u << 4);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 0, 0);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 2, 0);
++	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 3, 0);
++	POLL(NAF_PH_POWER_OFF, NAF_SPM_PWR_STATUS, 1u << 21, 0, 1000, 10);
++	POLL(NAF_PH_POWER_OFF, NAF_SPM_PWR_STATUS2, 1u << 21, 0, 1000, 10);
++	WR(NAF_PH_POWER_OFF, NAF_IFR_CG1_SET, 1u << 25);
++	WR(NAF_PH_POWER_OFF, NAF_IFR_CG3_SET, 1u << 4);
++	WR(NAF_PH_POWER_OFF, NAF_TOP_SET(NAF_TOP_CFG8), 1u << 7);
++	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, (NAF_SPM_PROJECT_CODE << 16) | (s[NAU_S_SPM_POWERON] & 1u));
++}
++#undef RMW
++#undef WR
++#undef POLL
++#undef DLY
++
++/* SET/CLR/UPDATE aliases and command registers: explicit writes only, never
++ * read-modify-write (a read of an alias is not the target state). */
++static int
++naf_write_only(uint32_t pa)
++{
++	switch (pa) {
++	case NAF_SPM_POWERON:
++	case NAF_IFR_CG1_SET: case NAF_IFR_CG1_CLR: case NAF_IFR_CG3_SET: case NAF_IFR_CG3_CLR:
++	case NAF_IFR_PROT2_SET: case NAF_IFR_PROT2_CLR: case NAF_TOP_UPDATE1:
++	case NAF_TOP_SET(NAF_TOP_CFG7): case NAF_TOP_CLR(NAF_TOP_CFG7):
++	case NAF_TOP_SET(NAF_TOP_CFG8): case NAF_TOP_CLR(NAF_TOP_CFG8):
++	case NAF_TOP_SET(NAF_TOP_CFG12): case NAF_TOP_CLR(NAF_TOP_CFG12):
++	case NAF_TOP_SET(NAF_TOP_CFG13): case NAF_TOP_CLR(NAF_TOP_CFG13):
++		return 1;
++	default:
++		return 0;
++	}
++}
++
++static int
++naf_plan_valid(const struct naf_op *ops, unsigned n)
++{
++	for (unsigned i = 0; i < n; i++) {
++		const struct naf_op *o = &ops[i];
++		switch (o->kind) {
++		case NAF_RMW:
++			if (!naf_write_allowed(o->pa) || !naf_read_allowed(o->pa) || naf_write_only(o->pa)) {
++				return 0;
++			}
++			break;
++		case NAF_W:
++			if (!naf_write_allowed(o->pa) || (o->pa >= NAF_SRAM && o->pa < NAF_SRAM + NAF_SRAM_BYTES)) {
++				return 0;
++			}
++			break;
++		case NAF_POLL:
++		case NAF_OBSERVE:
++			if (!naf_read_allowed(o->pa) || !o->arg || o->arg > 50000) { return 0; }
++			break;
++		case NAF_DELAY:
++			if (o->arg > 1000) { return 0; }
++			break;
++		case NAF_FILL:
++			if (o->pa != NAF_SRAM || o->arg != NAF_SRAM_BYTES || o->value) { return 0; }
++			break;
++		default:
++			return 0;
++		}
++	}
++	return 1;
++}
++
++int
++naf_build(const struct nau_state *st, const struct naf_amp_evidence amp[2], struct naf_plan *p)
++{
++	if (!p) { return -1; }
++	p->n_up = p->n_down = 0;
++	if (naf_gate(st, amp)) { return -1; }
++	struct naf_builder up = {p->up, 0, 0}, down = {p->down, 0, 0};
++	naf_build_up(&up);
++	naf_build_down(&down, st->snap);
++	if (up.overflow || down.overflow || !naf_plan_valid(p->up, up.n) ||
++	    !naf_plan_valid(p->down, down.n)) {
++		return -1;
++	}
++	p->n_up = up.n;
++	p->n_down = down.n;
++	return 0;
++}
++
++/* ---- executor ---- */
++static struct naf_plan naf_plan_store; /* static: not on the kernel stack */
++
++enum { NAF_X_OK = 0, NAF_X_UNCERTAIN = -2, NAF_X_OBSERVE = -3 };
++
++static int
++naf_exec(const struct naf_io *o, void *c, struct naf_state *s, const struct naf_op *ops,
++    unsigned n, unsigned *done)
++{
++	for (unsigned i = 0; i < n; i++) {
++		const struct naf_op *op = &ops[i];
++		uint32_t v = 0;
++		s->phase = op->phase;
++		s->op = i;
++		s->last_pa = op->pa;
++		switch (op->kind) {
++		case NAF_RMW:
++			s->reads++;
++			if (o->read(c, op->pa, &v)) { s->failure = NAF_FAIL_READ; return NAF_X_UNCERTAIN; }
++			v = (v & ~op->mask) | (op->value & op->mask);
++			s->last_value = v;
++			s->writes++;
++			s->active = 1;
++			if (o->write(c, op->pa, v)) { s->failure = NAF_FAIL_WRITE; return NAF_X_UNCERTAIN; }
++			break;
++		case NAF_W:
++			s->last_value = op->value;
++			s->writes++;
++			s->active = 1;
++			if (o->write(c, op->pa, op->value)) { s->failure = NAF_FAIL_WRITE; return NAF_X_UNCERTAIN; }
++			break;
++		case NAF_POLL: {
++			unsigned k;
++			for (k = 0; k < op->arg; k++) {
++				s->reads++;
++				s->polls++;
++				if (o->read(c, op->pa, &v)) { s->failure = NAF_FAIL_READ; return NAF_X_UNCERTAIN; }
++				s->last_value = v;
++				if ((v & op->mask) == op->value) { break; }
++				if (op->step_us && o->delay_us(c, op->step_us)) {
++					s->failure = NAF_FAIL_DELAY;
++					return NAF_X_UNCERTAIN;
++				}
++			}
++			if (k == op->arg) { s->failure = NAF_FAIL_POLL; return NAF_X_UNCERTAIN; }
++			break;
++		}
++		case NAF_DELAY:
++			if (o->delay_us(c, op->arg)) { s->failure = NAF_FAIL_DELAY; return NAF_X_UNCERTAIN; }
++			break;
++		case NAF_FILL:
++			for (uint32_t off = 0; off < op->arg; off += 4) {
++				s->writes++;
++				s->active = 1;
++				if (o->write(c, op->pa + off, op->value)) {
++					s->failure = NAF_FAIL_WRITE;
++					return NAF_X_UNCERTAIN;
++				}
++			}
++			break;
++		case NAF_OBSERVE: {
++			unsigned seen = 0, bad = 0;
++			for (unsigned k = 0; k < op->arg && seen < 3; k++) {
++				s->reads++;
++				if (o->read(c, op->pa, &v)) { s->failure = NAF_FAIL_READ; return NAF_X_UNCERTAIN; }
++				if (v < op->mask || v > op->value) { bad = 1; break; }
++				if (!s->observed) { s->cur_first = v; s->observed = 1; }
++				else if (v != s->cur_last) { seen++; }
++				s->cur_last = v;
++				if (o->delay_us(c, op->step_us)) { s->failure = NAF_FAIL_DELAY; return NAF_X_UNCERTAIN; }
++			}
++			s->cur_changes = seen;
++			(*done)++;
++			if (bad || seen < 2) { s->failure = NAF_FAIL_OBSERVE; return NAF_X_OBSERVE; }
++			continue;
++		}
++		default:
++			s->failure = NAF_FAIL_PLAN;
++			return NAF_X_UNCERTAIN;
++		}
++		(*done)++;
++	}
++	return NAF_X_OK;
++}
++
++static int
++naf_live(const struct naf_io *o, void *c, struct naf_state *s, const uint32_t *snap,
++    uint32_t *live, unsigned *mismatch)
++{
++	*mismatch = 0;
++	for (unsigned i = 0; i < NAF_WATCH; i++) {
++		uint32_t v = 0, idx = naf_watch[i].idx;
++		s->reads++;
++		if (o->read(c, nau_snapshot_pa[idx], &v)) { return -1; }
++		live[idx] = v;
++		if ((v ^ snap[idx]) & naf_watch[i].mask) { *mismatch |= 1u << i; }
++	}
++	return 0;
++}
++
++int
++naf_return_ok(const struct naf_state *s)
++{
++	return s && !s->active && !s->uncertain;
++}
++
++int
++naf_cycle(const struct naf_io *o, void *c, const struct nau_state *st,
++    const struct naf_amp_evidence amp[2], uint32_t authorize, struct naf_state *s)
++{
++	if (!s || s->entered) { return -1; }
++	*s = (struct naf_state){0};
++	s->entered = 1;
++	s->error = -1;
++	if (!o || !o->read || !o->write || !o->delay_us || !st || authorize != NAF_AUTHORIZE) {
++		s->failure = NAF_FAIL_ARG;
++		return -1;
++	}
++	s->gate = naf_gate(st, amp);
++	if (s->gate) { s->failure = NAF_FAIL_GATE; return -1; }
++	/* Live re-read: the boot snapshot must still describe the hardware. */
++	uint32_t live[NAU_SNAP_COUNT];
++	for (unsigned i = 0; i < NAU_SNAP_COUNT; i++) { live[i] = st->snap[i]; }
++	unsigned drift = 0;
++	if (naf_live(o, c, s, st->snap, live, &drift)) {
++		s->failure = NAF_FAIL_READ; /* reads only so far: hardware untouched */
++		return -1;
++	}
++	s->live_gate = naf_gate_words(live, amp);
++	if (drift || s->live_gate) {
++		s->verify_mismatch = drift;
++		s->failure = NAF_FAIL_LIVE;
++		return -1;
++	}
++	struct naf_plan *p = &naf_plan_store;
++	if (naf_build(st, amp, p)) { s->failure = NAF_FAIL_PLAN; return -1; }
++
++	int r = naf_exec(o, c, s, p->up, p->n_up, &s->up_done);
++	if (r == NAF_X_UNCERTAIN) {
++		s->uncertain = 1;
++		s->error = -2;
++		return -2;
++	}
++	int observe_failed = r == NAF_X_OBSERVE;
++	unsigned saved_failure = s->failure;
++	r = naf_exec(o, c, s, p->down, p->n_down, &s->down_done);
++	if (r != NAF_X_OK) {
++		s->uncertain = 1;
++		s->error = -2;
++		return -2;
++	}
++	unsigned mismatch = 0;
++	if (naf_live(o, c, s, st->snap, live, &mismatch)) {
++		s->failure = NAF_FAIL_READ;
++		s->uncertain = 1;
++		s->error = -2;
++		return -2;
++	}
++	if (mismatch) {
++		s->verify_mismatch = mismatch;
++		s->failure = NAF_FAIL_VERIFY;
++		s->uncertain = 1;
++		s->error = -4;
++		return -4;
++	}
++	s->active = 0;
++	if (observe_failed) {
++		s->failure = saved_failure;
++		s->error = -3;
++		return -3;
++	}
++	s->failure = NAF_FAIL_NONE;
++	s->error = 0;
++	return 0;
++}
++
++/* Continuous streaming interface. Caller is the sole worker and holds plan. */
++int naf_stream_open(const struct naf_io *o, void *c, const struct nau_state *snap,
++    const struct naf_amp_evidence amp[2], struct naf_plan *plan, struct naf_state *s)
++{
++    if (!o || !o->read || !o->write || !o->delay_us || !s || !plan || s->active || s->uncertain) return -1;
++    *s = (struct naf_state){0};
++    s->gate = naf_gate(snap, amp);
++    if (s->gate) { s->failure = NAF_FAIL_GATE; return -1; }
++    uint32_t live[NAU_SNAP_COUNT]; unsigned drift = 0;
++    if (naf_live(o, c, s, snap->snap, live, &drift) || drift) { s->failure = NAF_FAIL_LIVE; return -1; }
++    if (naf_build(snap, amp, plan) || !plan->n_up || plan->up[plan->n_up-1].kind != NAF_OBSERVE) return -1;
++    s->entered = 1;
++    int rc = naf_exec(o, c, s, plan->up, plan->n_up-1, &s->up_done);
++    if (rc) { s->uncertain = 1; s->error = rc; return rc; }
++    return 0;
++}
++int naf_stream_close(const struct naf_io *o, void *c, const struct nau_state *snap,
++    const struct naf_plan *plan, struct naf_state *s)
++{
++    if (!o || !plan || !s || !snap || s->uncertain) return -1;
++    if (!s->active) return 0;
++    int rc = naf_exec(o, c, s, plan->down, plan->n_down, &s->down_done);
++    if (rc) { s->uncertain = 1; return rc; }
++    uint32_t live[NAU_SNAP_COUNT]; unsigned mismatch = 0;
++    if (naf_live(o, c, s, snap->snap, live, &mismatch) || mismatch) {
++        s->verify_mismatch = mismatch; s->uncertain = 1; return -2;
++    }
++    s->active = 0;
++    return 0;
++}
++#endif /* NORD2 */
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_afe.h
+@@ -0,0 +1,178 @@
++#ifndef NORD2_AUDIO_AFE_H
++#define NORD2_AUDIO_AFE_H
++#include <stdint.h>
++#include "audio_id.h"
++
++/* MT6893 continuous speaker AFE backend, derived from reviewed revision5.
++ * Selected source Android04d00c2; register/order audit in SOURCE-AUDIT.md.
++ * Cold SPM AUDIO domain is powered up; APLL2 is actually programmed to
++ * 196.608MHz (PCW/postdivider/tuner), not assumed to inherit that rate.
++ * DL1 uses one4KiB SRAM block, stereoS16; I2S3 uses32-bit serial slots as
++ * required by selected Android BE fixup. SRAM must reuse AFE16KiB mapping.
++ * naf_stream_open/close retain per-object plans; worker feeds SRAM while
++ * open. audio_hw.c owns continuous refill, amplifiers, watchdogs and errors.
++ * RMW preserves unrelated bits; polling is bounded. Uncertain MMIO failure
++ * latches component offline, never panics iOS. Legacy naf_cycle is retained
++ * only as a source-model compatibility entry; parent must use nau_hw_*.
++ */
++
++enum naf_kind { NAF_RMW = 1, NAF_W = 2, NAF_POLL = 3, NAF_DELAY = 4, NAF_FILL = 5, NAF_OBSERVE = 6 };
++
++enum naf_phase {
++	NAF_PH_POWER = 1, NAF_PH_AFECLK = 2, NAF_PH_AFE = 3, NAF_PH_I2S_CFG = 4,
++	NAF_PH_DL1_CFG = 5, NAF_PH_APLL2 = 6, NAF_PH_I2S_ON = 7, NAF_PH_STREAM = 8,
++	NAF_PH_OBSERVE = 9,
++	NAF_PH_STOP = 10, NAF_PH_I2S_OFF = 11, NAF_PH_APLL2_OFF = 12, NAF_PH_AFE_OFF = 13,
++	NAF_PH_POWER_OFF = 14,
++};
++
++struct naf_op {
++	uint8_t kind, phase;
++	uint16_t step_us;      /* POLL/OBSERVE interval */
++	uint32_t pa, mask, value;
++	uint32_t arg;          /* POLL/OBSERVE iterations, DELAY us, FILL bytes */
++};
++
++/* Physical addresses (live DT + selected sources). */
++#define NAF_SPM_POWERON      0x10006000u
++#define NAF_SPM_PWR_STATUS   0x1000616cu
++#define NAF_SPM_PWR_STATUS2  0x10006170u
++#define NAF_SPM_AUDIO_PWR    0x10006354u
++#define NAF_IFR_CG1_SET      0x10001088u
++#define NAF_IFR_CG1_CLR      0x1000108cu
++#define NAF_IFR_CG1_STA      0x10001094u
++#define NAF_IFR_CG3_SET      0x100010a4u
++#define NAF_IFR_CG3_CLR      0x100010a8u
++#define NAF_IFR_CG3_STA      0x100010acu
++#define NAF_IFR_PROT2_SET    0x10001714u
++#define NAF_IFR_PROT2_CLR    0x10001718u
++#define NAF_IFR_PROT2_STA1   0x10001724u
++#define NAF_TOP_UPDATE1      0x10000008u
++#define NAF_TOP_CFG7         0x10000080u
++#define NAF_TOP_CFG8         0x10000090u
++#define NAF_TOP_CFG12        0x100000d0u
++#define NAF_TOP_CFG13        0x100000e0u
++#define NAF_TOP_SET(cfg)     ((cfg) + 4u)
++#define NAF_TOP_CLR(cfg)     ((cfg) + 8u)
++#define NAF_APM_AP_PLL_CON3  0x1000c00cu
++#define NAF_APM_APLL2_TUNER  0x1000c044u
++#define NAF_APM_APLL2_CON0   0x1000c32cu
++#define NAF_APM_APLL2_CON1   0x1000c330u
++#define NAF_APM_APLL2_CON2   0x1000c334u
++#define NAF_APM_APLL2_CON4   0x1000c33cu
++#define NAF_GPIO_MODE_32     0x10005340u
++#define NAF_LT_PD            0x11f20060u
++#define NAF_LT_PU            0x11f20080u
++#define NAF_AFE              0x11210000u
++#define NAF_AFE_TOP_CON0     (NAF_AFE + 0x000u)
++#define NAF_AFE_DAC_CON0     (NAF_AFE + 0x010u)
++#define NAF_AFE_I2S_CON3     (NAF_AFE + 0x040u)
++#define NAF_AFE_CONN_24BIT   (NAF_AFE + 0x048u)
++#define NAF_AFE_DL1_CON0     (NAF_AFE + 0x04cu)
++#define NAF_AFE_DL1_BASE_MSB (NAF_AFE + 0x050u)
++#define NAF_AFE_DL1_BASE     (NAF_AFE + 0x054u)
++#define NAF_AFE_DL1_CUR      (NAF_AFE + 0x05cu)
++#define NAF_AFE_DL1_END_MSB  (NAF_AFE + 0x060u)
++#define NAF_AFE_DL1_END      (NAF_AFE + 0x064u)
++#define NAF_AFE_DAC_MON      (NAF_AFE + 0x2ecu)
++#define NAF_AFE_APLL2_TCFG   (NAF_AFE + 0x3f4u)
++#define NAF_AFE_CONN28       (NAF_AFE + 0x4bcu)
++#define NAF_AFE_CONN29       (NAF_AFE + 0x4c0u)
++#define NAF_AFE_MEMIF_CON0   (NAF_AFE + 0x8ccu)
++#define NAF_AFE_CONN_24BIT_1 (NAF_AFE + 0x994u)
++#define NAF_AFE_HD_ENGEN     (NAF_AFE + 0xdd0u)
++#define NAF_SRAM             0x11212000u
++#define NAF_SRAM_BYTES       0x1000u   /* one DT block_size, prefer_mode 0 */
++
++/* Source-derived constants. */
++#define NAF_SPM_PROJECT_CODE 0xb16u      /* clk-mt6885-pg.c:263 */
++#define NAF_APLL2_HZ         196608000u  /* mt6885-afe-clk.c:481 */
++#define NAF_RATE_48K         10u         /* mt6885-afe-control.c:36,78-79 */
++
++/* Measured inputs the gate requires; anything missing is a blocker. */
++struct naf_amp_evidence {
++	unsigned measured;   /* 1 only from a clean milestone-1b probe */
++	unsigned supported;  /* exact REV in the tfa_init.c tables */
++	unsigned pwdn, ampe, manstate;
++};
++
++enum {
++	NAF_G_SNAPSHOT = 1u << 0,   /* milestone-1a snapshot incomplete/failed */
++	NAF_G_SPM_CFG = 1u << 1,    /* POWERON_CONFIG_EN != selected keyed write */
++	NAF_G_AUDIO_ON = 1u << 2,   /* AUDIO MTCMOS not in the exact cold state */
++	NAF_G_ADSP_ON = 1u << 3,    /* ADSP domain on or not in selected cold state */
++	NAF_G_PROTECT = 1u << 4,    /* AUDIO bus protection not set while cold */
++	NAF_G_INFRA = 1u << 5,      /* ifrao_audio/audio26m already ungated */
++	NAF_G_MUX = 1u << 6,        /* an audio mux ungated or not on 26 MHz */
++	NAF_G_APLL2_ON = 1u << 7,   /* APLL2 enabled/powered or its tuner enabled */
++	NAF_G_APLL2_RATE = 1u << 8, /* measured postdiv/PCW != 196.608 MHz source calc */
++	NAF_G_APLL2_TUNER = 1u << 9,/* tuner != PCW + 1 (clk-pll.c:271-272) */
++	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not GPIO-mode inputs */
++	NAF_G_AMPS = 1u << 11,      /* no measured power-down for both amplifiers */
++	NAF_G_AFE_SEEN = 1u << 12,  /* snapshot found the AFE readable (not cold) */
++};
++
++/* mtk_pll_calc_values() for the MT6893 PLL() parameters (fin 26 MHz,
++ * fmin 1500 MHz, fmax 3800 MHz, pcwbits 32, integer bits 8). Returns the
++ * PCW and writes the postdiv register code (log2 of the divider). */
++uint32_t naf_pll_pcw(uint32_t freq, uint32_t *postdiv_code);
++/* __mtk_pll_recalc_rate() inverse check, clk-pll.c:118-142. */
++uint32_t naf_pll_rate(uint32_t pcw, uint32_t postdiv_code);
++
++unsigned naf_gate(const struct nau_state *, const struct naf_amp_evidence amp[2]);
++
++#define NAF_MAX_OPS 128
++struct naf_plan {
++	unsigned n_up, n_down;
++	struct naf_op up[NAF_MAX_OPS];
++	struct naf_op down[NAF_MAX_OPS];
++};
++/* Builds the bring-up and teardown programmes from a gate-passing snapshot.
++ * 0 on success, -1 if the gate is not clean (plan left empty). */
++int naf_build(const struct nau_state *, const struct naf_amp_evidence amp[2], struct naf_plan *);
++/* 1 if pa may ever be written by this component. */
++int naf_write_allowed(uint32_t pa);
++
++struct naf_io {
++	int (*read)(void *, uint32_t, uint32_t *);
++	int (*write)(void *, uint32_t, uint32_t);
++	int (*delay_us)(void *, unsigned);
++};
++
++enum { NAF_FAIL_NONE, NAF_FAIL_ARG, NAF_FAIL_GATE, NAF_FAIL_LIVE, NAF_FAIL_PLAN, NAF_FAIL_READ,
++	NAF_FAIL_WRITE, NAF_FAIL_DELAY, NAF_FAIL_POLL, NAF_FAIL_OBSERVE, NAF_FAIL_VERIFY };
++
++struct naf_state {
++	unsigned entered, gate, live_gate, failure, phase, op, polls;
++	unsigned up_done, down_done, observed, cur_changes, verify_mismatch;
++	unsigned active, uncertain, writes, reads;
++	uint32_t cur_first, cur_last, last_pa, last_value;
++	int error;
++};
++
++/* Magic the caller must pass; no revision5 call site passes it. */
++#define NAF_AUTHORIZE 0x4e414632u
++
++/*
++ * One silent-stream cycle: live re-read of every gate register (reads only),
++ * gate, plan validation against the write allowlist, bring-up, bounded
++ * DL1_CUR observation, source teardown, final read-back verify.
++ *   0  streamed, observed, torn down and verified cold
++ *  -1  refused before any write (arguments, authorization, gate, live drift, plan)
++ *  -2  uncertain: a callback failed or a bring-up/teardown poll timed out; no
++ *      cleanup is attempted, state->active/uncertain stay set (Linux return
++ *      must be refused, no further call)
++ *  -3  bring-up finished but DL1_CUR did not advance in range; teardown and
++ *      verify still ran cleanly (functional failure, hardware back to cold)
++ *  -4  teardown finished but read-back differs from the snapshot (uncertain)
++ * A second call on the same state makes no callback.
++ */
++int naf_cycle(const struct naf_io *, void *, const struct nau_state *,
++    const struct naf_amp_evidence amp[2], uint32_t authorize, struct naf_state *);
++/* 1 if Linux return may proceed (pure, no callback). */
++int naf_return_ok(const struct naf_state *);
++int naf_stream_open(const struct naf_io *, void *, const struct nau_state *,
++    const struct naf_amp_evidence[2], struct naf_plan *, struct naf_state *);
++int naf_stream_close(const struct naf_io *, void *, const struct nau_state *,
++    const struct naf_plan *, struct naf_state *);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_hw.c
+@@ -0,0 +1,390 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++#include "audio_hw.h"
++
++static int worker(struct nau_hw *h)
++{ return h && h->io.worker && h->owner && h->io.worker(h->cookie) == h->owner; }
++static int rd32(void *c, uint32_t pa, uint32_t *v)
++{ struct nau_hw *h=c; return h->io.read(h->cookie,pa,4,v); }
++static int wr32(void *c, uint32_t pa, uint32_t v)
++{ struct nau_hw *h=c; return h->io.write(h->cookie,pa,4,v); }
++static int delay(void *c, unsigned us)
++{ struct nau_hw *h=c; return h->io.delay_us(h->cookie,us); }
++static int busrd(void *c, uint32_t pa, unsigned w, uint32_t *v)
++{ struct nau_hw *h=c; return h->io.read(h->cookie,pa,w,v); }
++static int buswr(void *c, uint32_t pa, unsigned w, uint32_t v)
++{ struct nau_hw *h=c; return h->io.write(h->cookie,pa,w,v); }
++static const struct naf_io afe_io={rd32,wr32,delay};
++static const struct na8_io bus_io={busrd,buswr,delay};
++static int lease(struct nau_hw *h, unsigned acquire)
++{
++ if (acquire && h->leased) return 0;
++ if (!acquire && !h->leased) return 0;
++ if (h->io.lease(h->cookie,acquire)) return NAH_E_IO;
++ h->leased=acquire; return 0;
++}
++static int amp_read(struct nau_hw *h,unsigned amp,unsigned reg,uint16_t *v)
++{ return na8_read16(&bus_io,h,&h->bus,h->amps[amp].addr,reg,v) ? NAH_E_IO:0; }
++static int amp_rmw(struct nau_hw *h,unsigned amp,unsigned reg,uint16_t mask,uint16_t value)
++{
++ uint16_t old=0,check=0;
++ if (amp_read(h,amp,reg,&old)) return NAH_E_IO;
++ uint16_t next=(uint16_t)((old & ~mask)|(value & mask));
++ if (na8_write16(&bus_io,h,&h->bus,h->amps[amp].addr,reg,next)) return NAH_E_IO;
++ if (amp_read(h,amp,reg,&check) || ((check^next)&mask)) return NAH_E_IO;
++ return 0;
++}
++static int amp_cold(struct nau_hw *h,unsigned amp)
++{
++ /* tfa98xx_powerdown + probus AMPE, no fake no-DSP mute callback. */
++ if (amp_rmw(h,amp,0x00,8,0) || amp_rmw(h,amp,0x00,1,1)) return NAH_E_IO;
++ for (unsigned k=0;k<50;k++) {
++  uint16_t v=0;
++  if (amp_read(h,amp,0x14,&v)) return NAH_E_IO;
++  h->status.amp_status[amp]=v;
++  if (!(v & 0x78)) return 0;
++  if (delay(h,1000)) return NAH_E_IO;
++ }
++ return NAH_E_AMPS;
++}
++static int amp_enable(struct nau_hw *h,unsigned amp)
++{
++ /* tfa_dev_set_state(OPERATING): PWDN0 -> MANSCONF1 -> AMPE1.
++  * Stable clocks verified before output enable, exact family CLKS field. */
++ if (amp_rmw(h,amp,0x00,1,0) || amp_rmw(h,amp,0x01,4,4)) return NAH_E_IO;
++ unsigned is74=(h->amps[amp].rev & 255)==0x74;
++ unsigned clockreg=is74 ? 0x11:0x10, clockmask=is74 ? 0x80:0x40;
++ unsigned ready=0;
++ for (unsigned k=0;k<50;k++) {
++  uint16_t v=0;
++  if (amp_read(h,amp,clockreg,&v)) return NAH_E_IO;
++  if (v & clockmask) { ready=1; break; }
++  if (delay(h,1000)) return NAH_E_IO;
++ }
++ if (!ready) return NAH_E_AMPS;
++ return amp_rmw(h,amp,0x00,8,8);
++}
++static int board_valid(const struct nau_hw *h)
++{
++ const struct nah_board *b=h->board;
++ if (!b || !b->apply) return 0;
++ unsigned nonzero=0;
++ for (unsigned i=0;i<32;i++) nonzero|=b->source_sha256[i];
++ if (!nonzero) return 0;
++ if (b->supports) return b->supports(h->amps[0].rev,h->amps[0].addr) && b->supports(h->amps[1].rev,h->amps[1].addr);
++ return b->revision[0]==h->amps[0].rev && b->revision[1]==h->amps[1].rev;
++}
++static int bus_clock_prepare(struct nau_hw *h)
++{
++ if (h->bus_clock_prepared) return 0;
++ uint32_t pwr=0,pwr2=0,mux=0,gate=0;
++ if (rd32(h,NAF_SPM_PWR_STATUS,&pwr) || rd32(h,NAF_SPM_PWR_STATUS2,&pwr2) ||
++     rd32(h,0x100000b0,&mux) || rd32(h,0x11d05e00,&gate)) return NAH_E_IO;
++ if ((pwr|pwr2)&(1u<<23)) return NAH_E_AMPS; /* CAM/CCU master must be off */
++ /* Source clk-mt6885.c1886: i2c_sel PDN15; enable preserves parent.
++  * Source clk-mt6885-i2c.c110: IMPS I2C8 gatebit4, CLR e04/SET e08.
++  * Enabling a gated clock is needed before controller-idle can be read;
++  * no peripheral transfer or controller reset is initiated by these writes. */
++ if (mux&(1u<<15)) {
++  h->bus_clock_changed|=1;
++  if (wr32(h,0x100000b8,1u<<15)) return NAH_E_IO;
++ }
++ if (gate&(1u<<4)) {
++  h->bus_clock_changed|=2;
++  if (wr32(h,0x11d05e04,1u<<4)) return NAH_E_IO;
++ }
++ if (rd32(h,0x100000b0,&mux) || rd32(h,0x11d05e00,&gate) ||
++     (mux&(1u<<15)) || (gate&(1u<<4))) return NAH_E_IO;
++ h->bus_clock_prepared=1;
++ return 0;
++}
++static int bus_clock_restore(struct nau_hw *h)
++{
++ if (!h->bus_clock_changed) { h->bus_clock_prepared=0; return 0; }
++ /* Never gate a possibly active shared controller after a transfer fault. */
++ if (h->bus.uncertain || h->bus.inflight) return NAH_E_UNCERTAIN;
++ uint32_t pwr=0,pwr2=0;
++ if (rd32(h,NAF_SPM_PWR_STATUS,&pwr) || rd32(h,NAF_SPM_PWR_STATUS2,&pwr2) ||
++     ((pwr|pwr2)&(1u<<23))) return NAH_E_IO;
++ if ((h->bus_clock_changed&2) && wr32(h,0x11d05e08,1u<<4)) return NAH_E_IO;
++ /* i2c_sel is shared with OTHER controllers. Enabling it is monotonic;
++  * disabling after playback could cut another worker's transaction. The
++  * source CCF has global refcounts, this port does not. Retain that one
++  * shared clock if we enabled it; restore only exclusively leased I2C8. */
++ if (h->bus_clock_changed&1) h->status.retained_shared_clock=1;
++ h->bus_clock_changed=h->bus_clock_prepared=0;
++ return 0;
++}
++static int reset_restore(struct nau_hw *h)
++{
++ if (!h->reset_changed) return 0;
++ static const uint32_t dir[2]={0x10005030,0x10005040};
++ static const uint32_t dout[2]={0x10005130,0x10005140};
++ static const unsigned bit[2]={15,20};
++ static const unsigned di[2]={NAU_S_DIR_96,NAU_S_DIR_128};
++ static const unsigned oi[2]={NAU_S_DOUT_96,NAU_S_DOUT_128};
++ int error=0;
++ for (unsigned i=0;i<2;i++) {
++  uint32_t m=1u<<bit[i];
++  /* Drop output before restoring latch if inherited direction was input. */
++  if (!(h->snapshot.snap[di[i]]&m) && wr32(h,dir[i]+8,m)) error=NAH_E_IO;
++  if (wr32(h,dout[i]+((h->snapshot.snap[oi[i]]&m)?4:8),m)) error=NAH_E_IO;
++  if ((h->snapshot.snap[di[i]]&m) && wr32(h,dir[i]+4,m)) error=NAH_E_IO;
++ }
++ if (!error) h->reset_changed=0;
++ h->status.reset_error=error;
++ return error;
++}
++static int reset_hold_fault(struct nau_hw *h)
++{
++ /* Only the two already-owned GPIO reset lines. This cannot address any
++  * I2C slave or reset/clock the shared controller. Set latch before output
++  * enable so both amps are held in external reset, even if AMPE latched. */
++ if (!h->reset_changed) return NAH_E_IO;
++ int error=0;
++ if (wr32(h,0x10005134,1u<<15)) error=NAH_E_IO;
++ if (wr32(h,0x10005144,1u<<20)) error=NAH_E_IO;
++ if (wr32(h,0x10005034,1u<<15)) error=NAH_E_IO;
++ if (wr32(h,0x10005044,1u<<20)) error=NAH_E_IO;
++ uint32_t latch0=0,latch1=0,dir0=0,dir1=0;
++ if (rd32(h,0x10005130,&latch0) || rd32(h,0x10005140,&latch1) ||
++     rd32(h,0x10005030,&dir0) || rd32(h,0x10005040,&dir1) ||
++     !(latch0&(1u<<15)) || !(latch1&(1u<<20)) ||
++     !(dir0&(1u<<15)) || !(dir1&(1u<<20))) error=NAH_E_IO;
++ h->status.amp_reset_held=!error;
++ h->status.reset_error=error;
++ return error;
++}
++static int amps_prepare(struct nau_hw *h)
++{
++ if (h->reset_changed) return 0;
++ /* Source tfa98xx.c:4740-4749 resetpulse, probe GPIOF_OUT_INIT_LOW:5037.
++  * Pinmux must alreadyGPIO; no takeover of anotherperipheral. */
++ struct nau_pin pins[NAU_PIN_COUNT]; nau_pin_decode(h->snapshot.snap,pins);
++ if (pins[4].mode || pins[7].mode) return NAH_E_AMPS;
++ const struct naf_amp_evidence dummy[2]={{1,1,1,0,0},{1,1,1,0,0}};
++ if (naf_gate(&h->snapshot,dummy)) return NAH_E_COLD;
++ if (lease(h,1)) return NAH_E_IO;
++ if (bus_clock_prepare(h)) { (void)bus_clock_restore(h); (void)lease(h,0); return NAH_E_IO; }
++ /* A real read or cleanNACK proves the entire source bus preflight and
++  * AP config restoration before any GPIO mutation. */
++ uint16_t rev=0;
++ int rc=na8_read16(&bus_io,h,&h->bus,0x34,0x03,&rev);
++ if (rc<0) { (void)bus_clock_restore(h); (void)lease(h,0); return NAH_E_IO; }
++ h->reset_changed=1;
++ if (wr32(h,0x10005134,1u<<15) || wr32(h,0x10005144,1u<<20) ||
++     wr32(h,0x10005034,1u<<15) || wr32(h,0x10005044,1u<<20)) goto fail;
++ for (unsigned i=0;i<5;i++) if (delay(h,1000)) goto fail;
++ if (wr32(h,0x10005138,1u<<15) || wr32(h,0x10005148,1u<<20)) goto fail;
++ for (unsigned i=0;i<5;i++) if (delay(h,1000)) goto fail;
++ rc=na8_probe(&bus_io,h,&h->bus,h->amps);
++ if (rc) goto fail;
++ for (unsigned i=0;i<2;i++) {
++  h->status.amp_revision[i]=h->amps[i].rev;
++  if (h->amps[i].cls!=NA8_SUPPORTED) { rc=NAH_E_AMPS; goto fail; }
++  h->evidence[i]=(struct naf_amp_evidence){1,1,h->amps[i].pwdn,h->amps[i].ampe,h->amps[i].manstate};
++ }
++ if (lease(h,0)) goto fail;
++ return 0;
++fail:
++ (void)reset_restore(h); (void)bus_clock_restore(h); (void)lease(h,0);
++ return rc<0 ? rc:NAH_E_IO;
++}
++int nau_hw_init(struct nau_hw *h,const struct nah_io *io,void *cookie,const struct nah_board *board)
++{
++ if (!h || !io || !io->read || !io->write || !io->worker || !io->delay_us || !io->lease ||
++     h->snapshot.entered || h->status.initialized || h->afe.active || h->afe.uncertain) return NAH_E_ARG;
++ uintptr_t owner=io->worker(cookie);
++ if (!owner) return NAH_E_WORKER;
++ /* Caller guarantees a fresh zeroed object. No stack-size-sensitive copies. */
++ h->io=*io; h->cookie=cookie; h->owner=owner; h->board=board; h->snapshot.entered=1;
++ for (unsigned i=0;i<NAU_SNAP_COUNT;i++) {
++  if (io->read(cookie,nau_snapshot_pa[i],4,&h->snapshot.snap[i])) {
++   h->snapshot.failed=1; return h->status.error=NAH_E_IO;
++  }
++  h->snapshot.snap_read++;
++ }
++ int rc=amps_prepare(h);
++ if (rc) return h->status.error=rc;
++ h->status.gate=naf_gate(&h->snapshot,h->evidence);
++ if (h->status.gate) { (void)reset_restore(h); return h->status.error=NAH_E_COLD; }
++ h->status.initialized=1;
++ return h->status.error=0;
++}
++int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
++ unsigned silent,unsigned gain,unsigned duration,uint64_t now)
++{
++ if (!worker(h)) return NAH_E_WORKER;
++ if (!h->status.initialized || h->status.running || h->status.uncertain ||
++     rate!=NAH_RATE || channels!=2 || bits!=16 || silent>1 || gain>NAH_MAX_GAIN_Q15 ||
++     duration>NAH_MAX_TEST_US || now>UINT64_MAX-duration) return NAH_E_ARG;
++ /* This refusal must happen before any mutation or controller programming. */
++ if (!silent && !board_valid(h)) return h->status.error=NAH_E_BOARD_CONFIG;
++ if (!silent && !h->reset_changed) {
++  int prep=amps_prepare(h);
++  if (prep) return h->status.error=prep;
++ }
++ h->status.silent_only=silent; h->gain_q15=gain;
++ h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
++ h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
++ h->first_tick=1; h->new_input=0;
++ int rc=naf_stream_open(&afe_io,h,&h->snapshot,h->evidence,&h->plan,&h->afe);
++ if (rc) {
++  h->status.uncertain=h->afe.uncertain;
++  return h->status.error= h->afe.uncertain ? NAH_E_UNCERTAIN:NAH_E_COLD;
++ }
++ h->status.running=1;
++ /* AFE is clocking a zero-filled SRAM ring before any amplifier comes on. */
++ if (!silent) {
++  if ((rc=lease(h,1))) goto fail;
++  for (unsigned i=0;i<2;i++) {
++   if ((rc=amp_cold(h,i))) goto fail;
++   if (nah_amp_cold_init(&bus_io,h,&h->bus,h->amps[i].addr,h->amps[i].rev)) { rc=NAH_E_AMPS; goto fail; }
++   if (h->board->apply(h,&bus_io,&h->bus,i)) { rc=NAH_E_BOARD_CONFIG; goto fail; }
++   if (nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { rc=NAH_E_IO; goto fail; }
++   /* Source rateenum8=48000Hz in TFA AUDFS; siliconinit+container
++    * do not establish sample rate themselves. */
++   if ((rc=amp_rmw(h,i,0x02,0x000f,8))) goto fail;
++   /* Board callback must preserve powered-down, output-disabled state. */
++   uint16_t v=0;
++   if (amp_read(h,i,0x00,&v) || (v&9)!=1) { rc=NAH_E_BOARD_CONFIG; goto fail; }
++  }
++  for (unsigned i=0;i<2;i++) if ((rc=amp_enable(h,i))) goto fail;
++  if ((rc=lease(h,0))) goto fail;
++ }
++ h->status.error=0;
++ return 0;
++fail:
++ h->status.error=rc;
++ (void)nau_hw_stop(h);
++ return rc;
++}
++int nau_hw_feed(struct nau_hw *h,const int16_t *pcm,unsigned frames)
++{
++ if (!worker(h)) return NAH_E_WORKER;
++ if (!h->status.running || (!pcm && frames)) return NAH_E_ARG;
++ unsigned room=NAH_QUEUE_FRAMES-h->qcount;
++ if (frames>room) frames=room;
++ for (unsigned i=0;i<frames;i++) {
++  h->queue[h->qw*2]=pcm[i*2]; h->queue[h->qw*2+1]=pcm[i*2+1];
++  h->qw=(h->qw+1)%NAH_QUEUE_FRAMES;
++ }
++ h->qcount+=frames; h->status.fed_frames+=frames;
++ if (frames) h->new_input=1;
++ h->status.queued_frames=h->qcount;
++ return (int)frames;
++}
++static int terminate(struct nau_hw *h,int reason)
++{ h->status.error=reason; (void)nau_hw_stop(h); return reason; }
++int nau_hw_tick(struct nau_hw *h,uint64_t now)
++{
++ if (!worker(h)) return NAH_E_WORKER;
++ if (!h->status.running) return NAH_E_ARG;
++ if (now<h->last_us) return terminate(h,NAH_E_DEADLINE);
++ uint64_t gap=now-h->last_us;
++ if (!h->first_tick && gap>=20000) return terminate(h,NAH_E_DEADLINE);
++ if (gap>h->status.max_tick_gap_us) h->status.max_tick_gap_us=(uint32_t)gap;
++ if (h->deadline_us && now>=h->deadline_us) return nau_hw_stop(h);
++ uint32_t pa=0;
++ if (rd32(h,NAF_AFE_DL1_CUR,&pa)) return terminate(h,NAH_E_IO);
++ h->status.current_pa=pa;
++ if (pa<NAF_SRAM || pa>=NAF_SRAM+NAF_SRAM_BYTES || (pa&3))
++  return terminate(h,NAH_E_POINTER);
++ uint32_t current=(pa-NAF_SRAM)/4;
++ if (h->first_tick) {
++  h->first_tick=0; h->last_frame=current; h->last_us=now; h->last_feed_us=now;
++  return 0;
++ }
++ if (h->new_input) { h->last_feed_us=now; h->new_input=0; }
++ if (!h->deadline_us && !h->qcount && now-h->last_feed_us>=750000)
++  return terminate(h,NAH_E_IDLE);
++ uint32_t consumed=(current+NAH_RING_FRAMES-h->last_frame)%NAH_RING_FRAMES;
++ if (consumed>NAH_RATE/100) return terminate(h,NAH_E_DEADLINE);
++ /* If a bounded worker misses a complete revolution, ownership is lost.
++  * Timestamp gap above avoids that ambiguity; no chasing current pointer. */
++ if (!consumed && gap>=4000) {
++  if (++h->idle_ticks>=3) return terminate(h,NAH_E_CLOCK_STALLED);
++ } else if (consumed) h->idle_ticks=0;
++ unsigned starved=0;
++ for (unsigned i=0;i<consumed;i++) {
++  int32_t left=0,right=0;
++  if (h->qcount && !h->status.silent_only) {
++   left=(int32_t)h->queue[h->qr*2]*(int32_t)h->gain_q15/32768;
++   right=(int32_t)h->queue[h->qr*2+1]*(int32_t)h->gain_q15/32768;
++   h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; h->status.pcm_frames++;
++  } else {
++   /* Silent diagnostic drains producer too, avoiding queue blockage. */
++   if (h->qcount) { h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; }
++   h->status.silence_frames++; starved=1;
++  }
++  uint32_t word=(uint16_t)left | ((uint32_t)(uint16_t)right<<16);
++  if (wr32(h,NAF_SRAM+4*((h->last_frame+i)%NAH_RING_FRAMES),word))
++   return terminate(h,NAH_E_IO);
++ }
++ if (starved) h->status.underruns++;
++ h->last_frame=current; h->last_us=now;
++ h->status.consumed_frames+=consumed; h->status.queued_frames=h->qcount; h->status.ticks++;
++ /* Every20ms inspect source-defined TDM fault/no-clock status. */
++ if (!h->status.silent_only && !(h->status.ticks%4)) {
++  if (lease(h,1)) return terminate(h,NAH_E_IO);
++  int fault=0; h->bus.poll_limit=200; /* <=2ms, fit within DMA headroom */
++  for (unsigned i=0;i<2;i++) {
++   uint16_t v=0;
++   if (amp_read(h,i,0x10,&v)) { fault=NAH_E_IO; break; }
++   h->status.amp_status[i]=v;
++   unsigned mask=(h->amps[i].rev&255)==0x74 ? 0xc0:0xc00;
++   if (v&mask) { fault=NAH_E_AMP_FAULT; break; }
++  }
++  h->bus.poll_limit=0;
++  if (lease(h,0) && !fault) fault=NAH_E_IO;
++  if (fault) return terminate(h,fault);
++ }
++ return 0;
++}
++int nau_hw_stop(struct nau_hw *h)
++{
++ if (!worker(h)) return NAH_E_WORKER;
++ if (!h->status.running) return h->status.stop_error;
++ int err=0;
++ if (!h->status.silent_only) {
++  if (lease(h,1)) err=NAH_E_IO;
++  else {
++   /* A bus failure is sticky: no next-slave access after uncertainty. */
++   for (unsigned i=0;i<2 && !h->bus.offline;i++)
++    if (amp_cold(h,i) || nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { err=NAH_E_IO; if (h->bus.offline) break; }
++  }
++  if (lease(h,0)) err=NAH_E_IO;
++ }
++ /* Unknown amplifier write/transfer result must first force both local
++  * amp reset GPIOs high, before any digital clock/DMA stop. Do not restore
++  * those pins to inherited inputs in this permanently latched error state. */
++ unsigned hold_reset=h->bus.uncertain;
++ if (hold_reset && reset_hold_fault(h)) err=NAH_E_IO;
++ /* If amplifier access failed, stopping the owned digital source still
++  * removes excitation. Never reset shared bus or panic iOS/WiFi. */
++ if (naf_stream_close(&afe_io,h,&h->snapshot,&h->plan,&h->afe)) err=NAH_E_UNCERTAIN;
++ if (!hold_reset && reset_restore(h)) err=NAH_E_IO;
++ if (lease(h,1)) err=NAH_E_IO;
++ else { if (bus_clock_restore(h)) err=NAH_E_IO; if (lease(h,0)) err=NAH_E_IO; }
++ h->status.running=0; h->qcount=0; h->status.queued_frames=0;
++ h->status.uncertain=h->afe.uncertain || h->bus.uncertain || !!err;
++ h->status.stop_error=err;
++ if (err && !h->status.error) h->status.error=err;
++ return err;
++}
++void nau_hw_status(const struct nau_hw *h,struct nah_status *out)
++{
++ if (h && out) {
++  *out=h->status;
++  out->afe_phase=h->afe.phase; out->afe_op=h->afe.op;
++  out->i2c_stage=h->bus.stage; out->i2c_failure=h->bus.failure;
++  out->last_pa=h->afe.last_pa;
++ }
++}
++#endif
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_hw.h
+@@ -0,0 +1,95 @@
++#ifndef NORD2_AUDIO_HW_H
++#define NORD2_AUDIO_HW_H
++#include <stdint.h>
++#include "audio_afe.h"
++#include "audio_i2c8.h"
++#include "audio_amp.h"
++
++#define NAH_RATE 48000u
++#define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
++#define NAH_QUEUE_FRAMES 8192u
++#define NAH_MAX_GAIN_Q15 256u /* full-scale input <= -42dBFS at DMA */
++#define NAH_MAX_TEST_US 2000000u
++/* Failure values are stable public worker status, never a kernel panic. */
++enum { NAH_OK=0, NAH_E_ARG=-1, NAH_E_WORKER=-2, NAH_E_IO=-3,
++ NAH_E_COLD=-4, NAH_E_AMPS=-5, NAH_E_BOARD_CONFIG=-6,
++ NAH_E_POINTER=-7, NAH_E_DEADLINE=-8, NAH_E_UNCERTAIN=-9,
++ NAH_E_CLOCK_STALLED=-10, NAH_E_AMP_FAULT=-11, NAH_E_IDLE=-12 };
++/* These callbacks are invoked exclusively by the owning audio worker.
++ * read/write operate mapped physical registers, with a DSB before returning.
++ * Access 0x11212000 through existing AFE map +0x2000; NEVER create a second
++ * Device mapping of the same 16KiB physical page. No allocations in tick.
++ * lease acquires/releases a shared I2C8 lease, independent of PMIF/touch.
++ * It must serialize every other AP I2C8 user; CCU is checked by transport.
++ * worker returns stable current-thread identity, 0 for invalid context. */
++struct nah_io {
++ int (*read)(void *, uint32_t, unsigned, uint32_t *);
++ int (*write)(void *, uint32_t, unsigned, uint32_t);
++ int (*delay_us)(void *, unsigned);
++ uintptr_t (*worker)(void *);
++ int (*lease)(void *, unsigned acquire);
++};
++/* Board profile cannot be supplied by USB/userspace. Immutable compiled data,
++ * reviewed against exact Nord2 container and observed amp REV is required.
++ * apply runs source-backed volatile init + exact board profile while PWDN=1,
++ * AMPE=0; it must not touch OTP/MTP or rail bucks. It is deliberately absent
++ * from this candidate until the matching container is recovered. The amp
++ * control path still performs independent mute/clock/readback checks.
++ * This callback boundary avoids manufacturing unknown analog settings. */
++struct nah_board {
++ uint16_t revision[2];
++ uint8_t source_sha256[32];
++ int (*apply)(void *, const struct na8_io *, struct na8_state *, unsigned amp);
++ int (*supports)(uint16_t revision, unsigned slave);
++};
++struct nah_status {
++ unsigned initialized, running, silent_only, uncertain, gate, retained_shared_clock;
++ unsigned amp_reset_held; /* uncertain amp transport: local GPIO reset latched high */
++ unsigned afe_phase, afe_op, i2c_stage, i2c_failure;
++ uint32_t last_pa;
++ int error, stop_error, reset_error;
++ uint32_t current_pa, consumed_frames, queued_frames, fed_frames;
++ uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
++ uint16_t amp_revision[2], amp_status[2];
++};
++struct nau_hw {
++ struct nah_io io; void *cookie; uintptr_t owner;
++ const struct nah_board *board;
++ struct nau_state snapshot;
++ struct naf_amp_evidence evidence[2];
++ struct na8_state bus;
++ struct na8_amp amps[2];
++ struct naf_plan plan;
++ struct naf_state afe;
++ struct nah_status status;
++ int16_t queue[NAH_QUEUE_FRAMES * 2u];
++ uint32_t qr, qw, qcount, last_frame, idle_ticks;
++ uint64_t last_us, deadline_us, last_feed_us;
++ unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed;
++};
++/* h must be static/heap, zeroed once per boot; never place on kernel stack.
++ * init snapshots original reset GPIO111/148 fields, checks coldAFE and idlebus,
++ * then source reset pulse high5ms/low5ms when pinsareGPIO. Stop restores saved
++ * direction/latch fields; no controller reset or bitbang ever occurs. */
++int nau_hw_init(struct nau_hw *, const struct nah_io *, void *, const struct nah_board *);
++/* silent_only=1 proves AFE without amp enable; normal start returns
++ * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.
++ * Both modes run actual continuous DMA and tick. duration_us=0 is continuous
++ * HAL playback with 750ms input-idle watchdog; nonzero tests are capped2s.
++ * rate must be48000/channels2/bits16. gain0..256 scales queue PCM; no amp gain
++ * guessed or modified. now_us is monotonic microseconds from worker clock. */
++int nau_hw_start(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
++ unsigned silent_only, unsigned gain_q15, unsigned duration_us, uint64_t now_us);
++/* feed returns accepted frames (0 if full), or negative error. Only worker;
++ * producer/devfs queues its data externally before this call. */
++int nau_hw_feed(struct nau_hw *, const int16_t *, unsigned frames);
++/* Call at <=5ms cadence. >=20ms gap stops before overwriting ambiguous ring.
++ * First tick establishes the post-startup pointer/time baseline while DMA
++ * still contains only zeros (amp startup can take bounded50ms polls).
++ * tick writes only consumed frames behind DMA, prefilled zero ring is21.33ms.
++ * Starvation writes zeros (never leaves stale previously consumed content).
++ * Nonzero terminal result requires reporting status; no automatic restart. */
++int nau_hw_tick(struct nau_hw *, uint64_t now_us);
++int nau_hw_stop(struct nau_hw *);
++void nau_hw_status(const struct nau_hw *, struct nah_status *);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_board.c
+@@ -0,0 +1,76 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++#if defined(KERNEL)
++#include <pexpert/arm64/board_config.h>
++#endif
++#if defined(NORD2)
++#include "audio_board.h"
++#include "audio_hw.h"
++#include "audio_board_offsets.h"
++struct board_op { uint8_t reg; uint16_t mask,value; };
++static struct board_op plan[2][52];
++static unsigned loaded;
++static const uint8_t pinned[32]={0x63,0x53,0x00,0xfb,0xc9,0x6f,0x25,0x8f,0xf9,0xa3,0x5f,0x82,0x43,0x5f,0x2e,0x9d,0x3f,0xf6,0xf1,0x37,0x0c,0x15,0x60,0x67,0xb4,0x01,0x46,0xe0,0x11,0x03,0x86,0x92};
++static uint16_t u16(const uint8_t *p){return (uint16_t)(p[0]|(uint16_t)p[1]<<8);}
++static uint32_t u32(const uint8_t *p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
++static int supports(uint16_t r,unsigned addr)
++{return loaded && (addr==0x34||addr==0x37) && (r==0x0a74||r==0x0b74||r==0x0c74);}
++int nah_board_load(const uint8_t *b,size_t n,const uint8_t digest[32])
++{
++ if(loaded || !b || !digest || n!=4163)return -1;
++ unsigned difference=0;
++ for(unsigned i=0;i<32;i++)difference|=digest[i]^pinned[i];
++ if(difference || b[0]!='P'||b[1]!='M'||b[2]!='3'||b[3]!='_'||b[4]!='0'||b[5]!='1'||u32(b+6)!=n || u16(b+40)!=2)return -1;
++ /* Pinned SHA proves complete graph identity. Offsets below are immutable
++  * descriptor payload locations, decoded with explicit byte order/bounds.
++  * Three volatileunlock ops and patch/default markers are intentionally absent. */
++ for(unsigned amp=0;amp<2;amp++) {
++  uint32_t dev=u32(b+46+4*amp)&0xffffff;
++  if(dev>n-12 || b[dev+2]!=(amp?0x37:0x34))return -1;
++  for(unsigned i=0;i<52;i++) {
++   unsigned off=offsets[amp][i];
++   if(off>n-4)return -1;
++   struct board_op op={0};
++   /* All selected payloads are bitfields. This is asserted by generator. */
++   uint16_t value=u16(b+off),field=u16(b+off+2);
++   unsigned pos=(field>>4)&15,width=(field&15)+1;
++   if(pos+width>16 || (uint32_t)value>=(UINT32_C(1)<<width))return -1;
++   op.reg=(uint8_t)(field>>8);op.mask=(uint16_t)(((UINT32_C(1)<<width)-1)<<pos);op.value=(uint16_t)(value<<pos);
++   if(op.reg==0x0f || (op.reg>=0xa0 && op.reg!=0xb0 && op.reg!=0xc4))return -1;
++   plan[amp][i]=op;
++  }
++ }
++ loaded=1;return 0;
++}
++int nah_board_register_allowed(unsigned reg)
++{
++ if(!loaded)return 0;
++ for(unsigned a=0;a<2;a++)for(unsigned i=0;i<52;i++)if(plan[a][i].reg==reg)return 1;
++ return 0;
++}
++int nah_board_change_allowed(unsigned reg,uint16_t old,uint16_t next)
++{
++ if(!loaded)return 0;
++ for(unsigned a=0;a<2;a++)for(unsigned i=0;i<52;i++) {
++  const struct board_op *p=&plan[a][i];
++  if(p->reg==reg && !((old^next)&(uint16_t)~p->mask) && (next&p->mask)==p->value)return 1;
++ }
++ return 0;
++}
++static int apply(void *cookie,const struct na8_io *io,struct na8_state *bus,unsigned amp)
++{
++ struct nau_hw *h=cookie;
++ if(!h||!io||!bus||amp>1||h->amps[amp].addr!=(amp?0x37:0x34)||!supports(h->amps[amp].rev,h->amps[amp].addr))return NAH_E_BOARD_CONFIG;
++ for(unsigned i=0;i<52;i++) {
++  const struct board_op *p=&plan[amp][i];uint16_t old=0,check=0;
++  if(na8_read16(io,h,bus,h->amps[amp].addr,p->reg,&old))return NAH_E_IO;
++  uint16_t next=(uint16_t)((old&~p->mask)|(p->value&p->mask));
++  if(na8_write16(io,h,bus,h->amps[amp].addr,p->reg,next)||na8_read16(io,h,bus,h->amps[amp].addr,p->reg,&check)||((check^next)&p->mask))return NAH_E_IO;
++ }
++ return 0;
++}
++static const struct nah_board board={{0,0},{0x63,0x53,0x00,0xfb,0xc9,0x6f,0x25,0x8f,0xf9,0xa3,0x5f,0x82,0x43,0x5f,0x2e,0x9d,0x3f,0xf6,0xf1,0x37,0x0c,0x15,0x60,0x67,0xb4,0x01,0x46,0xe0,0x11,0x03,0x86,0x92},apply,supports};
++const struct nah_board *nah_board_profile(void){return loaded?&board:0;}
++#endif
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_board.h
+@@ -0,0 +1,13 @@
++#ifndef NORD2_AUDIO_BOARD_H
++#define NORD2_AUDIO_BOARD_H
++#include <stddef.h>
++#include <stdint.h>
++struct nah_board;
++/* Caller computes digest from exactly blob[0..length). Lifetime only this call.
++ * Once loaded immutable for boot; failed load leaves getterNULL. Worker only
++ * starts after this initialization on the same thread. */
++int nah_board_load(const uint8_t *blob,size_t length,const uint8_t digest[32]);
++const struct nah_board *nah_board_profile(void);
++int nah_board_register_allowed(unsigned reg);
++int nah_board_change_allowed(unsigned reg,uint16_t old,uint16_t next);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_install.c
+@@ -0,0 +1,255 @@
++#include <arm64/sweet_early.h>
++#if defined(NORD2)
++/* SPDX-License-Identifier: MIT
++ * Fixed-path, pre-launchd Nord2 HAL installer. No userspace-pointer syscalls.
++ * Single caller, root mounted writable; invoke on EVERY boot before launchd.
++ * A return != 0 means refuse launchd until operator chooses recovery policy.
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <sys/vnode.h>
++#include <sys/vnode_internal.h>
++#include <sys/vnode_if.h>
++#include <sys/namei.h>
++#include <sys/mount.h>
++#include <sys/mount_internal.h>
++#include <sys/fcntl.h>
++#include <sys/uio.h>
++#include <sys/dirent.h>
++#include <sys/proc.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/boot.h>
++#include <pexpert/device_tree.h>
++#include <libkern/crypto/sha2.h>
++#if defined(NORD2)
++#include "audio_package.h"
++/* flags=0 readdir on bundled HFS emits legacy 32-bit inode dirents. */
++_Static_assert(offsetof(struct dirent,d_name)==8,"HFS legacy dirent layout");
++_Static_assert(sizeof(((struct dirent *)0)->d_ino)==4,"HFS legacy inode width");
++enum path { A,B,S,SD,SE,SP,AD,AE,AP,V,D,J,C,R,P,VP,DP,TUN, PATH_COUNT };
++static const char *const paths[PATH_COUNT]={
++ "/System/Library/Audio/Plug-Ins/HAL",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-original",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-stage",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-stage/RedwoodAudio.driver",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-stage/RedwoodAudio.driver/RedwoodAudio",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-stage/RedwoodAudio.driver/Info.plist",
++ "/System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver",
++ "/System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver/RedwoodAudio",
++ "/System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver/Info.plist",
++ "/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin",
++ "/Library/Audio/Plug-Ins/HAL.disabled/VirtualAudio.plugin",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-journal",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-commit",
++ "/System/Library/Audio/Plug-Ins/HAL.nord2-rollback",
++ "/System/Library/Audio/Plug-Ins",
++ "/Library/Audio/Plug-Ins/HAL",
++ "/Library/Audio/Plug-Ins/HAL.disabled",
++ "/Library/Audio/Tunings/D22"
++};
++struct identity { uint64_t ino; uint32_t fsid, type; };
++struct journal {
++ unsigned char magic[8]; uint32_t version, disabled;
++ struct identity original, custom, virtual;
++ uint32_t executable_size, plist_size;
++ unsigned char executable_hash[32], plist_hash[32], original_hash[32], digest[32];
++};
++static unsigned char buffer[N2AP_MAX];
++static vfs_context_t ctx;
++static void hash(const void *p,unsigned n,unsigned char out[32])
++{ SHA256_CTX h;SHA256_Init(&h);SHA256_Update(&h,p,n);SHA256_Final(out,&h); }
++static int check_hash(const unsigned char *p,unsigned n,const unsigned char expected[32])
++{ unsigned char got[32];hash(p,n,got);return memcmp(got,expected,32)?EINVAL:0; }
++/* namei's NAMEI_NOFOLLOW_ANY covers intermediate components, unlike lookup NOFOLLOW. */
++static int n2_lookup(enum path p,vnode_t *vp)
++{
++ struct nameidata nd; int e;
++ NDINIT(&nd,LOOKUP,OP_LOOKUP,NOFOLLOW,UIO_SYSSPACE,CAST_USER_ADDR_T(paths[p]),ctx);
++ nd.ni_flag|=NAMEI_NOFOLLOW_ANY;
++ e=namei(&nd);if(e)return e;
++ *vp=nd.ni_vp;nameidone(&nd);return 0;
++}
++static int vnode_identity(vnode_t vp,struct identity *id)
++{
++ struct vnode_attr va;int e;
++ VATTR_INIT(&va);VATTR_WANTED(&va,va_uid);VATTR_WANTED(&va,va_gid);
++ VATTR_WANTED(&va,va_mode);VATTR_WANTED(&va,va_fileid);VATTR_WANTED(&va,va_fsid);
++ e=vnode_getattr(vp,&va,ctx);
++ if(!e && (!VATTR_IS_SUPPORTED(&va,va_uid)||!VATTR_IS_SUPPORTED(&va,va_gid)||
++ !VATTR_IS_SUPPORTED(&va,va_mode)||!VATTR_IS_SUPPORTED(&va,va_fileid)||
++ !VATTR_IS_SUPPORTED(&va,va_fsid)||va.va_uid||va.va_gid||
++ (va.va_mode&0022)||vnode_vtype(vp)==VLNK))e=EINVAL;
++ if(!e){id->ino=va.va_fileid;id->fsid=va.va_fsid;id->type=vnode_vtype(vp);}
++ return e;
++}
++static int identity(enum path p,struct identity *id)
++{vnode_t vp=NULL;int e=n2_lookup(p,&vp);if(e)return e;e=vnode_identity(vp,id);vnode_put(vp);return e;}
++static int same(enum path p,const struct identity *want)
++{struct identity got;int e=identity(p,&got);return e?e:(memcmp(&got,want,sizeof(got))?EINVAL:0);}
++static int absent(enum path p)
++{vnode_t vp=NULL;int e=n2_lookup(p,&vp);if(!e)vnode_put(vp);return e==ENOENT?0:(e?e:EEXIST);}
++static int sync_path(enum path p)
++{vnode_t vp=NULL;int e=n2_lookup(p,&vp);if(e)return e;e=VNOP_FSYNC(vp,MNT_WAIT,ctx);vnode_put(vp);return e;}
++static int directory(enum path p)
++{struct identity id;int e=identity(p,&id);return e?e:(id.type==VDIR?0:ENOTDIR);}
++static int rw(vnode_t vp,int write,void *bytes,unsigned n)
++{int resid=n;int e=vn_rdwr(write?UIO_WRITE:UIO_READ,vp,bytes,n,0,UIO_SYSSPACE,
++ write?(IO_SYNC|IO_UNIT):0,vfs_context_ucred(ctx),&resid,vfs_context_proc(ctx));return e?e:(resid?EIO:0);}
++static int read_file(enum path p,void *bytes,unsigned n,unsigned mode)
++{
++ vnode_t vp=NULL;struct vnode_attr va;int e=n2_lookup(p,&vp);if(e)return e;
++ VATTR_INIT(&va);VATTR_WANTED(&va,va_data_size);VATTR_WANTED(&va,va_nlink);
++ VATTR_WANTED(&va,va_uid);VATTR_WANTED(&va,va_gid);VATTR_WANTED(&va,va_mode);
++ e=vnode_getattr(vp,&va,ctx);
++ if(!e&&(!VATTR_IS_SUPPORTED(&va,va_data_size)||!VATTR_IS_SUPPORTED(&va,va_nlink)||
++ !VATTR_IS_SUPPORTED(&va,va_uid)||!VATTR_IS_SUPPORTED(&va,va_gid)||!VATTR_IS_SUPPORTED(&va,va_mode)||
++ vnode_vtype(vp)!=VREG||va.va_data_size!=n||va.va_nlink!=1||va.va_uid||va.va_gid||
++ (va.va_mode&07777)!=mode))e=EINVAL;
++ if(!e)e=rw(vp,0,bytes,n);vnode_put(vp);return e;
++}
++/* Exclusive new inode; no truncate or replacement of an existing file. */
++static int create_file(enum path p,const void *bytes,unsigned n,unsigned mode)
++{
++ vnode_t vp=NULL;int flags=FREAD|FWRITE|O_CREAT|O_EXCL|O_NOFOLLOW_ANY;
++ int e=vnode_open(paths[p],flags,mode,0,&vp,ctx);if(e)return e;
++ struct vnode_attr va;VATTR_INIT(&va);VATTR_SET(&va,va_uid,0);VATTR_SET(&va,va_gid,0);VATTR_SET(&va,va_mode,mode);
++ e=vnode_setattr(vp,&va,ctx);if(!e)e=rw(vp,1,(void *)bytes,n);
++ if(!e)e=VNOP_FSYNC(vp,MNT_WAIT,ctx);
++ int ce=vnode_close(vp,flags,ctx);if(!e)e=ce;
++ if(!e)e=read_file(p,buffer,n,mode);
++ if(!e&&memcmp(buffer,bytes,n))e=EIO;
++ return e;
++}
++static int mkdir_fixed(enum path p)
++{
++ struct nameidata nd;struct vnode_attr va;int e;
++ NDINIT(&nd,CREATE,OP_MKDIR,WANTPARENT|NOFOLLOW,UIO_SYSSPACE,CAST_USER_ADDR_T(paths[p]),ctx);
++ nd.ni_flag|=NAMEI_NOFOLLOW_ANY;e=namei(&nd);if(e)return e;
++ if(nd.ni_vp)e=EEXIST;
++ else {VATTR_INIT(&va);VATTR_SET(&va,va_type,VDIR);VATTR_SET(&va,va_mode,0755);
++ VATTR_SET(&va,va_uid,0);VATTR_SET(&va,va_gid,0);
++ e=VNOP_MKDIR(nd.ni_dvp,&nd.ni_vp,&nd.ni_cnd,&va,ctx);
++ if(!e)e=VNOP_FSYNC(nd.ni_vp,MNT_WAIT,ctx);
++ if(!e)e=VNOP_FSYNC(nd.ni_dvp,MNT_WAIT,ctx);}
++ nameidone(&nd);if(nd.ni_vp)vnode_put(nd.ni_vp);if(nd.ni_dvp)vnode_put(nd.ni_dvp);return e;
++}
++/* Both names are fixed; every rename is non-overwriting and inode-checked.
++ * Serialize mount renames BEFORE taking lookup iocounts, as vfs_syscalls does.
++ * Single pre-launchd caller; no racing user filesystem operations are permitted.
++ */
++static int move(enum path from,enum path to,const struct identity *expected)
++{
++ vnode_t parent=NULL;mount_t mp;struct nameidata f,t;int e,fe=0,te=0;
++ e=n2_lookup(P,&parent);if(e)return e;mp=vnode_mount(parent);mount_ref(mp,0);vnode_put(parent);
++ mount_lock_renames(mp);
++ NDINIT(&f,DELETE,OP_UNLINK,WANTPARENT|NOFOLLOW,UIO_SYSSPACE,CAST_USER_ADDR_T(paths[from]),ctx);
++ f.ni_flag|=NAMEI_NOFOLLOW_ANY;e=namei(&f);if(e)goto out;fe=1;
++ NDINIT(&t,RENAME,OP_RENAME,WANTPARENT|NOFOLLOW,UIO_SYSSPACE,CAST_USER_ADDR_T(paths[to]),ctx);
++ t.ni_flag|=NAMEI_NOFOLLOW_ANY;e=namei(&t);if(e)goto out;te=1;
++ if(!f.ni_vp||t.ni_vp){e=EEXIST;goto out;}
++ if(vnode_mount(f.ni_vp)!=mp||vnode_mount(t.ni_dvp)!=mp){e=EXDEV;goto out;}
++ struct identity actual;e=vnode_identity(f.ni_vp,&actual);if(e)goto out;
++ if(memcmp(&actual,expected,sizeof(actual))){e=EINVAL;goto out;}
++ /* No other writer exists before launchd; target existence checked above. */
++ e=VNOP_RENAMEX(f.ni_dvp,f.ni_vp,&f.ni_cnd,t.ni_dvp,NULL,&t.ni_cnd,VFS_RENAME_EXCL,ctx);
++ if(!e)e=VNOP_FSYNC(f.ni_dvp,MNT_WAIT,ctx);
++ if(!e&&f.ni_dvp!=t.ni_dvp)e=VNOP_FSYNC(t.ni_dvp,MNT_WAIT,ctx);
++ out:
++ if(te){nameidone(&t);if(t.ni_vp)vnode_put(t.ni_vp);if(t.ni_dvp)vnode_put(t.ni_dvp);}
++ if(fe){nameidone(&f);if(f.ni_vp)vnode_put(f.ni_vp);if(f.ni_dvp)vnode_put(f.ni_dvp);}
++ mount_unlock_renames(mp);mount_drop(mp,0);
++ if(!e)e=same(to,expected);return e;
++}
++/* Exact entry allowlist for custom directories, rejecting additions on later boots. */
++static int entries_many(enum path p,const char *const *names,unsigned names_count)
++{
++ vnode_t vp=NULL;uio_t uio=NULL;unsigned char buf[2048];int e=n2_lookup(p,&vp),eof=0,count=0;unsigned seen=0;
++ if(e)return e;e=VNOP_OPEN(vp,FREAD,ctx);if(e){vnode_put(vp);return e;}uio=uio_create(1,0,UIO_SYSSPACE,UIO_READ);if(!uio){e=ENOMEM;goto out;}
++ for(unsigned pages=0;pages<16&&!eof;pages++){
++ off_t off=uio_offset(uio);uio_reset(uio,off,UIO_SYSSPACE,UIO_READ);
++ e=uio_addiov(uio,CAST_USER_ADDR_T(buf),sizeof(buf));if(e)goto out;
++ e=VNOP_READDIR(vp,uio,0,&eof,&count,ctx);if(e)goto out;
++ unsigned n=sizeof(buf)-(unsigned)uio_resid(uio),at=0;
++ if(!n&&!eof){e=EIO;goto out;}
++ while(at<n){struct dirent *d=(void *)(buf+at);unsigned min=offsetof(struct dirent,d_name);
++ if(n-at<min||d->d_reclen<min+1||d->d_reclen>n-at||d->d_namlen>=d->d_reclen-min||d->d_name[d->d_namlen]){e=EINVAL;goto out;}
++ if(d->d_ino&&strcmp(d->d_name,".")&&strcmp(d->d_name,"..")){
++ unsigned bit=0;for(unsigned k=0;k<names_count;k++)if(!strcmp(d->d_name,names[k]))bit=1u<<k;
++ if(!bit||(seen&bit)){e=EINVAL;goto out;}seen|=bit;}
++ at+=d->d_reclen;
++ }
++ }
++ if(!eof||seen!=((1u<<names_count)-1))e=EINVAL;
++ out:if(uio)uio_free(uio);{int ce=VNOP_CLOSE(vp,FREAD,ctx);if(!e)e=ce;}vnode_put(vp);return e;
++}
++static int entries(enum path p,const char *one,const char *two)
++{const char *names[2]={one,two};return entries_many(p,names,two?2:1);}
++/* Journal-free rollback is a read-only no-op ONLY for the verified root-image
++ * directory arrangement. Never invent which VirtualAudio placement was original.
++ * This checks structure, not every Apple executable's contents. */
++static int baseline_original(void)
++{
++ static const char *const apple[]={"AirPlayHalogen.driver","AppleAOPAudioPlugin.driver",
++ "AppleTimeSyncAudioClock.driver","AppleUSBAudio.driver","BTAudioHALPlugin.driver",
++ "BasebandVoice.driver","CarPlayHalogen.driver","NetworkUplinkClock.driver","OctaviaHalogen.driver"};
++ struct identity virtual;int e;
++ if((e=directory(A))||(e=directory(P))||(e=directory(VP))||
++ (e=directory(DP))||(e=directory(TUN))||(e=absent(B))||(e=absent(S))||
++ (e=absent(C))||(e=absent(R))||(e=absent(V))||(e=identity(D,&virtual)))return e;
++ if(virtual.type!=VDIR)return EINVAL;
++ return entries_many(A,apple,sizeof(apple)/sizeof(apple[0]));
++}
++static int custom(const struct journal *j,int active)
++{
++ int e=same(active?A:S,&j->custom);if(e)return e;
++ e=entries(active?A:S,"RedwoodAudio.driver",NULL);if(e)return e;
++ e=entries(active?AD:SD,"RedwoodAudio","Info.plist");if(e)return e;
++ e=read_file(active?AE:SE,buffer,j->executable_size,0755);if(e)return e;
++ e=check_hash(buffer,j->executable_size,j->executable_hash);if(e)return e;
++ e=read_file(active?AP:SP,buffer,j->plist_size,0644);if(e)return e;
++ return check_hash(buffer,j->plist_size,j->plist_hash);
++}
++static void seal(struct journal *j)
++{
++ hash(&j->original,sizeof(j->original)+sizeof(j->custom)+sizeof(j->virtual),j->original_hash);
++ hash(j,offsetof(struct journal,digest),j->digest);
++}
++static int journal_read(struct journal *j)
++{
++ int e=read_file(J,j,sizeof(*j),0600);if(e)return e;
++ if(memcmp(j->magic,"N2AJNL1",8)||j->version!=1||j->disabled>1||
++ j->original.type!=VDIR||j->custom.type!=VDIR||j->virtual.type!=VDIR||
++ !j->executable_size||!j->plist_size||j->executable_size>N2AP_MAX||
++ j->plist_size>N2AP_MAX-j->executable_size)return EINVAL;
++ e=check_hash((void *)j,offsetof(struct journal,digest),j->digest);if(e)return e;
++ return check_hash((void *)&j->original,sizeof(j->original)+sizeof(j->custom)+sizeof(j->virtual),j->original_hash);
++}
++static int marker(enum path p,const struct journal *j)
++{unsigned char got[32];int e=read_file(p,got,32,0600);return e?e:(memcmp(got,j->digest,32)?EINVAL:0);}
++/* No deletions: preserve journal, markers, custom staging and the Apple directory.
++ * Rollback intent is durable before first rollback mutation. Recovery recognizes
++ * every inode layout and retries moves, including a crash after a successful move.
++ */
++#include "audio_install_restore.inc"
++static int mode(void)
++{
++ const char *p=PE_boot_args();unsigned seen=0,result=0;
++ if(!p)return 0;size_t cap=sizeof(((boot_args *)0)->CommandLine),n=strnlen(p,cap);
++ if(n==cap)return -1;
++ for(size_t at=0;at<n;){while(at<n&&(p[at]==' '||p[at]=='\t'||p[at]=='\n'||p[at]=='\r'))at++;
++ size_t b=at;while(at<n&&p[at]!=' '&&p[at]!='\t'&&p[at]!='\n'&&p[at]!='\r')at++;
++ size_t len=at-b;const char key[]="nord2audioinstall";
++ if(len>=sizeof(key)-1&&!memcmp(p+b,key,sizeof(key)-1)&&(len==sizeof(key)-1||p[b+sizeof(key)-1]=='=')){
++ seen++;if(len==sizeof("nord2audioinstall=1")-1&&!memcmp(p+b,"nord2audioinstall=1",len))result=1;
++ else if(len==sizeof("nord2audioinstall=2")-1&&!memcmp(p+b,"nord2audioinstall=2",len))result=2;
++ else return -1;}}
++ return seen>1?-1:(int)result;
++}
++#include "audio_install_flow.inc"
++
++#else
++int nord2_audio_install(void) { return 0; }
++#endif
++
++#endif /* NORD2 */
+--- /dev/null
++++ b/bsd/dev/audio_install.h
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef NORD2_AUDIO_INSTALL_H
++#define NORD2_AUDIO_INSTALL_H
++/* Call on EVERY boot after root mount and before load_init_program, even with
++ * no audio bootarg. Zero: safe to proceed. Nonzero: reject launchd and enter
++ * parent-selected recovery policy; console log records phase/error/recovery. */
++int nord2_audio_install(void);
++#endif
+--- /dev/null
 +++ b/bsd/dev/wifi_station_rejoin.h
 @@ -0,0 +1,24 @@
 +#ifndef WIFI_STATION_REJOIN_H
@@ -23606,6 +26914,293 @@
 +  waits++;thread_block(THREAD_CONTINUE_NULL);
 + }
 + printf("NORD2 WIFI MAIN DRAIN: waits=%u; panic now\n",waits);
++}
+--- /dev/null
++++ b/bsd/dev/audio_hw_native.inc
+@@ -0,0 +1,144 @@
++/* Include in the parent's audio-worker TU after kernel thread/vm headers.
++ * Mapping ownership belongs to parent. This bridge NEVER calls ml_io_map.
++ * Populate exactly9 windows with existing16KiB mappings, base list below.
++ * If top/infra or GPIO/SPM have separate old aliases, consolidate/reuse one
++ * mapping before populating this context; do not establish another alias.
++ * Audio worker calls nau_hw_* with &nah_native_io and &native as cookie.
++ * I2C8 lease callback must serialize AP users and must not touch PMIF. */
++#include "audio_hw.h"
++#define NAH_NATIVE_WINDOWS 9u
++struct nah_native_window { uint32_t base; vm_offset_t va; };
++struct nah_native_context {
++ struct nah_native_window windows[NAH_NATIVE_WINDOWS];
++ thread_t worker;
++ int (*i2c8_lease)(unsigned);
++};
++static const uint32_t nah_native_bases[NAH_NATIVE_WINDOWS]={
++ 0x10000000, /* TOPCKGEN+INFRACFG_AO */
++ 0x10004000, /* GPIO+SPM */
++ 0x1000c000, /* APMIXED */
++ 0x11000000, /* APDMA I2C8 channel+0x780 */
++ 0x11210000, /* AFE and SRAM+0x2000; same mapping */
++ 0x11c20000, /* IOCFG_RM */
++ 0x11d04000, /* I2C8 shadow/AP/CCU+IMPS gates+0x1e00 */
++ 0x11d10000, /* IOCFG_BM */
++ 0x11f20000  /* IOCFG_LT */
++};
++static int nah_native_valid(const struct nah_native_context *c)
++{
++ if (!c || PAGE_SIZE!=0x4000u || !c->worker || !c->i2c8_lease) return 0;
++ for (unsigned i=0;i<NAH_NATIVE_WINDOWS;i++)
++  if (c->windows[i].base!=nah_native_bases[i] || !c->windows[i].va ||
++      (c->windows[i].va&0x3fff)) return 0;
++ return 1;
++}
++static uintptr_t nah_native_worker(void *cookie)
++{
++ struct nah_native_context *c=cookie;
++ return c && c->worker && c->worker==current_thread() ? (uintptr_t)c->worker:0;
++}
++static vm_offset_t nah_native_va(struct nah_native_context *c,uint32_t pa,unsigned width)
++{
++ if (!nah_native_worker(c) || (width!=1 && width!=2 && width!=4) || (pa&(width-1))) return 0;
++ uint32_t base=pa&~0x3fffu;
++ for (unsigned i=0;i<NAH_NATIVE_WINDOWS;i++)
++  if (c->windows[i].base==base) return c->windows[i].va+(pa-base);
++ return 0;
++}
++static int nah_native_read(void *cookie,uint32_t pa,unsigned w,uint32_t *v)
++{
++ struct nah_native_context *c=cookie;
++ vm_offset_t va=nah_native_va(c,pa,w);
++ if (!v || !va) return -1;
++ /* FIFO_DATA is only popped by the polled transport; SRAM is write-only. */
++ if (pa>=NAF_SRAM && pa<NAF_SRAM+NAF_SRAM_BYTES) return -1;
++ __asm__ __volatile__("dsb sy" ::: "memory");
++ if (w==1) *v=*(volatile uint8_t *)va;
++ else if (w==2) *v=*(volatile uint16_t *)va;
++ else *v=*(volatile uint32_t *)va;
++ __asm__ __volatile__("dsb sy" ::: "memory");
++ return 0;
++}
++static int nah_native_bus_write(uint32_t pa,unsigned w)
++{
++ /* No shadow, CCU, APDMA, reset, RESUME_ARBIT, clock or pad writes.
++  * Slave/value validation is done by audio_i2c8.c before any callback.
++  * All AP setup registers are saved/restored by transport. */
++ if (pa==0x11d04100) return w==1;
++ if (w!=2) return 0;
++ switch (pa) {
++ case 0x11d04104: case 0x11d04108: case 0x11d0410c:
++ case 0x11d04110: case 0x11d04114: case 0x11d04118:
++ case 0x11d0411c: case 0x11d04120: case 0x11d04124:
++ case 0x11d04128: case 0x11d0412c: case 0x11d04130:
++ case 0x11d04134: case 0x11d04138: case 0x11d04140:
++ case 0x11d04144: case 0x11d04148: case 0x11d0414c: return 1;
++ default: return 0;
++ }
++}
++static int nah_native_write(void *cookie,uint32_t pa,unsigned w,uint32_t v)
++{
++ struct nah_native_context *c=cookie;
++ unsigned clock=(w==4 &&
++   (((pa==0x100000b8) && v==(1u<<15)) ||
++    ((pa==0x11d05e04 || pa==0x11d05e08) && v==(1u<<4))));
++ unsigned reset=(w==4 &&
++  (((pa==0x10005034 || pa==0x10005038 || pa==0x10005134 || pa==0x10005138) && v==(1u<<15)) ||
++   ((pa==0x10005044 || pa==0x10005048 || pa==0x10005144 || pa==0x10005148) && v==(1u<<20))));
++ if (!((w==4 && naf_write_allowed(pa)) || nah_native_bus_write(pa,w) || reset || clock)) return -1;
++ vm_offset_t va=nah_native_va(c,pa,w);
++ if (!va) return -1;
++ __asm__ __volatile__("dsb sy" ::: "memory");
++ if (w==1) *(volatile uint8_t *)va=(uint8_t)v;
++ else if (w==2) *(volatile uint16_t *)va=(uint16_t)v;
++ else *(volatile uint32_t *)va=v;
++ __asm__ __volatile__("dsb sy" ::: "memory");
++ return 0;
++}
++static int nah_native_delay(void *cookie,unsigned us)
++{ if (!nah_native_worker(cookie) || us>1000) return -1; delay(us); return 0; }
++static int nah_native_lease(void *cookie,unsigned acquire)
++{
++ struct nah_native_context *c=cookie;
++ if (!nah_native_worker(c) || !c->i2c8_lease || acquire>1) return -1;
++ return c->i2c8_lease(acquire);
++}
++static const struct nah_io nah_native_io={
++ nah_native_read,nah_native_write,nah_native_delay,nah_native_worker,nah_native_lease
++};
++
++#ifdef NAH_NATIVE_DEFINE_PREPARE
++/* Include this bridge after ni_gpio/ni_lt declarations in sweet_touch.c.
++ * Parent service calls this exported entry on its exclusive audio worker.
++ * Native init is one attempt/boot, all maps are retained even on failure:
++ * other iOS components remain usable; no panic/unmap of shared NI windows. */
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++static struct nah_native_context nah_native;
++static unsigned nah_native_attempted;
++static volatile unsigned nah_native_bus_owned;
++static int nah_native_bus_lease(unsigned acquire)
++{
++ if (current_thread()!=nah_native.worker) return -1;
++ if (acquire) return __sync_bool_compare_and_swap(&nah_native_bus_owned,0,1)?0:-1;
++ return __sync_bool_compare_and_swap(&nah_native_bus_owned,1,0)?0:-1;
++}
++int nah_native_prepare(struct nah_io *out,void **cookie)
++{
++ if (!out || !cookie || nah_native_attempted || PAGE_SIZE!=0x4000u ||
++     !nw.infra || !ni_gpio || !ni_lt || !current_thread()) return -1;
++ nah_native_attempted=1;
++ nah_native.worker=current_thread(); nah_native.i2c8_lease=nah_native_bus_lease;
++ for (unsigned i=0;i<NAH_NATIVE_WINDOWS;i++) {
++  uint32_t pa=nah_native_bases[i]; vm_offset_t va=0;
++  /* ni_gpio maps logical10005000, offset1000 within16KiB page. */
++  if (pa==0x10000000) va=nw.infra-0x1000;
++  else if (pa==0x10004000) va=ni_gpio-0x1000;
++  else if (pa==0x11f20000) va=ni_lt;
++  else va=ml_io_map(pa,0x4000);
++  if (!va) return -1;
++  nah_native.windows[i]=(struct nah_native_window){pa,va};
++ }
++ if (!nah_native_valid(&nah_native)) return -1;
++ *out=nah_native_io; *cookie=&nah_native; return 0;
++}
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_native.h
+@@ -0,0 +1,5 @@
++#ifndef NORD2_AUDIO_NATIVE_H
++#define NORD2_AUDIO_NATIVE_H
++struct nah_io;
++int nah_native_prepare(struct nah_io *,void **);
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_board_offsets.h
+@@ -0,0 +1,5 @@
++/* Descriptor locations only; no firmware register values. */
++static const uint16_t offsets[2][52]={
++ {807,811,815,819,823,827,831,835,839,843,847,851,855,859,863,867,871,875,879,883,887,891,895,899,903,907,911,915,919,923,927,931,935,939,943,947,951,955,959,963,967,971,975,979,983,987,991,1342,1346,1350,1354,1358},
++ {1079,1083,1087,1091,1095,1099,1103,1107,1111,1115,1119,1123,1127,1131,1135,1139,1143,1147,1151,1155,1159,1163,1167,1171,1175,1179,1183,1187,1191,1195,1199,1203,1207,1211,1215,1219,1223,1227,1231,1235,1239,1243,1247,1251,1255,1259,1263,1342,1346,1350,1354,1358}
++};
+--- /dev/null
++++ b/bsd/dev/audio_package.h
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: MIT
++ * Private Nord2 audio package parser. No filesystem or allocation side effects.
++ * Wire fields are explicitly little endian; no packed-struct dereferences.
++ */
++#ifndef NORD2_AUDIO_PACKAGE_H
++#define NORD2_AUDIO_PACKAGE_H
++#define N2AP_MAX 262144u
++#define N2AP_HEADER 96u
++struct n2ap_entry { const unsigned char *bytes; unsigned length; };
++struct n2ap_view { struct n2ap_entry executable, plist; };
++typedef int (*n2ap_hash_fn)(const unsigned char *, unsigned,
++    const unsigned char expected[32]);
++static unsigned n2ap_u32(const unsigned char *p)
++{ return (unsigned)p[0] | (unsigned)p[1]<<8 | (unsigned)p[2]<<16 | (unsigned)p[3]<<24; }
++static int n2ap_parse(const void *data, unsigned size, n2ap_hash_fn hash,
++    struct n2ap_view *out)
++{
++    const unsigned char *p = data;
++    unsigned a, b, i;
++    if (!p || !out || !hash || size < N2AP_HEADER || size > N2AP_MAX) return -1;
++    if (p[0]!='N'||p[1]!='2'||p[2]!='A'||p[3]!='P'||n2ap_u32(p+4)!=1 ||
++        n2ap_u32(p+8)!=size || n2ap_u32(p+12)!=2) return -2;
++    a=n2ap_u32(p+16); b=n2ap_u32(p+20);
++    if (!a || !b || a > size-N2AP_HEADER || b != size-N2AP_HEADER-a) return -3;
++    for (i=24;i<32;i++) if(p[i]) return -4;
++    if (hash(p+N2AP_HEADER,a,p+32) || hash(p+N2AP_HEADER+a,b,p+64)) return -5;
++    out->executable.bytes=p+N2AP_HEADER; out->executable.length=a;
++    out->plist.bytes=p+N2AP_HEADER+a; out->plist.length=b;
++    return 0;
++}
++#endif
+--- /dev/null
++++ b/bsd/dev/audio_install_flow.inc
+@@ -0,0 +1,60 @@
++int nord2_audio_install(void)
++{
++ struct journal j;struct n2ap_view pkg;DTEntry chosen;const void *data=NULL;unsigned size=0;
++ int e=0,recovery=0,phase=1,m=mode();ctx=vfs_context_kernel();
++ if(m<0)return EINVAL;
++ e=journal_read(&j);
++ if(!e){
++ phase=2;
++ int rolled=!same(A,&j.original)&&!absent(B)&&!same(j.disabled?D:V,&j.virtual)&&!absent(j.disabled?V:D);
++ int committed=!marker(C,&j), rollback_requested=!marker(R,&j);
++ int interrupted=!same(B,&j.original) &&
++ ((!absent(A)&&!same(S,&j.custom)) ||
++ (j.disabled&&!same(D,&j.virtual)&&!absent(V)));
++ if(rolled){e=m==1?EALREADY:0;goto out;}
++ if(m==2||rollback_requested||!committed||interrupted){
++ if(m==2&&!rollback_requested){e=rollback_intent(&j);if(e)goto out;}
++ e=restore(&j);recovery=1;goto out;
++ }
++ /* Committed installs must match package if supplied on a repeated mode=1 boot. */
++ e=custom(&j,1);if(e)goto out;e=same(B,&j.original);if(e)goto out;
++ e=same(V,&j.virtual);if(e)goto out;e=absent(D);if(e)goto out;
++ if(m==1){if(SecureDTLookupEntry(NULL,"/chosen",&chosen)!=kSuccess||SecureDTGetProperty(chosen,"nord2-audio-package",&data,&size)!=kSuccess){e=ENOENT;goto out;}
++ e=n2ap_parse(data,size,check_hash,&pkg);if(e){e=EINVAL;goto out;}
++ if(pkg.executable.length!=j.executable_size||pkg.plist.length!=j.plist_size||
++ check_hash(pkg.executable.bytes,pkg.executable.length,j.executable_hash)||check_hash(pkg.plist.bytes,pkg.plist.length,j.plist_hash))e=EINVAL;}
++ goto out;
++ }
++ if(e!=ENOENT)goto out;
++ if(m!=1){e=m==2?baseline_original():0;goto out;}
++ if(SecureDTLookupEntry(NULL,"/chosen",&chosen)!=kSuccess||SecureDTGetProperty(chosen,"nord2-audio-package",&data,&size)!=kSuccess){e=ENOENT;goto out;}
++ e=n2ap_parse(data,size,check_hash,&pkg);if(e){e=EINVAL;goto out;}
++ phase=3;memset(&j,0,sizeof(j));memcpy(j.magic,"N2AJNL1",8);j.version=1;
++ if((e=directory(P))||(e=directory(VP))||(e=directory(TUN))||
++ (e=absent(B))||(e=absent(S))||(e=absent(C))||(e=absent(R))||
++ (e=identity(A,&j.original)))goto out;
++ if(j.original.type!=VDIR){e=EINVAL;goto out;}
++ if(!absent(V)){j.disabled=1;if((e=directory(DP))||(e=identity(D,&j.virtual)))goto out;}
++ else {if((e=absent(D))||(e=identity(V,&j.virtual)))goto out;}
++ if(j.virtual.type!=VDIR){e=EINVAL;goto out;}
++ j.executable_size=pkg.executable.length;j.plist_size=pkg.plist.length;
++ hash(pkg.executable.bytes,pkg.executable.length,j.executable_hash);hash(pkg.plist.bytes,pkg.plist.length,j.plist_hash);
++ phase=4;if((e=mkdir_fixed(S))||(e=mkdir_fixed(SD))||
++ (e=create_file(SE,pkg.executable.bytes,pkg.executable.length,0755))||
++ (e=create_file(SP,pkg.plist.bytes,pkg.plist.length,0644))||
++ (e=identity(S,&j.custom))||(e=custom(&j,0))||(e=sync_path(SD))||
++ (e=sync_path(S))||(e=sync_path(P)))goto out;
++ phase=5;seal(&j);if((e=create_file(J,&j,sizeof(j),0600))||(e=sync_path(P)))goto out;
++ /* Journal is durable; every subsequent failure attempts original-layout recovery. */
++ phase=6;if((e=move(A,B,&j.original))||(e=move(S,A,&j.custom))||
++ (j.disabled&&(e=move(D,V,&j.virtual)))||(e=custom(&j,1))||
++ (e=same(V,&j.virtual))||(e=create_file(C,j.digest,32,0600))||
++ (e=sync_path(P))){
++ /* Preserve durable rollback intent even when commit write succeeded but its
++  * readback/parent sync failed. Still attempt restore if recording intent fails. */
++ (void)rollback_intent(&j);recovery=restore(&j);goto out;}
++ out:
++ printf("NORD2 AUDIO INSTALL: mode=%d phase=%d error=%d recovery=%d\n",m,phase,e,recovery);
++ return e?e:((recovery>1)?recovery:0);
++}
++
+--- /dev/null
++++ b/bsd/dev/audio_install_restore.inc
+@@ -0,0 +1,24 @@
++static int rollback_intent(const struct journal *j)
++{
++ int e=marker(R,j);if(!e)return 0;
++ if(e!=ENOENT)return e;
++ e=create_file(R,j->digest,32,0600);if(e)return e;
++ return sync_path(P);
++}
++static int restore(const struct journal *j)
++{
++ int e;
++ if(j->disabled){
++ if(!same(D,&j->virtual)){if((e=absent(V)))return e;}
++ else {if((e=same(V,&j->virtual))||(e=absent(D)))return e;
++ if((e=move(V,D,&j->virtual)))return e;}
++ }else if((e=same(V,&j->virtual))||(e=absent(D)))return e;
++ if(!same(A,&j->original))return absent(B);
++ if((e=same(B,&j->original)))return e;
++ if(!same(A,&j->custom)){
++ if((e=custom(j,1))||(e=absent(S)))return e;
++ if((e=move(A,S,&j->custom)))return e;
++ }else if((e=absent(A)))return e;
++ if((e=move(B,A,&j->original)))return e;
++ return same(A,&j->original);
 +}
 --- /dev/null
 +++ b/bsd/dev/wifi_live_control_bind.inc
