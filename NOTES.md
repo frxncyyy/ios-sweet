@@ -4,6 +4,33 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: scan-cancel OFF/ON hardware SUCCESS; new recovery copy saved.**
+  Human call_a8eff3e5704f41afa1596de23a52ddb8 says "perfetto, funziona" to the
+  OFF/5s/ON, fresh networks/reconnection/Safari and two-minute responsiveness task.
+  Exact image55c65bc7 remains on phone; no fallback flash needed. At276111ms OFF
+  during associated scan emitted corrected CID27, canceled that scan, completed
+  PTK/GTK/STA/BSS cleanup and SCANRETURN276146ms, without native halt. ON283975ms
+  resumed real scans; generations2/3/4 each show authorized IFNET/JOINNOTICE plus
+  matched DHCP OFFER/ACK. Additional OFF/ON requests observed through404284ms;
+  EP0 at433822ms is still same boot, error/halt0, join_ready1. No claim of unlimited
+  reconnection or long-term reliability: finite management PID budget remains.
+  User-confirmed snapshot670039B SHA
+  59b3b096ba6e8b779f661f3bead14b4a1cd08aa93d1f0d127f5c7eea392576a7 saved in
+  wifi-ios-scan-cancel/ios/hardware-review/off-on-user-confirmed.log.
+  Parser caveat: exit0 does NOT imply valid for connection reader; valid=false
+  from12 bound-event identity checks. Source stationEventLocked prints current
+  joinTicket/epoch0 during retiring LEFT callbacks; actual event uses station and
+  JOINNOTICE has correct old ticket/epoch. Preserve strict reader/raw evidence;
+  future logging correction should use station identity, not loosen validation.
+  Startup backend2 and supplemental interleaved RXCOUNTS extended1 also retained.
+  Human success and exact raw lifecycle/DHCP records are independent evidence.
+  Verified private recovery copy research/nord2/known-good/wifi-lifecycle-55c65bc7/
+  boot.img33497088B SHA55c65bc730e032df8c7645fe4cef922058f5a26e99f59e8cba4c26262152caf6;
+  manifest + stage hardware-success.json record evidence and limits. Old618 and
+  RAMADB backups remain. Open-network/private-address behavior not newly tested.
+  Rootexec98926 bounded600s capture still finishing; next save final snapshot.
+
+
 - **2026-10-23: 55c65bc7 baseline connected; one OFF/ON test requested.**
   User call_b70c7ee9836d49d4a6e9be9e2f36eaf5 says "fatto" to baseline task;
   this is not a separate explicit IP/router/Safari outcome. Immutable snapshot
