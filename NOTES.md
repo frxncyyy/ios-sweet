@@ -3,6 +3,16 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: speaker balance CI40025686247 running.**
+  Source6508982301b417fa99fe5f697ed52acf59747d35 pushedfork. Pipeline4852
+  watches exactrun, verifies all generatedtargets andHAL, then packs new
+  playback+rollback inios-balance. Images notyetready, noexactapproval.
+  Preferredrecovery remains currentlyaudible3b8cb873, hashreverified;
+  testedRAMADB andnewHALrollback willalso beavailable. Currentphoneunchanged.
+  Next: independentimagechecks, preparationreceipt, exactuserapproval, then
+  matchedindividualtones andprogressivebottom-onlygain tuning live.
+
+
 - **2026-10-23: bounded speaker gain controls validated, CI next.**
   Full ASan/UBSan suite PASS (`ios-balance/host-validation-3.log`), including
   49gainpairs/7legacy MMIOcycles and all65536USBgainargument encodings.
