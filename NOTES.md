@@ -6,7 +6,10 @@
 - **2026-10-23: corrected audio image flashed; inherited clocks block init.**
   Human call_663dd5b5 authorizes exact playback8e6697a2 and conditional
   rollback3ec181c7/RAMADB. Guarded runner flashed boot/reboot OKAY once;
-  rootexec81674 owns600s USB capture in ios-startup/hardware-playback.
+  rootexec81674 completed600s USB capture with exit0. Immutable final389403B log
+  SHA f999ed6c0a5199a28ab4e7b33b9e40ac9bd7f62265dabdadf809f19c8dacc2f8
+  and receipt are saved in ios-startup/hardware-review. Final STATUStoken3
+  confirms enabled0/running0/initialized0/error-4/uncertain0/stop_error0.
   User call_9e1cc0e8 confirms lockscreen/touch/buttons healthy and explicitly
   requests Claude fix this plus downstream startup blockers before next build.
   Installed HAL reused successfully mode1phase2error0. Readiness race resolved:
@@ -22,6 +25,13 @@
   Independent hardware-sol/cold-state and profile-sol/cold-state findings cover
   all5 failed state assumptions, borrowed-resource shutdown and actual69-word
   gate regression. Claude leads implementation; parent must review/run tests.
+  hardware-sol/cold-state/run-regression.py accepts a private candidate source
+  and checks three playback cycles, shared-state preservation and negative
+  rate/status/live-drift cases. Only baseline rejection has run so far.
+  install-sol/startup-audit has a separately reproduced diagnostic deadline bug:
+  startup time consumed the one-second tone interval. Private wrapper fix,
+  source-extracting sanitizer test and unified-suite hook are ready; no canonical
+  promotion yet. Review these with Claude's candidate before the next build.
   No new image prepared/authorized yet. Phone remains8e with audio disabled;
   no physical sound proven. Preserve installed HAL/backups; old WiFi kernel
   alone does not undo persistent HAL installation. Never stock Android.
