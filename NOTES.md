@@ -28,7 +28,11 @@
   boot.img33497088B SHA55c65bc730e032df8c7645fe4cef922058f5a26e99f59e8cba4c26262152caf6;
   manifest + stage hardware-success.json record evidence and limits. Old618 and
   RAMADB backups remain. Open-network/private-address behavior not newly tested.
-  Rootexec98926 bounded600s capture still finishing; next save final snapshot.
+  Rootexec98926 bounded600s capture ended0 at15:33Europe/Rome, normal deadline,
+  no USB error and capacity not reached. Final immutable snapshot675781B SHA
+  0097390314c1d0c57f0713a67931dd230dccce1da7637406a9c30c9350f0a688;
+  no STATIONFAULT, same parser limitations above. Manifest/final receipt updated.
+  No device action or user question pending; current image55c65bc7 remains healthy.
 
 
 - **2026-10-23: 55c65bc7 baseline connected; one OFF/ON test requested.**
