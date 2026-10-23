@@ -4,6 +4,12 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: post-OFF recovery confirmed by user.**
+  Human call_613ac78d827c441088f016faaca00622 says "tutto ok" for lockscreen,
+  touch and buttons. Phone remains known618; no further hardware actions pending.
+  Source correction d40194d has passed local checks; Claude audit pending beforeCI.
+
+
 - **2026-10-23: proven scan-cancel opcode bug corrected; local checks PASS.**
   Actual f8e4dac runtime sent CID0x04 with associated scan cancel body. Selected
   Android gen4m ENUM_CMD_ID assigns0x04 NIC_POWER_CTRL,0x1b SCAN_CANCEL; body4B
