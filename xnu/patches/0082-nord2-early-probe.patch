@@ -22557,7 +22557,7 @@
 +#define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
 +#define NAH_QUEUE_FRAMES 8192u
 +#define NAH_DEFAULT_GAIN_Q15 256u /* original tested bringup level */
-+#define NAH_DEFAULT_BOTTOM_GAIN_Q15 1024u /* listening-tested live setting */
++#define NAH_DEFAULT_BOTTOM_GAIN_Q15 5793u /* user-approved live level, 2026-10-24 */
 +/* Digital calibration range, not a calibrated acoustic/protection limit.
 + * Unity is the upper bound: never amplify beyond the incoming signed PCM.
 + * Startup defaults remain the physically tested low levels above. */

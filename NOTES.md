@@ -4,6 +4,53 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: live speaker volume USER APPROVED; persisting default next.**
+  User call_bfb483ac30c7412b822393aed8e67a5f:0 confirms5793isright;
+  qualityconcern withdrawn aspossiblysubjective. Keep top256/bottom5793.
+  Currentgainrangeb60647f1 remainsrunning/healthy, nofurthergainchange.
+  Collector5247 finishedexit0; finalstatus/logreceipt in
+  ios-gainrange/hardware-review/final-receipt.json, fault0. 11264drops were
+  exclusivelyduringintentionalSTOP/GAINdisabledwindow; noneafterre-enable.
+  Valuesarevolatile inthisimage (bootdefaultstill1024). Newios-calibrated
+  changes ONLY defaultbottom to5793, nofilters/profile/routing/protocol.
+  IndependentdefaultreviewPASS; fullhostsuite/native11/patchchecksPASS. Need
+  CI/build/independentimagereviews andnewexactapproval beforepermanentflash.
+  Fallbackforthefinaltest iscurrenthealthy b60647f1 plusnewrollback/RAMADB.
+  No morequalityA/Bneeded unlessuserreportsit again. No backgroundcollector.
+
+
+
+- **2026-10-24: bottom4096 nearly right; smaller5793 step awaiting listening.**
+  User call_b40f5a77c056467c854a936812f90cd1:0 asks justalittlemore;
+  muffling isolatedtobottom, no crackle. STATUSbeforechange23starts/error0;
+  STOP→GAINtop256/bottom5793 (+3.01dB)→ENABLE verifiedclean, volatile.
+  CurrentstageHARDWARE_LISTENING_BOTTOM5793. Userasked shortsame-content
+  testthenpause and whethermufflingworsenswithlevel. No moregain yet.
+  Earlier11264droppedframes allaccrued duringintentionalSTOP/GAINdisabled
+  window280307–280508ms; unchangedoverfurther3Mframes/23starts. This is
+  deliberateproducerdisable, not evidenceofcontinuedplaybackloss.
+  Profile sourceaudit no provenrate/format/routebug; AndroidDSP difference
+  plausiblebutunproven. ExistingUSB isolation withsameMONOreference isnext
+  useful discriminator, no blindfilter/profileedits/newbuild justified.
+  Evidence profile-sol/gainrange-review/muffled.md, hardware-review.
+  Currentbootb60647f1; collector5247 stillrunning600s. Recoveryunchanged.
+
+
+
+- **2026-10-24: bottom2048 improved but still quiet; live4096 test pending.**
+  User call_df865a0fbdd843b08966067142a8ea11:0 reports improvement, asks
+  morevolume, describes slightlymuffled quality (not yetisolatedspeaker;
+  no reportedcrackle). PrechangeSTATUS:11mediastarts,0fault/drop,stopped.
+  STOP→top256/bottom4096→ENABLE allverified clean; noflash. Newlistening
+  question asks loudness and whethertimbre isbottomonly/both; pauseafter.
+  Capturedlog nowhas18cleanstartuprecords, noAMP ERROR/SETTLEfailure yet;
+  this doesnotprove historicalfaultfullyresolved. Collector5247 active.
+  Currentstage/receipts ios-gainrange. Profileagent source-only reviewing
+  muffledquality vsAndroid; no newbuild/codechange. Waitlisteningfeedback
+  beforemoregain, STOPbeforechanges, neverclaimAndroidDSPprotectionpresent.
+
+
+
 - **2026-10-24: new hardware clean; bottom2048 listening test pending.**
   Currentb60647f1, userconfirms UI/controls healthy
   call_e4b9e48cecb44efa8f70a15fd839a92f:0. SilentDMAcompleted0faults;
