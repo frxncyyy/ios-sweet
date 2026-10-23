@@ -4,6 +4,19 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: 55c65bc7 baseline connected; one OFF/ON test requested.**
+  User call_b70c7ee9836d49d4a6e9be9e2f36eaf5 says "fatto" to baseline task;
+  this is not a separate explicit IP/router/Safari outcome. Immutable snapshot
+  baseline-after-user 450687B SHA8a6e8ac2de0c7cd4b80d07b03bf8d6dfb2f89f0db166d24b2ab1bbeca52f6a12
+  shows authorized generation1, matched DHCP OFFER/ACK and BSD input. EP0 status
+  at213335ms: service6, halt/error0, tx716/rx926; counters alone are not IP proof.
+  Seven runtime readers0; startup backend2 on later records and supplemental
+  extended1 on interleaved connectx-prefix RXCOUNTS at line5583. Raw evidence and
+  strict reader preserved; no false all-pass claim. Asked one OFF/5s/ON only if
+  baseline IP/router/Safari correct, then fresh networks/rejoin/Safari and 120s
+  responsiveness. No OFF/ON result yet. Rootexec98926 collector remains active.
+
+
 - **2026-10-23: exact scan-cancel image 55c65bc7 FLASHED; baseline test pending.**
   Human call_c859b2996c9a44f5af0ba5ba18391406 says "autorizzo" for this exact
   image and conditional 618/RAMADB recovery. Separate authorization.json saved
