@@ -4,6 +4,17 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: switch/power source pushed; CI39952094220 dispatched.**
+  Source f8e4daca68b4c2b12cc59c91106006032cfce68a on fork/codex/nord2-bringup.
+  Fullkernel build DEVELOPMENT/SWEET13.5 queued; no newimage or authorization.
+  Phone remains healthy618. Tests/compile/review details below. Stage:
+  research/nord2/wifi-ios-switch-power/ios; target
+  shim/out/nord2-xnu/nord2-ios-wifi-switch-power-stop23.img.
+  After success verify exactCI source/artifact234targets/ISA, pack and independently
+  verifyimage, then request new exact boot-only approval. Existing618/RAMADB
+  fallback remains available. Current hardware crash rootcause is still unproven.
+
+
 - **2026-10-23: combined switch/power correction integrated; native compile PASS.**
   Phone remains verified618; user confirmed lockscreen/touch/buttons restored.
   Handover queues one copied request after explicit disconnect, preserves old
