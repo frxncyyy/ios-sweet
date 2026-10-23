@@ -4,6 +4,31 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: new hardware clean; bottom2048 listening test pending.**
+  Currentb60647f1, userconfirms UI/controls healthy
+  call_e4b9e48cecb44efa8f70a15fd839a92f:0. SilentDMAcompleted0faults;
+  three1s legacyquiettones/start-stopcycles allclean, bothampsvalid1ff
+  andhealthyclock/TDM flags. Disabled/empty beforeGAIN; nowtop256/bottom2048
+  confirmed, HALenabled. Userasked shortsame-content comparison thenpause;
+  no loudnessoutcome yet. Collector5247 remainsactive; fullreceipts in
+  ios-gainrange/hardware-review. Continue <=6dB bottomsteps onlyafterclean
+  status/listeningfeedback, STOPbeforeediting. No furtherflash needed.
+
+
+
+- **2026-10-24: gainrange flashed with exact approval; clean init/silentDMA PASS.**
+  Approval call_8dffaa1955314e4d9d2da355f958878f:0 “autorizzo”; phone
+  verifiedfastboot, guardedrunner consumedONCE. Bootflash/rebootOKAY;
+  currentb60647f1…0d27130. HALreuse mode1phase2error0, both0c74ampsinit0.
+  Newcapgainmax32768/default256/1024 confirmed; STOP empty/faults0;
+  bounded1s silentDMA completed cleanly. Rootcollector5247 active600s.
+  Evidence ios-gainrange/hardware-review. UIconfirmationpending; no audible
+  tone or gain increase yet. Next quietamprestart, thencontrolledbottom
+  increases viaUSB/humanfeedback. Preferredroute3b/rollback53e61/RAMADB
+  recovery nowauthorized; neverstockAndroid, do not rerunusedrunner.
+
+
+
 - **2026-10-24: gainrange images VERIFIED; exact approval pending.**
   Independent playback/rollback reviewsPASS; prepared.json complete in
   ios-gainrange, runner/testplan/host/CI/reviews pinned. Source7ed29f2d,
