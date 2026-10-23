@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: clock image flashed; next refusal is AP I2C8 START=2.**
+  Human call_1e803ebc authorizes exact7d2ca8f9 and conditional rollback864fc70c/
+  RAMADB; call_6298d3b3 confirms fastboot. Guarded runner flashed boot/reboot
+  OKAY once. Currentphone7d2ca8f95d1107527e00b4ccaff0b16bf17823647899de8a463c580497230c9c.
+  HAL reuse mode1phase2error0. Gate now0, ownership800651ff; init stops-3 at
+  I2C stage8/failure6, PA11d04124 value2 (AP START RESUME_ARBIT bit1).
+  ampIDs0000/0000 unmeasured; stop0/reset0/held0/uncertain0. LiveSTOPtoken2
+  succeeded enabled0/running0/initialized0/stop_error0; no silent/tone sent.
+  Immutable init.log+receipt/status-initial/stop saved ios-clocks/hardware-review.
+  User call_719881c8 confirms lockscreen/touch/buttons healthy. Collector
+  rootexec69566 still collecting600s. Preserve final immutable log on completion.
+  Actual Claude Opus resumes same session14f85f3b-0a44-42f8-a2ab-0bbc2fe3ec79,
+  PID668034 rootexec26578, scoped only private claude-i2c-start; audit bit1 and
+  entire subsequent I2C path, meaningful regression before any new CI.
+  Live viewer PID668185 classclaude-nord2-audio-i2c on desktop3. No canonical
+  edits or device delegated. Current guarded runner consumed; never rerun it.
+  No recovery needed while UI healthy. Keep existing HAL+backups. Never stock.
+
+
 - **2026-10-23: inherited-clock audio images VERIFIED; new approval pending.**
   Source428e55d47777febe1c97016e9ee1525f6bd91855, CI39998991055attempt1SUCCESS.
   Kernel17892872B SHA61f94e91c4d4b9bcd5782baf35275e205ba3701d34a956d0e341a076d4ce6737.
