@@ -3,6 +3,15 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: inherited-clock source428e55d in CI39998991055.**
+  Exact source428e55d47777febe1c97016e9ee1525f6bd91855 committed/pushed.
+  Private ios-clocks/complete.py rootexec79725 waits exact CI and prepares
+  distinct audio-clocks playback/rollback images, pins installed HAL unchanged.
+  Independent profile reviewer run-clocks.py prepared; run only after packing.
+  No new authorization or phone action. Phone remains healthy8e6697a2, audio
+  disabled; same installed HAL, original backups and verified recovery preserved.
+
+
 - **2026-10-23: Claude's inherited-clock fix integrated and validated; CI next.**
   Actual Claude Opus session 14f85f3b completed its private candidate. The AFE
   now distinguishes inherited clocks from resources it enables, preserves
