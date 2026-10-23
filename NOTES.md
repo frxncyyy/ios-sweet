@@ -3,6 +3,21 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-24: calibrated audio flashed; boot defaults VERIFIED.**
+  Exact approval call_be0c06e695124a07ac0bd81853ccf006:0, “autorizzo”.
+  Fastboot detected; ios-calibrated guarded playback runner consumed once.
+  Flash/reboot OKAY; current image is a5b6e6e3…1fb6be41. HAL reuse mode1
+  phase2/error0; both 0c74 amplifiers initialized. First USB STATUS token1
+  confirms top256/bottom5793, enabled1, initialized1, all faults0 before any
+  audio playback or USB GAIN command. Boot-level persistence is confirmed.
+  User has been asked for UI/controls and a brief same-content listening
+  check; outcome pending. Collector root session44938 is bounded600s.
+  Evidence ios-calibrated/hardware-review/boot-default-status.json and
+  hardware-playback/xnu-live.log. No live gain mutation performed. Do not
+  rerun used runner. Conditional b60647f1 / f7537a1f / RAM ADB recovery is
+  authorized if needed. Never stock Android or unrelated partition writes.
+
+
 - **2026-10-24: calibrated-volume images independently VERIFIED; approval pending.**
   Both independent reports PASS and prepare.py completed. Playback
   `a5b6e6e3c86a825e2828018597e687922496f82dbd1ff705113a99db1fb6be41`,
