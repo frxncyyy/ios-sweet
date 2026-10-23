@@ -4,6 +4,47 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: user asks for live debugging instead of repeated kernel flashes.**
+  Source inspection confirms current Nord2 MTU3 EP0 exposes only bounded
+  vendor-IN log/status requests51..54. tools/nord2-usb-console.py has no
+  command channel; bsd/dev/sweet_usb.c decoder rejects vendor-OUT commands.
+  There is no established shell/ADB/SSH on the running Nord2 iOS build.
+  The later Sweet DWC3 Ethernet implementation is not the active Nord2 USB
+  path. A first development image is needed for live control; arbitrary
+  new kernel code would still require rebuilding/restarting unless a separate
+  loader were implemented. Do not imply hot patching already exists.
+  Practical scoped design: versioned USB mailbox for public Wi-Fi snapshots,
+  bounded capture windows and explicit precompiled diagnostic choices. USB
+  PIO runs with interrupts masked: do not acquire IOLocks or call radio APIs
+  inside the request decoder. Enqueue fixed requests and consume them in the
+  retained Wi-Fi owner; poll replies without exposing pointers/keys/payload.
+  Restarting capture must preserve boot-lifetime PID history, DMA ownership,
+  key state and deadlines. A retry is a separate lifecycle feature: current
+  njs_native.used/nst_native.attempted admit only one native Join per boot.
+  Do not clear those flags to simulate cleanup. No live-control implementation
+  or new image is completed yet; current phone remains ecb026c7 untouched.
+  OFLD correction is committed621929518b61c160157046bc636128656bd35917.
+  Private TX-correlation candidate/review are underway in
+  research/nord2/wifi/upstream-dhcp-20261023/tx-correlation-{candidate,review}.
+
+- **2026-10-23: fresh Topaz/HackiOS references compared against failed DHCP.**
+  U=research/nord2/wifi/upstream-dhcp-20261023. Topaz topaz pinned
+  e4772911e116ab4ab6c4ac1f38e6106fefe8b483; HackiOS kernel main pinned
+  8e61187098f2c26c5daee8f9f72b6416aa64b9ab. HackiOS userland main changed
+  to a79ff0772a3454fd1ef127e181e5b3bce6c9ce18, but eight relevant networking
+  blobs are byte-identical to the prior pin (history comparison has no common
+  ancestor). Topaz report29de81d1/manifest4bbda899 compares explicit native
+  ToDS/LLC framing with our MediaTek firmware Ethernet translation; Qualcomm
+  HTT constants cannot be copied into MTK TXDs. BSD saved Ethernet header,
+  input framing and real carrier contracts match our implemented path.
+  HackiOS report71d171a0/manifest50379010: avoid duplicate DHCP service if
+  configd already has en0; existing DISCOVERs do not support a missing-start
+  hypothesis. Its any-IPv4 wait helper accepts169.254, so is not a lease test.
+  IFNET_INIT_NX_NOAUTO differs, but no evidence justifies changing it blindly.
+  Neither comparison establishes a new proven DHCP fix; no upstream binary
+  was executed and no device action/new CI was performed.
+
+
 - **2026-10-23: Claude review complete; OFLD receive correction integrated locally.**
   C=research/nord2/wifi/claude-opus-dhcp-ecb0/resume-20261023. Actual Opus
   finished successfully; report f2386fa9 and candidate a790d902. It identifies
