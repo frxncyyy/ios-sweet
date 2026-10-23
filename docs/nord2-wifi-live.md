@@ -83,8 +83,12 @@ after its distinct diagnostic IDs are exhausted; packet transmission continues.
 Local tests exercise actual owner code through two complete WPA2 handshakes,
 teardown and fresh scan, then reject an old-MIC attempt. They also cover mailbox
 concurrency, lost responses, capture quotas and receive-policy guards. These
-are synthetic firmware tests. Repeated disconnect/rejoin has now been observed on the physical Nord 2.
-DHCP still fails there; the v2 peer/profile additions require a new device test.
+are synthetic firmware tests. Repeated disconnect/rejoin was observed on the physical Nord 2 with v1.
+On 2026-10-23 the corrected STA wire states in image `618e62b5` completed
+WPA2 and DHCP over the default Ethernet path; the user confirmed the
+IP/router/Safari test. The v2 read-only peer query also succeeded, reporting
+TO_DS=1 and cipher=4. Private address was disabled. The alternate raw ToDS
+profile and long-term stability remain untested.
 
 
 ## Version2 peer metadata and next-join profile extension

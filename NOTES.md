@@ -4,6 +4,31 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: Wi-Fi/DHCP WORKING; user confirms the IP/router/Safari test.**
+  User replied FUNZIONA to call_bb34ad358ebe43719dbddf12be7a7a72 after first
+  WPA2 Join on618e62b5, privateaddressoff. Corrected zero-based STA0/2 fixed
+  the ordinary Ethernet path; raw ToDS profile was NEVER selected or tested.
+  Evidence generation1: actual DHCP DISCOVER, OFFER, REQUEST, ACK; both OFFER
+  and ACK have DHCPMATCH matched1/tracked1. Native service6/flags127/halt0/
+  error0; thousands of transmitted and received packets. Live read-only peer
+  query succeeded: WLAN5/fromDS0/toDS1/MUAR1/cipher4/QoS0, meta1030.
+  Immutable first-join-dhcp-ack.log457179B SHA
+  f2be5ce6a5f8756bb7d75488f84c174a4abf19b6f4074ea4c24edd325a6938ad.
+  Startup8readers passed. AfterJoin backendstartupreader2 is expected; extended
+  strictreader1 rejects interleaved RXCOUNTS line5451 (620B with otherconsole
+  text), not a radiofailure. Preserve original; DHCPMATCH rows and mailbox are
+  separately valid. Native connectionreader authorized; datareader validprefix.
+  Copied exact known-working boot to research/nord2/known-good/wifi-dhcp-618e62b5/
+  boot.img; separate manifest.json records CI/source/evidence/userconfirmation.
+  SHA618e62b541d4cf57b0b5db21e6f7a5d89855ea14338663d905ba42282d61c9fa.
+  Captured user-confirmed-working snapshot; disabled packetcapture successfully
+  without disconnecting. Bounded600s read-only console collector48659 continues
+  toward its existing deadline; its process saves result.json and exits without
+  further intervention. No extra device test/reset/flash is needed now.
+  User did not provide numerical assignedIP; exactIP not recorded. WPA3/private
+  MAC/open-network/rawprofile and long-termstability are not claimed tested.
+
+
 - **2026-10-23: exact618e62b5 image flashed; USBv2 active, user Join pending.**
   Human call_789ff96268dd43009c36a5d029b68678 authorized exact prepared image
   and conditional d9a/RAMADB recovery. Verified singlefastboot/product/32MiBboot;
