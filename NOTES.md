@@ -3,6 +3,35 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-24: calibrated-volume images independently VERIFIED; approval pending.**
+  Both independent reports PASS and prepare.py completed. Playback
+  `a5b6e6e3c86a825e2828018597e687922496f82dbd1ff705113a99db1fb6be41`,
+  rollback `f7537a1fe98afe7b333f0462d6ac6ec6bbfe0777477469d2c95122e3128acba8`;
+  CI 40034353275 / source 50d13b7c. Preferred current b60647f1 fallback was
+  rehashed unchanged before/after each review. All receipts and the one-use
+  runner are pinned in ios-calibrated/prepared.json. No exact-image approval
+  or phone write yet. Ask approval for boot-only/default-volume persistence,
+  reusing the installed HAL. After approval/fastboot, verify STATUS gains
+  top256/bottom5793 before any USB gain command, then UI and brief playback.
+  Current phone is already at the user-approved live volume on b60647f1.
+
+
+- **2026-10-24: approved-volume images built; independent review pending.**
+  CI 40034353275 succeeded on source 50d13b7c4d0628db9a16fc02b54f25e2e5f43e15.
+  All 261 generated targets and the unchanged HAL package verified. Stage
+  `research/nord2/audio/playback-20261023/ios-calibrated` contains receipts.
+  Playback: 33542144 bytes, SHA-256
+  `a5b6e6e3c86a825e2828018597e687922496f82dbd1ff705113a99db1fb6be41`.
+  Audio rollback: 33531904 bytes, SHA-256
+  `f7537a1fe98afe7b333f0462d6ac6ec6bbfe0777477469d2c95122e3128acba8`.
+  Generic image checks passed. Profile agent is reviewing both independently;
+  next run prepare.py, record exact-image approval, then the one-use runner.
+  No authorization or flash yet. Phone remains healthy on b60647f1 with live
+  gains top256/bottom5793; user approves volume and no longer reports a
+  definite quality issue. The new image only makes that bottom gain the boot
+  default. Preferred fallback remains b60647f1 plus verified rollback/RAM ADB.
+
+
 
 - **2026-10-24: permanent approvedlevel CI40034353275 running.**
   Source50d13b7c4d0628db9a16fc02b54f25e2e5f43e15 pushedfork. Onlybottom
