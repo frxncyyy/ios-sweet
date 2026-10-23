@@ -243,7 +243,7 @@ naf_write_allowed(uint32_t pa)
 	case NAF_AFE_TOP_CON0: case NAF_AFE_DAC_CON0: case NAF_AFE_I2S_CON3:
 	case NAF_AFE_CONN_24BIT: case NAF_AFE_DL1_CON0: case NAF_AFE_DL1_BASE_MSB:
 	case NAF_AFE_DL1_BASE: case NAF_AFE_DL1_END_MSB: case NAF_AFE_DL1_END:
-	case NAF_AFE_APLL2_TCFG: case NAF_AFE_CONN28: case NAF_AFE_CONN29:
+	case NAF_AFE_APLL2_TCFG: case NAF_AFE_CONN0: case NAF_AFE_CONN1:
 	case NAF_AFE_MEMIF_CON0: case NAF_AFE_CONN_24BIT_1: case NAF_AFE_HD_ENGEN:
 		return 1;
 	default:
@@ -433,9 +433,10 @@ naf_build_up(struct naf_builder *b, const struct naf_own *o)
 	RMW(NAF_PH_I2S_ON, NAF_LT_PD, NAF_PIN_LT_MASK, 0);
 	RMW(NAF_PH_I2S_ON, NAF_AFE_I2S_CON3, 1u << 0, 1u << 0);
 
-	/* 8. DL1_CH1/2 -> I2S3_CH1/2 (I_DL1_CH1 5, I_DL1_CH2 6), DL1 on. */
-	RMW(NAF_PH_STREAM, NAF_AFE_CONN28, 1u << 5, 1u << 5);
-	RMW(NAF_PH_STREAM, NAF_AFE_CONN29, 1u << 6, 1u << 6);
+	/* 8. DL1 -> I2S3 mixer CONN0/1 (dai-i2s.c407-433), inputs5/6.
+	 * CONN28/29 feed I2S1, not the GPIO32/33/35 I2S3 peripheral. */
+	RMW(NAF_PH_STREAM, NAF_AFE_CONN0, 1u << 5, 1u << 5);
+	RMW(NAF_PH_STREAM, NAF_AFE_CONN1, 1u << 6, 1u << 6);
 	RMW(NAF_PH_STREAM, NAF_AFE_DAC_CON0, 1u << 4, 1u << 4);
 
 	/* 9. Observe the DMA pointer only: <= 400 x 50 us. */
@@ -449,8 +450,8 @@ naf_build_down(struct naf_builder *b, const uint32_t *s, const struct naf_own *o
 	const uint32_t poweron = (NAF_SPM_PROJECT_CODE << 16) | 1u;
 	/* DL1 off (fe-dai.c:631-644), interconnect off. */
 	RMW(NAF_PH_STOP, NAF_AFE_DAC_CON0, 1u << 4, 0);
-	RMW(NAF_PH_STOP, NAF_AFE_CONN28, 1u << 5, 0);
-	RMW(NAF_PH_STOP, NAF_AFE_CONN29, 1u << 6, 0);
+	RMW(NAF_PH_STOP, NAF_AFE_CONN0, 1u << 5, 0);
+	RMW(NAF_PH_STOP, NAF_AFE_CONN1, 1u << 6, 0);
 	/* DAPM POST_PMD in reverse supply order: I2S_EN, gpio, HD_EN, APLL. Pins
 	 * return to the measured snapshot fields, not to an assumed value. */
 	RMW(NAF_PH_I2S_OFF, NAF_AFE_I2S_CON3, 1u << 0, 0);

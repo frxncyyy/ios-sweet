@@ -78,3 +78,37 @@ Private audit receipts live under
 `research/nord2/audio/playback-20261023/{hardware,install,profile}-sol/android-parity-20261023`.
 The combined image pipeline is `research/nord2/audio/playback-20261023/ios-parity`.
 The earlier `ios-i2c-legacy` candidate was superseded before packing and testing.
+
+## Device result and remaining routing defect
+
+The authorized parity image (`d0677caa…adb3a0c`, source `23ebee5`, CI
+`40015584829`) initialized both physical amplifiers as revision `0c74`.
+The one-second silent DMA and tone tests completed without hardware or stop
+errors. During iOS media playback, the HAL delivered 955,392 frames with no
+producer drops; the driver serviced 904,332 cumulative PCM frames. The user
+heard no media output. These counters establish data movement, not sound.
+
+The follow-up comparison found an error missed by the initial audit:
+`mt6885-dai-i2s.c:407–432` binds I2S3 to `AFE_CONN0/1`, while the port used
+`AFE_CONN28/29`. The latter belong to I2S1 in the same Android source at
+lines 461–483. Correct clocks and advancing DL1 therefore did not establish
+that samples reached the physical I2S3 output. The route regression must
+anchor sink selection to Android's DAPM arrays, not merely reproduce the
+port's register constants.
+
+The port was stopped cleanly through USB after this test. The follow-up
+candidate routes and disconnects DL1 through CONN0/1, removes CONN28/29
+from the write allowlist, and preserves the historical observation addresses.
+Source-derived tests reproduce the old defect and verify three 0c74 playback
+cycles, stereo sample packing and failure cleanup without any I2S1 writes.
+The full sanitizer suite and ten native compilation units pass.
+
+The candidate also records nine fixed amplifier registers per chip once after
+both enables, before PCM delivery. It preserves partial evidence on failed
+reads and acts on clear-on-read NOCLK rather than hiding that fault. Saved
+values are printed only after stop or failed startup, with no new ongoing
+reads or playback-time console output. Neither the HAL nor live USB ABI changes.
+
+The initial digital ceiling remains 256/32768 (about −42.1 dB); the half-scale
+test tone reaches about −48.2 dBFS. No physical output success or amplifier
+gain in dB is inferred from the container's raw gain fields.

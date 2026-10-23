@@ -47,7 +47,7 @@ static void route_checks(uint32_t pa,uint32_t v)
   i2s_routes++;
  }
  if (pa==NAF_AFE_DAC_CON0 && (v&16u) && !(reg(pa)&16u)) {
-  assert((v&1u) && (reg(NAF_AFE_CONN28)&(1u<<5)) && (reg(NAF_AFE_CONN29)&(1u<<6)));
+  assert((v&1u) && (reg(NAF_AFE_CONN0)&(1u<<5)) && (reg(NAF_AFE_CONN1)&(1u<<6)));
   assert(reg(NAF_AFE_DL1_BASE)==NAF_SRAM && reg(NAF_AFE_DL1_END)==NAF_SRAM+NAF_SRAM_BYTES-1u);
   assert(((reg(NAF_AFE_DL1_CON0)>>24)&15u)==NAF_RATE_48K && (reg(NAF_AFE_DL1_CON0)&(1u<<5)));
   assert(reg(NAF_AFE_I2S_CON3)&1u);

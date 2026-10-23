@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: I2S3 routing correction and saved amp diagnostics validated.**
+  Combined source uses CONN0/1, retains historical CONN28/29 observation slots
+  and forbids writes to the unrelated I2S1 mixers. Android-derived regression
+  reproduces old silence cause and verifies stereo/three actual0c74 model
+  cycles and error cleanup. Added fixed startup observations SYS0,10,11,13,14,
+  58,20,23,26 for both amps, with partial-valid masks and NOCLK fault handling;
+  prints saved data only after stop, no new ongoing read or printf path.
+  Full ASan/UBSan suite PASS; ten strict native units PASS. Generated patch
+  28,781 lines clean-applies and matches buildtree. Hardware/install canonical
+  reviews PASS; profile audit finds no further proven blocker. No gain/profile
+  change. Receipts in `ios-route`; full CI/images/independent image checks next.
+  Current phone remains healthy `d0677caa`, audio disabled; no new authorization.
+
+
+- **2026-10-23: HAL reaches DMA but inaudible; wrong I2S sink found.**
+  User `call_c3ee0245dd5f4e01b2f65717859d05f3:0` reports no media sound;
+  first tone observation was uncertain. Live HAL test: 955,392 written frames,
+  0 dropped, 904,332 cumulative PCM, peak32768, muted0, max gap3,931us.
+  STOP token9 / STATUS token10 clean: enabled0/running0/error0/uncertain0.
+  Immutable `ios-parity/hardware-review/inaudible-hal.log` and JSON receipts
+  preserve evidence. No recovery needed; UI remains healthy, audio disabled.
+  Source-backed cause: current AFE_CONN28/29 route is I2S1, whereas selected
+  Android mt6885-dai-i2s.c407/432 routes DL1 to I2S3 via AFE_CONN0/1 (bits5/6).
+  Parent manually confirmed. Hardware agent prepares complete routing/ownership
+  fix and source-derived regression; install/profile agents inspect actual
+  0c74 mute/operating flags and board profile before the next coherent build.
+  status22 is decimal 0x16 (supply health), not evidence of output switching.
+  New `ios-route` stage is offline-only, packing paused, no images/authorization.
+  Collector83639 completed 600 seconds, exit0. Final immutable log 426145 bytes,
+  SHA-256 `3fdc445f92492d6b96d46b18206ef4f6ee815e6837e457a2d7430e603b1b9edd`, in the same review directory.
+
+
 - **2026-10-23: parity audio initialization and silent/tone DMA PASS.**
   Current image `d0677caa…adb3a0c`; user confirms UI/touch/buttons healthy.
   HAL reuse mode1 phase2 error0. Both physical TFA9874 revisions are `0c74`;

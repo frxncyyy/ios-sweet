@@ -81,7 +81,7 @@ na8_allowed(unsigned slave, unsigned reg)
 {
 	return (slave == 0x34 || slave == 0x37) &&
         (reg == 0x03 || reg == 0x00 || reg == 0x01 || reg == 0x02 ||
-         reg == 0x04 || nah_board_register_allowed(reg) || reg == 0xfb || na8_silicon_value(reg,0) || reg == 0x10 || reg == 0x11 || reg == 0x14 ||
+         reg == 0x04 || nah_board_register_allowed(reg) || reg == 0xfb || na8_silicon_value(reg,0) || reg == 0x10 || reg == 0x11 || reg == 0x13 || reg == 0x14 ||
          (reg >= 0x20 && reg <= 0x27) || reg == 0x5f);
 }
 

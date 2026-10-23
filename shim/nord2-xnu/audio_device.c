@@ -32,7 +32,7 @@ static LCK_MTX_DECLARE(nsa_lock, &nsa_group);
 static struct nsa_stream stream;
 static struct nau_hw hardware;
 static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
- unsigned tone_active, hal_status; uint64_t report_us, last_pending_us; } device;
+ unsigned tone_active, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
 static uint64_t now_us(void) {
  uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
 }
@@ -94,6 +94,21 @@ static void snapshot(struct nal_snapshot *out) {
  w[NAL_F_PEAK]=stream.peak;w[NAL_F_VOLUME]=stream.below;w[NAL_F_MUTED]=stream.muted;
  w[NAL_F_OPENS]=stream.opens;w[NAL_F_WRITES]=stream.writes;
  lck_mtx_unlock(&nsa_lock);
+}
+static void report_amp_observed(void) {
+ /* Saved startup evidence only. No console output while DMA is running;
+  * each startup is reported at most once, after stop or failed startup. */
+ if(hardware.status.running || !hardware.status.amp_observed_seq ||
+    device.amp_report_seq==hardware.status.amp_observed_seq)return;
+ device.amp_report_seq=hardware.status.amp_observed_seq;
+ for(unsigned a=0;a<2;a++) {
+  const uint16_t *v=hardware.status.amp_observed[a];
+  if(!hardware.status.amp_observed_valid[a])continue;
+  printf("NORD2 AUDIO AMP START: seq=%u amp=%u valid=%x sys=%04x s10=%04x s11=%04x s13=%04x s14=%04x mute58=%04x tdm20=%04x tdm23=%04x tdm26=%04x\n",
+   hardware.status.amp_observed_seq,a,hardware.status.amp_observed_valid[a],
+   v[NAH_O_SYS0],v[NAH_O_STATUS10],v[NAH_O_STATUS11],v[NAH_O_STATUS13],
+   v[NAH_O_STATUS14],v[NAH_O_MUTE58],v[NAH_O_TDM20],v[NAH_O_TDM23],v[NAH_O_TDM26]);
+ }
 }
 static void diagnose(const char *where,int reason,unsigned initial) {
  /* Saved evidence only: never read hardware again after a failed access.
@@ -258,6 +273,7 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
   } else {lck_mtx_lock(&nsa_lock);
    nsa_flush_idle(&stream,now_us());
    lck_mtx_unlock(&nsa_lock);}
+  report_amp_observed();
   if(!hardware.status.running && t-device.report_us>=5000000) {
    struct nal_snapshot s;snapshot(&s);device.report_us=t;
    printf("NORD2 AUDIO PCM: opens=%u writes=%u queued=%u peak=%u running=%u error=%d pcm=%u\n",

@@ -25,6 +25,7 @@ def main():
    ('saved-preflight',[T/'test-saved-preflight.c',S/'audio_i2c8.c'],[],[]),
    ('i3c',[T/'test-i3c.c',S/'audio_i2c8.c',S/'audio_board.c'],[],[]),
    ('order',[T/'test-order.c',S/'audio_i2c8.c',S/'audio_board.c'],[],[]),
+   ('route-plan',[T/'test-route-plan.c',S/'audio_afe.c',S/'audio_id.c'],[],[]),
    ('plan-dump',[T/'plan-dump.c',S/'audio_afe.c',S/'audio_id.c'],[],[])])
   # Real 8e6697a2 inherited boot snapshot: pure classification and plans.
   for case in ['classify','plan']:
@@ -32,6 +33,7 @@ def main():
   if a.board:
    cases.append(('producer-capacity',[T/'test-producer-capacity.c',S/'audio_stream.c']+modules,[],[a.board.resolve()]))
    cases.append(('hardware',[T/'test-full.c']+modules,[],[a.board.resolve()]))
+   cases.append(('route-hardware',[T/'test-route.c']+modules,[],[a.board.resolve()]))
    cases.append(('protection',[T/'test-protection.c']+modules,[],[a.board.resolve()]))
    for case in INHERITED:
     cases.append(('inherited-'+case,[T/'test-inherited.c']+modules,[],[case,a.board.resolve()]))
@@ -47,6 +49,7 @@ def main():
  subprocess.run(['python3',str(T/'test_device_deadline.py')],check=True)
  subprocess.run(['python3',str(T/'test_producer_policy.py')],check=True)
  subprocess.run(['python3',str(T/'test_stop_order.py')],check=True)
+ subprocess.run(['python3',str(T/'test_observed.py')],check=True)
  subprocess.run(['python3',str(T/'test_amp_parity.py')]+(['--board',str(a.board.resolve())]if a.board else[]),check=True)
  print('PASS software models/ABI only; physical sound remains unverified')
 if __name__=='__main__':main()

@@ -81,6 +81,25 @@ static int amp_enable(struct nau_hw *h,unsigned amp)
  if ((status&(tdmmask|noclkmask)) || !(clocks&clockmask)) return NAH_E_AMP_FAULT;
  return amp_rmw(h,amp,0x00,8,8);
 }
+static int amp_observe_startup(struct nau_hw *h)
+{
+ /* Both outputs have source-backed enable/readback, DMA is still all
+  * zeros. Fixed18 reads total, no ongoing polling or extra writes.
+  * A failed transfer ends capture immediately; the valid masks preserve
+  * partial evidence and normal start-failure containment handles cleanup. */
+ static const uint8_t regs[NAH_O_FIELDS]={0x00,0x10,0x11,0x13,0x14,0x58,0x20,0x23,0x26};
+ for (unsigned a=0;a<2;a++) for (unsigned i=0;i<NAH_O_FIELDS;i++) {
+  uint16_t v=0;
+  if (amp_read(h,a,regs[i],&v)) return NAH_E_IO;
+  h->status.amp_observed[a][i]=v;
+  h->status.amp_observed_valid[a]|=1u<<i;
+  /* STATUS10 clears NOCLK on read. Preserve and act on that evidence,
+   * rather than accidentally consuming a new fault as diagnostics. */
+  if (i==NAH_O_STATUS10 && (v&((h->amps[a].rev&255)==0x74?0xc0:0x500)))
+   return NAH_E_AMP_FAULT;
+ }
+ return 0;
+}
 static int board_valid(const struct nau_hw *h)
 {
  const struct nah_board *b=h->board;
@@ -251,6 +270,11 @@ int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
   int prep=amps_prepare(h);
   if (prep) return h->status.error=prep;
  }
+ if (!++h->status.amp_observed_seq) h->status.amp_observed_seq=1;
+ for (unsigned a=0;a<2;a++) {
+  h->status.amp_observed_valid[a]=0;
+  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
+ }
  h->status.silent_only=silent; h->gain_q15=gain;
  h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
  h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
@@ -277,6 +301,7 @@ int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
    if (amp_read(h,i,0x00,&v) || (v&9)!=1) { rc=NAH_E_BOARD_CONFIG; goto fail; }
   }
   for (unsigned i=0;i<2;i++) if ((rc=amp_enable(h,i))) goto fail;
+  if ((rc=amp_observe_startup(h))) goto fail;
   if ((rc=lease(h,0))) goto fail;
  }
  h->status.error=0;

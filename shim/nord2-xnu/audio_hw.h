@@ -41,6 +41,10 @@ struct nah_board {
  int (*apply)(void *, const struct na8_io *, struct na8_state *, unsigned amp);
  int (*supports)(uint16_t revision, unsigned slave);
 };
+/* Fixed startup observations, captured once after both AMPE enables.
+ * No generic register access or live ABI is exposed. */
+enum { NAH_O_SYS0,NAH_O_STATUS10,NAH_O_STATUS11,NAH_O_STATUS13,
+ NAH_O_STATUS14,NAH_O_MUTE58,NAH_O_TDM20,NAH_O_TDM23,NAH_O_TDM26,NAH_O_FIELDS };
 struct nah_status {
  unsigned initialized, running, silent_only, uncertain, gate, retained_shared_clock;
  unsigned amp_reset_held; /* uncertain amp transport: local GPIO reset latched high */
@@ -50,6 +54,8 @@ struct nah_status {
  uint32_t current_pa, consumed_frames, queued_frames, fed_frames;
  uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
  uint16_t amp_revision[2], amp_status[2];
+ uint16_t amp_observed[2][NAH_O_FIELDS];
+ unsigned amp_observed_valid[2], amp_observed_seq;
  /* Saved-state diagnostics only: naf_own_mask of the boot snapshot and the
   * last I2C8 register/value the transport touched (no extra MMIO). */
  uint32_t ownership, i2c_last_pa, i2c_last_value;

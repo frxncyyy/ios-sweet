@@ -67,6 +67,8 @@ enum nau_afe {
 	/* AFE 0x11210000 (mt6885-reg.h:2355-2377, 2564-2565) */
 	NAU_A_TOP_CON0, NAU_A_TOP_CON1, NAU_A_TOP_CON2, NAU_A_TOP_CON3,
 	NAU_A_DAC_CON0, NAU_A_I2S_CON3, NAU_A_DL1_CON0, NAU_A_CONN28, NAU_A_CONN29,
+	/* Append-only: I2S3 mixer; historical I2S1 observations above stay intact. */
+	NAU_A_CONN0, NAU_A_CONN1,
 	NAU_AFE_COUNT
 };
 

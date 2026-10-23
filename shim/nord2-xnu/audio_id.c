@@ -94,6 +94,8 @@ const uint32_t nau_afe_pa[NAU_AFE_COUNT] = {
 	[NAU_A_DL1_CON0] = 0x1121004c,
 	[NAU_A_CONN28] = 0x112104bc,
 	[NAU_A_CONN29] = 0x112104c0,
+	[NAU_A_CONN0] = 0x11210020, /* I2S3 channel1 mixer */
+	[NAU_A_CONN1] = 0x11210024, /* I2S3 channel2 mixer */
 };
 
 const uint32_t nau_dma_pa[NAU_DMA_COUNT] = {

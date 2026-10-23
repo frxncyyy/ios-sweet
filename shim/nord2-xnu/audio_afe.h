@@ -83,8 +83,10 @@ struct naf_op {
 #define NAF_AFE_DL1_END      (NAF_AFE + 0x064u)
 #define NAF_AFE_DAC_MON      (NAF_AFE + 0x2ecu)
 #define NAF_AFE_APLL2_TCFG   (NAF_AFE + 0x3f4u)
-#define NAF_AFE_CONN28       (NAF_AFE + 0x4bcu)
-#define NAF_AFE_CONN29       (NAF_AFE + 0x4c0u)
+#define NAF_AFE_CONN0        (NAF_AFE + 0x020u)
+#define NAF_AFE_CONN1        (NAF_AFE + 0x024u)
+#define NAF_AFE_CONN28       (NAF_AFE + 0x4bcu) /* historical I2S1 sink; not writable */
+#define NAF_AFE_CONN29       (NAF_AFE + 0x4c0u) /* historical I2S1 sink; not writable */
 #define NAF_AFE_MEMIF_CON0   (NAF_AFE + 0x8ccu)
 #define NAF_AFE_CONN_24BIT_1 (NAF_AFE + 0x994u)
 #define NAF_AFE_HD_ENGEN     (NAF_AFE + 0xdd0u)
