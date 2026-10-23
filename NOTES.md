@@ -4,6 +4,27 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: proven scan-cancel opcode bug corrected; local checks PASS.**
+  Actual f8e4dac runtime sent CID0x04 with associated scan cancel body. Selected
+  Android gen4m ENUM_CMD_ID assigns0x04 NIC_POWER_CTRL,0x1b SCAN_CANCEL; body4B
+  sequence/ext/reserved. Hardware failure contains wrongCID4 seq117, scanseq55,
+  before PTK-delete preflight error12. Exact firmware response to invalid power
+  mode55 is unknown; do not claim a captured ready-bit loss or hardware fix yet.
+  Corrected wireCID, allowlist and pending-cancel detach/service guards; host
+  internal_wire4 role unchanged. Existing ready/coherence/cursor guards unchanged.
+  Source-oracle oldruntime FAIL and actual outgoing powerCID rejection FAIL;
+  corrected source oracle138 checks PASS; parent audit all12 accepted station
+  command IDs vs Android enum PASS. Both actual-owner lifecycle and power suites
+  PASS (OFF during scan, heldDDONE, earlySCANDONE, real teardown/ON/freshscan/rejoin).
+  Six generated native ARMv8.2 units compile PASS, regenerated0082 applies and
+  matches234 targets. Candidate promotion manifest78bd9760, private evidence
+  lifecycle-fix-20261023/off-owner-review. New stage wifi-ios-scan-cancel/ios,
+  target nord2-ios-wifi-scan-cancel-stop23.img, no image/CI/new authorization yet.
+  Claude independent off-cleanup-error12 review still running. Phone known618;
+  recovery final snapshot346275B SHAb9f8db8379d353f377d6a20a3720aff4a095fd825d6fabb295c67c5beb49dcce,
+  eight readers0, boot-onlybackend2; iOS frames valid, human UI confirmation pending.
+
+
 - **2026-10-23: ee98 OFF cleanup halted; known618 boot restored, UI check pending.**
   User reports OFF could not restart, then the phone crashed/rebooted. Complete
   final log 575016B SHA65a98a38a00cc261856bd8fe97b5a7e7b8581b579008dcf03297e1dda524a972

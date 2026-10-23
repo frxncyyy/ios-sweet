@@ -166,7 +166,7 @@ static int njs_associated_scan_start_locked(void){
  nss_native.scan_sequence=sequence;slot->state=NSS_RUNNING;return 0;
 }
 static struct nss_slot*njs_associated_scan_done_locked(void){
- struct nsb_scan*scan=nst_native.state.associated_scan;if(!scan||(!scan->done&&!nst_native.state.associated_scan_canceled)||scan->active||(nst_native.state.wire_busy&&(nst_native.state.wire_cid==3||nst_native.state.wire_cid==4)))return 0;
+ struct nsb_scan*scan=nst_native.state.associated_scan;if(!scan||(!scan->done&&!nst_native.state.associated_scan_canceled)||scan->active||(nst_native.state.wire_busy&&(nst_native.state.wire_cid==3||nst_native.state.wire_cid==NST_CID_SCAN_CANCEL)))return 0;
  for(unsigned k=0;k<NSS_SLOTS;k++)if(&nss_native.slot[k].scan==scan){if(nst_associated_scan_detach(&nst_native.state,scan))return 0;nss_native.slot[k].captured=scan->last;return &nss_native.slot[k];}return 0;
 }
 /* Compiled native module implements all six operations for this checked

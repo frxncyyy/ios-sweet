@@ -12683,7 +12683,7 @@
 +}
 +static int acceptable(const struct nst*s){return source(s)&&!s->callback_active;}
 +static int busy(const struct nst*s){return s->wire_busy||s->air_pending||s->peer_kind;}
-+static int cid_size(uint8_t cid,size_t n){switch(cid){case 3:return n==1188;case 4:return n==4;case 7:return n==64;case 0x0a:return n==68;case 0x11:return n==12;case 0x12:return n==116;case 0x13:return n==200;case 0x14:return n==4;case 0x16:return n==12;case 0x17:return n==4;case 0x19:return n==22;case 0x1c:return n==24;default:return 0;}}
++static int cid_size(uint8_t cid,size_t n){switch(cid){case 3:return n==1188;case NST_CID_SCAN_CANCEL:return n==4;case 7:return n==64;case 0x0a:return n==68;case 0x11:return n==12;case 0x12:return n==116;case 0x13:return n==200;case 0x14:return n==4;case 0x16:return n==12;case 0x17:return n==4;case 0x19:return n==22;case 0x1c:return n==24;default:return 0;}}
 +static int group_slot(const struct nst*s,unsigned key){
 + if(key>3)return -1;if(s->gtk_mapped&(1u<<key))return s->gtk_wlan[key];
 + if(!s->gtk_mapped)return s->peer.group_wlan;
@@ -12693,7 +12693,7 @@
 +static int command(struct nst*s,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n,unsigned internal){
 + if(!acceptable(s)||!ticket||!p||!cid_size(cid,n))return -1;if(s->wire_busy||s->air_pending)return 1;
 + if(cid==7&&s->security==SW_SECURITY_OPEN)return -1;
-+ if((cid==3&&internal!=3)||(cid==4&&internal!=4))return -1;
++ if((cid==3&&internal!=3)||(cid==NST_CID_SCAN_CANCEL&&internal!=4))return -1;
 + if(cid==7&&(p[10]!=s->peer.bss||!eq(p+4,s->peer.ap,6)||p[11]!=(p[0]?4:0)||p[12]>3||p[13]!=(p[0]?16:0)||p[14]!=(p[2]?s->peer.wlan:group_slot(s,p[12]))||p[0]>1||p[2]>1||p[3]||p[1]!=(p[0]?p[2]:0)||(p[2]&&p[12])))return -1;
 + if(cid==7&&!p[2]&&((!p[0]&&!(s->gtk_mapped&(1u<<p[12])))||(p[0]&&s->gtk_submission_serial==UINT32_MAX)))return -1;
 + if(cid==0x1c&&(p[0]!=s->peer.bss||(!p[2]&&(p[3]!=s->peer.channel||p[5]!=s->peer.band))||p[2]>1))return -1;
@@ -12712,7 +12712,7 @@
 +}
 +int nst_associated_scan_cancel(struct nst*s){if(!source(s)||!s->associated_scan)return -1;s->associated_scan_cancel=1;return 0;}
 +int nst_associated_scan_detach(struct nst*s,struct nsb_scan*scan){
-+ if(!s||!scan||s->associated_scan!=scan||(!scan->done&&!s->associated_scan_canceled)||scan->active||(s->wire_busy&&(s->wire_cid==3||s->wire_cid==4)))return -1;
++ if(!s||!scan||s->associated_scan!=scan||(!scan->done&&!s->associated_scan_canceled)||scan->active||(s->wire_busy&&(s->wire_cid==3||s->wire_cid==NST_CID_SCAN_CANCEL)))return -1;
 + s->associated_scan=0;s->associated_scan_published=s->associated_scan_cancel=s->associated_scan_canceled=0;return 0;
 +}
 +static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned type,unsigned protect){
@@ -12966,7 +12966,7 @@
 +int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event_fn fn,void*ctx){
 + if(!source(s)||s->active||s->callback_active||!o||!o->bus||!o->now_us||!o->bus->owner||!o->bus->reg_read||!o->bus->reg_write||!o->bus->mem_read||!o->bus->mem_write||!o->bus->sync||!budget||budget>16)return -1;
 + s->active=1;s->entered=1;s->phase=NST_IDLE;
-+ if(s->associated_scan&&s->associated_scan_cancel&&!s->associated_scan->done&&!s->associated_scan_canceled&&!s->wire_busy&&!s->air_pending){uint8_t cancel[4]={s->associated_scan->sequence,0,0,0};if(command(s,UINT64_MAX-2,4,cancel,sizeof cancel,4))return fail(s,49);}
++ if(s->associated_scan&&s->associated_scan_cancel&&!s->associated_scan->done&&!s->associated_scan_canceled&&!s->wire_busy&&!s->air_pending){uint8_t cancel[4]={s->associated_scan->sequence,0,0,0};if(command(s,UINT64_MAX-2,NST_CID_SCAN_CANCEL,cancel,sizeof cancel,4))return fail(s,49);}
 + if(before(s,o,c)||coherent(s,o,c)||transmit(s,o,c,fn,ctx))return -1;
 + static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
 + if(s->air_pending&&s->dma_done&&(s->air_done||(retired_air_failure(s)&&s->last>=s->operation_deadline))){
@@ -13036,7 +13036,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/wifi_station_transport.h
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,124 @@
 +#ifndef NORD2_STATION_TRANSPORT_H
 +#define NORD2_STATION_TRANSPORT_H
 +#include <stddef.h>
@@ -13045,6 +13045,9 @@
 +#include "wifi_station_wire.h"
 +#include "wifi_station_data_diag.h"
 +#include "wifi_station_tx.h"
++/* Selected gen4m ENUM_CMD_ID: 0x04 is NIC_POWER_CTRL, never scan cancel.
++ * Internal_wire4 is a host role and must not be used as a wire CID. */
++#define NST_CID_SCAN_CANCEL 0x1bu
 +#define NST_MAX_ETHERNET 1514u
 +#define NST_RX_BYTES 3840u
 +#define NST_FRAME_BYTES 1600u
@@ -19506,7 +19509,7 @@
 + nss_native.scan_sequence=sequence;slot->state=NSS_RUNNING;return 0;
 +}
 +static struct nss_slot*njs_associated_scan_done_locked(void){
-+ struct nsb_scan*scan=nst_native.state.associated_scan;if(!scan||(!scan->done&&!nst_native.state.associated_scan_canceled)||scan->active||(nst_native.state.wire_busy&&(nst_native.state.wire_cid==3||nst_native.state.wire_cid==4)))return 0;
++ struct nsb_scan*scan=nst_native.state.associated_scan;if(!scan||(!scan->done&&!nst_native.state.associated_scan_canceled)||scan->active||(nst_native.state.wire_busy&&(nst_native.state.wire_cid==3||nst_native.state.wire_cid==NST_CID_SCAN_CANCEL)))return 0;
 + for(unsigned k=0;k<NSS_SLOTS;k++)if(&nss_native.slot[k].scan==scan){if(nst_associated_scan_detach(&nst_native.state,scan))return 0;nss_native.slot[k].captured=scan->last;return &nss_native.slot[k];}return 0;
 +}
 +/* Compiled native module implements all six operations for this checked

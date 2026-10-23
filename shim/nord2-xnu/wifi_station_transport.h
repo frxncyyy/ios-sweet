@@ -6,6 +6,9 @@
 #include "wifi_station_wire.h"
 #include "wifi_station_data_diag.h"
 #include "wifi_station_tx.h"
+/* Selected gen4m ENUM_CMD_ID: 0x04 is NIC_POWER_CTRL, never scan cancel.
+ * Internal_wire4 is a host role and must not be used as a wire CID. */
+#define NST_CID_SCAN_CANCEL 0x1bu
 #define NST_MAX_ETHERNET 1514u
 #define NST_RX_BYTES 3840u
 #define NST_FRAME_BYTES 1600u
