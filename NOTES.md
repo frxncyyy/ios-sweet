@@ -4,6 +4,29 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: user resumed; actual Claude Opus investigating the failed DHCP test.**
+  User explicitly asks Claude to fix DHCP from the new logs. Actual Claude Code
+  PID561634, model claude-opus-5-5, resumed session
+  01e36598-017d-44c6-9f31-18c35b9ccb96; root wrapper46856 owns the run.
+  Private output C=research/nord2/wifi/claude-opus-dhcp-ecb0/resume-20261023.
+  PROMPT.md and input-manifest.json pin pause-final.log (430714 bytes,
+  SHA111ab77a0b1923c92300f1d283d1efd7e4e6ceee3a86049104db7e8dfdc1eda0),
+  PAUSE-RESULT and qualified OFLD audit. Previous STA-BMC255 change did not
+  resolve DHCP. The two OFLD=3 rejections are TDLS-class, not proven DHCP;
+  the third RX row has DW2 bit25 TRANS_FAIL, not DW1 ICV error. Shared PID127
+  TX status is not packet-specific proof. Claude may read sources and logs
+  and write a candidate/report/tests only inside C; no shell, device, CI or
+  canonical source edits. Root will review and execute candidate tests.
+  A read-only agent monitors this sole Claude process; no duplicate session.
+  Live viewer verified visible on workspace 3 (class claude-wifi-dhcp-resume).
+  Runtime still matches b5a09a2; only unrelated untracked kmod/ present.
+  Phone remains ecb026c7, with no new USB action, Join, flash or recovery.
+  Next: inspect Claude's concrete candidate and source evidence, validate
+  meaningful production tests, then prepare/review a new image if warranted.
+  DHCP lease/router/Internet remain unverified; new device test needs exact
+  image approval. No scheduled restart or unattended phone test.
+
+
 - **2026-10-23: USER PAUSED until tomorrow; DHCP still fails on ecb026c7.**
   User reports169.254/Routerempty again and asks to save logs, resume tomorrow.
   Phone remains ecb026c7; no reboot/restore or secondJoin requested. Full saved
