@@ -13,7 +13,6 @@
 #define NA8_GATE 0x11d05000u
 #define NA8_DMA 0x11000780u
 #define NA8_GATE_BIT (1u << 4)
-#define NA8_I3C_EN (1u << 15)
 
 static const uint8_t na8_slave[2] = {0x34, 0x37};
 
@@ -243,7 +242,9 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	 * action (:1253-1254). Keep the unowned shadow/CCU guards conservative.
 	 * The source reads bit15 I3C_EN
 	 * from V2 DMA_FSM_DEBUG at 0xec, not DEBUGSTAT at 0xe4
-	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). Refuse that separate mode. */
+	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). At fixed100k this is
+	 * read-only evidence: source adds I3C master-code HFIFO only above1MHz
+	 * and !hs_only (1041-1045). HS0/EXT_CONF8001 select our legacy path. */
 	s->stage = 8;
 	R(NA8_SH + 0x24, 2, &s->sh_start);
 	if (s->sh_start & 3) { REFUSE(18); }
@@ -275,7 +276,7 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
  if(s->ap_preflight[NA8_AP_CONTROL]&4) {AP_REFUSE(7,NA8_AP_CONTROL);}
  if(s->prior_irq!=0 && s->prior_irq!=1) {AP_REFUSE(8,NA8_AP_IRQ);}
  if(s->ap_preflight[NA8_AP_FIFO]) {AP_REFUSE(9,NA8_AP_FIFO);}
- if(s->i3c&NA8_I3C_EN) {AP_REFUSE(21,NA8_AP_I3C);}
+ /* I3C_EN is preserved read-only;100k never enters source HFIFO branch. */
 #undef AP_REFUSE
 	if (s->prior_irq == 1) {
 		/* Same exact-completion adoption as the reviewed battery handoff;

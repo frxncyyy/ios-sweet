@@ -19927,7 +19927,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_id.h
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,160 @@
 +#ifndef NORD2_AUDIO_ID_H
 +#define NORD2_AUDIO_ID_H
 +#include <stdint.h>
@@ -19951,7 +19951,8 @@
 + * Revision 3 keeps that snapshot contract and changes only milestone 1b
 + * (audio_i2c8.c): a clean completed NACK is a bounded result rather than an
 + * uncertain fault, the source V2 HW timeout is programmed/restored, and an
-+ * AP-channel I3C mode is refused. None of this is hardware-authorized.
++ * AP-channel I3C_EN is retained as read-only evidence; the fixed100kHz
++ * transport follows the source legacy-I2C branch without changing it.
 + */
 +
 +enum nau_snap {
@@ -20089,7 +20090,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_i2c8.c
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,486 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -20107,7 +20108,6 @@
 +#define NA8_GATE 0x11d05000u
 +#define NA8_DMA 0x11000780u
 +#define NA8_GATE_BIT (1u << 4)
-+#define NA8_I3C_EN (1u << 15)
 +
 +static const uint8_t na8_slave[2] = {0x34, 0x37};
 +
@@ -20337,7 +20337,9 @@
 +	 * action (:1253-1254). Keep the unowned shadow/CCU guards conservative.
 +	 * The source reads bit15 I3C_EN
 +	 * from V2 DMA_FSM_DEBUG at 0xec, not DEBUGSTAT at 0xe4
-+	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). Refuse that separate mode. */
++	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). At fixed100k this is
++	 * read-only evidence: source adds I3C master-code HFIFO only above1MHz
++	 * and !hs_only (1041-1045). HS0/EXT_CONF8001 select our legacy path. */
 +	s->stage = 8;
 +	R(NA8_SH + 0x24, 2, &s->sh_start);
 +	if (s->sh_start & 3) { REFUSE(18); }
@@ -20369,7 +20371,7 @@
 + if(s->ap_preflight[NA8_AP_CONTROL]&4) {AP_REFUSE(7,NA8_AP_CONTROL);}
 + if(s->prior_irq!=0 && s->prior_irq!=1) {AP_REFUSE(8,NA8_AP_IRQ);}
 + if(s->ap_preflight[NA8_AP_FIFO]) {AP_REFUSE(9,NA8_AP_FIFO);}
-+ if(s->i3c&NA8_I3C_EN) {AP_REFUSE(21,NA8_AP_I3C);}
++ /* I3C_EN is preserved read-only;100k never enters source HFIFO branch. */
 +#undef AP_REFUSE
 +	if (s->prior_irq == 1) {
 +		/* Same exact-completion adoption as the reviewed battery handoff;
@@ -20577,7 +20579,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_i2c8.h
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,97 @@
 +#ifndef NORD2_AUDIO_I2C8_H
 +#define NORD2_AUDIO_I2C8_H
 +#include <stdint.h>
@@ -20593,7 +20595,8 @@
 + * after mutation is sticky uncertain, with no reset/retry/next-slave access.
 + * Shared clock enabling, amp reset and the AP lease belong to audio_hw.c.
 + * Every transfer rechecks clocks, pinmux, CAM/CCU/shadow/AP idle, DMA/FIFO,
-+ * and V2 I3C_EN at0xec. Source references: SOURCE-AUDIT.md.
++ * and captures V2 I3C_EN at0xec as read-only evidence. Fixed100kHz uses
++ * the selected source legacy-I2C branch regardless of that bit.
 + */
 +struct na8_io {
 +	int (*read)(void *, uint32_t, unsigned, uint32_t *);   /* width 1/2/4 */
@@ -20606,7 +20609,7 @@
 + * 12 delay, 13 timeout, 14 completion error, 15 byte bounds,
 + * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
 + * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
-+ * 21 AP-channel I3C mode enabled. */
++ * 21 reserved (former unsupported I3C_EN refusal). */
 +/* Read-only AP-channel preflight snapshot. Bit(index) means that read
 + * completed successfully during the latest transfer; missing fields are0. */
 +enum na8_ap_field { NA8_AP_START, NA8_AP_CONTROL, NA8_AP_IRQ, NA8_AP_FIFO,

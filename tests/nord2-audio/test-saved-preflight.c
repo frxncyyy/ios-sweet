@@ -9,13 +9,13 @@
 int nah_board_register_allowed(unsigned r){(void)r;return 0;}
 int nah_board_change_allowed(unsigned r,uint16_t a,uint16_t b){(void)r;(void)a;(void)b;return 0;}
 static const uint32_t pa[NA8_AP_FIELDS]={0x11d04124,0x11d04110,0x11d0410c,0x11d041f4,0x11d041ec};
-static const unsigned failure[NA8_AP_FIELDS]={6,7,8,9,21};
-static const uint32_t good[NA8_AP_FIELDS]={2,0x38,0,0,0};
-static const uint32_t bad[NA8_AP_FIELDS]={3,0x3c,2,1,0x8000};
+static const unsigned failure[4]={6,7,8,9};
+static const uint32_t good[NA8_AP_FIELDS]={2,0x28,1,0,0x8800};
+static const uint32_t bad[4]={3,0x2c,2,1};
 struct context{struct i2c8_model model;unsigned reads,writes,delays,ap_reads;int fail_index,failed;uint32_t order[64];};
 static struct context c;
 static struct na8_state s;
-static void reset(void){memset(&c,0,sizeof(c));memset(&s,0,sizeof(s));m_init(&c.model);c.fail_index=-1;for(unsigned i=0;i<NA8_AP_FIELDS;i++)c.model.ch[1][(pa[i]&255)/2]=(uint16_t)good[i];}
+static void reset(void){memset(&c,0,sizeof(c));memset(&s,0,sizeof(s));m_init(&c.model);c.fail_index=-1;for(unsigned i=0;i<NA8_AP_FIELDS;i++)c.model.ch[1][(pa[i]&255)/2]=(uint16_t)good[i];c.model.saved[2]=(uint16_t)good[NA8_AP_CONTROL];}
 static int readio(void *cookie,uint32_t addr,unsigned width,uint32_t *v){
  struct context *x=cookie;assert(!x->failed);x->reads++;
  for(unsigned i=0;i<NA8_AP_FIELDS;i++)if(addr==pa[i]){
@@ -31,9 +31,9 @@ static int transfer(void){uint16_t value=0;return na8_read16(&io,&c,&s,0x34,3,&v
 static void no_mutation(void){assert(!c.writes&&!c.delays&&!c.model.starts&&!s.mutated&&!s.uncertain&&na8_return_ok(&s));}
 int main(void){
  /* Every predicate combination retains old priority, but captures all5 reads. */
- for(unsigned mask=1;mask<(1u<<NA8_AP_FIELDS);mask++){
+ for(unsigned mask=1;mask<(1u<<4);mask++){
   reset();unsigned first=NA8_AP_FIELDS;
-  for(unsigned i=0;i<NA8_AP_FIELDS;i++)if(mask&(1u<<i)){c.model.ch[1][(pa[i]&255)/2]=(uint16_t)bad[i];if(first==NA8_AP_FIELDS)first=i;}
+  for(unsigned i=0;i<4;i++)if(mask&(1u<<i)){c.model.ch[1][(pa[i]&255)/2]=(uint16_t)bad[i];if(first==NA8_AP_FIELDS)first=i;}
   assert(transfer()==-1&&s.failure==failure[first]&&s.stage==8&&s.offline);
   assert(s.ap_valid==NA8_AP_VALID_ALL&&c.ap_reads==NA8_AP_FIELDS);
   for(unsigned i=0;i<NA8_AP_FIELDS;i++){assert(c.order[i]==pa[i]);assert(s.ap_preflight[i]==((mask&(1u<<i))?bad[i]:good[i]));}
@@ -65,5 +65,5 @@ int main(void){
  /* Snapshot clears before a later call fails in an earlier phase. */
  c.model.mux|=0x8000;assert(transfer()==-1&&s.failure==1&&!s.ap_valid);
  for(unsigned i=0;i<NA8_AP_FIELDS;i++)assert(!s.ap_preflight[i]);
- puts("PASS actualtransport:31predicatecombinations,5callbackfailures,6earlierguards,START2success,stalevalidreset; zeroadditionalwrites/read-after-failure");
+ puts("PASS actualtransport:15predicatecombinations,5callbackfailures,6earlierguards,START2/IRQ1/DEBUG8800success,stalevalidreset; zeroadditionalwrites/read-after-failure");
 }

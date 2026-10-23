@@ -23,6 +23,7 @@ def main():
   modules=[S/(n+'.c')for n in ['audio_hw','audio_afe','audio_id','audio_i2c8','audio_amp','audio_board']]
   cases.extend([('stream',[T/'test-stream.c']+modules,[],[]),('i2c',[T/'test-i2c.c',S/'audio_i2c8.c',S/'audio_id.c',S/'audio_board.c'],[],[]),
    ('saved-preflight',[T/'test-saved-preflight.c',S/'audio_i2c8.c'],[],[]),
+   ('i3c',[T/'test-i3c.c',S/'audio_i2c8.c',S/'audio_board.c'],[],[]),
    ('plan-dump',[T/'plan-dump.c',S/'audio_afe.c',S/'audio_id.c'],[],[])])
   # Real 8e6697a2 inherited boot snapshot: pure classification and plans.
   for case in ['classify','plan']:

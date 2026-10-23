@@ -3,6 +3,36 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: legacy100k I2C correction validated; CI next.**
+  Removed the false DMA_FSM_DEBUG bit15 prerequisite: Android uses it only
+  for an optional HFIFO high-speed header above1MHz, never for our fixed100k
+  path. Preserve the entire measured8800 read-only; zero new hardware writes.
+  Three independent audits found no other demonstrated downstream blocker:
+  native bindings and all15 saved config words match, all5 silicon tables and
+  104 board fields match their pinned sources. Actual amp ACK/REV still unknown.
+  Host sanitizer suite PASS including all65536 debug words, measured AP state,
+  three playback cycles and idle/fault guards. Model now strictly rejects HFIFO
+  clear and non-owned W1C actions. Initial fixture test needed saved CONTROL28
+  updated; corrected and entire suite rerun PASS. Five strict native TUs PASS;
+  generated patch28567lines clean-applies and reproduces source. Receipts in
+  ios-i2c-legacy; private audits in hardware-sol/install-sol/profile-sol i3c-inherited.
+  No new image or authorization yet. Phone remains62a89dcc with audio disabled;
+  preserve final collector log. Existing conditional rollbackffd83e98/RAMADB.
+
+- **2026-10-23: I2C image flashed; complete preflight exposes DMA_FSM_DEBUG8800.**
+  Human call_a0404e7e authorizes playback62a89dcc and conditional rollbackffd83e98/
+  RAMADB. Guarded ios-i2c runner flashed boot and rebooted OKAY once; collector
+  rootexec63543 runs600s. HAL reused mode1phase2error0. AP START2 now passes;
+  init stops-3 at stage8/failure21, PA11d041ec value8800. Saved AP valid1f:
+  START2 CONTROL28 IRQ1 FIFO0 I3C8800. No amp IDs yet; no tone/silent test sent.
+  Immutable initial log and receipt in ios-i2c/hardware-review; STATUS2 and STOP3
+  confirm enabled0/running0/init0/uncertain0/stop_error0. UI confirmation pending.
+  Source Android i2c-mtk.c1040-1047 uses bit15 only for the >1MHz HFIFO branch;
+  the fixed100kHz legacy-I2C path should preserve this read-only register.
+  Parent and hardware/install agents audit full downstream transfer/restoration,
+  not just this predicate, before next build. Current runner consumed, never rerun.
+  Preserve final log after collector completion. No recovery needed absent UI fault.
+
 - **2026-10-23: I2C audio images VERIFIED; exact approval pending.**
   Source d7cb0124f075847ce137659e5ed99b28e0af20d4, CI40008878528 attempt1 SUCCESS.
   Kernel SHA e78464aee09cfdad57dfa2547b198261306ed1893566a53e49ea905d9df510d6;

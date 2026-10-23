@@ -21,7 +21,8 @@
  * Revision 3 keeps that snapshot contract and changes only milestone 1b
  * (audio_i2c8.c): a clean completed NACK is a bounded result rather than an
  * uncertain fault, the source V2 HW timeout is programmed/restored, and an
- * AP-channel I3C mode is refused. None of this is hardware-authorized.
+ * AP-channel I3C_EN is retained as read-only evidence; the fixed100kHz
+ * transport follows the source legacy-I2C branch without changing it.
  */
 
 enum nau_snap {

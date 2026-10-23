@@ -195,7 +195,7 @@ m_read(struct i2c8_model *m, uint32_t pa, unsigned w)
 	}
 	M_CHECK(w == 2 && !(off & 1) && off != 0);
 	/* This PIO derivative has no DEBUGSTAT read; silently treating it as
-	 * DMA_FSM_DEBUG would invalidate the I3C refusal test. */
+	 * DMA_FSM_DEBUG would invalidate the inherited-capability test. */
 	M_CHECK(ch != 1 || off != M_V2_DEBUGSTAT);
 	if (ch == 1 && off == 0x0c && m->behaviour == M_SLOW && m->nrx && !m->ch[1][6]) {
 		if (++m->polls >= m->slow_polls) {
@@ -219,8 +219,8 @@ m_write(struct i2c8_model *m, uint32_t pa, unsigned w, uint32_t v)
 		return;
 	}
 	M_CHECK(w == 2 && v <= 0xffff);
-	if (off == 0x0c) { if (!m->irq_sticky) { c[6] &= (uint16_t)~v; } return; }
-	if (off == 0x38) { if (v & 1) { m->ntx = m->nrx = m->rxpos = 0; } return; }
+	if (off == 0x0c) { M_CHECK(v == 1 || v == 3); if (!m->irq_sticky) { c[6] &= (uint16_t)~v; } return; }
+	if (off == 0x38) { M_CHECK(v == 5); m->ntx = m->nrx = m->rxpos = 0; return; }
 	if (off == 0x24) { M_CHECK(v == 1); m_start(m); return; }
 	M_CHECK(m_is_config(off));
 	c[off / 2] = (uint16_t)v;

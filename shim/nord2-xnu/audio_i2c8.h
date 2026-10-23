@@ -13,7 +13,8 @@
  * after mutation is sticky uncertain, with no reset/retry/next-slave access.
  * Shared clock enabling, amp reset and the AP lease belong to audio_hw.c.
  * Every transfer rechecks clocks, pinmux, CAM/CCU/shadow/AP idle, DMA/FIFO,
- * and V2 I3C_EN at0xec. Source references: SOURCE-AUDIT.md.
+ * and captures V2 I3C_EN at0xec as read-only evidence. Fixed100kHz uses
+ * the selected source legacy-I2C branch regardless of that bit.
  */
 struct na8_io {
 	int (*read)(void *, uint32_t, unsigned, uint32_t *);   /* width 1/2/4 */
@@ -26,7 +27,7 @@ struct na8_io {
  * 12 delay, 13 timeout, 14 completion error, 15 byte bounds,
  * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
  * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
- * 21 AP-channel I3C mode enabled. */
+ * 21 reserved (former unsupported I3C_EN refusal). */
 /* Read-only AP-channel preflight snapshot. Bit(index) means that read
  * completed successfully during the latest transfer; missing fields are0. */
 enum na8_ap_field { NA8_AP_START, NA8_AP_CONTROL, NA8_AP_IRQ, NA8_AP_FIFO,
