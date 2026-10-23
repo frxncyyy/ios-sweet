@@ -4,6 +4,35 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: live USB control and repeated Join implementation complete locally.**
+  User explicitly requested implementation. Canonical fixed mailbox, native owner
+  binder and host CLI now support STATUS, bounded capture, OFLD policy comparison
+  and asynchronous disconnect; boot opt-in nord2wifilive=1. USB decoder is
+  queue-only, with boot nonce/exact generation/idempotent token; no shell, keys,
+  arbitrary memory/storage/firmware operations. Reply word57 is join_ready,
+  time is milliseconds. Capture is configured/armed mode, not emitted-frame
+  proof: 32 windows per boot, 64 TX+64 RX rows each, including fresh stations.
+  Rejoin keeps historical used/attempted/PID state, requires actual teardown,
+  key-delete submissions, token/DDONE and client retirement plus a fresh native
+  scan. Fresh credentials arrive only from iOS. It follows source firmware
+  ordering; EID24 has no generation and token wrap cannot distinguish arbitrary
+  late duplicates. No firmware teardown-ACK or absolute epoch guarantee.
+  Local actual-owner two-WPA2-join/teardown/scan test passes, third old-MIC fails
+  cleanly; strengthened after-receive KEY_READY check reviewed. Full station11
+  groups passed before rejoin; service fixture updated for the new typed hooks.
+  Final binder797 checks, host155, mailbox ASan/TSan, exact USB decoder100000
+  malformed cases, PID correlation and owning ARM64 sweet_touch compile pass.
+  Runtime patch0082 regenerated cleanly; header/live TU registration included.
+  Evidence: research/nord2/wifi/live-control-20261023/{validation,rejoin-review,
+  mailbox-review/v2,host-v2}; TX candidate/review under upstream-dhcp-20261023.
+  docs/nord2-wifi-live.md documents usage and limits. Private fresh image stage
+  research/nord2/wifi-ios-live/ios is closed pending final source/CI/artifact
+  verification; target nord2-ios-wifi-live-stop23.img. Full CI and image still
+  pending at this milestone. Phone remains ecb026c7, untouched, DHCP unresolved.
+  Exact new image requires explicit approval under AGENTS.md; recover with
+  d9a44316 or tested RAM ADB only, never stock Android over iOS userdata.
+
+
 - **2026-10-23: user asks for live debugging instead of repeated kernel flashes.**
   Source inspection confirms current Nord2 MTU3 EP0 exposes only bounded
   vendor-IN log/status requests51..54. tools/nord2-usb-console.py has no

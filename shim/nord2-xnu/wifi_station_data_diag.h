@@ -26,6 +26,9 @@ struct nsdd {
  uint32_t identities,identity_next,reply_match[9],reply_other[9],match_logs,rx_samples;
  struct nsdd_identity identity[4];
  uint32_t rx_error_logs;
+ /* Independent live capture budget. Original counters/identities/quotas and
+  * the boot PID ledger are never reset by a USB capture request. */
+ uint32_t live_mode,live_epoch,live_tx,live_rx;
  uint32_t headers_tx,headers_rx,dhcp_tx,dhcp_rx,txs_early,txs_live,records,summary;
 };
 /* Fixed RXD metadata only; no rejected payload access. dst:0 unknown,
@@ -33,6 +36,27 @@ struct nsdd {
 struct nsdd_rx_error {uint64_t generation;uint32_t n,d1,d2,d4,wlan,sec,key,ht,groups,type,a1,dst,tid;};
 int nsdd_rx_error_take(struct nsdd*,struct nsdd_rx_error*,uint64_t,const uint8_t*,size_t);
 void nsdd_rx_error(struct nsdd*,uint64_t,const uint8_t*,size_t);
+/* Serialized retained owner only. Boot-lifetime diagnostic identities never
+ * reset with NST/nsdd/generation/scan state.127 is permanently ambiguous. */
+#define NSDD_PID_MANAGEMENT_MIN 1u
+#define NSDD_PID_MANAGEMENT_MAX 31u
+#define NSDD_PID_SECURITY_MIN 32u
+#define NSDD_PID_SECURITY_MAX 63u
+#define NSDD_PID_DATA_MIN 64u
+#define NSDD_PID_DATA_MAX 126u
+#define NSDD_PID_SHARED 127u
+struct nsdd_pid_record {uint64_t generation;uint32_t pid,wlan,kind,protected_frame,ether,dhcp,parse,bytes,eapol_class,attempted,published,publication,local,seen,status,closed;};
+unsigned nsdd_pid_reserve(uint64_t,unsigned wlan,unsigned kind,unsigned protect,const uint8_t*,size_t);
+void nsdd_pid_attempt(uint64_t,unsigned pid,unsigned wlan);
+void nsdd_pid_publish(uint64_t,unsigned pid,unsigned wlan,unsigned publication);
+void nsdd_pid_local(uint64_t,unsigned pid,unsigned wlan);
+void nsdd_pid_status(uint64_t,const struct nsdd_txs*);
+void nsdd_pid_finish(uint64_t);
+#if !defined(KERNEL) && !defined(_KERNEL)
+/* Host hardware models explicitly represent a fresh kernel boot. Never kernel. */
+void nsdd_test_boot_reset(void);
+const struct nsdd_pid_record *nsdd_test_pid(unsigned);
+#endif
 int nsdd_classify(struct nsdd_frame*,const uint8_t*,size_t);
 int nsdd_decode_txs(struct nsdd_txs*,const uint8_t*,size_t);
 /* Serialized native owner only. type2 is security, type3 ordinary data.
@@ -44,4 +68,5 @@ void nsdd_event(struct nsdd*,uint64_t generation,const uint8_t *event_body,size_
 void nsdd_reject(struct nsdd*,uint64_t generation,unsigned reason);
 void nsdd_rx_snapshot(struct nsdd*,uint64_t generation);
 void nsdd_summary(struct nsdd*,uint64_t generation);
+void nsdd_capture(struct nsdd*,unsigned mode,unsigned epoch);
 #endif

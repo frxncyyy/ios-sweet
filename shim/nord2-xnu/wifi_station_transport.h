@@ -12,11 +12,11 @@
 /* FRAME_RESULT status0..255 is firmware status. This disjoint local value
  * is negative-only for cleanup management after proved DDONE; it never means air success/ACK. */
 #define NST_TX_LOCAL_TIMEOUT 0x100u
-/* Host-only optional TXS can never alias an air-correlated management PID.
- * Source driver PID range is1..127. This first-attempt epoch never reuses a
- * management PID; exhaustion refuses publication without touching DMA. */
+/* Source PID range1..127. Disjoint boot-lifetime diagnostic ranges never
+ * alias management. Security/data fallback127 remains ambiguous and local
+ * receipts remain independent of TXS. Management exhaustion refuses IO. */
 #define NST_PID_HOST 127u
-#define NST_PID_MANAGEMENT_MAX 126u
+#define NST_PID_MANAGEMENT_MAX NSDD_PID_MANAGEMENT_MAX
 /* Only the actual CAP worker may prepare/run this object. The native binder
  * authenticates exact addresses/thread; these public structs alone grant no IO. */
 enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,
@@ -42,6 +42,9 @@ struct nst {
  unsigned prepared,entered,active,phase,halt,error,mutated,wire_busy,air_pending;
  unsigned credit_capacity,credit_available,credit_reserved,credit_acquired,credit_released;
  unsigned tx_next,base_completed,submitted,dma_completed,rx_current,next_pid;
+ /* Optional development comparison with the former OFLD drop policy.
+  * This can only reject additional frames; all secure RX checks still run. */
+ unsigned ofld_drop;
  unsigned wire_bytes,wire_cid,wire_sequence,wire_pid,wire_wlan,wire_type;
  unsigned published,dma_done,air_done,air_status,callback_active;
  uint64_t generation,ticket,last,deadline,operation_deadline;

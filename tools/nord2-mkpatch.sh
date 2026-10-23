@@ -30,6 +30,7 @@ NEW_FILES="$NEW_FILES bsd/dev/wifi_rom_contract.c bsd/dev/wifi_rom_contract.h bs
 NEW_FILES="$NEW_FILES iokit/Kernel/arm/nord2_battery.c iokit/Kernel/arm/nord2_battery.h iokit/Kernel/arm/mtk_i2c_read.c iokit/Kernel/arm/mtk_i2c_read.h iokit/Kernel/arm/nord2_battery_platform.cpp iokit/Kernel/arm/nbg_telemetry.h"
 NEW_FILES="$NEW_FILES bsd/dev/dma_pool_contract.c bsd/dev/dma_pool_contract.h bsd/dev/pool_probe.c bsd/dev/pool_probe.h bsd/dev/pool_adapter.c bsd/dev/pool_adapter.h bsd/dev/pool_bind.inc bsd/dev/wifi_dma_preflight.c bsd/dev/wifi_dma_preflight.h"
 MAIN_FILES="wifi_ios_join wifi_ios_station_view wifi_station_wire wifi_station_tx wifi_station_transport wifi_station_diag wifi_station_data_diag wifi_station_transaction wifi_wpa_diag wifi_wpa_crypto wifi_wpa2 wifi_wpa_owner wifi_wpa_nst wifi_ios_scalar wifi_ios_age wifi_ios_binding wifi_ios_bss wifi_ios_card wifi_ios_control wifi_ios_cursor wifi_ios_event wifi_ios_lifecycle wifi_ios_mapping wifi_ios_policy wifi_ios_rates wifi_ios_scan_contract wifi_ios_snapshot wifi_vcn33 wifi_default_feature wifi_rx_readback wifi_normal_transport wifi_normal_rx wifi_scan_bss wifi_scan_plan wifi_normal_config wifi_normal_init wifi_regulatory_policy wifi_normal_backend wifi_basic_config wifi_basic_resources wifi_basic_metadata wifi_basic_primitives wifi_capability wifi_capability_dispatcher wifi_main_command wifi_main_dmashdl wifi_main_init_plan wifi_main_initializer wifi_main_transport wifi_main_layout wifi_main_fw_place wifi_main_fw_xnu wifi_main_phy_backup wifi_main_phy_exchange wifi_main_phy_force wifi_main_phy_xnu"
+MAIN_FILES="$MAIN_FILES wifi_live_control"
 for name in $MAIN_FILES; do
     NEW_FILES="$NEW_FILES bsd/dev/$name.c bsd/dev/$name.h"
     cp "shim/nord2-xnu/$name.h" "$BT/bsd/dev/$name.h"
@@ -57,11 +58,13 @@ cp shim/nord2-xnu/wifi_wake_bind.inc "$BT/bsd/dev/wifi_wake_bind.inc"
 cp shim/nord2-xnu/wifi_wfsys_bind.inc "$BT/bsd/dev/wifi_wfsys_bind.inc"
 cp shim/nord2-xnu/wifi_rom_bind.inc "$BT/bsd/dev/wifi_rom_bind.inc"
 cp shim/nord2-xnu/pool_bind.inc "$BT/bsd/dev/pool_bind.inc"
-for name in wifi_station_service.h wifi_station_source_layout.h wifi_station_transport_forward.inc wifi_station_transport_bind.inc wifi_station_service_bind.inc wifi_ifnet_link.h wifi_ifnet_link.inc wifi_scan_service.h wifi_scan_service_bind.inc wifi_scan_return_bind.inc wifi_vcn33_bind.inc wifi_normal_transport_bind.inc wifi_normal_backend_bind.inc wifi_normal_backend_forward.inc wifi_normal_config_tables.inc wifi_basic_config_bind.inc wifi_capability_bind.inc wifi_async_event.h wifi_main_wfdma_native.h wifi_main_halt.h wifi_main_wfdma_bind.inc wifi_main_bind.inc failure_drain.inc; do
+for name in wifi_station_rejoin.h wifi_station_service.h wifi_station_source_layout.h wifi_station_transport_forward.inc wifi_station_transport_bind.inc wifi_station_service_bind.inc wifi_ifnet_link.h wifi_ifnet_link.inc wifi_scan_service.h wifi_scan_service_bind.inc wifi_scan_return_bind.inc wifi_vcn33_bind.inc wifi_normal_transport_bind.inc wifi_normal_backend_bind.inc wifi_normal_backend_forward.inc wifi_normal_config_tables.inc wifi_basic_config_bind.inc wifi_capability_bind.inc wifi_async_event.h wifi_main_wfdma_native.h wifi_main_halt.h wifi_main_wfdma_bind.inc wifi_main_bind.inc failure_drain.inc; do
     cp "shim/nord2-xnu/$name" "$BT/bsd/dev/$name"
     NEW_FILES="$NEW_FILES bsd/dev/$name"
 done
 # Fuel helper TUs carry their own NORD2/host-test guards in canonical source.
+cp shim/nord2-xnu/wifi_live_control_bind.inc "$BT/bsd/dev/wifi_live_control_bind.inc"
+NEW_FILES="$NEW_FILES bsd/dev/wifi_live_control_bind.inc"
 for name in SweetBattery.cpp nord2_battery.c nord2_battery.h mtk_i2c_read.c mtk_i2c_read.h nord2_battery_platform.cpp nbg_telemetry.h; do
     cp "shim/nord2-xnu/$name" "$BT/iokit/Kernel/arm/$name"
 done

@@ -2,7 +2,12 @@
  * is the existing retained worker and existing DMA claim, never this API alone. */
 #include "wifi_station_transport.h"
 #include "wifi_ios_join.h"
-static struct {struct nst state;unsigned attempted,active;}nst_native;
+#include "wifi_station_rejoin.h"
+static struct {struct nst state,staging,saved;struct nsr_ledger saved_ledger;unsigned attempted,active,undo,saved_attempted,saved_active,saved_return[3];}nst_native;
+static struct nsr_ledger nsr_native;
+static int njs_rejoin_ready_locked(void);
+static void njs_rejoin_refresh(void);
+
 static int nst_native_owner_window(const struct nwfn_native*n){
  return n==&nwfn_native&&nst_native.attempted==1&&nst_native.active==1&&
  ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&
@@ -15,7 +20,7 @@ static int nst_native_rx_active(const struct nwfn_native*n){return nst_native_ow
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t bytes,unsigned write){return nst_native_owner_window(n)&&nst_memory_range(&nst_native.state,a,bytes,write);}
 static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){return nst_native_owner_window(n)&&nst_register_write(&nst_native.state,a,v);}
 static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uint64_t now,uint64_t deadline,struct nst_profile*out){
- if(!t||!out||!generation||nst_native.attempted||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
+ if(!t||!out||!generation||generation>255||(nst_native.attempted&&(!nsr_native.scan_ready||nsr_native.admitted_generation!=generation||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nst_native.active))||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
  for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)return 1;
  struct ncs_cap cap;if(!ncd_native.diag.events||ncd_native.diag.events>sizeof(ncd_native.diag.history)/sizeof(ncd_native.diag.history[0])||ncs_cap_mac(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,&cap)||cap.bmc!=4||cap.wtbl<7)return -1;
  unsigned allowed=0;for(unsigned k=0;k<nss_native.info.count;k++)if(nss_native.info.channels[k].band==t->band&&nss_native.info.channels[k].channel==t->channel)allowed=1;
@@ -41,8 +46,29 @@ static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uin
  /* Source TC4: MCU queue1, PSE8, retry30, lifetime2000; long legacy fixed
   * basic rate chosen from peer rates. Explicit one-stream WF0 path policy. */
  struct sw_txd txd={.wlan=peer.wlan,.own_mac=peer.own_mac,.queue=1,.pid=1,.retry_limit=30,.fixed_rate=rate,.pse_header_len=8,.lifetime_ms=2000,.spe_index=0};
- if(nst_prepare(&nst_native.state,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
+ unsigned again=nst_native.attempted;
+ if(again&&(generation<=nsr_native.closed_generation||generation>255||nsr_native.next_pid>NST_PID_MANAGEMENT_MAX-4))return -1;
+ memset(&nst_native.staging,0,sizeof nst_native.staging);
+ if(nst_prepare(&nst_native.staging,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
+ if(again){nst_native.staging.normal.next=nsr_native.hw0_next;nst_native.staging.normal.token_next=nsr_native.token_next;nst_native.staging.next_pid=nsr_native.next_pid;}
+ nst_native.saved=nst_native.state;nst_native.saved_ledger=nsr_native;nst_native.saved_attempted=nst_native.attempted;nst_native.saved_active=nst_native.active;
+ nst_native.saved_return[0]=nss_return.attempted;nst_native.saved_return[1]=nss_return.ready;nst_native.saved_return[2]=nss_return.consumed;nst_native.undo=1;
+ nst_native.state=nst_native.staging;memset(&nst_native.staging,0,sizeof nst_native.staging);
+ nsr_native.scan_ready=0;nsr_native.admitted_generation=0;nsr_native.ptk=nsr_native.gtk=nsr_native.pending=nsr_native.bad=0;
+ nss_return.attempted=nss_return.ready=nss_return.consumed=0;
  nst_native.attempted=1;nst_native.active=1;*out=profile;
  printf("NORD2 WIFI TXPROFILE: generation=%llu band=%u channel=%u rates=%u basic=%u fixed=%u own=%u wlan=%u group=%u\n",(unsigned long long)generation,peer.band,peer.channel,all,basic,rate,peer.own_mac,peer.wlan,peer.group_wlan);
  return 0;
+}
+
+/* Only pure, unpublished construction may roll back. Once any native action
+ * reaches the retained transport, only real teardown/scan-return can recycle. */
+static void nst_native_commit_prepare(void){
+ memset(&nst_native.saved,0,sizeof nst_native.saved);memset(&nst_native.saved_ledger,0,sizeof nst_native.saved_ledger);nst_native.undo=0;
+}
+static int nst_native_abort_prepare(uint64_t generation){
+ struct nst*n=&nst_native.state;
+ if(!nst_native.undo||n->generation!=generation||n->mutated||n->submitted||n->wire_busy||n->air_pending||n->callback_active)return -1;
+ nst_native.state=nst_native.saved;nsr_native=nst_native.saved_ledger;nst_native.attempted=nst_native.saved_attempted;nst_native.active=nst_native.saved_active;
+ nss_return.attempted=nst_native.saved_return[0];nss_return.ready=nst_native.saved_return[1];nss_return.consumed=nst_native.saved_return[2];nst_native_commit_prepare();return 0;
 }

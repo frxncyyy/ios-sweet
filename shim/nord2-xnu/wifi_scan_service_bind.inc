@@ -106,10 +106,20 @@ static void nss_deliver(struct nss_slot*s,enum nss_status status){
  IOLockLock(nss_native.lock);s->callback_busy=0;if(s->retire)memset(s,0,sizeof(*s));IOLockUnlock(nss_native.lock);
 }
 #ifndef NSS_STATION_TEST_DISABLED
+#if defined(NORD2) || defined(NWL_HOST_TEST)
+static void nwl_configure_station(void);
+#define NJS_LIVE_CONFIGURE() nwl_configure_station()
+#endif
 #include "wifi_station_transport_bind.inc"
 #define NJS_RETURN_SCANS() nss_return_scans()
 #include "wifi_station_service_bind.inc"
 #include "wifi_scan_return_bind.inc"
+#if defined(NORD2) || defined(NWL_HOST_TEST)
+#include "wifi_live_control_bind.inc"
+#define NSS_LIVE_START() nwl_native_start()
+#define NSS_LIVE_WORK() nwl_native_work()
+#define NSS_LIVE_ENABLED() nwl_enabled()
+#endif
 #else
 static int nss_scan_return_origin_valid(const struct nct_session*s){return !s->scan_return;}
 static int nst_native_owner_window(const struct nwfn_native*n){(void)n;return 0;}
@@ -117,10 +127,21 @@ static int nst_native_rx_active(const struct nwfn_native*n){(void)n;return 0;}
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t b,unsigned w){(void)n;(void)a;(void)b;(void)w;return 0;}
 static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){(void)n;(void)a;(void)v;return 0;}
 #endif
+#ifndef NSS_LIVE_START
+#define NSS_LIVE_START() ((void)0)
+#define NSS_LIVE_WORK() ((void)0)
+#define NSS_LIVE_ENABLED() 0
+#endif
 static void nss_owner_loop(void){
- for(;;){int join_work=njs_owner_work();if(join_work<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);nwm_failure_drain();panic("NORD2 WIFI STATION: uncertain retained DMA; manual reset required");}if(join_work)continue;
+ NSS_LIVE_START();
+ for(;;){NSS_LIVE_WORK();int join_work=njs_owner_work();if(join_work<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);nwm_failure_drain();panic("NORD2 WIFI STATION: uncertain retained DMA; manual reset required");}if(join_work)continue;
  IOLockLock(nss_native.lock);struct nss_slot*s=0;for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED&&(!s||nss_native.slot[k].ticket<s->ticket))s=&nss_native.slot[k];
-  if(!s){if(njs_pending_locked()){IOLockUnlock(nss_native.lock);continue;}NVC_PHASE(6);assert_wait((event_t)&nss_native,THREAD_UNINT);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);continue;}
+  if(!s){if(njs_pending_locked()){IOLockUnlock(nss_native.lock);continue;}NVC_PHASE(6);
+   /* EP0 cannot acquire locks to wake this owner. Development mode polls
+    * its one-slot mailbox; normal builds retain the original idle sleep. */
+   if(NSS_LIVE_ENABLED()){uint64_t deadline;clock_interval_to_deadline(100,NSEC_PER_MSEC,&deadline);assert_wait_deadline((event_t)&nss_native,THREAD_UNINT,deadline);}
+   else assert_wait((event_t)&nss_native,THREAD_UNINT);
+   IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);continue;}
   s->state=NSS_RUNNING;unsigned canceled=s->canceled;IOLockUnlock(nss_native.lock);
   int result=canceled?1:nss_execute(s);enum nss_status status=canceled?NSS_CANCELED:result<0?NSS_FATAL:result?NSS_REFUSED:(s->scan.done&&!s->scan.partial&&!s->scan.timed_out&&!s->scan.dropped)?NSS_COMPLETE:NSS_PARTIAL;
   if(result<0){ncd_native.halt=nwfn_native.halt=nwfn_native.init.halt=nwfn_native.init.transport.halt=nfp_native.halt=1;IOLockLock(nss_native.lock);nss_native.failed=1;IOLockUnlock(nss_native.lock);}

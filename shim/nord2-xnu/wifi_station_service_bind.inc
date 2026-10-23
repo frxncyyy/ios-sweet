@@ -20,6 +20,9 @@ static uint64_t njs_uptime_us(void){
 #ifndef NJS_RETURN_SCANS
 #define NJS_RETURN_SCANS() 0
 #endif
+#ifndef NJS_LIVE_CONFIGURE
+#define NJS_LIVE_CONFIGURE() ((void)0)
+#endif
 #define NJS_JOIN_BUDGET_US UINT64_C(8000000)
 #define NJS_TX_SLOTS 8u
 #define NJS_CACHE_SLOTS 4u
@@ -37,7 +40,7 @@ static struct {
  struct njs_snapshot snapshot;
  struct nsb_scan cache[NJS_CACHE_SLOTS];
  struct nwo_install install;
- struct nwn driver;struct stc_arbiter arbiter;
+ struct nwn driver,constructor_saved;struct stc_arbiter arbiter,arbiter_saved;
  struct nst_profile profile;
  uint8_t tx[NJS_TX_SLOTS][NWIL_ETHERNET_MAX];unsigned tx_bytes[NJS_TX_SLOTS];
  uint8_t rx[NJS_RX_SLOTS][NWIL_ETHERNET_MAX];unsigned rx_bytes[NJS_RX_SLOTS];
@@ -64,6 +67,13 @@ static int njs_scan_blocked_locked(void){return njs_native.queued||njs_native.ac
 static void njs_cache_scan_locked(const struct nsb_scan*s){
  if(!niwj_scan_usable(s))return;
  njs_native.cache[njs_native.cache_next++%NJS_CACHE_SLOTS]=*s;
+ /* A later genuine UI scan may recover from a refused/canceled refresh. This
+  * is still source-proven all-queue drain+new scan, never a copied UI cache.
+  * nss_deliver sets callback_busy before releasing this same lock. */
+ if(nsr_native.closed_generation&&njs_native.scan_returned&&!nst_native.active&&!njs_native.active&&
+  nss_return.ready&&nss_return.consumed&&s->started>=nsr_native.closed_us&&
+  nct_done_receipt(&nct_native.session)&&!ncb_native.rx.active&&!ncb_native.rx.halt&&!ncb_native.rx.error)
+  nsr_native.scan_ready=1;
 }
 static void njs_initialize_locked(void){njs_native.notice_lock=IOLockAlloc();njs_cache_scan_locked(&ncb_native.rx.scan);njs_native.snapshot.phase=NJS_IDLE;}
 static int njs_request_ok(const struct niwj_request*q){
@@ -73,11 +83,12 @@ static int njs_request_ok(const struct niwj_request*q){
 int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
  if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
  if(!nss_available())return 1;uint64_t now_us=njs_uptime_us();if(now_us>UINT64_MAX-NJS_JOIN_BUDGET_US)return 1;IOLockLock(nss_native.lock);
- if(!njs_native.notice_lock||nss_native.failed||njs_native.used||njs_native.serial==UINT64_MAX){IOLockUnlock(nss_native.lock);return 1;}
+ if(!njs_native.notice_lock||nss_native.failed||(njs_native.used&&!njs_rejoin_ready_locked())||njs_native.serial>=255){IOLockUnlock(nss_native.lock);return 1;}
  unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
  if(busy){IOLockUnlock(nss_native.lock);return 2;}
  njs_native.admitted_us=now_us;njs_native.deadline_us=(now_us/1000+8000)*1000;
  njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=++njs_native.serial;njs_native.native_generation=njs_native.ticket;
+ if(njs_native.used)nsr_native.admitted_generation=njs_native.native_generation;
  njs_native.epoch=epoch;njs_native.cookie=cookie;njs_native.completion=completion;njs_native.queued=1;njs_native.canceled=njs_native.leave=njs_native.detach=njs_native.terminal=njs_native.joined=njs_native.retiring=0;
  njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED};
  *ticket=njs_native.ticket;IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
@@ -150,6 +161,7 @@ static void njs_snapshot_locked(void){
  * never client callback/ifnet invocation/recursive transport publication. */
 static int njs_event(void*ctx,const struct nst_event*e){
  if(ctx!=&njs_native||e->generation!=njs_native.native_generation)return 0;
+ if(e->kind==NST_COMMAND_DMA&&e->cid==7&&nsr_key_complete(&nsr_native,e))return -1;
  njs_native.last_event=e->kind;njs_native.last_status=e->status;njs_native.event_count++;if(e->kind==NST_FRAME_RESULT&&e->ticket==UINT64_MAX){njs_native.tx_results++;if(e->status==0)njs_native.tx_ok++;else njs_native.tx_fail++;if(njs_native.data_logs<8){njs_native.data_logs++;njs_trace_locked(1);}}
  if(e->kind==NST_DATA_SUBMITTED&&e->ticket==UINT64_MAX){if(e->status==0)njs_native.tx_local++;else njs_native.queued_drop++;if(njs_native.data_retire_logs<8){njs_native.data_retire_logs++;njs_trace_locked(1);}return 0;} /* local retirement, not tx_ok */
  if(e->kind==NST_ETHERNET){if(!njs_native.canceled&&!njs_native.leave&&njs_native.linked&&nwo_authorized(&njs_native.driver.owner)&&e->body&&e->bytes>=14&&e->bytes<=NWIL_ETHERNET_MAX){if(njs_native.rx_count==NJS_RX_SLOTS)return 1;unsigned k=njs_native.rx_count++;memcpy(njs_native.rx[k],e->body,e->bytes);njs_native.rx_bytes[k]=(unsigned)e->bytes;njs_native.rx_generation[k]=e->generation;}return 0;}
@@ -174,15 +186,25 @@ static int njs_start_owner(uint64_t now_us){
   * with first-attempt ownership. No native publish or callback occurs here. */
  if(!found||nst_native_prepare(&njs_native.target,njs_native.native_generation,now_us,njs_native.deadline_us,&njs_native.profile)){
   IOLockUnlock(nss_native.lock);njs_early_finish(2);return 0;}
- njs_native.used=1;
- uint64_t fresh_us=njs_uptime_us();if(fresh_us<now_us||fresh_us>=njs_native.deadline_us){IOLockUnlock(nss_native.lock);njs_early_finish(fresh_us>=njs_native.deadline_us?9:2);return 0;}
+ unsigned old_used=njs_native.used,old_returned=njs_native.scan_returned;
+ njs_native.constructor_saved=njs_native.driver;njs_native.arbiter_saved=njs_native.arbiter;
+ NJS_LIVE_CONFIGURE();
+ if(njs_native.used){niwj_clear(&njs_native.driver,sizeof njs_native.driver);niwj_clear(&njs_native.arbiter,sizeof njs_native.arbiter);}
+ njs_native.scan_returned=0;njs_native.used=1;
+ uint64_t fresh_us=njs_uptime_us();if(fresh_us<now_us||fresh_us>=njs_native.deadline_us){
+  int undo=nst_native_abort_prepare(njs_native.native_generation);njs_native.used=old_used;njs_native.scan_returned=old_returned;
+  njs_native.driver=njs_native.constructor_saved;njs_native.arbiter=njs_native.arbiter_saved;niwj_clear(&njs_native.constructor_saved,sizeof njs_native.constructor_saved);niwj_clear(&njs_native.arbiter_saved,sizeof njs_native.arbiter_saved);
+  IOLockUnlock(nss_native.lock);njs_early_finish(fresh_us>=njs_native.deadline_us?9:2);return undo?-1:0;}
  struct stc_config config={0};config.generation=njs_native.native_generation;config.deadline_ms=njs_native.deadline_us/1000;config.cleanup_timeout_ms=30000;config.assoc=njs_native.profile.assoc;
- config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=1,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
+ config.channel=(struct sw_channel){.bss=nst_native.state.peer.bss,.token=(uint8_t)njs_native.native_generation,.band=njs_native.target.band,.channel=njs_native.target.channel,.dbdc_band=4,.interval_ms=4000};
  memcpy(config.group_spare,nst_native.state.group_spare,sizeof config.group_spare);config.sta_wlan=nst_native.state.peer.wlan;config.group_wlan=nst_native.state.peer.group_wlan;config.pmk=njs_native.request.pmk;config.station_rsn=njs_native.request.station_rsn;config.ap_rsn=njs_native.target.ap_rsn;config.ap_rsn_bytes=njs_native.target.ap_rsn_bytes;config.rng=njs_rng;
  config.ap_ies=njs_native.target.record.ies;config.ap_ies_bytes=njs_native.target.record.ie_bytes;
  int result=nwn_begin(&njs_native.driver,&nst_native.state,&njs_native.arbiter,&config,njs_peer,&njs_native,fresh_us/1000);
- niwj_clear(&config,sizeof config);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;if(result==1)njs_snapshot_locked();IOLockUnlock(nss_native.lock);
- if(result!=1){njs_early_finish(2);return nst_native.state.mutated||nst_native.state.submitted?-1:0;}
+ niwj_clear(&config,sizeof config);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.queued=0;njs_native.active=result==1;
+ int undo=0;if(result==1){nst_native_commit_prepare();njs_snapshot_locked();}
+ else{undo=nst_native_abort_prepare(njs_native.native_generation);niwj_clear(&njs_native.driver,sizeof njs_native.driver);njs_native.driver=njs_native.constructor_saved;njs_native.arbiter=njs_native.arbiter_saved;njs_native.used=old_used;njs_native.scan_returned=old_returned;}
+ niwj_clear(&njs_native.constructor_saved,sizeof njs_native.constructor_saved);niwj_clear(&njs_native.arbiter_saved,sizeof njs_native.arbiter_saved);IOLockUnlock(nss_native.lock);
+ if(result!=1){njs_early_finish(2);return undo?-1:0;}
  IOLockLock(nss_native.lock);njs_trace_locked(1);IOLockUnlock(nss_native.lock);return 1;
 }
 static int njs_fatal_owner(void){
@@ -202,7 +224,7 @@ static int njs_owner_work(void){
  IOLockLock(nss_native.lock);unsigned queued=njs_native.queued,active=njs_native.active,scans=0,canceled=njs_native.canceled||njs_native.leave;
  if(queued&&!active)for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)scans=1;
  uint64_t admitted=njs_native.admitted_us,deadline=njs_native.deadline_us;IOLockUnlock(nss_native.lock);
- if(!queued&&!active)return 0;
+ if(!queued&&!active){njs_rejoin_refresh();return 0;}
  if(queued){uint64_t observed=njs_uptime_us();if(canceled||observed<admitted||observed>=deadline){njs_early_finish(!canceled&&observed>=deadline?9:2);return 1;}
   if(scans)return 0; /* Drain only scans admitted before this first join. */
  }
@@ -221,6 +243,7 @@ static int njs_owner_work(void){
  if(!njs_native.canceled&&!njs_native.leave&&nwo_authorized(&njs_native.driver.owner)&&!nst_native.state.wire_busy&&!nst_native.state.air_pending&&njs_native.tx_count){
   unsigned k=njs_native.tx_head;int sent=nst_data(&nst_native.state,UINT64_MAX,njs_native.tx[k],njs_native.tx_bytes[k]);
   if(sent<=0){if(sent<0)njs_native.queued_drop++;niwj_clear(njs_native.tx[k],sizeof njs_native.tx[k]);njs_native.tx_bytes[k]=0;njs_native.tx_head=(k+1)%NJS_TX_SLOTS;njs_native.tx_count--;}}
+ nsr_key_capture(&nsr_native,&nst_native.state);
  if(nst_native.state.halt||nst_step(&nst_native.state,&ncd_io,&ncd_native,16,njs_event,&njs_native)<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
  njs_snapshot_locked();njs_trace_locked(0);
  if(nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!njs_native.canceled&&!njs_native.leave&&!njs_native.linked)link_up=1;

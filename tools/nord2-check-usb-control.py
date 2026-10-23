@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 source = Path(sys.argv[1])
+canonical = Path(__file__).resolve().parents[1] / 'shim/nord2-xnu'
 out = Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 usb = (source / 'bsd/dev/sweet_usb.c').read_text()
@@ -27,6 +28,7 @@ prelude = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "wifi_live_control.h"
 #define DMB_SY 15
 #define __builtin_arm_dmb(x) ((void)(x))
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -104,6 +106,20 @@ int main(void) {
     assert(req(0xc0,0x54,tail&65535,tail>>16,1024)==1 && length==3);
     assert(req(0xc0,0x54,0,64,1024)==1 && length==0);
     assert(req(0xc0,0x54,65535,65535,1024)==1 && length==0);
+    /* Actual optional live mailbox shares EP0, but cannot introduce a data
+     * OUT stage or bypass the opt-in owner initialization. */
+    assert(req(0xc0,NWL_USB_CAP,0,0,64)==1 && length==64);
+    assert(req(0x40,NWL_USB_COMMAND,0x1001,0,0)==0);
+    assert(nwl_initialize(0x12345678)==0);
+    assert(req(0x40,NWL_USB_COMMAND,0x1001,0,0)==2);
+    assert(req(0x40,NWL_USB_COMMAND,0x1001,0,1)==0);
+    assert(req(0xc0,NWL_USB_COMMAND,0x1001,0,1)==0);
+    struct nwl_request live_request;struct nwl_snapshot live_snapshot={0};
+    assert(nwl_take(&live_request)==1);
+    assert(nwl_complete(&live_request,NWL_OK,&live_snapshot)==0);
+    assert(req(0xc0,NWL_USB_REPLY,0,0,NWL_BYTES)==1 && length==NWL_BYTES);
+    assert(req(0xc0,NWL_USB_REPLY,1,0,NWL_BYTES)==0);
+    assert(req(0x40,NWL_USB_REPLY,0,0,0)==0);
     uint32_t rng=1;
     for (unsigned i=0;i<100000;i++) {
         uint8_t s[8];
@@ -125,7 +141,9 @@ exe = out / 'usb-control-host'
 stream = '#define NORD2_STREAM_CAPACITY' + early.split('#define NORD2_STREAM_CAPACITY', 1)[1].split('/* The GUI reuses', 1)[0]
 cfile.write_text(prelude + reader + stream + decoder + cases)
 subprocess.run(['clang', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-                '-fsanitize=address,undefined', '-g', str(cfile), '-o', str(exe)],
+                '-Wno-misleading-indentation', '-I'+str(canonical),
+                '-fsanitize=address,undefined', '-g', str(cfile),
+                str(canonical / 'wifi_live_control.c'), '-o', str(exe)],
                check=True)
 subprocess.run([str(exe.resolve())], check=True)
 

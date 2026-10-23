@@ -43,6 +43,55 @@ int nsdd_decode_txs(struct nsdd_txs*r,const uint8_t*p,size_t n){
  if(r->advanced){r->sequence=le16(p+2);r->tx_count=p[5];r->rate=le16(p+6);r->tid=p[9];r->flush=p[14];}
  return 0;
 }
+/* One serialized native worker owns this boot-static ledger. No secrets or
+ * payload pointers retained. Source driver PID range1..127; our partition and
+ * no-reuse are deliberate bounded diagnostic policy, not vendor wrap policy. */
+static struct nsdd_pid_record pid_ledger[127];
+static unsigned pid_next[3]={NSDD_PID_MANAGEMENT_MIN,NSDD_PID_SECURITY_MIN,NSDD_PID_DATA_MIN};
+static uint32_t pid_notes[7],pid_exhausted[3];
+static void pid_note(uint64_t g,uint64_t original,unsigned pid,unsigned wlan,unsigned reason){
+ if(!reason||reason>6)return;inc(&pid_notes[reason]);if(pid_notes[reason]>2)return;
+ printf("NORD2 WIFI TXNOTE: g=%llu original=%llu pid=%u wlan=%u reason=%u count=%u\n",(unsigned long long)g,(unsigned long long)original,pid,wlan,reason,pid_notes[reason]);
+}
+unsigned nsdd_pid_reserve(uint64_t g,unsigned wlan,unsigned kind,unsigned protect,const uint8_t*p,size_t n){
+ if(!g||wlan>254||kind<1||kind>3||protect>1||!p)return 0;
+ struct nsdd_frame f={0};unsigned c=0;
+ if(kind==1){if(n<26||n>1568)return 0;c=(p[0]>>4)&15;}
+ else{if(nsdd_classify(&f,p,n))return 0;if(kind==2&&f.ether==0x888e&&n>=21&&p[15]==3){unsigned info=be16(p+19);c=info==0x010a?1:info==0x030a?2:info==0x0302?3:4;}}
+ unsigned k=kind-1,max=kind==1?NSDD_PID_MANAGEMENT_MAX:kind==2?NSDD_PID_SECURITY_MAX:NSDD_PID_DATA_MAX;
+ if(pid_next[k]>max){inc(&pid_exhausted[k]);if(pid_exhausted[k]==1)printf("NORD2 WIFI TXLIMIT: g=%llu kind=%u limit=%u fallback=%u\n",(unsigned long long)g,kind,max,kind==1?0:NSDD_PID_SHARED);return kind==1?0:NSDD_PID_SHARED;}
+ unsigned pid=pid_next[k]++;struct nsdd_pid_record r={0};r.generation=g;r.pid=pid;r.wlan=wlan;r.kind=kind;r.protected_frame=protect;r.bytes=(uint32_t)n;r.ether=f.ether;r.dhcp=f.dhcp;r.parse=f.parse;r.eapol_class=c;r.status=256;pid_ledger[pid]=r;return pid;
+}
+static struct nsdd_pid_record*pid_current(uint64_t g,unsigned pid,unsigned wlan){
+ if(!g||pid<1||pid>126||wlan>254)return 0;
+ struct nsdd_pid_record*r=&pid_ledger[pid];if(!r->generation||r->generation!=g||r->wlan!=wlan||r->closed)return 0;return r;
+}
+void nsdd_pid_attempt(uint64_t g,unsigned pid,unsigned wlan){struct nsdd_pid_record*r=pid_current(g,pid,wlan);if(r)r->attempted=1;}
+void nsdd_pid_publish(uint64_t g,unsigned pid,unsigned wlan,unsigned publication){
+ struct nsdd_pid_record*r=pid_current(g,pid,wlan);if(!r||!r->attempted||r->published||!publication)return;r->published=1;r->publication=publication;
+ printf("NORD2 WIFI TXPUB: g=%llu pid=%u wlan=%u kind=%u protected=%u ether=%u dhcp=%u parse=%u bytes=%u class=%u pub=%u\n",(unsigned long long)g,pid,wlan,r->kind,r->protected_frame,r->ether,r->dhcp,r->parse,r->bytes,r->eapol_class,publication);
+}
+void nsdd_pid_local(uint64_t g,unsigned pid,unsigned wlan){struct nsdd_pid_record*r=pid_current(g,pid,wlan);if(r&&r->published)r->local=1;}
+void nsdd_pid_status(uint64_t g,const struct nsdd_txs*x){
+ if(!g||!x||x->pid>255||x->wlan>255||x->status>255||x->flags>255||x->advanced>1||x->sequence>65535||x->tx_count>255||x->rate>65535||x->tid>255||x->flush>255)return;unsigned pid=x->pid;if(pid==127)return;
+ if(!pid||pid>126||!pid_ledger[pid].generation){pid_note(g,0,pid,x->wlan,1);return;}
+ struct nsdd_pid_record*r=&pid_ledger[pid];
+ if(r->wlan!=x->wlan){pid_note(g,r->generation,pid,x->wlan,2);return;}
+ if(r->generation!=g){pid_note(g,r->generation,pid,x->wlan,3);return;}
+ if(r->closed){pid_note(g,r->generation,pid,x->wlan,4);return;}
+ if(!r->published){pid_note(g,r->generation,pid,x->wlan,5);return;}
+ if(r->seen){pid_note(g,r->generation,pid,x->wlan,6);return;}
+ r->seen=1;r->status=x->status;
+ printf("NORD2 WIFI TXSTATUS: g=%llu pid=%u wlan=%u status=%u count=%u rate=%u flags=%u adv=%u seq=%u tid=%u flush=%u\n",(unsigned long long)g,pid,x->wlan,x->status,x->tx_count,x->rate,x->flags,x->advanced,x->sequence,x->tid,x->flush);
+}
+void nsdd_pid_finish(uint64_t g){
+ if(!g)return;for(unsigned pid=1;pid<=126;pid++){struct nsdd_pid_record*r=&pid_ledger[pid];if(r->generation!=g||r->closed)continue;r->closed=1;
+ printf("NORD2 WIFI TXFINAL: g=%llu pid=%u wlan=%u kind=%u attempt=%u pub=%u local=%u seen=%u status=%u\n",(unsigned long long)g,pid,r->wlan,r->kind,r->attempted,r->publication,r->local,r->seen,r->status);}
+}
+#if !defined(KERNEL) && !defined(_KERNEL)
+void nsdd_test_boot_reset(void){for(unsigned k=0;k<127;k++)pid_ledger[k]=(struct nsdd_pid_record){0};pid_next[0]=1;pid_next[1]=32;pid_next[2]=64;for(unsigned k=0;k<7;k++)pid_notes[k]=0;for(unsigned k=0;k<3;k++)pid_exhausted[k]=0;}
+const struct nsdd_pid_record*nsdd_test_pid(unsigned pid){return pid&&pid<=126?&pid_ledger[pid]:0;}
+#endif
 /* Called only after nsdd_classify verified all IPv4/UDP/BOOTP extents. */
 static void correlate(struct nsdd*s,uint64_t g,const uint8_t*p,const struct nsdd_frame*r,unsigned tx){
  if(!r->dhcp)return;
@@ -89,7 +138,15 @@ void nsdd_rx_snapshot(struct nsdd*s,uint64_t g){
  if(count<limits[s->rx_samples])return;s->rx_samples++;
  printf("NORD2 WIFI RXCOUNTS: g=%llu sample=%u uni=%u group=%u error=%u peer=%u key=%u replay=%u plain=%u\n",(unsigned long long)g,s->rx_samples,s->rx_unicast,s->rx_group,s->rejected[NSDD_RX_ERROR],s->rejected[NSDD_RX_PEER],s->rejected[NSDD_RX_KEY],s->rejected[NSDD_RX_REPLAY],s->rejected[NSDD_RX_PLAINTEXT]);
 }
+void nsdd_capture(struct nsdd*s,unsigned mode,unsigned epoch){
+ if(!s||s->summary||mode>2||epoch>32||(!epoch&&mode))return;
+ s->live_mode=mode;s->live_epoch=epoch;s->live_tx=s->live_rx=0;
+}
 static void header(struct nsdd*s,uint64_t g,unsigned dir,const struct nsdd_frame*r){
+ if(s->live_mode&&(s->live_mode==2||r->dhcp)){
+  uint32_t*quota=dir==3?&s->live_rx:&s->live_tx;
+  if(*quota<64){(*quota)++;printf("NORD2 WIFI LIVEFRAME: epoch=%u g=%llu dir=%u n=%u dst=%u ether=%u bytes=%u dhcp=%u parse=%u\n",s->live_epoch,(unsigned long long)g,dir,*quota,r->destination,r->ether,r->bytes,r->dhcp,r->parse);}
+ }
  uint32_t*budget=r->dhcp?(dir==3?&s->dhcp_rx:&s->dhcp_tx):(dir==3?&s->headers_rx:&s->headers_tx);
  if(*budget>=(r->dhcp?12u:4u))return;(*budget)++;s->records++;
  printf("NORD2 WIFI DATAHDR: n=%u g=%llu dir=%u dst=%u eth=%u bytes=%u dhcp=%u parse=%u\n",s->records,(unsigned long long)g,dir,r->destination,r->ether,r->bytes,r->dhcp,r->parse);
@@ -105,6 +162,7 @@ void nsdd_receive(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n){
 }
 void nsdd_event(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n,unsigned authorized){
  if(!s||s->summary||authorized>1)return;struct nsdd_txs r;if(nsdd_decode_txs(&r,p,n))return;
+ nsdd_pid_status(g,&r);
  if(r.status)inc(&s->txs_fail);else inc(&s->txs_ok);if(r.pid==127)inc(&s->ambiguous);
  uint32_t*budget=authorized?&s->txs_live:&s->txs_early;if(*budget>=(authorized?16u:8u))return;(*budget)++;s->records++;
  printf("NORD2 WIFI DATATXS: n=%u part=1 g=%llu pid=%u wlan=%u status=%u ambiguous=%u last_kind=%u last_pub=%u\n",s->records,(unsigned long long)g,r.pid,r.wlan,r.status,r.pid==127,s->last_kind,s->last_pub);
@@ -112,7 +170,7 @@ void nsdd_event(struct nsdd*s,uint64_t g,const uint8_t*p,size_t n,unsigned autho
  if(r.advanced)printf("NORD2 WIFI TXPHY: g=%llu n=%u pid=%u status=%u response=%u table=%u width=%u power=%u delay=%u applied=%u\n",(unsigned long long)g,s->records,r.pid,r.status,p[10],p[11],p[12],p[13],le32(p+16),le32(p+24));
 }
 void nsdd_summary(struct nsdd*s,uint64_t g){
- if(!s||s->summary)return;s->summary=1;
+ if(!s||s->summary)return;s->summary=1;nsdd_pid_finish(g);
  for(unsigned k=1;k<NSDD_RX_REASON_END;k++)if(s->rejected[k])printf("NORD2 WIFI RXTOTAL: g=%llu reason=%u count=%u\n",(unsigned long long)g,k,s->rejected[k]);
  printf("NORD2 WIFI DHCPTOTAL: g=%llu offer=%u ack=%u nak=%u other_offer=%u other_ack=%u other_nak=%u\n",(unsigned long long)g,s->reply_match[2],s->reply_match[5],s->reply_match[6],s->reply_other[2],s->reply_other[5],s->reply_other[6]);
  volatile uint8_t*erase=(volatile uint8_t*)s->identity;for(unsigned k=0;k<sizeof s->identity;k++)erase[k]=0;s->identities=s->identity_next=0;

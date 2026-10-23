@@ -147,7 +147,7 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
   assert(reads==mmio_reads&&writes==mmio_writes);
  }
  assert(nss_return.consumed&&nct_native.session.continuation==1&&nct_native.session.phase==NCT_DONE&&callbacks==4&&!njs_native.linked&&!njs_native.snapshot.data_ready&&njs_native.snapshot.phase==NJS_FAILED);
- assert(nord2_wifi_join_enqueue(&join,&callbacks,1,join_completed,&denied)==1&&denied==123);assert(!nord2_wifi_scan_info(&nss_native.info));
+ assert(njs_rejoin_ready_locked()&&njs_native.used&&nst_native.attempted);assert(!nord2_wifi_scan_info(&nss_native.info));
  assert(delivered&&nrd_calls&&nrd_calls==nrd_restored&&nrd_checked==nrd_calls);
  IOLock*notice=njs_native.notice_lock;assert(!pthread_mutex_destroy(&notice->m));free(notice);assert(!pthread_mutex_destroy(&nss_native.lock->m));free(nss_native.lock);
- puts("PASS post-authorized actual owner: native STA/PTK/GTK/replay/port, BSD linkup, two local data retirements, queued purge, real key deletes/peer cleanup, LEFT then RETIRED, closure guards, five RX cursors, two returned scans, history/rejoin preserved; crypto-phase seam, no hardware claim");return 0;}
+ puts("PASS post-authorized actual owner: native STA/PTK/GTK/replay/port, BSD linkup, two local data retirements, queued purge, real key deletes/peer cleanup, LEFT then RETIRED, closure guards, five RX cursors, two returned scans, historical ledger and fresh-scan readiness preserved; crypto-phase seam, no hardware claim");return 0;}

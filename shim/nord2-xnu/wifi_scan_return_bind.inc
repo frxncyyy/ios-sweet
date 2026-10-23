@@ -1,14 +1,15 @@
-/* One-way same-worker return after actual closed first-station cleanup. No
- * allocation/reset/rejoin: original DMA pool and first-attempt ledger persist. */
+/* Same-worker verified teardown. A new model requires a further actual NSS
+ * scan; historical attempt, DMA pool and boot PID ledger remain retained. */
 static int nss_scan_return_origin_valid(const struct nct_session*s){
  if(!nss_return.ready)return !nst_native.attempted&&!nst_native.active&&s->continuation!=2&&!s->scan_return;
  return s==&nct_native.session&&s->scan_return==&nss_return.origin&&
   nss_return.attempted==1&&nss_return.ready==1&&nss_return.origin.sealed==1&&
-  !nst_native.active&&!njs_native.queued&&!njs_native.active&&!njs_native.linked&&!njs_native.tx_admit&&
-  njs_native.cookie_retired&&!njs_native.retiring&&!njs_native.cookie&&!njs_native.completion&&
+  !nst_native.active&&!njs_native.active&&!njs_native.linked&&!njs_native.tx_admit&&
+  ((njs_native.queued&&nsr_native.admitted_generation==njs_native.native_generation&&njs_native.native_generation>nsr_native.closed_generation)||
+   (njs_native.cookie_retired&&!njs_native.retiring&&!njs_native.cookie&&!njs_native.completion))&&
   njs_native.driver.owner.transaction.phase==STC_DONE&&njs_native.scan_returned==1&&njs_native.used==1&&
   njs_native.arbiter.connection_used==1&&nst_native.attempted==1&&
-  nss_return.origin.generation==njs_native.native_generation;
+  nss_return.origin.generation==nsr_native.closed_generation;
 }
 /* Pure prerequisite failure leaves scans blocked. A physical owner/read fault
  * keeps the existing common halt/drain path, never a guessed return origin. */
@@ -18,7 +19,7 @@ static int nss_return_scans(void){
  if(njs_native.scan_returned){IOLockUnlock(nss_native.lock);return 0;}
  struct nst*n=&nst_native.state;struct nwo*o=&njs_native.driver.owner;struct stc*t=&o->transaction;
  struct nwt_state*w=&nwfn_native.init.transport;
- if(nss_return.attempted||nss_return.ready||nss_native.failed||nct_native.active||
+ if(nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nsr_native.bad||nss_return.attempted||nss_return.ready||nss_native.failed||nct_native.active||
   !ncd_native.active||ncd_native.parked||ncd_native.halt||nwfn_native.halt||nwfn_native.stage!=NWFN_RETAINED||!nwfn_native.ap_owned||!nwfn_native.wf_owned||nwfn_native.asleep||
   !nfp_native.ready||nfp_native.halt||nfp_native.state.halt||nfp_native.state.error||!nfp_native.finish_done||
   !njs_native.used||njs_native.queued||njs_native.active||!njs_native.terminal||njs_native.retiring||!njs_native.cookie_retired||njs_native.cookie||njs_native.completion||njs_native.linked||njs_native.tx_admit||njs_native.tx_count||njs_native.rx_count||
@@ -59,7 +60,49 @@ restore:
  nss_return.origin=(struct nct_scan_return){.basic=&nbc_native.state,.cap=&ncd_native.diag,.init=&nwfn_native.init,.firmware=&nfp_native,
   .sealed=1,.completed=w->completed,.tx_index=w->tx_index,.pse_total=nbc_native.state.plan.pse_cmd,.capacity=n->credit_capacity,.next_sequence=w->next_sequence,.generation=n->generation};
  for(unsigned k=0;k<5;k++)nss_return.queue[k]=n->queue[k];
+ nsr_native.closed_generation=n->generation;nsr_native.closed_us=n->last;
+ nsr_native.hw0_next=n->normal.next;nsr_native.token_next=n->normal.token_next;nsr_native.next_pid=n->next_pid;
+ nsr_native.scan_ticket=0;nsr_native.scan_ready=0;nsr_native.scan_state=1;
+ niwj_clear(njs_native.cache,sizeof njs_native.cache);njs_native.cache_next=0;
  n->pm_pending=0;nst_native.active=0;nss_return.ready=1;njs_native.scan_returned=1;
  printf("NORD2 WIFI IOS SCANRETURN: generation=%llu completed=%u tx=%u sequence=%u rx_event=%u used=1\n",(unsigned long long)n->generation,w->completed,w->tx_index,w->next_sequence,w->rx_index);
- IOLockUnlock(nss_native.lock);return 0;
+ IOLockUnlock(nss_native.lock);njs_rejoin_refresh();return 0;
+}
+
+/* Called with NSS admission lock held. Scan callback release is deferred by
+ * NSS; no reuse is admitted while ANY old callback is still executing. */
+static int njs_rejoin_ready_locked(void){
+ if(!njs_native.used||!nsr_native.scan_ready||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||
+  !njs_native.scan_returned||nst_native.active||nst_native.state.halt||nst_native.state.error||nst_native.state.callback_active||nst_native.state.wire_busy||nst_native.state.air_pending||!nstx_idle(&nst_native.state.normal)||nst_native.state.submitted!=nst_native.state.dma_completed||nss_native.failed||ncd_native.halt||nwfn_native.halt||nct_native.active||
+  njs_native.active||njs_native.retiring||njs_native.cookie||njs_native.completion||!njs_native.cookie_retired||
+  nsr_native.closed_generation!=nss_return.origin.generation||!nct_done_receipt(&nct_native.session)||!nst_scan_admissible(&ncb_native.rx.scan))return 0;
+ for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].callback_busy)return 0;
+ return nsr_native.closed_generation<255&&nsr_native.next_pid<=NST_PID_MANAGEMENT_MAX-4;
+}
+static void njs_rejoin_scan_done(void*cookie,uint64_t generation,uint64_t ticket,enum nss_status status){
+ struct nss_view v={0};unsigned usable=!nord2_wifi_scan_view(ticket,&v)&&v.scan&&niwj_scan_usable(v.scan);
+ IOLockLock(nss_native.lock);
+ if(cookie==&nsr_native&&nsr_native.scan_state==2&&generation==nsr_native.closed_generation&&ticket==nsr_native.scan_ticket){
+  nsr_native.scan_ready=usable&&(status==NSS_COMPLETE||status==NSS_PARTIAL)&&v.client_generation==generation&&
+   v.captured_us>=nsr_native.closed_us&&v.scan->started>=nsr_native.closed_us&&nss_return.consumed&&
+   !nct_native.active&&nct_done_receipt(&nct_native.session)&&!ncb_native.rx.active&&!ncb_native.rx.halt&&!ncb_native.rx.error;
+  nsr_native.scan_state=3;
+ }
+ IOLockUnlock(nss_native.lock);(void)nord2_wifi_scan_release(ticket);
+}
+static void njs_rejoin_refresh(void){
+ if(ncd_native.worker!=current_thread()||!nss_available())return;
+ IOLockLock(nss_native.lock);
+ unsigned run=nsr_native.scan_state==1&&!nss_native.failed&&!njs_native.queued&&!njs_native.active;
+ uint64_t generation=nsr_native.closed_generation;
+ /* One finite publication attempt; queue-full may retry only inside30s. */
+ uint64_t now=njs_uptime_us();
+ if(run&&(now<nsr_native.closed_us||now-nsr_native.closed_us>=UINT64_C(30000000))){nsr_native.scan_state=3;run=0;}
+ IOLockUnlock(nss_native.lock);if(!run)return;
+ struct nss_request q={0};uint64_t ticket=0;
+ int r=nord2_wifi_scan_enqueue(&q,&nsr_native,generation,njs_rejoin_scan_done,&ticket);
+ IOLockLock(nss_native.lock);
+ if(!r){nsr_native.scan_ticket=ticket;nsr_native.scan_state=2;}
+ else if(r!=2)nsr_native.scan_state=3;
+ IOLockUnlock(nss_native.lock);
 }

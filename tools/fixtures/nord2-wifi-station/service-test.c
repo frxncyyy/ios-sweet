@@ -27,6 +27,22 @@ static void read_random(void*p,unsigned n){memset(p,0x41,n);advance_entropy_cloc
 static struct {IOLock*lock;unsigned failed;struct nss_info info;struct {unsigned state;}slot[NSS_SLOTS];}nss_native;
 static struct {struct ncr_state rx;}ncb_native;
 static struct {struct nst state;unsigned attempted,active;}nst_native;
+/* Actual bounded key metadata helpers; the complete physical rejoin/scan
+ * boundary is exercised by test-nord2-wifi-rejoin, not this service seam. */
+#include "wifi_station_rejoin.h"
+static struct nsr_ledger nsr_native;
+static struct {struct nct_scan_return origin;unsigned attempted,ready,consumed;}nss_return;
+static struct {unsigned active;struct nct_session session;}nct_native;
+int nct_done_receipt(const struct nct_session*s){assert(s==&nct_native.session);return 0;}
+static int njs_rejoin_ready_locked(void){return 0;} /* Never fabricate physical readiness. */
+static unsigned refresh_calls,constructor_commits,constructor_aborts,prepare_expiry;
+static void njs_rejoin_refresh(void){refresh_calls++;}
+static struct nst constructor_backup;
+static void nst_native_commit_prepare(void){constructor_commits++;memset(&constructor_backup,0,sizeof constructor_backup);}
+static int nst_native_abort_prepare(uint64_t generation){
+ struct nst*n=&nst_native.state;if(n->generation!=generation||n->mutated||n->submitted||n->wire_busy||n->air_pending||n->callback_active)return -1;
+ constructor_aborts++;nst_native.state=constructor_backup;memset(&constructor_backup,0,sizeof constructor_backup);return 0;
+}
 static unsigned source_ready=1,prepared_calls,ifnet_down,ifnet_up,ifnet_error,notices[5],release_reentry;
 static uint64_t clock_us=200,entropy_advance_us;
 static unsigned prepare_success;
@@ -40,8 +56,8 @@ static int ncd_native_now(void*p,uint64_t*out){assert(p==&ncd_native);*out=clock
 static uint64_t njs_native_deadline_test;
 static int nst_native_prepare(const struct niwj_target*t,uint64_t g,uint64_t now,uint64_t deadline,struct nst_profile*out){assert(deadline==njs_native_deadline_test);assert(deadline>now);prepared_calls++;if(!prepare_success)return -1;
  /* Pure constructor seam: real engine begins after a later millisecond. */
- memset(out,0,sizeof *out);struct nst*n=&nst_native.state;memset(n,0,sizeof *n);n->prepared=1;n->generation=g;n->peer.bss=0;n->peer.wlan=5;n->peer.group_wlan=4;memcpy(n->peer.ap,t->record.bssid,6);memcpy(n->peer.self,nss_native.info.mac,6);
- memcpy(out->assoc.peer.self,n->peer.self,6);memcpy(out->assoc.peer.ap,n->peer.ap,6);out->assoc.ssid=t->record.ssid;out->assoc.ssid_len=t->record.ssid_len;out->assoc.rates=t->rates;out->assoc.rates_len=t->rate_count;out->assoc.capability=17;out->assoc.listen_interval=10;clock_us+=1000;return 0;}
+ memset(out,0,sizeof *out);constructor_backup=nst_native.state;struct nst*n=&nst_native.state;memset(n,0,sizeof *n);n->prepared=1;n->generation=g;n->peer.bss=0;n->peer.wlan=5;n->peer.group_wlan=4;memcpy(n->peer.ap,t->record.bssid,6);memcpy(n->peer.self,nss_native.info.mac,6);
+ memcpy(out->assoc.peer.self,n->peer.self,6);memcpy(out->assoc.peer.ap,n->peer.ap,6);out->assoc.ssid=t->record.ssid;out->assoc.ssid_len=t->record.ssid_len;out->assoc.rates=t->rates;out->assoc.rates_len=t->rate_count;out->assoc.capability=17;out->assoc.listen_interval=10;clock_us=prepare_expiry?deadline:clock_us+1000;prepare_expiry=0;return 0;}
 int nst_peer_begin(struct nst*t,uint64_t ticket,unsigned kind,const struct nst_profile*p,const uint8_t*r,size_t n){(void)t;(void)ticket;(void)kind;(void)p;(void)r;(void)n;return prepare_success?1:-1;}
 int nst_command(struct nst*t,uint64_t ticket,uint8_t cid,const uint8_t*p,size_t n){(void)t;(void)ticket;(void)cid;(void)p;(void)n;return -1;}
 int nst_management(struct nst*t,uint64_t ticket,const uint8_t*p,size_t n){(void)t;(void)ticket;(void)p;(void)n;return -1;}
@@ -115,6 +131,11 @@ printf("PASS256 idle disconnects: byteidentical service/native ledger; unavailab
  /* Only host doubles were adopted and submit remained BUSY; no firmware
   * epoch or key is claimed. Reset this isolated seam for legacy cases. */
  nwp_cancel(&njs_native.driver.owner.transaction.wpa);memset(&njs_native.driver,0,sizeof njs_native.driver);memset(&njs_native.arbiter,0,sizeof njs_native.arbiter);memset(&nst_native,0,sizeof nst_native);niwj_clear(&njs_native.request,sizeof njs_native.request);njs_native.active=njs_native.used=njs_native.queued=0;njs_native.completion=0;njs_native.cookie=0;prepare_success=0;entropy_advance_us=0;memset(nss_native.info.mac,0,6);
+ /* New pure pre-publication rollback seam: constructor expires after
+  * preparation, retires/wipes once, and preserves the unused old native object. */
+ prepare_success=prepare_expiry=1;clock_us=UINT64_C(7000000);assert(!nord2_wifi_join_enqueue(&q,(void*)1,7,complete,&ticket));njs_native_deadline_test=njs_native.deadline_us;
+ unsigned before_abort=constructor_aborts;assert(njs_owner_work()==1&&constructor_aborts==before_abort+1&&!nst_native.state.prepared&&!nst_native.state.mutated&&!njs_native.used&&!njs_native.active&&njs_native.cookie_retired&&njs_native.snapshot.result==9);
+ struct niwj_request after_expiry={0};assert(!memcmp(&after_expiry,&njs_native.request,sizeof after_expiry));prepare_success=0;
  memset(njs_native.cache,0,sizeof njs_native.cache);njs_native.cache_next=0;prepared_calls=0;
  memset(notices,0,sizeof notices);release_reentry=0;
 
@@ -132,4 +153,5 @@ seed_ready(4);assert(njs_owner_work()==1&&njs_native.linked&&njs_native.snapshot
 seed_ready(5);ifnet_error=1;assert(njs_owner_work()==1&&!njs_native.linked&&!njs_native.tx_admit&&!njs_native.tx_count&&njs_native.snapshot.result!=1&&!nst_native.state.controlled_port);assert(njs_owner_work()==1&&njs_native.cookie_retired&&notices[NJS_JOINED]==1);assert(ifnet_up==2);
 seed_ready(6);ifnet_error=0;block_up=1;pthread_t owner_worker,closer;assert(!pthread_create(&owner_worker,NULL,owner_thread,NULL));pthread_mutex_lock(&barrier);while(!up_entered)pthread_cond_wait(&barrier_cond,&barrier);pthread_mutex_unlock(&barrier);assert(!pthread_create(&closer,NULL,disconnect_thread,NULL));pthread_mutex_lock(&barrier);while(!disconnect_started)pthread_cond_wait(&barrier_cond,&barrier);assert(!disconnect_done);assert(pthread_mutex_trylock(&njs_native.notice_lock->mutex)==EBUSY);release_up=1;pthread_cond_broadcast(&barrier_cond);pthread_mutex_unlock(&barrier);assert(!pthread_join(owner_worker,NULL)&&!pthread_join(closer,NULL));assert(disconnect_done&&!njs_native.linked&&!njs_native.tx_admit&&!nst_native.state.controlled_port&&!njs_native.tx_count&&njs_native.snapshot.phase==NJS_LEAVING);/* Typed data retirement never creates an RF-success statistic or authority. */
 unsigned local=njs_native.tx_local,ok=njs_native.tx_ok,results=njs_native.tx_results,failed=njs_native.tx_fail,dropped=njs_native.queued_drop,logs=njs_native.logs;struct nst_event local_event={.kind=NST_DATA_SUBMITTED,.ticket=UINT64_MAX,.generation=njs_native.native_generation};assert(!njs_event(&njs_native,&local_event));assert(njs_native.tx_local==local+1&&njs_native.tx_ok==ok&&njs_native.tx_results==results&&njs_native.tx_fail==failed&&njs_native.logs==logs+1&&!nst_native.state.controlled_port);local_event.status=1;assert(!njs_event(&njs_native,&local_event));assert(njs_native.queued_drop==dropped+1&&njs_native.tx_local==local+1);local_event.generation++;assert(!njs_event(&njs_native,&local_event)&&njs_native.queued_drop==dropped+1);
+assert(refresh_calls&&constructor_commits&&constructor_aborts);
 printf("PASS actual live service binder admission/copy/wipe/reentrant-retire/synchronous-disconnect/authorized-detach; mocked native IO only\n");IOLock*notice=njs_native.notice_lock;assert(!pthread_mutex_destroy(&notice->mutex));free(notice);assert(!pthread_mutex_destroy(&nss_native.lock->mutex));free(nss_native.lock);return 0;}

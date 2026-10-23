@@ -118,7 +118,7 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
   assert(reads==mmio_reads&&writes==mmio_writes);
  }
  assert(nss_return.consumed&&nct_native.session.continuation==1&&nct_native.session.phase==NCT_DONE&&callbacks==4&&!njs_native.linked&&!njs_native.snapshot.data_ready&&njs_native.snapshot.phase==NJS_FAILED);
- assert(nord2_wifi_join_enqueue(&join,&callbacks,1,join_completed,&denied)==1&&denied==123);assert(!nord2_wifi_scan_info(&nss_native.info));
+ assert(njs_rejoin_ready_locked()&&njs_native.used&&nst_native.attempted);assert(!nord2_wifi_scan_info(&nss_native.info));
  assert(delivered&&nrd_calls&&nrd_calls==nrd_restored&&nrd_checked==nrd_calls);
  IOLock*notice=njs_native.notice_lock;assert(!pthread_mutex_destroy(&notice->m));free(notice);assert(!pthread_mutex_destroy(&nss_native.lock->m));free(nss_native.lock);
- puts("PASS actual native scan return: boot26/scan then9 mixed station publications7commands/5queue rearm+segmentation/real peer cleanup/closure guards/read-only physical preflight/typed sealed origin/two real scans/permanent rejoin refusal; terminalmetadata seam with actualNJSretire/callback ordering, no RF claim");return 0;}
+ puts("PASS actual native scan return: boot26/scan then9 mixed station publications7commands/5queue rearm+segmentation/real peer cleanup/closure guards/read-only physical preflight/typed sealed origin/two real scans/fresh-scan rejoin readiness; terminalmetadata seam with actualNJSretire/callback ordering, no RF claim");return 0;}

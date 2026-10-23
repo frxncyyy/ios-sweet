@@ -72,6 +72,8 @@ static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned 
  if(e||used!=32)return -1;
  if(type==1){if(n<24||!eq(p+4,s->peer.ap,6)||!eq(p+10,s->peer.self,6)||!eq(p+16,s->peer.ap,6))return -1;}
  else if(!eq(p+6,s->peer.self,6)||(type==2&&!eq(p,s->peer.ap,6)))return -1;
+ unsigned pid=nsdd_pid_reserve(s->generation,d.wlan,type,protect,p,n);if(!pid)return -1;
+ d.pid=(uint8_t)pid;p32(txd+20,(u32(txd+20)&~127u)|pid);if(type==1)s->next_pid=pid+1;
  wipe(s->wire,sizeof s->wire);cp(s->wire,txd,32);cp(s->wire+32,p,n);s->wire_bytes=(unsigned)n+32;s->ticket=ticket;s->wire_cid=0;s->wire_type=type;s->wire_pid=d.pid;s->wire_wlan=d.wlan;s->wire_busy=1;s->published=s->dma_done=s->air_done=0;s->internal_wire=0;return 0;
 }
 int nst_management(struct nst*s,uint64_t t,const uint8_t*p,size_t n){return frame(s,t,p,n,1,0);}
@@ -108,7 +110,7 @@ static int data_transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn 
  if(!s->published){
   if(!nstx_idle(d)||rr(s,o,c,0x180600f0,&v)||(v&3)!=3||coherent(s,o,c)||rr(s,o,c,0x18025308,&v)||v!=d->next||rr(s,o,c,0x1802530c,&v)||v!=d->next)return fail(s,40);
   s->phase=NST_DATA_READ;if(sy(s,o,c,cell,16,2)||mr(s,o,c,cell,d->descriptor,16))return -1;if(!(u32(d->descriptor+4)&0x80000000))return fail(s,41);
-  size_t used=0;d->token=d->token_next;struct sw_txd options=s->txd;options.pid=NST_PID_HOST;options.protected_frame=(uint8_t)!!(u32(s->wire+12)&2);
+  size_t used=0;d->token=d->token_next;struct sw_txd options=s->txd;options.pid=(uint8_t)s->wire_pid;options.protected_frame=(uint8_t)!!(u32(s->wire+12)&2);
   if(nstx_build(d->page,sizeof d->page,&used,&options,s->wire+32,s->wire_bytes-32,s->wire_type==2,d->token,d->buffer)||used!=s->wire_bytes+32||nwt_tx_desc(d->descriptor,d->buffer,64))return fail(s,42);
   s->phase=NST_DATA_WRITE;if(mw(s,o,c,d->buffer,d->page,sizeof d->page)||sy(s,o,c,d->buffer,sizeof d->page,1))return -1;
   s->phase=NST_DATA_VERIFY;if(sy(s,o,c,d->buffer,sizeof d->page,2)||mr(s,o,c,d->buffer,s->data_verify,sizeof s->data_verify)||!eq(d->page,s->data_verify,sizeof d->page))return fail(s,43);wipe(s->data_verify,sizeof s->data_verify);
@@ -118,9 +120,11 @@ static int data_transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn 
    * The native caller proves real PSE data quota>0; this serial ledger uses
    * only one unit and source releases it after successful publication. */
   if(!d->credit_available||d->credit_reserved)return fail(s,47);d->credit_available--;d->credit_reserved=1;d->credit_acquired++;
+  nsdd_pid_attempt(s->generation,s->wire_pid,s->peer.wlan);
   if(rw(s,o,c,0x18025308,(d->next+1)%1024))return -1;
   d->credit_reserved=0;d->credit_available++;d->credit_released++;
   d->published=1;d->submitted++;d->token_next=(d->token_next+1)%NSTX_TOKEN_COUNT;s->published=1;s->submitted++;
+  nsdd_pid_publish(s->generation,s->wire_pid,s->peer.wlan,s->submitted);
   nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
   {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
  }
@@ -136,7 +140,8 @@ static int data_transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn 
  wipe(d->page,sizeof d->page);wipe(s->wire,sizeof s->wire);s->phase=NST_DATA_RETIRE;
  if(mw(s,o,c,d->buffer,d->page,sizeof d->page)||sy(s,o,c,d->buffer,sizeof d->page,1)||sy(s,o,c,d->buffer,sizeof d->page,2)||mr(s,o,c,d->buffer,s->data_verify,sizeof s->data_verify)||!eq(d->page,s->data_verify,sizeof d->page))return fail(s,46);
  wipe(s->data_verify,sizeof s->data_verify);d->next=(d->next+1)%1024;d->completed++;d->published=d->dma_done=d->report_done=0;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
- struct nst_event e={.kind=s->wire_type==2?NST_SECURITY_SUBMITTED:NST_DATA_SUBMITTED,.ticket=s->ticket,.pid=NST_PID_HOST,.wlan=s->peer.wlan};return emit(s,fn,ctx,&e);
+ nsdd_pid_local(s->generation,s->wire_pid,s->peer.wlan);
+ struct nst_event e={.kind=s->wire_type==2?NST_SECURITY_SUBMITTED:NST_DATA_SUBMITTED,.ticket=s->ticket,.pid=(uint8_t)s->wire_pid,.wlan=s->peer.wlan};return emit(s,fn,ctx,&e);
 }
 static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,void*ctx){
  if(!s->wire_busy||(s->wire_type==3&&s->bss_absent&&!s->published))return 0;
@@ -152,8 +157,10 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
   if(!s->credit_available||s->credit_reserved)return fail(s,35);s->credit_available--;s->credit_reserved=1;s->credit_acquired++;
   s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,s->wire_bytes)||sy(s,o,c,s->init->transport.command,s->wire_bytes,1)||mw(s,o,c,a,s->descriptor,16)||sy(s,o,c,a,16,1))return -1;
   if(s->last>UINT64_MAX-UINT64_C(3000000))return fail(s,15);s->operation_deadline=s->last+UINT64_C(3000000);s->phase=NST_TX_PUBLISH;s->init->transport.submit_attempted=1;
-  if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;s->credit_reserved=0;s->credit_available++;s->credit_released++;
-  if(s->wire_type==1){s->air_pending=1;s->next_pid++;}
+  if(s->wire_type)nsdd_pid_attempt(s->generation,s->wire_pid,s->wire_wlan);
+  if(rw(s,o,c,0x18025418,(s->tx_next+1)%1024))return -1;s->published=1;s->submitted++;
+  if(s->wire_type)nsdd_pid_publish(s->generation,s->wire_pid,s->wire_wlan,s->submitted);s->credit_reserved=0;s->credit_available++;s->credit_released++;
+  if(s->wire_type==1){s->air_pending=1;}
   nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
   {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
   if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
@@ -169,6 +176,7 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
  /* DDONE proves host buffer no longer read. Erase key-bearing host/DMA copy now. */
  unsigned bytes=s->wire_bytes;wipe(s->wire,sizeof s->wire);s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,bytes)||sy(s,o,c,s->init->transport.command,bytes,1))return -1;
  s->init->transport.tx_index=(s->tx_next+1)%1024;s->tx_next=s->init->transport.tx_index;s->init->transport.completed++;if(!s->wire_type)s->init->transport.next_sequence++;s->init->transport.submit_attempted=0;s->dma_completed++;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
+ if(s->wire_type==1)nsdd_pid_local(s->generation,s->wire_pid,s->wire_wlan);
  if(channel_release){s->channel_held=0;s->grant_deadline=0;struct nst_event released={.kind=NST_CHANNEL_RELEASED,.ticket=s->ticket,.token=s->channel_token};if(emit(s,fn,ctx,&released))return -1;}
  if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;return 0;}struct nst_event e={.kind=NST_COMMAND_DMA,.ticket=s->ticket,.cid=(uint8_t)s->wire_cid,.sequence=(uint8_t)s->wire_sequence};return emit(s,fn,ctx,&e);}return 0;
 }
@@ -212,7 +220,8 @@ static int decode(struct nst*s){
  /* OFLD is routing metadata, not a receive error in gen4m's RXD sanity
   * check. Keep the bounded descriptor observation, then enforce the same
   * payload-format, header, peer, key and replay rules as ordinary data. */
- if(d4&(3u<<11))nsdd_rx_error(&s->data_diag,s->generation,p,n);
+ if(d4&(3u<<11)){nsdd_rx_error(&s->data_diag,s->generation,p,n);
+  if(s->ofld_drop){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_ERROR);return 0;}}
  if(groups&8){g4=off;off+=16;}if(groups&1){g1=off;off+=16;}if(groups&2)off+=8;if(groups&4)off+=8;if(groups&16)off+=72;off+=((d2>>14)&3)*2;if(off>bytes){nsdd_reject(&s->data_diag,s->generation,NSDD_RX_GROUP_EXTENT);return 0;}
  const uint8_t*m=p+off;size_t len=bytes-off;unsigned translated=(d2>>13)&1,sec=(d1>>16)&31,key=(d1>>21)&3,wlan=d1&1023,tid=(d2>>16)&15;
  if(!translated){
@@ -265,7 +274,7 @@ int nst_step(struct nst*s,const struct ncd_io*o,void*c,unsigned budget,nst_event
  static const unsigned order[5]={0,2,3,4,1};unsigned used=0;while(used<budget){unsigned progress=0;for(unsigned j=0;j<5&&used<budget;j++){int e=receive(s,o,c,order[j],fn,ctx);if(e<0)return -1;if(e){used++;progress++;}}if(!progress)break;}
  if(s->air_pending&&s->dma_done&&(s->air_done||(retired_air_failure(s)&&s->last>=s->operation_deadline))){
   /*0x100 is explicitly local timeout, outside every firmware8-bit status.
-   * Management PID was consumed at publication and is never reused here; a
+   * Management PID was consumed at validated reservation and is never reused here; a
    * late old TXS cannot complete cleanup. No authorization follows failure. */
   unsigned status=s->air_done?s->air_status:NST_TX_LOCAL_TIMEOUT;
   struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=status,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};
