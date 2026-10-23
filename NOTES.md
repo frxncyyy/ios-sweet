@@ -4,6 +4,21 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: ee98 boot healthy; firstWPA2/DHCP receipts observed; switch requested.**
+  USBcollector15956 remainsactive (600s from14:34Europe/Rome). Boot-before-test
+  snapshot349173B SHA441d8feabe0d3fd7fb9089b3c97c6145a78b0629f38b70b46c6e8ad538c3b88b
+  all9readers0; validiOSframes, nofault. Human baseline replycall_476d1eaf says
+  "fatto" (not an explicit IP/router/Safari outcome). Baseline-after-user440613B
+  SHA57c2cbdad13e68df2aec47721d7af40afd3ea6ba817575a6f70506ecc2865e2f;
+  generation1 authorized109595ms, matchedDHCPoffer+ACK, BSDinput, nofault.
+  Connection/IOS/WPA/data/RX/TX/fault readers0. Startupbackend2 afterruntime;
+  extendedreader1 correctly rejects line5348 connectx-prefix concatenation before
+  RXCOUNTS; rawsnapshot preserved, no readerweakening or false allpass.
+  Asked human toconfirmbaseline then ONE switchtootherknownnetwork withoutprior
+  disconnect; iffails no retry/OFF. Need collect newresult before OFF/ON.
+  Phone remains ee98, conditional618/RAMADB recovery available; neverrerunrunner.
+
+
 - **2026-10-23: exactee98bd7c switch/power image FLASHED; boot capture active.**
   Human call_844ebfbf2f034fc787674fc3fd8de8b9 authorized exactimage boot-only and
   conditional618/RAMADB recovery, phone readyfastboot. Separateauthorization.json
