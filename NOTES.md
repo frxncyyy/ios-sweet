@@ -4,6 +4,45 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: new live-control image prepared and independently verified; NOT flashed.**
+  Image shim/out/nord2-xnu/nord2-ios-wifi-live-stop23.img,33486848 bytes,
+  SHAee8b6da014367d8adad5ba934da453f2c5f5eba0de87acbf7c3464eebe881138.
+  Payload research/nord2/wifi-ios-live/ios/payload.bin,15010576 bytes,
+  SHA96c717510604cb231f764d94bbc6f51cc0a650cb1ade485b23a28c4c69855562.
+  CI39924876139a1/sourcec35ce62/kernel d40fa5c6 exact; boot spare67584 bytes.
+  Source/CI/schema/linked review passed. Bounded actual linked28 bodies/33840B
+  reviewff44055c/manifest1ae7e101; independent existing-image report7febeced,
+  manifest334abecf. Existing checker preserved its initial inherited null-DHCP
+  schema failure and validated the actual live contract in the corrected private
+  checker; no runtime change. Source-pin docs prefix also corrected privately.
+  Image built/verified under1GiB; recovery d9a/6e4/RAMADB byte checks passed.
+  New opt-in nord2wifilive=1, USB status/capture/OFLD/disconnect and experimental
+  clean rejoin; includes OFLD fix and unambiguous sampled PID diagnostics.
+  All local tests are synthetic; no claim that DHCP or hardware rejoin works.
+  D=research/nord2/wifi-ios-live/ios: prepared=true, human/RF/recovery=false,
+  runner unused. Next: request exact boot-only image approval with tested
+  d9a44316 or RAMADB recovery, then validate live STATUS/capture and user-driven
+  WPA2 Join on the phone; preserve complete startup log before first Join.
+  Phone remains prior ecb026c7, untouched. Never boot stock Android over userdata.
+
+
+- **2026-10-23: live-control full CI passed; image verification in progress.**
+  Runtime commit101cf92a1f12910d6cd82a0ea482da423255fd1a and multi-generation
+  reader commitc35ce62d7368a8b3f0a8c91bd52d743cc08d56a3 pushed only to fork.
+  Initial two dispatches failed HTTP422 Actions-disabled; user restored access.
+  CI39924876139attempt1 then passed on exactc35ce62. Kernel17804248 bytes,
+  SHAd40fa5c636f869b6aac16cb73c1f05fd4f3e0a7e3f9191dc86b44a26e7b6f7c9.
+  Artifacts research/ci-39924876139: run.json/SHA256SUMS verified;235 generated
+  sources equal;38 compile units generic ARMv8.2;2281905 instructions checked
+  without LDAPUR/STLUR. Actual-owner composed live mailbox test also passes
+  two full WPA2 joins/capture/disconnect/cleanup/fresh scans/JOIN_READY;
+  owner-composition/review.json3b256869, explicit synthetic scheduler/MMIO seams.
+  Private image stage research/nord2/wifi-ios-live/ios has357 committed source
+  pins and reviewed readers; parent source/CI identity verified, linked review
+  and final packed image/prepared gate still in progress. No exact image
+  approval and no device action. Phone remains ecb026c7; DHCP not solved.
+
+
 - **2026-10-23: live USB control and repeated Join implementation complete locally.**
   User explicitly requested implementation. Canonical fixed mailbox, native owner
   binder and host CLI now support STATUS, bounded capture, OFLD policy comparison
