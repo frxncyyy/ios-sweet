@@ -28,7 +28,7 @@ static int allwrite(void *c,uint32_t pa,unsigned w,uint32_t v)
   assert(v==(pa==0x10005038 || pa==0x10005138 ? 1u<<15:1u<<20));
   *regp(&cm,pa-8)&=~v; return 0;
  }
- if (hw.bus.uncertain && pa==NAF_AFE_DAC_CON0 && !(v&16)) {
+ if ((hw.bus.uncertain || hw.bus.offline) && pa==NAF_AFE_DAC_CON0 && !(v&16)) {
   assert((*regp(&cm,0x10005130)&(1u<<15)) && (*regp(&cm,0x10005140)&(1u<<20)));
   assert((*regp(&cm,0x10005030)&(1u<<15)) && (*regp(&cm,0x10005040)&(1u<<20)));
  }
@@ -38,6 +38,24 @@ static int alldelay(void *c,unsigned us) { (void)c;assert(us<=1000);return 0; }
 static uintptr_t allworker(void *c) { (void)c;return cm.owner; }
 static int alllease(void *c,unsigned acq) { (void)c;(void)acq;return 0; }
 static const struct nah_io allio={allread,allwrite,alldelay,allworker,alllease};
+static void full_prepare(uint16_t rev0,uint16_t rev1,unsigned sticky)
+{
+ setup(); /* Initializes independent cold AFE register model. */
+ /* Legitimate inherited board pinmux: already I2S3, GPIO directionbits
+  * may contain outputs while peripheral mux makes those GPIO bits inert. */
+ *regp(&cm,NAF_GPIO_MODE_32)=0x1011;
+ *regp(&cm,0x10005010)=0xb;
+ memset(&hw,0,sizeof(hw));
+ m_init(&bm);
+ bm.slave[1].reg[0]=1;bm.slave[1].reg[0x14]=0;
+ bm.slave[0].reg[0x11]=0x80;bm.slave[1].reg[0x11]=0x80;
+ bm.slave[0].reg[3]=rev0;bm.slave[1].reg[3]=rev1;
+ bm.slave[0].reg[0x10]=(uint16_t)sticky;bm.slave[1].reg[0x10]=(uint16_t)sticky; /* historical lost-clock sticky from cold startup */
+ *regp(&cm,0x10001094)|=1u<<18;
+ /* Truly cold clocks and asserted/reset input GPIOs, source setup needed. */
+ bm.gate=16;*regp(&cm,0x100000b0)=32768;
+ *regp(&cm,0x10005130)=1u<<15;*regp(&cm,0x10005140)=1u<<20;
+ }
 int main(int argc,char **argv)
 {
  assert(argc==2);
@@ -46,22 +64,14 @@ int main(int argc,char **argv)
  FILE *input=fopen(argv[1],"rb");assert(input);
  assert(fread(blob,1,sizeof(blob),input)==sizeof(blob));assert(fgetc(input)==EOF);fclose(input);
  assert(nah_board_load(blob,sizeof(blob),digest)==0);
- setup(); /* Initializes independent cold AFE register model. */
- memset(&hw,0,sizeof(hw));
- m_init(&bm);
- bm.slave[1].reg[0]=1;bm.slave[1].reg[0x14]=0;
- bm.slave[0].reg[0x11]=0x80;bm.slave[1].reg[0x11]=0x80;
- bm.slave[0].reg[0x10]=0;bm.slave[1].reg[0x10]=0;
- *regp(&cm,0x10001094)|=1u<<18;
- /* Truly cold clocks and asserted/reset input GPIOs, source setup needed. */
- bm.gate=16;*regp(&cm,0x100000b0)=32768;
- *regp(&cm,0x10005130)=1u<<15;*regp(&cm,0x10005140)=1u<<20;
+ full_prepare(0x0b74,0x0a74,0x80);
  assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
  assert(hw.status.initialized && hw.amps[0].rev==0x0b74 && hw.amps[1].rev==0x0a74);
  assert(!bm.gate && !(*regp(&cm,0x100000b0)&32768));
  assert(!(*regp(&cm,0x10005130)&(1u<<15)) && !(*regp(&cm,0x10005140)&(1u<<20)));
  assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==0);
  assert((bm.slave[0].reg[0]&9)==8 && (bm.slave[1].reg[0]&9)==8);
+ assert(!(bm.slave[0].reg[0x10]&0x80) && !(bm.slave[1].reg[0x10]&0x80));
  assert((bm.slave[0].reg[2]&15)==8 && (bm.slave[1].reg[2]&15)==8);
  assert((bm.slave[0].reg[0x26]&15)==1 && (bm.slave[1].reg[0x26]&15)==0);
  assert((bm.slave[0].reg[0x21]&0x1f0)==0x1f0);
@@ -79,6 +89,7 @@ int main(int argc,char **argv)
  assert(nau_hw_stop(&hw)==0);
  assert((bm.slave[0].reg[0]&9)==1 && (bm.slave[1].reg[0]&9)==1);
  assert(bm.gate==16);
+ assert(*regp(&cm,NAF_GPIO_MODE_32)==0x1011 && (*regp(&cm,0x10005010)&0xb)==0xb);
  assert(!(*regp(&cm,0x100000b0)&32768) && hw.status.retained_shared_clock);
  assert((*regp(&cm,0x10005130)&(1u<<15)) && (*regp(&cm,0x10005140)&(1u<<20)));
  assert(!(*regp(&cm,0x10005030)&(1u<<15)) && !(*regp(&cm,0x10005040)&(1u<<20)));
@@ -139,5 +150,44 @@ int main(int argc,char **argv)
  assert(!(*regp(&cm,NAF_AFE_DAC_CON0)&16));
  assert(!bm.slave[5].accessed && !bm.slave[6].accessed);
  assert(nau_hw_start(&hw,48000,2,16,0,256,0,6000000)==NAH_E_ARG);
- printf("PASS: full cold-init/reset/PLL/AFE/silicon+container profile/amp start, continuous PCM+status, stop and reset/clock restoration (%u amp transfers, no rail or MTP commands)\n",bm.ntrans);
+ unsigned lifecycle_transfers=bm.ntrans;
+ /* A preflight refusal while AMPE is latched has no controller mutation,
+  * but still means amp disable cannot be verified. It must hold resets. */
+ full_prepare(0x0b74,0x0a74,0);
+ assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
+ assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==0);
+ cm.current=NAF_SRAM;assert(nau_hw_tick(&hw,0)==0);
+ bm.gate=16;starts=bm.starts;fault=0;
+ for(unsigned i=1;i<=4 && !fault;i++) {
+  cm.current=NAF_SRAM+4*(96*i%1024);
+  fault=nau_hw_tick(&hw,2000*i);
+ }
+ assert(fault==NAH_E_IO && hw.bus.offline && !hw.bus.uncertain);
+ assert(hw.status.uncertain && hw.status.stop_error && hw.status.amp_reset_held);
+ assert(bm.starts==starts && (bm.slave[0].reg[0]&8) && (bm.slave[1].reg[0]&8));
+ assert((*regp(&cm,0x10005130)&(1u<<15)) && (*regp(&cm,0x10005140)&(1u<<20)));
+ assert((*regp(&cm,0x10005030)&(1u<<15)) && (*regp(&cm,0x10005040)&(1u<<20)));
+ assert(!bm.slave[5].accessed && !bm.slave[6].accessed);
+ /* A persistent current NOCLK survives baseline clearing and must refuse
+  * AMPE before either output comes on; TDM format errors also refuse. */
+ full_prepare(0x0b74,0x0a74,0x80);bm.noclk_persistent=1;
+ assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
+ assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==NAH_E_AMP_FAULT);
+ assert(!(bm.slave[0].reg[0]&8) && !(bm.slave[1].reg[0]&8));
+ assert(!hw.status.running && !hw.status.uncertain);
+ full_prepare(0x0b74,0x0a74,0x40);
+ assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
+ assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==NAH_E_AMP_FAULT);
+ assert(!(bm.slave[0].reg[0]&8) && !(bm.slave[1].reg[0]&8));
+ /* The pinned board rejects9873 audible starts. Exercise its independent
+  * read-only status monitor branch through a silent AFE diagnostic instead. */
+ full_prepare(0x0a73,0x0b73,0x100);
+ assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
+ assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==NAH_E_BOARD_CONFIG);
+ assert(nau_hw_start(&hw,48000,2,16,1,256,0,0)==0);
+ assert(nau_hw_tick(&hw,0)==0);
+ hw.status.silent_only=0;hw.status.ticks=3;cm.current=NAF_SRAM+384;
+ assert(nau_hw_tick(&hw,2000)==NAH_E_AMP_FAULT); /* 9873 NOCLK is bit8. */
+ assert(!bm.slave[5].accessed && !bm.slave[6].accessed);
+ printf("PASS: full cold-init/reset/PLL/AFE/silicon+container profile/amp start, continuous PCM+status, stop and reset/clock restoration (%u amp transfers, no rail or MTP commands; persistentNOCLK/TDM and9873mask checked)\n",lifecycle_transfers);
 }

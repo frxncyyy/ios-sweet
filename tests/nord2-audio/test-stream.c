@@ -118,6 +118,22 @@ static void setup(void)
 int main(void)
 {
  setup();
+ /* Exhaustive pin-gate matrix: source-exact inherited I2S3 function1 is
+  * accepted only alongside all existing cold hardware prerequisites.
+  * GPIO mode0 outputs and alternate I2S1/I2S5 functions stay refused. */
+ for(unsigned modes=0;modes<4096;modes++)for(unsigned dirs=0;dirs<8;dirs++) {
+  unsigned a=modes&15,b=(modes>>4)&15,c=(modes>>8)&15;
+  hw.snapshot.snap[NAU_S_MODE_32]=a|(b<<4)|(c<<12)|0xf00;
+  hw.snapshot.snap[NAU_S_DIR_32]=(dirs&3)|((dirs&4)<<1)|4;
+  unsigned bad=a>1||b>1||c>1 || (!a&&(dirs&1)) || (!b&&(dirs&2)) || (!c&&(dirs&4));
+  assert(!!(naf_gate(&hw.snapshot,amps)&NAF_G_PINS)==!!bad);
+ }
+ hw.snapshot.snap[NAU_S_MODE_32]=0x1011;
+ hw.snapshot.snap[NAU_S_DIR_32]=0xb;
+ assert(!naf_gate(&hw.snapshot,amps));
+ hw.snapshot.snap[NAU_S_PWR_STATUS]=1u<<21;
+ assert(naf_gate(&hw.snapshot,amps)&NAF_G_AUDIO_ON);
+ setup();
  assert(nau_hw_start(&hw,48000,2,16,0,256,2000000,100)==NAH_E_BOARD_CONFIG);
  assert(cm.writes==0 && cm.reads==0);
  assert(nau_hw_start(&hw,44100,2,16,1,256,2000000,100)==NAH_E_ARG);
@@ -166,6 +182,29 @@ int main(void)
  assert(nau_hw_tick(&hw,0)==0);
  for (unsigned i=1;i<=2;i++) assert(nau_hw_tick(&hw,i*5000)==0);
  assert(nau_hw_tick(&hw,15000)==NAH_E_CLOCK_STALLED); assert(!hw.status.running);
+ /* Startup zero-only work must not pollute the active DMA cadence metric. */
+ setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,0,0)==0);
+ assert(nau_hw_tick(&hw,200000)==0 && hw.status.max_tick_gap_us==0);
+ cm.current=NAF_SRAM+384;
+ assert(nau_hw_tick(&hw,202000)==0 && hw.status.max_tick_gap_us==2000);
+ assert(nau_hw_stop(&hw)==0);
+ /* Actual integration cadence is2ms, not the older5ms fixture. A fixed
+  * valid pointer must still stop within12ms despite each gapbeing<4ms. */
+ setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,0,0)==0);
+ assert(nau_hw_tick(&hw,0)==0);
+ for(unsigned i=1;i<=5;i++) assert(nau_hw_tick(&hw,2000*i)==0);
+ assert(nau_hw_tick(&hw,12000)==NAH_E_CLOCK_STALLED);
+ /* Initial zero CUR is a documented source condition, bounded to12ms;
+  * no producer data is copied until the first real pointer is established. */
+ setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,0,0)==0);
+ cm.current=0;assert(nau_hw_tick(&hw,0)==0 && hw.first_tick);
+ assert(nau_hw_tick(&hw,2000)==0 && hw.first_tick);
+ cm.current=NAF_SRAM;assert(nau_hw_tick(&hw,4000)==0 && !hw.first_tick);
+ cm.current=0;assert(nau_hw_tick(&hw,6000)==NAH_E_POINTER);
+ setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,0,0)==0);
+ cm.current=0;
+ for(unsigned i=0;i<6;i++)assert(nau_hw_tick(&hw,2000*i)==0);
+ assert(nau_hw_tick(&hw,12000)==NAH_E_CLOCK_STALLED);
  setup(); cm.fail_write=1;
  assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,0)==NAH_E_UNCERTAIN);
  calls=cm.reads+cm.writes;

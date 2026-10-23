@@ -39,7 +39,7 @@ struct i2c8_model {
 	struct m_slave slave[M_SLAVES];
 	uint8_t tx[8], rx[8];
 	unsigned ntx, nrx, rxpos;
-	unsigned behaviour, slow_polls, polls;
+	unsigned behaviour, slow_polls, polls, noclk_persistent;
 	unsigned irq_sticky;             /* INTR_STAT W1C has no effect (fault) */
 	unsigned start_stuck;            /* NACK completion leaves START set */
 	unsigned starts, ntrans, dma_en_reads, gate_reads;
@@ -146,8 +146,11 @@ m_start(struct i2c8_model *m)
         s->reg[ptr]=(uint16_t)((m->tx[1]<<8)|m->tx[2]);
         c[0x0c/2]=1; return;
     }
+    if (ptr==0x10 && m->noclk_persistent) s->reg[ptr]|=(s->reg[3]&255)==0x74 ? 0x80:0x100;
     m->rx[0] = (uint8_t)(s->reg[ptr] >> 8);
 	m->rx[1] = (uint8_t)s->reg[ptr];
+ /* Selected tfa98xx.c956 and tfa_dsp.c4654: NOCLK is clear-on-read. */
+ if (ptr==0x10) s->reg[ptr]&=(uint16_t)~((s->reg[3]&255)==0x74 ? 0x80:0x100);
 	m->nrx = 2;
 	m->rxpos = 0;
 	if (m->behaviour == M_SLOW) { m->polls = 0; return; }

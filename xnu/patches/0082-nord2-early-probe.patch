@@ -19099,7 +19099,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_device.c
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,224 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
@@ -19199,11 +19199,21 @@
 + w[NAL_F_OPENS]=stream.opens;w[NAL_F_WRITES]=stream.writes;
 + lck_mtx_unlock(&nsa_lock);
 +}
++static void diagnose(const char *where,int reason,unsigned initial) {
++ /* Saved evidence only: never read hardware again after a failed access. */
++ const struct nah_status *h=&hardware.status;
++ printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u\n",
++  where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
++  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain);
++ if(initial)for(unsigned i=0;i<hardware.snapshot.snap_read && i<NAU_SNAP_COUNT;i++)
++  printf("NORD2 AUDIO SNAP: index=%u pa=%x value=%x\n",i,nau_snapshot_pa[i],hardware.snapshot.snap[i]);
++}
 +static int start(unsigned silent,unsigned duration) {
 + int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,now_us());
 + if(!e)device.starts++;
 + printf("NORD2 AUDIO: start=%d silent=%u duration=%u gate=%u amp=%04x/%04x\n",
 + e,silent,duration,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
++ if(e)diagnose("start",e,1);
 + return e;
 +}
 +static void commands(void) {
@@ -19225,7 +19235,7 @@
 +  }
 + }
 + struct nal_snapshot s;snapshot(&s);(void)nal_complete(&q,result,&s);
-+ if(!hardware.status.running || q.op!=NAL_STATUS)printf("NORD2 AUDIO LIVE: token=%u op=%u result=%u error=%d\n",q.token,q.op,result,hardware.status.error);
++ if(!hardware.status.running)printf("NORD2 AUDIO LIVE: token=%u op=%u result=%u error=%d\n",q.token,q.op,result,hardware.status.error);
 +}
 +static void feed_tone(void) {
 + /* Fixed1kHz sine, half scale BEFORE the independent hardware ceiling. */
@@ -19254,6 +19264,7 @@
 + uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
 + printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
 + hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
++ if(e)diagnose("init",e,1);
 + for(;;) {
 +  commands();
 +  unsigned stop=0,enabled=0,queued=0;uint64_t last_sound=0,t;
@@ -19261,7 +19272,10 @@
 +  queued=stream.count;last_sound=stream.last_sound_us;lck_mtx_unlock(&nsa_lock);t=now_us();
 +  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || !last_sound || t-last_sound>=750000)))) {
 +   device.tone_active=0;(void)nau_hw_stop(&hardware);
-+   lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);queued=0;
++   /* Mute/disable already flush their producer queue. Preserve PCM that
++    * arrived during the bounded hardware stop; fresh idle checks below
++    * discard only a queue that is still stale under its own lock. */
++   queued=0;
 +  }
 +  /* No amp power for an idle HAL's zero-filled writes. Errors remain visible
 +   * and do not spin restarting hardware. Live ENABLE after a clean stop can
@@ -19280,8 +19294,11 @@
 +   if(!hardware.status.running){device.tone_active=0;
 +    if(e==NAH_E_IDLE && !hardware.status.uncertain && !hardware.status.stop_error)hardware.status.error=0;
 +    printf("NORD2 AUDIO: stopped=%d error=%d uncertain=%u pcm=%u silence=%u\n",e,hardware.status.error,
-+     hardware.status.uncertain,hardware.status.pcm_frames,hardware.status.silence_frames);}
-+  } else {lck_mtx_lock(&nsa_lock);if(!last_sound || t-last_sound>=750000)nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);}
++     hardware.status.uncertain,hardware.status.pcm_frames,hardware.status.silence_frames);
++    if(hardware.status.error)diagnose("tick",e,0);}
++  } else {lck_mtx_lock(&nsa_lock);
++   nsa_flush_idle(&stream,now_us());
++   lck_mtx_unlock(&nsa_lock);}
 +  if(!hardware.status.running && t-device.report_us>=5000000) {
 +   struct nal_snapshot s;snapshot(&s);device.report_us=t;
 +   printf("NORD2 AUDIO PCM: opens=%u writes=%u queued=%u peak=%u running=%u error=%d pcm=%u\n",
@@ -19316,7 +19333,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_stream.c
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,74 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "audio_stream.h"
@@ -19339,6 +19356,11 @@
 +void nsa_flush(struct nsa_stream *s) {
 + if (!s) return;
 + s->read = s->write = s->count = 0; s->flushes++;
++}
++void nsa_flush_idle(struct nsa_stream *s, uint64_t now) {
++ if (!s) return;
++ uint64_t sound=s->last_sound_us;
++ if (!sound || (now>=sound && now-sound>=750000)) nsa_flush(s);
 +}
 +void nsa_enable(struct nsa_stream *s, unsigned enabled) {
 + if (!s) return;
@@ -19388,7 +19410,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_stream.h
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,25 @@
 +#ifndef NORD2_AUDIO_STREAM_H
 +#define NORD2_AUDIO_STREAM_H
 +#include <stdint.h>
@@ -19410,6 +19432,8 @@
 +void nsa_enable(struct nsa_stream *, unsigned enabled);
 +void nsa_volume(struct nsa_stream *, unsigned eighth_db_below, unsigned muted);
 +void nsa_flush(struct nsa_stream *);
++/* Caller holds the producer lock and samples now while holding it. */
++void nsa_flush_idle(struct nsa_stream *, uint64_t now_us);
 +unsigned nsa_gain(unsigned eighth_db_below);
 +#endif
 --- /dev/null
@@ -20648,7 +20672,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_afe.c
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,691 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -20756,8 +20780,16 @@
 +		/* Program cold APLL2 rather than requiring bootloader rate. */
 +	}
 +	if (s[NAU_S_APLL2_TUNER] != s[NAU_S_APLL2_CON2] + 1u) { /* Reprogram tuner along with PCW. */ }
-+	if ((s[NAU_S_MODE_32] & NAF_PIN_MODE_MASK) || (s[NAU_S_DIR_32] & NAF_PIN_DIR_MASK)) {
-+		g |= NAF_G_PINS;
++	/* Cold AUDIO/ADSP and gated clocks were checked above. GPIO mode0
++	 * inputs are idle; function1 is exactly our quiescent I2S3 peripheral
++	 * (pinctrl-mtk-mt6885.h377-418). GPIO DIR is irrelevant in function1.
++	 * Keep rejecting GPIO outputs and every alternate peripheral function;
++	 * this does not authorize takeover of I2S1/I2S5/PCM/I2S0. */
++	static const unsigned pins[3]={0,1,3};
++	for (unsigned i=0;i<3;i++) {
++		unsigned mode=(s[NAU_S_MODE_32]>>(4*pins[i]))&15u;
++		unsigned output=(s[NAU_S_DIR_32]>>pins[i])&1u;
++		if ((mode==0 && output) || (mode!=0 && mode!=1)) g |= NAF_G_PINS;
 +	}
 +	if (!amp || !naf_amp_ok(&amp[0]) || !naf_amp_ok(&amp[1])) { g |= NAF_G_AMPS; }
 +	return g;
@@ -21444,7 +21476,7 @@
 +	NAF_G_APLL2_ON = 1u << 7,   /* APLL2 enabled/powered or its tuner enabled */
 +	NAF_G_APLL2_RATE = 1u << 8, /* measured postdiv/PCW != 196.608 MHz source calc */
 +	NAF_G_APLL2_TUNER = 1u << 9,/* tuner != PCW + 1 (clk-pll.c:271-272) */
-+	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not GPIO-mode inputs */
++	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not idleGPIOinputs or exactI2S3 */
 +	NAF_G_AMPS = 1u << 11,      /* no measured power-down for both amplifiers */
 +	NAF_G_AFE_SEEN = 1u << 12,  /* snapshot found the AFE readable (not cold) */
 +};
@@ -21515,7 +21547,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_hw.c
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,415 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -21584,6 +21616,17 @@
 +  if (delay(h,1000)) return NAH_E_IO;
 + }
 + if (!ready) return NAH_E_AMPS;
++ /* Selected tfa98xx.c956 explicitly removes cold-start NOCLK sticky by
++  * reading once. Otherwise our first monitor would misclassify historical
++  * startup loss as a runtime failure. Never discard a current TDM fault;
++  * reread NOCLK and CLKS before enabling the output. */
++ uint16_t status=0,clocks=0;
++ unsigned tdmmask=is74 ? 0x40:0x400, noclkmask=is74 ? 0x80:0x100;
++ if (amp_read(h,amp,0x10,&status)) return NAH_E_IO;
++ if (status&tdmmask) return NAH_E_AMP_FAULT;
++ if (amp_read(h,amp,0x10,&status) || amp_read(h,amp,clockreg,&clocks)) return NAH_E_IO;
++ h->status.amp_status[amp]=status;
++ if ((status&(tdmmask|noclkmask)) || !(clocks&clockmask)) return NAH_E_AMP_FAULT;
 + return amp_rmw(h,amp,0x00,8,8);
 +}
 +static int board_valid(const struct nau_hw *h)
@@ -21749,7 +21792,7 @@
 + h->status.silent_only=silent; h->gain_q15=gain;
 + h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
 + h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
-+ h->first_tick=1; h->new_input=0;
++ h->first_tick=1; h->new_input=0; h->pointer_waiting=0; h->last_progress_us=now;
 + int rc=naf_stream_open(&afe_io,h,&h->snapshot,h->evidence,&h->plan,&h->afe);
 + if (rc) {
 +  h->status.uncertain=h->afe.uncertain;
@@ -21805,16 +21848,26 @@
 + if (now<h->last_us) return terminate(h,NAH_E_DEADLINE);
 + uint64_t gap=now-h->last_us;
 + if (!h->first_tick && gap>=20000) return terminate(h,NAH_E_DEADLINE);
-+ if (gap>h->status.max_tick_gap_us) h->status.max_tick_gap_us=(uint32_t)gap;
++ if (!h->first_tick && gap>h->status.max_tick_gap_us) h->status.max_tick_gap_us=(uint32_t)gap;
 + if (h->deadline_us && now>=h->deadline_us) return nau_hw_stop(h);
 + uint32_t pa=0;
 + if (rd32(h,NAF_AFE_DL1_CUR,&pa)) return terminate(h,NAH_E_IO);
 + h->status.current_pa=pa;
++ if (h->first_tick && !h->pointer_waiting) {
++  h->pointer_waiting=1; h->last_progress_us=now;
++ }
++ /* Selected mtk-afe-platform-driver.c105-110 handles initial CUR0 as
++  * a zero PCM position. Keep the prefilled ring silent while waiting at
++  * most12ms for a real pointer; never normalize a bad pointer after start. */
++ if (!pa && h->first_tick) {
++  if (now-h->last_progress_us>=12000) return terminate(h,NAH_E_CLOCK_STALLED);
++  h->last_us=now; return 0;
++ }
 + if (pa<NAF_SRAM || pa>=NAF_SRAM+NAF_SRAM_BYTES || (pa&3))
 +  return terminate(h,NAH_E_POINTER);
 + uint32_t current=(pa-NAF_SRAM)/4;
 + if (h->first_tick) {
-+  h->first_tick=0; h->last_frame=current; h->last_us=now; h->last_feed_us=now;
++  h->first_tick=0; h->pointer_waiting=0; h->last_frame=current; h->last_us=now; h->last_feed_us=now; h->last_progress_us=now;
 +  return 0;
 + }
 + if (h->new_input) { h->last_feed_us=now; h->new_input=0; }
@@ -21824,9 +21877,10 @@
 + if (consumed>NAH_RATE/100) return terminate(h,NAH_E_DEADLINE);
 + /* If a bounded worker misses a complete revolution, ownership is lost.
 +  * Timestamp gap above avoids that ambiguity; no chasing current pointer. */
-+ if (!consumed && gap>=4000) {
-+  if (++h->idle_ticks>=3) return terminate(h,NAH_E_CLOCK_STALLED);
-+ } else if (consumed) h->idle_ticks=0;
++ /* Measure elapsed time since actual progress, not individual tick gap:
++  * the real worker runs every2ms, so a >=4ms-per-tick counter never fires. */
++ if (consumed) h->last_progress_us=now;
++ else if (now-h->last_progress_us>=12000) return terminate(h,NAH_E_CLOCK_STALLED);
 + unsigned starved=0;
 + for (unsigned i=0;i<consumed;i++) {
 +  int32_t left=0,right=0;
@@ -21854,7 +21908,7 @@
 +   uint16_t v=0;
 +   if (amp_read(h,i,0x10,&v)) { fault=NAH_E_IO; break; }
 +   h->status.amp_status[i]=v;
-+   unsigned mask=(h->amps[i].rev&255)==0x74 ? 0xc0:0xc00;
++   unsigned mask=(h->amps[i].rev&255)==0x74 ? 0xc0:0x500;
 +   if (v&mask) { fault=NAH_E_AMP_FAULT; break; }
 +  }
 +  h->bus.poll_limit=0;
@@ -21871,6 +21925,9 @@
 + if (!h->status.silent_only) {
 +  if (lease(h,1)) err=NAH_E_IO;
 +  else {
++   /* A refused preflight can latch offline before any controller write,
++    * but output disable is still unverified for amps already running. */
++   if (h->bus.offline) err=NAH_E_IO;
 +   /* A bus failure is sticky: no next-slave access after uncertainty. */
 +   for (unsigned i=0;i<2 && !h->bus.offline;i++)
 +    if (amp_cold(h,i) || nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { err=NAH_E_IO; if (h->bus.offline) break; }
@@ -21880,7 +21937,7 @@
 + /* Unknown amplifier write/transfer result must first force both local
 +  * amp reset GPIOs high, before any digital clock/DMA stop. Do not restore
 +  * those pins to inherited inputs in this permanently latched error state. */
-+ unsigned hold_reset=h->bus.uncertain;
++ unsigned hold_reset=!h->status.silent_only && (h->bus.uncertain || err);
 + if (hold_reset && reset_hold_fault(h)) err=NAH_E_IO;
 + /* If amplifier access failed, stopping the owned digital source still
 +  * removes excitation. Never reset shared bus or panic iOS/WiFi. */
@@ -21908,7 +21965,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_hw.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,94 @@
 +#ifndef NORD2_AUDIO_HW_H
 +#define NORD2_AUDIO_HW_H
 +#include <stdint.h>
@@ -21940,11 +21997,10 @@
 + uintptr_t (*worker)(void *);
 + int (*lease)(void *, unsigned acquire);
 +};
-+/* Board profile cannot be supplied by USB/userspace. Immutable compiled data,
-+ * reviewed against exact Nord2 container and observed amp REV is required.
++/* Board profile cannot be supplied by USB/userspace. Immutable boot ADT data,
++ * verified against the pinned Nord2 container and observed amp REV is required.
 + * apply runs source-backed volatile init + exact board profile while PWDN=1,
-+ * AMPE=0; it must not touch OTP/MTP or rail bucks. It is deliberately absent
-+ * from this candidate until the matching container is recovered. The amp
++ * AMPE=0; it must not touch OTP/MTP or rail bucks. The amp
 + * control path still performs independent mute/clock/readback checks.
 + * This callback boundary avoids manufacturing unknown analog settings. */
 +struct nah_board {
@@ -21975,8 +22031,8 @@
 + struct nah_status status;
 + int16_t queue[NAH_QUEUE_FRAMES * 2u];
 + uint32_t qr, qw, qcount, last_frame, idle_ticks;
-+ uint64_t last_us, deadline_us, last_feed_us;
-+ unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed;
++ uint64_t last_us, deadline_us, last_feed_us, last_progress_us;
++ unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
 +};
 +/* h must be static/heap, zeroed once per boot; never place on kernel stack.
 + * init snapshots original reset GPIO111/148 fields, checks coldAFE and idlebus,

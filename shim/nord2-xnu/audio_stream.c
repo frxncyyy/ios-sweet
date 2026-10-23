@@ -19,6 +19,11 @@ void nsa_flush(struct nsa_stream *s) {
  if (!s) return;
  s->read = s->write = s->count = 0; s->flushes++;
 }
+void nsa_flush_idle(struct nsa_stream *s, uint64_t now) {
+ if (!s) return;
+ uint64_t sound=s->last_sound_us;
+ if (!sound || (now>=sound && now-sound>=750000)) nsa_flush(s);
+}
 void nsa_enable(struct nsa_stream *s, unsigned enabled) {
  if (!s) return;
  s->enabled = !!enabled;

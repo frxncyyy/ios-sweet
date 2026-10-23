@@ -107,7 +107,7 @@ enum {
 	NAF_G_APLL2_ON = 1u << 7,   /* APLL2 enabled/powered or its tuner enabled */
 	NAF_G_APLL2_RATE = 1u << 8, /* measured postdiv/PCW != 196.608 MHz source calc */
 	NAF_G_APLL2_TUNER = 1u << 9,/* tuner != PCW + 1 (clk-pll.c:271-272) */
-	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not GPIO-mode inputs */
+	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not idleGPIOinputs or exactI2S3 */
 	NAF_G_AMPS = 1u << 11,      /* no measured power-down for both amplifiers */
 	NAF_G_AFE_SEEN = 1u << 12,  /* snapshot found the AFE readable (not cold) */
 };

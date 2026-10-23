@@ -19,5 +19,7 @@ unsigned nsa_dequeue(struct nsa_stream *, int16_t *, unsigned capacity);
 void nsa_enable(struct nsa_stream *, unsigned enabled);
 void nsa_volume(struct nsa_stream *, unsigned eighth_db_below, unsigned muted);
 void nsa_flush(struct nsa_stream *);
+/* Caller holds the producer lock and samples now while holding it. */
+void nsa_flush_idle(struct nsa_stream *, uint64_t now_us);
 unsigned nsa_gain(unsigned eighth_db_below);
 #endif

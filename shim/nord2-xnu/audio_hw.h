@@ -29,11 +29,10 @@ struct nah_io {
  uintptr_t (*worker)(void *);
  int (*lease)(void *, unsigned acquire);
 };
-/* Board profile cannot be supplied by USB/userspace. Immutable compiled data,
- * reviewed against exact Nord2 container and observed amp REV is required.
+/* Board profile cannot be supplied by USB/userspace. Immutable boot ADT data,
+ * verified against the pinned Nord2 container and observed amp REV is required.
  * apply runs source-backed volatile init + exact board profile while PWDN=1,
- * AMPE=0; it must not touch OTP/MTP or rail bucks. It is deliberately absent
- * from this candidate until the matching container is recovered. The amp
+ * AMPE=0; it must not touch OTP/MTP or rail bucks. The amp
  * control path still performs independent mute/clock/readback checks.
  * This callback boundary avoids manufacturing unknown analog settings. */
 struct nah_board {
@@ -64,8 +63,8 @@ struct nau_hw {
  struct nah_status status;
  int16_t queue[NAH_QUEUE_FRAMES * 2u];
  uint32_t qr, qw, qcount, last_frame, idle_ticks;
- uint64_t last_us, deadline_us, last_feed_us;
- unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed;
+ uint64_t last_us, deadline_us, last_feed_us, last_progress_us;
+ unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
 };
 /* h must be static/heap, zeroed once per boot; never place on kernel stack.
  * init snapshots original reset GPIO111/148 fields, checks coldAFE and idlebus,

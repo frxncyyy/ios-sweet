@@ -95,11 +95,21 @@ static void snapshot(struct nal_snapshot *out) {
  w[NAL_F_OPENS]=stream.opens;w[NAL_F_WRITES]=stream.writes;
  lck_mtx_unlock(&nsa_lock);
 }
+static void diagnose(const char *where,int reason,unsigned initial) {
+ /* Saved evidence only: never read hardware again after a failed access. */
+ const struct nah_status *h=&hardware.status;
+ printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u\n",
+  where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
+  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain);
+ if(initial)for(unsigned i=0;i<hardware.snapshot.snap_read && i<NAU_SNAP_COUNT;i++)
+  printf("NORD2 AUDIO SNAP: index=%u pa=%x value=%x\n",i,nau_snapshot_pa[i],hardware.snapshot.snap[i]);
+}
 static int start(unsigned silent,unsigned duration) {
  int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,now_us());
  if(!e)device.starts++;
  printf("NORD2 AUDIO: start=%d silent=%u duration=%u gate=%u amp=%04x/%04x\n",
  e,silent,duration,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
+ if(e)diagnose("start",e,1);
  return e;
 }
 static void commands(void) {
@@ -121,7 +131,7 @@ static void commands(void) {
   }
  }
  struct nal_snapshot s;snapshot(&s);(void)nal_complete(&q,result,&s);
- if(!hardware.status.running || q.op!=NAL_STATUS)printf("NORD2 AUDIO LIVE: token=%u op=%u result=%u error=%d\n",q.token,q.op,result,hardware.status.error);
+ if(!hardware.status.running)printf("NORD2 AUDIO LIVE: token=%u op=%u result=%u error=%d\n",q.token,q.op,result,hardware.status.error);
 }
 static void feed_tone(void) {
  /* Fixed1kHz sine, half scale BEFORE the independent hardware ceiling. */
@@ -150,6 +160,7 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
  uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
  printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
  hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
+ if(e)diagnose("init",e,1);
  for(;;) {
   commands();
   unsigned stop=0,enabled=0,queued=0;uint64_t last_sound=0,t;
@@ -157,7 +168,10 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
   queued=stream.count;last_sound=stream.last_sound_us;lck_mtx_unlock(&nsa_lock);t=now_us();
   if(hardware.status.running && (stop || (!device.tone_active && (!enabled || !last_sound || t-last_sound>=750000)))) {
    device.tone_active=0;(void)nau_hw_stop(&hardware);
-   lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);queued=0;
+   /* Mute/disable already flush their producer queue. Preserve PCM that
+    * arrived during the bounded hardware stop; fresh idle checks below
+    * discard only a queue that is still stale under its own lock. */
+   queued=0;
   }
   /* No amp power for an idle HAL's zero-filled writes. Errors remain visible
    * and do not spin restarting hardware. Live ENABLE after a clean stop can
@@ -176,8 +190,11 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
    if(!hardware.status.running){device.tone_active=0;
     if(e==NAH_E_IDLE && !hardware.status.uncertain && !hardware.status.stop_error)hardware.status.error=0;
     printf("NORD2 AUDIO: stopped=%d error=%d uncertain=%u pcm=%u silence=%u\n",e,hardware.status.error,
-     hardware.status.uncertain,hardware.status.pcm_frames,hardware.status.silence_frames);}
-  } else {lck_mtx_lock(&nsa_lock);if(!last_sound || t-last_sound>=750000)nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);}
+     hardware.status.uncertain,hardware.status.pcm_frames,hardware.status.silence_frames);
+    if(hardware.status.error)diagnose("tick",e,0);}
+  } else {lck_mtx_lock(&nsa_lock);
+   nsa_flush_idle(&stream,now_us());
+   lck_mtx_unlock(&nsa_lock);}
   if(!hardware.status.running && t-device.report_us>=5000000) {
    struct nal_snapshot s;snapshot(&s);device.report_us=t;
    printf("NORD2 AUDIO PCM: opens=%u writes=%u queued=%u peak=%u running=%u error=%d pcm=%u\n",

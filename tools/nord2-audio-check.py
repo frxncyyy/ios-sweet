@@ -14,6 +14,7 @@ def main():
   binary=struct.pack('<IIIIIIII',0xfeedfacf,0x100000c,0,8,0,0,0,0)
   (d/'test.pkg').write_bytes(m.encode(binary,plist))
   cases=[('queue',[R/'tests/nord2_audio_stream_test.c',S/'audio_stream.c'],['-lm'],[]),
+   ('idle',[T/'test-idle.c',S/'audio_stream.c'],[],[]),
    ('live',[R/'tests/nord2_audio_live_test.c',S/'audio_live.c'],[],[]),
    ('install',[T/'test-flow.c'],['-lcrypto'],[]),
    ('package',[T/'test-package.c'],['-lcrypto'],[d/'test.pkg'])]

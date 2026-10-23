@@ -64,6 +64,17 @@ static int amp_enable(struct nau_hw *h,unsigned amp)
   if (delay(h,1000)) return NAH_E_IO;
  }
  if (!ready) return NAH_E_AMPS;
+ /* Selected tfa98xx.c956 explicitly removes cold-start NOCLK sticky by
+  * reading once. Otherwise our first monitor would misclassify historical
+  * startup loss as a runtime failure. Never discard a current TDM fault;
+  * reread NOCLK and CLKS before enabling the output. */
+ uint16_t status=0,clocks=0;
+ unsigned tdmmask=is74 ? 0x40:0x400, noclkmask=is74 ? 0x80:0x100;
+ if (amp_read(h,amp,0x10,&status)) return NAH_E_IO;
+ if (status&tdmmask) return NAH_E_AMP_FAULT;
+ if (amp_read(h,amp,0x10,&status) || amp_read(h,amp,clockreg,&clocks)) return NAH_E_IO;
+ h->status.amp_status[amp]=status;
+ if ((status&(tdmmask|noclkmask)) || !(clocks&clockmask)) return NAH_E_AMP_FAULT;
  return amp_rmw(h,amp,0x00,8,8);
 }
 static int board_valid(const struct nau_hw *h)
@@ -229,7 +240,7 @@ int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
  h->status.silent_only=silent; h->gain_q15=gain;
  h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
  h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
- h->first_tick=1; h->new_input=0;
+ h->first_tick=1; h->new_input=0; h->pointer_waiting=0; h->last_progress_us=now;
  int rc=naf_stream_open(&afe_io,h,&h->snapshot,h->evidence,&h->plan,&h->afe);
  if (rc) {
   h->status.uncertain=h->afe.uncertain;
@@ -285,16 +296,26 @@ int nau_hw_tick(struct nau_hw *h,uint64_t now)
  if (now<h->last_us) return terminate(h,NAH_E_DEADLINE);
  uint64_t gap=now-h->last_us;
  if (!h->first_tick && gap>=20000) return terminate(h,NAH_E_DEADLINE);
- if (gap>h->status.max_tick_gap_us) h->status.max_tick_gap_us=(uint32_t)gap;
+ if (!h->first_tick && gap>h->status.max_tick_gap_us) h->status.max_tick_gap_us=(uint32_t)gap;
  if (h->deadline_us && now>=h->deadline_us) return nau_hw_stop(h);
  uint32_t pa=0;
  if (rd32(h,NAF_AFE_DL1_CUR,&pa)) return terminate(h,NAH_E_IO);
  h->status.current_pa=pa;
+ if (h->first_tick && !h->pointer_waiting) {
+  h->pointer_waiting=1; h->last_progress_us=now;
+ }
+ /* Selected mtk-afe-platform-driver.c105-110 handles initial CUR0 as
+  * a zero PCM position. Keep the prefilled ring silent while waiting at
+  * most12ms for a real pointer; never normalize a bad pointer after start. */
+ if (!pa && h->first_tick) {
+  if (now-h->last_progress_us>=12000) return terminate(h,NAH_E_CLOCK_STALLED);
+  h->last_us=now; return 0;
+ }
  if (pa<NAF_SRAM || pa>=NAF_SRAM+NAF_SRAM_BYTES || (pa&3))
   return terminate(h,NAH_E_POINTER);
  uint32_t current=(pa-NAF_SRAM)/4;
  if (h->first_tick) {
-  h->first_tick=0; h->last_frame=current; h->last_us=now; h->last_feed_us=now;
+  h->first_tick=0; h->pointer_waiting=0; h->last_frame=current; h->last_us=now; h->last_feed_us=now; h->last_progress_us=now;
   return 0;
  }
  if (h->new_input) { h->last_feed_us=now; h->new_input=0; }
@@ -304,9 +325,10 @@ int nau_hw_tick(struct nau_hw *h,uint64_t now)
  if (consumed>NAH_RATE/100) return terminate(h,NAH_E_DEADLINE);
  /* If a bounded worker misses a complete revolution, ownership is lost.
   * Timestamp gap above avoids that ambiguity; no chasing current pointer. */
- if (!consumed && gap>=4000) {
-  if (++h->idle_ticks>=3) return terminate(h,NAH_E_CLOCK_STALLED);
- } else if (consumed) h->idle_ticks=0;
+ /* Measure elapsed time since actual progress, not individual tick gap:
+  * the real worker runs every2ms, so a >=4ms-per-tick counter never fires. */
+ if (consumed) h->last_progress_us=now;
+ else if (now-h->last_progress_us>=12000) return terminate(h,NAH_E_CLOCK_STALLED);
  unsigned starved=0;
  for (unsigned i=0;i<consumed;i++) {
   int32_t left=0,right=0;
@@ -334,7 +356,7 @@ int nau_hw_tick(struct nau_hw *h,uint64_t now)
    uint16_t v=0;
    if (amp_read(h,i,0x10,&v)) { fault=NAH_E_IO; break; }
    h->status.amp_status[i]=v;
-   unsigned mask=(h->amps[i].rev&255)==0x74 ? 0xc0:0xc00;
+   unsigned mask=(h->amps[i].rev&255)==0x74 ? 0xc0:0x500;
    if (v&mask) { fault=NAH_E_AMP_FAULT; break; }
   }
   h->bus.poll_limit=0;
@@ -351,6 +373,9 @@ int nau_hw_stop(struct nau_hw *h)
  if (!h->status.silent_only) {
   if (lease(h,1)) err=NAH_E_IO;
   else {
+   /* A refused preflight can latch offline before any controller write,
+    * but output disable is still unverified for amps already running. */
+   if (h->bus.offline) err=NAH_E_IO;
    /* A bus failure is sticky: no next-slave access after uncertainty. */
    for (unsigned i=0;i<2 && !h->bus.offline;i++)
     if (amp_cold(h,i) || nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { err=NAH_E_IO; if (h->bus.offline) break; }
@@ -360,7 +385,7 @@ int nau_hw_stop(struct nau_hw *h)
  /* Unknown amplifier write/transfer result must first force both local
   * amp reset GPIOs high, before any digital clock/DMA stop. Do not restore
   * those pins to inherited inputs in this permanently latched error state. */
- unsigned hold_reset=h->bus.uncertain;
+ unsigned hold_reset=!h->status.silent_only && (h->bus.uncertain || err);
  if (hold_reset && reset_hold_fault(h)) err=NAH_E_IO;
  /* If amplifier access failed, stopping the owned digital source still
   * removes excitation. Never reset shared bus or panic iOS/WiFi. */

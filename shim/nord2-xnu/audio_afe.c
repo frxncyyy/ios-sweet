@@ -103,8 +103,16 @@ naf_gate_words(const uint32_t *s, const struct naf_amp_evidence amp[2])
 		/* Program cold APLL2 rather than requiring bootloader rate. */
 	}
 	if (s[NAU_S_APLL2_TUNER] != s[NAU_S_APLL2_CON2] + 1u) { /* Reprogram tuner along with PCW. */ }
-	if ((s[NAU_S_MODE_32] & NAF_PIN_MODE_MASK) || (s[NAU_S_DIR_32] & NAF_PIN_DIR_MASK)) {
-		g |= NAF_G_PINS;
+	/* Cold AUDIO/ADSP and gated clocks were checked above. GPIO mode0
+	 * inputs are idle; function1 is exactly our quiescent I2S3 peripheral
+	 * (pinctrl-mtk-mt6885.h377-418). GPIO DIR is irrelevant in function1.
+	 * Keep rejecting GPIO outputs and every alternate peripheral function;
+	 * this does not authorize takeover of I2S1/I2S5/PCM/I2S0. */
+	static const unsigned pins[3]={0,1,3};
+	for (unsigned i=0;i<3;i++) {
+		unsigned mode=(s[NAU_S_MODE_32]>>(4*pins[i]))&15u;
+		unsigned output=(s[NAU_S_DIR_32]>>pins[i])&1u;
+		if ((mode==0 && output) || (mode!=0 && mode!=1)) g |= NAF_G_PINS;
 	}
 	if (!amp || !naf_amp_ok(&amp[0]) || !naf_amp_ok(&amp[1])) { g |= NAF_G_AMPS; }
 	return g;

@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: final audio review corrections integrated and tests PASS.**
+  Exact inherited I2S3 pinmux is accepted only with existing cold-domain guards;
+  exhaustive32768 mode/direction cases still reject foreign functions/GPIOoutputs.
+  Fresh locked queue policy preserves short PCM arriving during idle/amp stop;
+  actual nsa_flush_idle regression covers stale/zero/new-click paths. No active
+  command logging interrupts DMA. Hardware now detects frozen pointers at actual
+  2ms cadence, allows initial CUR0 for bounded12ms only, clears historical NOCLK
+  exactly as source cold-start does and rechecks present NOCLK/TDM/clock status
+  before AMPE. Offline/unverified amplifier disable forces local reset before
+  stopping AFE, including failures before controller writes. No shared reset.
+  Unified host suites PASS (144 install failures/crashes,2033 amp transfers and
+  3 playback cycles with injected faults, actual transport/CLI, pin/PCM/stall
+  regressions). All11 affected native translation units compile NORD2 with
+  Wall/Wextra/Werror. Generated patch reproduces all files; diff check clean.
+  Final CI next; no image authorization/flash. Phone remains healthy55c65bc7.
+
+- **2026-10-23: audio full CI PASS; final preflash review found concrete fixes.**
+  CI39969463181/source111c77af36ab491a37146804080bebfe2e99b7e5 succeeded,
+  260 generated patch targets match, kernel17892480B SHAa1ed8b70...fd03b1.
+  HAL artifact independently passes source/output hashes, arm64 ALL bundle,
+  iOS16 minimum, dependencies/factory/plist and actual package corruption tests.
+  Source package69560B SHA82253445...b4aa. Artifacts retained privately; this
+  candidate is deliberately not packed: subsequent review found inherited
+  exactI2S3 pins unnecessarily refused, fresh short PCM lost to stale idle
+  flush, and frozen DMA pointer undetected at actual2ms worker cadence.
+  User explicitly prioritizes thorough preflash review over time. Narrow fixes
+  and regression tests are integrating before one final CI. Error-only saved
+  MMIO snapshot/phase diagnostics added; live command logging suppressed during
+  playback. No new reads after failed hardware access. Hardware agent also
+  checking source-backed startup pointer/no-clock behavior. No audio image or
+  authorization yet; phone remains healthy55c65bc7 and entirely untouched.
+
 - **2026-10-23: first audio CI reached HAL compilation, verifier invocation fixed.**
   Source e7ed63229c8e3accc5c1fca4f3778e427e1d7d34, run39968346901 failed
   before kernel build: HAL compiled and plist lint passed, but lipo interpreted
