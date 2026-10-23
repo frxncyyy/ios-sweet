@@ -4,6 +4,25 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: exact scan-cancel image 55c65bc7 FLASHED; baseline test pending.**
+  Human call_c859b2996c9a44f5af0ba5ba18391406 says "autorizzo" for this exact
+  image and conditional 618/RAMADB recovery. Separate authorization.json saved
+  in research/nord2/wifi-ios-scan-cancel/ios. Guarded single-device/product/
+  partition/hash checks passed; boot-only flash and reboot OKAY at 15:22:49
+  Europe/Rome. One-use runner USED: never rerun. Current phone is 55c65bc7,
+  not 618. Rootexec98926 owns the bounded 600s native USB collector.
+  Boot-before-test snapshot 363711B SHA
+  2158e89eca359b50f8bc17d6c00ae57e7f756a5337cbd4530c9f657b4b890a1b;
+  all nine readers exit0, valid 1125x2436 iOS surfaces, real scan results and
+  no station fault. EP0 capture dhcp returned OK at 173768ms; join_ready1,
+  native error/halt0. Asked user to test baseline WPA2/IP/router/Safari once,
+  with private address disabled; no network switch or OFF yet. OFF/ON remains
+  UNVERIFIED. After baseline evidence, request one OFF/5s/ON cycle and observe
+  fresh scans, reconnection/Safari and responsiveness for 120s. If failed,
+  preserve logs and use already-authorized conditional 618/RAMADB recovery;
+  ask only for physical fastboot if needed, not duplicate approval.
+
+
 - **2026-10-23: scan-cancel image VERIFIED; exact human approval pending.**
   CI39957914679 attempt1 SUCCESS, exactsource73863296ab59112bc16b67582246886454c31225.
   All234 generated targets byte-match; genericARMv8.2 commands confirmed;
