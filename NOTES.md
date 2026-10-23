@@ -3,6 +3,33 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: complete speaker images PREPARED/VERIFIED; exact approval pending.**
+  Final source a04aa46ae2697707a68ede18eb545792f77a867f; full CI39973001578
+  SUCCESS, attempt1. Kernel17892512B SHA
+  beeaf56e3fb1fabd8d5dbe253d74ffa8600a69a41947e99c95d02099390842ac.
+  All260 generated patch targets match. Unmodified pinned HackiOS/Topaz HAL
+  artifact is byte-identical to independent metadata/package review.
+  Playback shim/out/nord2-xnu/nord2-ios-audio-playback-stop23.img33536000B,
+  SHA808a096755cd1a573312563b5dad3eb302a3721aa6506cd51065a578db760cd3,
+  spare18432B. Rollback nord2-ios-audio-rollback-stop23.img33525760B,
+  SHA0d1438ff3144dba6cf8e6ea81fbef3bfe211d8f26ea78ffde1841b95fa39782e,
+  spare28672B. Independent sequential reviews PASS: exact kernel/loader/Linux,
+  rescue ramdisk/headerDTB, Mach-O segments, command lines and ADT differences.
+  Playback adds only package+board; rollback ADT is exact baseline. Inputs
+  unchanged. Targeted ISA checks reject unsupported LDAPUR/STLUR; independent
+  objdump records1441 undecoded words, not a claim of exhaustive ISA decoding.
+  Stage research/nord2/audio/playback-20261023/ios contains prepared.json,
+  host/CI/image receipts, test plan, guarded run-authorized.py. No authorization
+  file exists, no runner execution marker/device action, phone remains55c65bc7.
+  Exact test must authorize BOTH boot flash and persistent iOS HAL installation
+  with original-directory backup, plus conditional rollback image/RAMADB.
+  Old55 alone cannot reverse HAL layout. No stock Android over iOS userdata.
+  Next after authorization/fastboot: guarded playback runner, collect USB,
+  inspect installer+audio status, quiet bounded tone then real app playback.
+  Speaker output only; physical sound unproven, gain limited256/32768. Mic and
+  telephony audio remain unimplemented. USB live controls permit repeat tests
+  after clean stops without flashing; uncertain hardware faults remain latched.
+
 - **2026-10-23: final audio review corrections integrated and tests PASS.**
   Exact inherited I2S3 pinmux is accepted only with existing cold-domain guards;
   exhaustive32768 mode/direction cases still reject foreign functions/GPIOoutputs.
