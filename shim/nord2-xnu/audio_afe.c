@@ -47,6 +47,103 @@ naf_pll_rate(uint32_t pcw, uint32_t postdiv_code)
 	return (uint32_t)((vco + postdiv - 1) / postdiv);
 }
 
+/* ---- inherited-state classification ---- */
+#define NAF_ST_AUDIO (1u << 21)      /* AUDIO_PWR_STA_MASK, pg.c:563 */
+#define NAF_ST_ADSP (1u << 22)       /* ADSP_PWR_STA_MASK, pg.c:564 */
+#define NAF_ADSP_MASK 0x227fu        /* RST_B..ISOINT_B, SLEEP_B, SLEEP_B_ACK (pg.c:267-273,573-574) */
+#define NAF_ADSP_OFF 0x0032u         /* pg.c:3382-3408 end state: ISO|CLK_DIS|SRAM_CKISO */
+#define NAF_ADSP_ON 0x224du          /* pg.c:3420-3458 end state: RST_B|ON|ON_2ND|ISOINT_B|SLEEP_B|ACK */
+#define NAF_TUNER_EN (1u << 5)       /* APLL2 tuner_en AP_PLL_CON3 bit5, clk-mt6885.c:2533 */
+
+unsigned
+naf_ownership(const uint32_t *s, struct naf_own *own)
+{
+	struct naf_own o = {0};
+	unsigned g = 0;
+	uint32_t st = s[NAU_S_PWR_STATUS], st2 = s[NAU_S_PWR_STATUS_2ND];
+	/* AUDIO: we perform its whole power transition, so only the exact source
+	 * power-down end state is accepted (pg.c:3282-3311): status21 clear,
+	 * ON/ON_2ND/RST_B clear, ISO/CLK_DIS/SRAM_PDN and its ack set. */
+	if (((st | st2) & NAF_ST_AUDIO) || (s[NAU_S_AUDIO_PWR_CON] & 0x111fu) != 0x1112u) {
+		g |= NAF_G_AUDIO_ON;
+	}
+	/* ADSP is a separate MTCMOS with its own protect bit3 (pg.c:507-510,
+	 * 3359-3467) and no PG parent relation to PG_AUDIO (pg.c:5001-5004).
+	 * Preserve either exact end state and never write it; a transition or
+	 * status/control disagreement means an unknown concurrent owner. */
+	uint32_t adsp = s[NAU_S_ADSP_PWR_CON] & NAF_ADSP_MASK;
+	if (!((st | st2) & NAF_ST_ADSP) && adsp == NAF_ADSP_OFF) {
+		o.adsp_on = 0;
+	} else if ((st & NAF_ST_ADSP) && (st2 & NAF_ST_ADSP) && adsp == NAF_ADSP_ON) {
+		o.adsp_on = 1;
+	} else {
+		g |= NAF_G_ADSP_ON;
+	}
+	/* The selected on-sequence releases protect bit4 after power-up and has
+	 * no precondition on it (pg.c:3314-3355); off sets it (pg.c:3271-3281).
+	 * Record the inherited value so stop can restore it after power-off. */
+	o.prot_clear = !(s[NAU_S_PROT2_STA1] & (1u << 4));
+	/* PG_AUDIO parents ifrao_audio / ifrao_audio26m (pg.c:5001-5003). */
+	o.ifr1_gated = !!(s[NAU_S_IFR1_CG] & (1u << 25));
+	o.ifr3_gated = !!(s[NAU_S_IFR3_CG] & (1u << 4));
+	/* audio_sel [25:24] pdn31, aud_intbus [1:0] pdn7, engen2 [1:0] pdn7,
+	 * aud_2 [0] pdn7 (clk-mt6885.c:1834-1844, 1922-1926, 1943-1947). All four
+	 * audio_sel parents exist (clk-mt6885.c:1031-1036); intbus has three. */
+	o.audio_gated = !!(s[NAU_S_CLK_CFG_7] & (1u << 31));
+	o.audio_parent = (uint8_t)((s[NAU_S_CLK_CFG_7] >> 24) & 3u);
+	o.intbus_gated = !!(s[NAU_S_CLK_CFG_8] & (1u << 7));
+	o.intbus_parent = (uint8_t)(s[NAU_S_CLK_CFG_8] & 3u);
+	o.engen2_gated = !!(s[NAU_S_CLK_CFG_12] & (1u << 7));
+	o.engen2_parent = (uint8_t)(s[NAU_S_CLK_CFG_12] & 3u);
+	o.aud2_gated = !!(s[NAU_S_CLK_CFG_13] & (1u << 7));
+	o.aud2_parent = (uint8_t)(s[NAU_S_CLK_CFG_13] & 1u);
+	if (o.intbus_parent > 2) { g |= NAF_G_MUX; }
+	/* APLL2 (clk-mt6885.c:2529-2534): unprepared end state of clk-pll.c:
+	 * 524-551 (en clear, ISO set, PWR_ON clear, tuner disabled), or a live
+	 * PLL (en set, PWR_ON set, ISO clear) at exactly the source rate. */
+	uint32_t con0 = s[NAU_S_APLL2_CON0], con4 = s[NAU_S_APLL2_CON4] & 3u;
+	uint32_t tuner_en = s[NAU_S_AP_PLL_CON3] & NAF_TUNER_EN;
+	if (!(con0 & 1u) && con4 == 2u && !tuner_en) {
+		o.apll2_borrowed = 0;
+		/* Cold prepare sequence reparents both consumers itself and needs
+		 * them gated on 26 MHz while the PLL is off. */
+		if (!o.engen2_gated || o.engen2_parent || !o.aud2_gated || o.aud2_parent) {
+			g |= NAF_G_MUX;
+		}
+	} else if ((con0 & 1u) && con4 == 1u) {
+		o.apll2_borrowed = 1;
+		if (naf_pll_rate(s[NAU_S_APLL2_CON2], (s[NAU_S_APLL2_CON1] >> 24) & 7u) != NAF_APLL2_HZ) {
+			g |= NAF_G_APLL2_RATE;
+		}
+		if (tuner_en && s[NAU_S_APLL2_TUNER] != s[NAU_S_APLL2_CON2] + 1u) {
+			g |= NAF_G_APLL2_TUNER; /* clk-pll.c:271-272 */
+		}
+		/* A consumer already on its playback parent is borrowed as-is; a
+		 * gated 26 MHz consumer is acquired. Any other live parent means a
+		 * foreign owner of that shared mux. */
+		if (!(o.aud2_parent == 1 || (o.aud2_gated && !o.aud2_parent))) { g |= NAF_G_MUX; }
+		if (!(o.engen2_parent == 2 || (o.engen2_gated && !o.engen2_parent))) { g |= NAF_G_MUX; }
+	} else {
+		g |= NAF_G_APLL2_ON;
+	}
+	if (own) { *own = o; }
+	return g;
+}
+
+uint32_t
+naf_own_mask(const struct naf_own *o)
+{
+	if (!o) { return 0; }
+	return NAF_OWN_VALID |
+	    (o->adsp_on ? NAF_OWN_ADSP_ON : 0) | (o->prot_clear ? NAF_OWN_PROT_CLEAR : 0) |
+	    (o->ifr1_gated ? 0 : NAF_OWN_IFR_AUDIO_ON) | (o->ifr3_gated ? 0 : NAF_OWN_IFR_26M_ON) |
+	    (o->apll2_borrowed ? NAF_OWN_APLL2_BORROWED : 0) |
+	    (o->audio_gated ? 0 : NAF_OWN_AUDIO_SEL_ON) | (o->intbus_gated ? 0 : NAF_OWN_INTBUS_ON) |
+	    (o->aud2_gated ? 0 : NAF_OWN_AUD2_ON) | (o->engen2_gated ? 0 : NAF_OWN_ENGEN2_ON) |
+	    ((uint32_t)o->audio_parent << 12) | ((uint32_t)o->intbus_parent << 14) |
+	    ((uint32_t)o->engen2_parent << 16) | ((uint32_t)o->aud2_parent << 18);
+}
+
 /* ---- gate ---- */
 /* Pins 32, 33, 35 (I2S3 BCK/LRCK/DO; GPIO34 = I2S0_DI is not touched). */
 #define NAF_PIN_MODE_MASK 0x0000f0ffu
@@ -63,51 +160,11 @@ naf_amp_ok(const struct naf_amp_evidence *a)
 static unsigned
 naf_gate_words(const uint32_t *s, const struct naf_amp_evidence amp[2])
 {
-	unsigned g = 0;
-	/* The PG path writes the entire keyed register. Refuse if that would
-	 * replace a distinct inherited high half. */
-	if (s[NAU_S_SPM_POWERON] != ((NAF_SPM_PROJECT_CODE << 16) | 1u)) {
-		/* Source keyed write is performed for each power transition. */
-	}
-	/* Cold MTCMOS: status bit21 clear; ON/ON_2ND/RST_B clear; ISO, CLK_DIS,
-	 * SRAM_PDN and its ack set (the power-down end state, pg.c:3282-3311). */
-	if (((s[NAU_S_PWR_STATUS] | s[NAU_S_PWR_STATUS_2ND]) & (1u << 21)) ||
-	    (s[NAU_S_AUDIO_PWR_CON] & 0x111fu) != 0x1112u) {
-		g |= NAF_G_AUDIO_ON;
-	}
-	/* pg.c:3370-3416 finishes ADSP off with CKISO/ISO/CLK_DIS set,
-	 * ISOINT_B/SLEEP_B/ACK/ON/ON_2ND/RST_B clear. Status alone can still
-	 * be zero while a power transition is in progress. */
-	if (((s[NAU_S_PWR_STATUS] | s[NAU_S_PWR_STATUS_2ND]) & (1u << 22)) ||
-	    (s[NAU_S_ADSP_PWR_CON] & 0x227fu) != 0x0032u) {
-		g |= NAF_G_ADSP_ON;
-	}
-	if (!(s[NAU_S_PROT2_STA1] & (1u << 4))) { g |= NAF_G_PROTECT; }
-	if (!(s[NAU_S_IFR1_CG] & (1u << 25)) || !(s[NAU_S_IFR3_CG] & (1u << 4))) { g |= NAF_G_INFRA; }
-	/* audio_sel pdn31 sel[25:24]; aud_intbus pdn7 [1:0]; engen2 pdn7 [1:0];
-	 * aud_2 pdn7 [0]: all gated and on parent 0 (26 MHz). */
-	if ((s[NAU_S_CLK_CFG_7] & ((1u << 31) | (3u << 24))) != (1u << 31) ||
-	    (s[NAU_S_CLK_CFG_8] & ((1u << 7) | 3u)) != (1u << 7) ||
-	    (s[NAU_S_CLK_CFG_12] & ((1u << 7) | 3u)) != (1u << 7) ||
-	    (s[NAU_S_CLK_CFG_13] & ((1u << 7) | 1u)) != (1u << 7)) {
-		g |= NAF_G_MUX;
-	}
-	/* APLL2 unprepared end state: CON0 en clear, CON4 ISO set/PWR_ON clear,
-	 * tuner enable (AP_PLL_CON3 bit5) clear (clk-pll.c:524-551). */
-	if ((s[NAU_S_APLL2_CON0] & 1u) || (s[NAU_S_APLL2_CON4] & 3u) != 2u ||
-	    (s[NAU_S_AP_PLL_CON3] & (1u << 5))) {
-		g |= NAF_G_APLL2_ON;
-	}
-	uint32_t code = 0, pcw = naf_pll_pcw(NAF_APLL2_HZ, &code);
-	if (((s[NAU_S_APLL2_CON1] >> 24) & 7u) != code || s[NAU_S_APLL2_CON2] != pcw) {
-		/* Program cold APLL2 rather than requiring bootloader rate. */
-	}
-	if (s[NAU_S_APLL2_TUNER] != s[NAU_S_APLL2_CON2] + 1u) { /* Reprogram tuner along with PCW. */ }
-	/* Cold AUDIO/ADSP and gated clocks were checked above. GPIO mode0
-	 * inputs are idle; function1 is exactly our quiescent I2S3 peripheral
-	 * (pinctrl-mtk-mt6885.h377-418). GPIO DIR is irrelevant in function1.
-	 * Keep rejecting GPIO outputs and every alternate peripheral function;
-	 * this does not authorize takeover of I2S1/I2S5/PCM/I2S0. */
+	unsigned g = naf_ownership(s, 0);
+	/* GPIO mode0 inputs are idle; function1 is exactly our quiescent I2S3
+	 * peripheral (pinctrl-mtk-mt6885.h377-418). GPIO DIR is irrelevant in
+	 * function1. Keep rejecting GPIO outputs and every alternate peripheral
+	 * function; this does not authorize takeover of I2S1/I2S5/PCM/I2S0. */
 	static const unsigned pins[3]={0,1,3};
 	for (unsigned i=0;i<3;i++) {
 		unsigned mode=(s[NAU_S_MODE_32]>>(4*pins[i]))&15u;
@@ -129,7 +186,9 @@ naf_gate(const struct nau_state *st, const struct naf_amp_evidence amp[2])
 	return g;
 }
 
-/* Gate/verify registers and the fields this component may change. */
+/* Gate/verify registers and the fields this component may change or depends
+ * on. Every borrowed field is restored to, and re-verified against, the boot
+ * snapshot; ADSP and audio_h are watched read-only for a concurrent owner. */
 static const struct {
 	uint8_t idx;
 	uint32_t mask;
@@ -146,6 +205,7 @@ static const struct {
 	{NAU_S_CLK_CFG_8, (1u << 7) | 3u},
 	{NAU_S_CLK_CFG_12, (1u << 7) | 3u},
 	{NAU_S_CLK_CFG_13, (1u << 7) | 1u},
+	{NAU_S_CLK_CFG_15, (1u << 7) | 3u},   /* audio_h, read-only (clk-mt6885.c:1985-1989) */
 	{NAU_S_AP_PLL_CON3, 1u << 5},
 	{NAU_S_APLL2_TUNER, 0xffffffffu},
 	{NAU_S_APLL2_CON0, 1u},
@@ -158,6 +218,7 @@ static const struct {
 	{NAU_S_LT_PU32, NAF_PIN_LT_MASK},
 };
 #define NAF_WATCH (sizeof(naf_watch) / sizeof(naf_watch[0]))
+_Static_assert(NAF_WATCH <= 32, "verify_mismatch is a 32-bit mask");
 
 /* ---- allowlists ---- */
 int
@@ -228,16 +289,29 @@ naf_emit(struct naf_builder *b, unsigned kind, unsigned phase, uint32_t pa, uint
 #define POLL(ph, pa, m, v, n, us) naf_emit(b, NAF_POLL, (ph), (pa), (m), (v), (n), (us))
 #define DLY(ph, us) naf_emit(b, NAF_DELAY, (ph), 0, 0, 0, (us), 0)
 
+/* clk-mux.c:178-224 mtk_clk_mux_set_parent_setclr_lock: only when the field
+ * differs, write CLR(field mask), SET(index << shift), then the update bit.
+ * No completion handshake exists in the selected source. */
 static void
-naf_build_up(struct naf_builder *b)
+naf_reparent(struct naf_builder *b, unsigned ph, uint32_t cfg, uint32_t field, unsigned shift,
+    unsigned index, unsigned update)
+{
+	WR(ph, NAF_TOP_CLR(cfg), field);
+	WR(ph, NAF_TOP_SET(cfg), (uint32_t)index << shift);
+	WR(ph, NAF_TOP_UPDATE1, 1u << update);
+}
+
+static void
+naf_build_up(struct naf_builder *b, const struct naf_own *o)
 {
 	const uint32_t poweron = (NAF_SPM_PROJECT_CODE << 16) | 1u;
 	/* 1. PG_AUDIO parents (pg.c:5001-5003), then MTCMOS on (pg.c:3314-3355).
 	 * Mux enable writes the CLR alias (clk-mux.c:78-98); infra CG enable
-	 * writes the CLR alias (clk-mt6885.c:2115-2131). */
-	WR(NAF_PH_POWER, NAF_TOP_CLR(NAF_TOP_CFG8), 1u << 7);   /* aud_intbus_sel */
-	WR(NAF_PH_POWER, NAF_IFR_CG3_CLR, 1u << 4);             /* ifrao_audio26m */
-	WR(NAF_PH_POWER, NAF_IFR_CG1_CLR, 1u << 25);            /* ifrao_audio */
+	 * writes the CLR alias (clk-mt6885.c:2115-2131). An inherited ungated
+	 * parent is already enabled and is borrowed: no write. */
+	if (o->intbus_gated) { WR(NAF_PH_POWER, NAF_TOP_CLR(NAF_TOP_CFG8), 1u << 7); } /* aud_intbus_sel */
+	if (o->ifr3_gated) { WR(NAF_PH_POWER, NAF_IFR_CG3_CLR, 1u << 4); }             /* ifrao_audio26m */
+	if (o->ifr1_gated) { WR(NAF_PH_POWER, NAF_IFR_CG1_CLR, 1u << 25); }            /* ifrao_audio */
 	WR(NAF_PH_POWER, NAF_SPM_POWERON, poweron);
 	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 2, 1u << 2); /* PWR_ON */
 	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 3, 1u << 3); /* PWR_ON_2ND */
@@ -249,12 +323,18 @@ naf_build_up(struct naf_builder *b)
 	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 8, 0);        /* SRAM_PDN */
 	POLL(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 12, 0, 1000, 10);
 	WR(NAF_PH_POWER, NAF_IFR_PROT2_CLR, 1u << 4);
-	/* Source ignores this ack (pg.c:3351-3353); waiting is strictly safer. */
+	/* Source ignores this ack (pg.c:3351-3353); waiting is strictly safer.
+	 * Already clear when the inherited protection was released. */
 	POLL(NAF_PH_POWER, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
 
-	/* 2. mt6885_afe_enable_clock (afe-clk.c:212-279): audio_sel on (parent
-	 * already 26 MHz per gate), aud_afe gate (audsys no_setclr, bit2). */
-	WR(NAF_PH_AFECLK, NAF_TOP_CLR(NAF_TOP_CFG7), 1u << 31);
+	/* 2. mt6885_afe_enable_clock (afe-clk.c:212-279): audio_sel enabled and
+	 * reparented to clk26m (:240-253), aud_intbus enabled (PG step above) and
+	 * reparented to clk26m (:255-262); audio_h already selects apll2_ck in
+	 * every accepted state and only feeds hires gates (audsys.c:113-130), so
+	 * it is watched, never written. Then aud_afe gate (audsys no_setclr, bit2). */
+	if (o->audio_gated) { WR(NAF_PH_AFECLK, NAF_TOP_CLR(NAF_TOP_CFG7), 1u << 31); }
+	if (o->audio_parent) { naf_reparent(b, NAF_PH_AFECLK, NAF_TOP_CFG7, 3u << 24, 24, 0, 0); }
+	if (o->intbus_parent) { naf_reparent(b, NAF_PH_AFECLK, NAF_TOP_CFG8, 3u, 0, 0, 1); }
 	RMW(NAF_PH_AFECLK, NAF_AFE_TOP_CON0, 1u << 2, 0);
 	/* 3. runtime resume (pcm.c:3466-3474): CPU_HD_ALIGN 0, 24-bit ports, AFE_ON. */
 	RMW(NAF_PH_AFE, NAF_AFE_MEMIF_CON0, 1u << 1, 0);
@@ -262,7 +342,7 @@ naf_build_up(struct naf_builder *b)
 	WR(NAF_PH_AFE, NAF_AFE_CONN_24BIT_1, 0xffffffffu);
 	RMW(NAF_PH_AFE, NAF_AFE_DAC_CON0, 1u << 0, 1u << 0);
 
-	/* 4. I2S3 BE hw_params: 48 kHz, I2S format, 16-bit (dai-i2s.c:1803-1808). */
+	/* 4. I2S3 BE hw_params: 48 kHz, I2S format, 32-bit WLEN (dai-i2s.c:1803-1808). */
 	RMW(NAF_PH_I2S_CFG, NAF_AFE_I2S_CON3, 0xffffeffeu,
 	    (NAF_RATE_48K << 8) | (1u << 3) | (1u << 1));
 
@@ -283,45 +363,62 @@ naf_build_up(struct naf_builder *b)
 	RMW(NAF_PH_DL1_CFG, NAF_AFE_MEMIF_CON0, 1u << 2, 0);
 	naf_emit(b, NAF_FILL, NAF_PH_DL1_CFG, NAF_SRAM, 0, 0, NAF_SRAM_BYTES, 0);
 
-	/* 6. APLL2 supply = mt6885_apll2_enable (afe-clk.c:421-451):
-	 * aud_2_sel enable, PLL prepare (clk-pll.c:426-459: CON4 PWR_ON, 1 us,
-	 * ISO off, 1 us, CON0 en + EN_BIT_CTRL bit0, tuner en AP_PLL_CON3 bit5,
-	 * 20 us; no RST_BAR flag), reparent to apll2_ck (clk-mux.c:178-216),
-	 * aud_engen2 on apll2_d4, aud_24m/aud_apll2_tuner gates, AFE tuner cfg,
-	 * 24M engine. No PCW/postdiv/tuner-value write: gate checked them. */
-	/* clk-pll.c:245-279 set_rate_regs, cold ownership required by gate.
-	 * APLL2 pcw_chg_addr defaults to base+CON1 (line613), bit31.
-	 * Tuner is disabled during all three writes and enabled at prepare. */
-	uint32_t pd = 0, pcw = naf_pll_pcw(NAF_APLL2_HZ, &pd);
-	RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
-	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24);
-	WR(NAF_PH_APLL2, NAF_APM_APLL2_CON2, pcw);
-	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
-	WR(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, pcw + 1u);
-	DLY(NAF_PH_APLL2, 20);
-	POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24, 1, 0);
-	POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON2, 0xffffffffu, pcw, 1, 0);
-	POLL(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, 0xffffffffu, pcw + 1u, 1, 0);
-	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 7);
-	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 0, 1u << 0);
-	DLY(NAF_PH_APLL2, 1);
-	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 1, 0);
-	DLY(NAF_PH_APLL2, 1);
-	RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON0, 1u << 0, 1u << 0);
-	RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 1u << 5);
-	DLY(NAF_PH_APLL2, 20);
-	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
-	WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 0); /* index 1 apll2_ck */
-	WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 21);           /* TOP_MUX_AUD_2_SHIFT */
-	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 1u << 7);
-	WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
-	WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG12), 2u);      /* index 2 apll2_d4 */
-	WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 17);           /* TOP_MUX_AUD_ENGEN2_SHIFT */
-	RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 9, 0);        /* aud_24m */
-	RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 18, 0);       /* aud_apll2_tuner */
-	RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 0x0000fff7u, 0x00000374u);
-	RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 1u, 1u);
-	RMW(NAF_PH_APLL2, NAF_AFE_HD_ENGEN, 1u << 1, 1u << 1);  /* AFE_24M_ON */
+	/* 6. APLL2 supply = mt6885_apll2_enable (afe-clk.c:421-451). */
+	if (!o->apll2_borrowed) {
+		/* Cold PLL: aud_2_sel enable, PLL prepare (clk-pll.c:426-459: CON4
+		 * PWR_ON, 1 us, ISO off, 1 us, CON0 en + EN_BIT_CTRL bit0, tuner en
+		 * AP_PLL_CON3 bit5, 20 us; no RST_BAR flag), reparent to apll2_ck
+		 * (clk-mux.c:178-216), aud_engen2 on apll2_d4, aud_24m /
+		 * aud_apll2_tuner gates, AFE tuner cfg, 24M engine.
+		 * clk-pll.c:245-279 set_rate_regs, cold ownership required by gate.
+		 * APLL2 pcw_chg_addr defaults to base+CON1 (line613), bit31.
+		 * Tuner is disabled during all three writes and enabled at prepare. */
+		uint32_t pd = 0, pcw = naf_pll_pcw(NAF_APLL2_HZ, &pd);
+		RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
+		RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24);
+		WR(NAF_PH_APLL2, NAF_APM_APLL2_CON2, pcw);
+		RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
+		WR(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, pcw + 1u);
+		DLY(NAF_PH_APLL2, 20);
+		POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON1, 7u << 24, pd << 24, 1, 0);
+		POLL(NAF_PH_APLL2, NAF_APM_APLL2_CON2, 0xffffffffu, pcw, 1, 0);
+		POLL(NAF_PH_APLL2, NAF_APM_APLL2_TUNER, 0xffffffffu, pcw + 1u, 1, 0);
+		WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 7);
+		RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 0, 1u << 0);
+		DLY(NAF_PH_APLL2, 1);
+		RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON4, 1u << 1, 0);
+		DLY(NAF_PH_APLL2, 1);
+		RMW(NAF_PH_APLL2, NAF_APM_APLL2_CON0, 1u << 0, 1u << 0);
+		RMW(NAF_PH_APLL2, NAF_APM_AP_PLL_CON3, 1u << 5, 1u << 5);
+		DLY(NAF_PH_APLL2, 20);
+		WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
+		WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 0); /* index 1 apll2_ck */
+		WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 21);           /* TOP_MUX_AUD_2_SHIFT */
+		WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 1u << 7);
+		WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
+		WR(NAF_PH_APLL2, NAF_TOP_SET(NAF_TOP_CFG12), 2u);      /* index 2 apll2_d4 */
+		WR(NAF_PH_APLL2, NAF_TOP_UPDATE1, 1u << 17);           /* TOP_MUX_AUD_ENGEN2_SHIFT */
+		RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 9, 0);        /* aud_24m */
+		RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 18, 0);       /* aud_apll2_tuner */
+		RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 0x0000fff7u, 0x00000374u);
+		RMW(NAF_PH_APLL2, NAF_AFE_APLL2_TCFG, 1u, 1u);
+		RMW(NAF_PH_APLL2, NAF_AFE_HD_ENGEN, 1u << 1, 1u << 1);  /* AFE_24M_ON */
+	} else {
+		/* Live APLL2 at exactly 196.608 MHz is borrowed: no PCW/postdiv/
+		 * power/enable/tuner_en write and never a power-down. Its consumers
+		 * are enabled/reparented only if needed (apll2_mux_setting,
+		 * afe-clk.c:149-184), normally no write at all. The AFE tuner loop
+		 * (aud_apll2_tuner + AFE_APLL2_TUNER_CFG) only steers the PLL via the
+		 * apmixed tuner_en we do not own, so it stays off; the PLL then runs
+		 * at plain PCW (-0.00025 ppm). aud_24m and AFE_24M_ON are the AFE-
+		 * local gates that bring apll2_d4 into the engine (audsys.c:80-81). */
+		if (o->aud2_gated) { WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 7); }
+		if (o->aud2_parent != 1) { naf_reparent(b, NAF_PH_APLL2, NAF_TOP_CFG13, 1u, 0, 1, 21); }
+		if (o->engen2_gated) { WR(NAF_PH_APLL2, NAF_TOP_CLR(NAF_TOP_CFG12), 1u << 7); }
+		if (o->engen2_parent != 2) { naf_reparent(b, NAF_PH_APLL2, NAF_TOP_CFG12, 3u, 0, 2, 17); }
+		RMW(NAF_PH_APLL2, NAF_AFE_TOP_CON0, 1u << 9, 0);        /* aud_24m */
+		RMW(NAF_PH_APLL2, NAF_AFE_HD_ENGEN, 1u << 1, 1u << 1);  /* AFE_24M_ON */
+	}
 
 	/* 7. I2S3_HD_EN (Oplus connects it: dai-i2s.c:1036-1056, 908-911), pins
 	 * to function 1 with bias disabled (DT:1737-1757; SMT group skipped),
@@ -343,7 +440,7 @@ naf_build_up(struct naf_builder *b)
 }
 
 static void
-naf_build_down(struct naf_builder *b, const uint32_t *s)
+naf_build_down(struct naf_builder *b, const uint32_t *s, const struct naf_own *o)
 {
 	const uint32_t poweron = (NAF_SPM_PROJECT_CODE << 16) | 1u;
 	/* DL1 off (fe-dai.c:631-644), interconnect off. */
@@ -359,33 +456,54 @@ naf_build_down(struct naf_builder *b, const uint32_t *s)
 	RMW(NAF_PH_I2S_OFF, NAF_AFE_I2S_CON3, 1u << 12, 0);
 	/* mt6885_apll2_disable (afe-clk.c:463-477), apll2_mux_setting(false)
 	 * (:185-205), PLL unprepare (clk-pll.c:524-551). */
-	RMW(NAF_PH_APLL2_OFF, NAF_AFE_HD_ENGEN, 1u << 1, 0);
-	RMW(NAF_PH_APLL2_OFF, NAF_AFE_APLL2_TCFG, 1u, 0);
-	RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 18, 1u << 18);
-	RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 9, 1u << 9);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 0);    /* index 0, as source writes */
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 17);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 1u << 7);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 0);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 21);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON0, 1u << 0, 0);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 1, 1u << 1);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 0, 0);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 7u << 24, s[NAU_S_APLL2_CON1]);
-	WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON2, s[NAU_S_APLL2_CON2]);
-	RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
-	WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_TUNER, s[NAU_S_APLL2_TUNER]);
-	DLY(NAF_PH_APLL2_OFF, 20);
-	WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 7);
-	/* runtime suspend (pcm.c:3411-3421), then disable_clock (afe-clk.c:300-314). */
+	if (!o->apll2_borrowed) {
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_HD_ENGEN, 1u << 1, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_APLL2_TCFG, 1u, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 18, 1u << 18);
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 9, 1u << 9);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG12), 3u);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 0);    /* index 0, as source writes */
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 17);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 1u << 7);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_CLR(NAF_TOP_CFG13), 1u << 0);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 0);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_UPDATE1, 1u << 21);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_AP_PLL_CON3, 1u << 5, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON0, 1u << 0, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 1, 1u << 1);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON4, 1u << 0, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 7u << 24, s[NAU_S_APLL2_CON1]);
+		WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON2, s[NAU_S_APLL2_CON2]);
+		RMW(NAF_PH_APLL2_OFF, NAF_APM_APLL2_CON1, 1u << 31, 1u << 31);
+		WR(NAF_PH_APLL2_OFF, NAF_APM_APLL2_TUNER, s[NAU_S_APLL2_TUNER]);
+		DLY(NAF_PH_APLL2_OFF, 20);
+		WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 7);
+	} else {
+		/* Borrowed PLL keeps running. Release only the AFE-local gates we
+		 * opened; consumers return to their exact inherited parent/gate, in
+		 * the source order engen2 then aud_2 (afe-clk.c:186-204). */
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_HD_ENGEN, 1u << 1, 0);
+		RMW(NAF_PH_APLL2_OFF, NAF_AFE_TOP_CON0, 1u << 9, 1u << 9);
+		if (o->engen2_parent != 2) {
+			naf_reparent(b, NAF_PH_APLL2_OFF, NAF_TOP_CFG12, 3u, 0, o->engen2_parent, 17);
+		}
+		if (o->engen2_gated) { WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG12), 1u << 7); }
+		if (o->aud2_parent != 1) {
+			naf_reparent(b, NAF_PH_APLL2_OFF, NAF_TOP_CFG13, 1u, 0, o->aud2_parent, 21);
+		}
+		if (o->aud2_gated) { WR(NAF_PH_APLL2_OFF, NAF_TOP_SET(NAF_TOP_CFG13), 1u << 7); }
+	}
+	/* runtime suspend (pcm.c:3411-3421), then disable_clock (afe-clk.c:300-314):
+	 * aud_afe gate, audio_sel back to its inherited parent and gate. */
 	RMW(NAF_PH_AFE_OFF, NAF_AFE_DAC_CON0, 1u << 0, 0);
 	POLL(NAF_PH_AFE_OFF, NAF_AFE_DAC_MON, 1u << 0, 0, 500, 20);
 	RMW(NAF_PH_AFE_OFF, NAF_AFE_TOP_CON0, 1u << 2, 1u << 2);
-	WR(NAF_PH_AFE_OFF, NAF_TOP_SET(NAF_TOP_CFG7), 1u << 31);
-	/* MTCMOS off (pg.c:3267-3313), then the PG parents in reverse. */
+	if (o->audio_parent) {
+		naf_reparent(b, NAF_PH_AFE_OFF, NAF_TOP_CFG7, 3u << 24, 24, o->audio_parent, 0);
+	}
+	if (o->audio_gated) { WR(NAF_PH_AFE_OFF, NAF_TOP_SET(NAF_TOP_CFG7), 1u << 31); }
+	/* MTCMOS off (pg.c:3267-3313); protection is required set for the SRAM/
+	 * ISO steps regardless of the inherited value. */
 	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, poweron);
 	WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_SET, 1u << 4);
 	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 1u << 4, 1000, 10);
@@ -398,9 +516,21 @@ naf_build_down(struct naf_builder *b, const uint32_t *s)
 	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 3, 0);
 	POLL(NAF_PH_POWER_OFF, NAF_SPM_PWR_STATUS, 1u << 21, 0, 1000, 10);
 	POLL(NAF_PH_POWER_OFF, NAF_SPM_PWR_STATUS2, 1u << 21, 0, 1000, 10);
-	WR(NAF_PH_POWER_OFF, NAF_IFR_CG1_SET, 1u << 25);
-	WR(NAF_PH_POWER_OFF, NAF_IFR_CG3_SET, 1u << 4);
-	WR(NAF_PH_POWER_OFF, NAF_TOP_SET(NAF_TOP_CFG8), 1u << 7);
+	/* Domain is off and isolated: return protect bit4 (only) to the state the
+	 * whole boot ran with, as the selected on-path releases it (pg.c:3349). */
+	if (o->prot_clear) {
+		WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_CLR, 1u << 4);
+		POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
+	}
+	/* PG parents in reverse (pg.c:5001-5003): intbus to its inherited parent
+	 * (afe-clk.c:308 also reparents before disable), then re-gate only what
+	 * we ungated. Borrowed gates stay open. */
+	if (o->intbus_parent) {
+		naf_reparent(b, NAF_PH_POWER_OFF, NAF_TOP_CFG8, 3u, 0, o->intbus_parent, 1);
+	}
+	if (o->ifr1_gated) { WR(NAF_PH_POWER_OFF, NAF_IFR_CG1_SET, 1u << 25); }
+	if (o->ifr3_gated) { WR(NAF_PH_POWER_OFF, NAF_IFR_CG3_SET, 1u << 4); }
+	if (o->intbus_gated) { WR(NAF_PH_POWER_OFF, NAF_TOP_SET(NAF_TOP_CFG8), 1u << 7); }
 	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, (NAF_SPM_PROJECT_CODE << 16) | (s[NAU_S_SPM_POWERON] & 1u));
 }
 #undef RMW
@@ -466,9 +596,10 @@ naf_build(const struct nau_state *st, const struct naf_amp_evidence amp[2], stru
 	if (!p) { return -1; }
 	p->n_up = p->n_down = 0;
 	if (naf_gate(st, amp)) { return -1; }
+	(void)naf_ownership(st->snap, &p->own);
 	struct naf_builder up = {p->up, 0, 0}, down = {p->down, 0, 0};
-	naf_build_up(&up);
-	naf_build_down(&down, st->snap);
+	naf_build_up(&up, &p->own);
+	naf_build_down(&down, st->snap, &p->own);
 	if (up.overflow || down.overflow || !naf_plan_valid(p->up, up.n) ||
 	    !naf_plan_valid(p->down, down.n)) {
 		return -1;
@@ -654,7 +785,9 @@ naf_cycle(const struct naf_io *o, void *c, const struct nau_state *st,
 	return 0;
 }
 
-/* Continuous streaming interface. Caller is the sole worker and holds plan. */
+/* Continuous streaming interface. Caller is the sole worker and holds plan.
+ * Every open re-reads all watched fields; any drift from the boot snapshot
+ * (another owner, or an unverified earlier stop) refuses before any write. */
 int naf_stream_open(const struct naf_io *o, void *c, const struct nau_state *snap,
     const struct naf_amp_evidence amp[2], struct naf_plan *plan, struct naf_state *s)
 {
@@ -663,8 +796,12 @@ int naf_stream_open(const struct naf_io *o, void *c, const struct nau_state *sna
     s->gate = naf_gate(snap, amp);
     if (s->gate) { s->failure = NAF_FAIL_GATE; return -1; }
     uint32_t live[NAU_SNAP_COUNT]; unsigned drift = 0;
-    if (naf_live(o, c, s, snap->snap, live, &drift) || drift) { s->failure = NAF_FAIL_LIVE; return -1; }
-    if (naf_build(snap, amp, plan) || !plan->n_up || plan->up[plan->n_up-1].kind != NAF_OBSERVE) return -1;
+    if (naf_live(o, c, s, snap->snap, live, &drift) || drift) {
+        s->verify_mismatch = drift; s->failure = NAF_FAIL_LIVE; return -1;
+    }
+    if (naf_build(snap, amp, plan) || !plan->n_up || plan->up[plan->n_up-1].kind != NAF_OBSERVE) {
+        s->failure = NAF_FAIL_PLAN; return -1;
+    }
     s->entered = 1;
     int rc = naf_exec(o, c, s, plan->up, plan->n_up-1, &s->up_done);
     if (rc) { s->uncertain = 1; s->error = rc; return rc; }
@@ -679,7 +816,7 @@ int naf_stream_close(const struct naf_io *o, void *c, const struct nau_state *sn
     if (rc) { s->uncertain = 1; return rc; }
     uint32_t live[NAU_SNAP_COUNT]; unsigned mismatch = 0;
     if (naf_live(o, c, s, snap->snap, live, &mismatch) || mismatch) {
-        s->verify_mismatch = mismatch; s->uncertain = 1; return -2;
+        s->verify_mismatch = mismatch; s->failure = NAF_FAIL_VERIFY; s->uncertain = 1; return -2;
     }
     s->active = 0;
     return 0;

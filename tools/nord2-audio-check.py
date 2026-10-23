@@ -4,6 +4,8 @@ from pathlib import Path
 import argparse,subprocess,tempfile,importlib.util,plistlib,struct
 R=Path(__file__).resolve().parents[1]
 S=R/'shim/nord2-xnu';T=R/'tests/nord2-audio'
+INHERITED=['cycles','mixed','refuse-rate','refuse-status','refuse-adsp','refuse-coldmux',
+ 'drift-audioh','drift-adsp','powerup-timeout','protect-timeout','ampe']
 def main():
  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--board',type=Path);a=ap.parse_args()
  flags=['clang','-std=c11','-DNORD2','-O1','-g','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-misleading-indentation','-fsanitize=address,undefined','-fno-sanitize-recover=all','-I'+str(S),'-I'+str(T)]
@@ -19,12 +21,24 @@ def main():
    ('install',[T/'test-flow.c'],['-lcrypto'],[]),
    ('package',[T/'test-package.c'],['-lcrypto'],[d/'test.pkg'])]
   modules=[S/(n+'.c')for n in ['audio_hw','audio_afe','audio_id','audio_i2c8','audio_amp','audio_board']]
-  cases.extend([('stream',[T/'test-stream.c']+modules,[],[]),('i2c',[T/'test-i2c.c',S/'audio_i2c8.c',S/'audio_board.c'],[],[])])
-  if a.board:cases.append(('hardware',[T/'test-full.c']+modules,[],[a.board.resolve()]))
+  cases.extend([('stream',[T/'test-stream.c']+modules,[],[]),('i2c',[T/'test-i2c.c',S/'audio_i2c8.c',S/'audio_board.c'],[],[]),
+   ('plan-dump',[T/'plan-dump.c',S/'audio_afe.c',S/'audio_id.c'],[],[])])
+  # Real 8e6697a2 inherited boot snapshot: pure classification and plans.
+  for case in ['classify','plan']:
+   cases.append(('inherited-'+case,[T/'test-inherited.c']+modules,[],[case]))
+  if a.board:
+   cases.append(('hardware',[T/'test-full.c']+modules,[],[a.board.resolve()]))
+   for case in INHERITED:
+    cases.append(('inherited-'+case,[T/'test-inherited.c']+modules,[],[case,a.board.resolve()]))
+  built={}
   for name,files,link,args in cases:
-   exe=d/name;subprocess.run(flags+[str(p)for p in files]+link+['-o',str(exe)],check=True)
-   subprocess.run([str(exe)]+[str(x)for x in args],check=True)
+   key=tuple(map(str,files))+tuple(link)
+   exe=built.get(key)
+   if not exe:
+    exe=d/name;subprocess.run(flags+[str(p)for p in files]+link+['-o',str(exe)],check=True);built[key]=exe
+   subprocess.run([str(exe)]+[str(x)for x in args],check=True,stdout=subprocess.DEVNULL if name=='plan-dump' else None)
  subprocess.run(['python3',str(T/'test_live_cli.py')],check=True)
  subprocess.run(['python3',str(T/'test_ready.py')],check=True)
+ subprocess.run(['python3',str(T/'test_device_deadline.py')],check=True)
  print('PASS software models/ABI only; physical sound remains unverified')
 if __name__=='__main__':main()

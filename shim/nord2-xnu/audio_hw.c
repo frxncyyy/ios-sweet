@@ -195,6 +195,8 @@ static int amps_prepare(struct nau_hw *h)
  if (rc) goto fail;
  for (unsigned i=0;i<2;i++) {
   h->status.amp_revision[i]=h->amps[i].rev;
+  /* Post-reset SYS_CONTROL0 for the saved log: PWDN bit0, AMPE bit3. */
+  h->status.amp_status[i]=h->amps[i].sys0;
   if (h->amps[i].cls!=NA8_SUPPORTED) { rc=NAH_E_AMPS; goto fail; }
   h->evidence[i]=(struct naf_amp_evidence){1,1,h->amps[i].pwdn,h->amps[i].ampe,h->amps[i].manstate};
  }
@@ -218,10 +220,17 @@ int nau_hw_init(struct nau_hw *h,const struct nah_io *io,void *cookie,const stru
   }
   h->snapshot.snap_read++;
  }
+ /* Pure decode of the inherited tree for the log; plans derive it again. */
+ struct naf_own own;
+ (void)naf_ownership(h->snapshot.snap,&own);
+ h->status.ownership=naf_own_mask(&own);
  int rc=amps_prepare(h);
  if (rc) return h->status.error=rc;
  h->status.gate=naf_gate(&h->snapshot,h->evidence);
- if (h->status.gate) { (void)reset_restore(h); return h->status.error=NAH_E_COLD; }
+ if (h->status.gate) {
+  (void)reset_restore(h);
+  return h->status.error= h->status.gate==NAF_G_AMPS ? NAH_E_AMPS:NAH_E_COLD;
+ }
  h->status.initialized=1;
  return h->status.error=0;
 }
@@ -408,6 +417,7 @@ void nau_hw_status(const struct nau_hw *h,struct nah_status *out)
   out->afe_phase=h->afe.phase; out->afe_op=h->afe.op;
   out->i2c_stage=h->bus.stage; out->i2c_failure=h->bus.failure;
   out->last_pa=h->afe.last_pa;
+  out->i2c_last_pa=h->bus.last_addr; out->i2c_last_value=h->bus.last_value;
  }
 }
 #endif

@@ -96,20 +96,37 @@ static void snapshot(struct nal_snapshot *out) {
  lck_mtx_unlock(&nsa_lock);
 }
 static void diagnose(const char *where,int reason,unsigned initial) {
- /* Saved evidence only: never read hardware again after a failed access. */
+ /* Saved evidence only: never read hardware again after a failed access.
+  * Trailing fields: last I2C8 register/value, inherited ownership summary,
+  * per-amp saved status (post-reset SYS_CONTROL0 after probe). */
  struct nah_status saved;nau_hw_status(&hardware,&saved);
  const struct nah_status *h=&saved;
- printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u\n",
+ printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u i2cpa=%x i2cv=%x own=%x st=%04x/%04x\n",
   where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
-  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain);
+  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain,
+  h->i2c_last_pa,h->i2c_last_value,h->ownership,h->amp_status[0],h->amp_status[1]);
  if(initial)for(unsigned i=0;i<hardware.snapshot.snap_read && i<NAU_SNAP_COUNT;i++)
   printf("NORD2 AUDIO SNAP: index=%u pa=%x value=%x\n",i,nau_snapshot_pa[i],hardware.snapshot.snap[i]);
 }
 static int start(unsigned silent,unsigned duration) {
- int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,now_us());
+ uint64_t begin=now_us();
+ int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,begin);
+ if(!e && duration) {
+  /* Hardware startup is bounded but may include reset, board and clock
+   * waits. Count the diagnostic interval only after successful startup;
+   * a one-second test must not expire while still starting. The lower
+   * layer already validated duration<=NAH_MAX_TEST_US before mutations. */
+  uint64_t active=now_us();
+  if(active<begin || active>UINT64_MAX-duration) {
+   hardware.status.error=e=NAH_E_DEADLINE;
+   (void)nau_hw_stop(&hardware); /* Preserve stop_error/uncertainty evidence. */
+  } else hardware.deadline_us=active+duration;
+ }
  if(!e)device.starts++;
- printf("NORD2 AUDIO: start=%d silent=%u duration=%u gate=%u amp=%04x/%04x\n",
- e,silent,duration,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
+ /* Never stall the running two-ms DMA feeder on synchronous console IO. */
+ if(!hardware.status.running)
+  printf("NORD2 AUDIO: start=%d silent=%u duration=%u gate=%u amp=%04x/%04x\n",
+   e,silent,duration,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
  if(e)diagnose("start",e,1);
  return e;
 }
@@ -182,6 +199,9 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
  if(e)hardware.status.error=e;
  printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
  hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
+ /* Inherited acquire/borrow decode of the boot snapshot (NAF_OWN_*). */
+ printf("NORD2 AUDIO OWN: own=%x st=%04x/%04x\n",hardware.status.ownership,
+ hardware.status.amp_status[0],hardware.status.amp_status[1]);
  if(e)diagnose("init",e,1);
  for(;;) {
   commands();

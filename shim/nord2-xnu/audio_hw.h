@@ -50,6 +50,9 @@ struct nah_status {
  uint32_t current_pa, consumed_frames, queued_frames, fed_frames;
  uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
  uint16_t amp_revision[2], amp_status[2];
+ /* Saved-state diagnostics only: naf_own_mask of the boot snapshot and the
+  * last I2C8 register/value the transport touched (no extra MMIO). */
+ uint32_t ownership, i2c_last_pa, i2c_last_value;
 };
 struct nau_hw {
  struct nah_io io; void *cookie; uintptr_t owner;
@@ -67,9 +70,13 @@ struct nau_hw {
  unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
 };
 /* h must be static/heap, zeroed once per boot; never place on kernel stack.
- * init snapshots original reset GPIO111/148 fields, checks coldAFE and idlebus,
- * then source reset pulse high5ms/low5ms when pinsareGPIO. Stop restores saved
- * direction/latch fields; no controller reset or bitbang ever occurs. */
+ * init snapshots original reset GPIO111/148 fields and the inherited clock/
+ * power tree, classifies acquired vs borrowed shared state (naf_ownership),
+ * checks idle bus, then source reset pulse high5ms/low5ms when pins are GPIO.
+ * Stop restores saved direction/latch fields and every borrowed clock/power
+ * field; no controller reset or bitbang ever occurs. NAH_E_COLD means the
+ * snapshot itself is refused (status.gate), NAH_E_AMPS that only the post-
+ * reset amplifier evidence is (gate == NAF_G_AMPS). */
 int nau_hw_init(struct nau_hw *, const struct nah_io *, void *, const struct nah_board *);
 /* silent_only=1 proves AFE without amp enable; normal start returns
  * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.

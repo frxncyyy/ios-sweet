@@ -3,6 +3,26 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: Claude's inherited-clock fix integrated and validated; CI next.**
+  Actual Claude Opus session 14f85f3b completed its private candidate. The AFE
+  now distinguishes inherited clocks from resources it enables, preserves
+  ADSP and the running 196.608 MHz APLL2, selects the Android 26 MHz bus route,
+  and restores the captured state after stopping. Saved diagnostics include
+  ownership and the exact last I2C register/value. The independent device-wrapper
+  fix gives diagnostic tones their full interval after startup and avoids
+  synchronous console output while DMA runs. HAL package remains unchanged.
+  Candidate suite and independent actual-69-word regression pass, including
+  repeated playback, silent/idle cycles, state drift and injected power faults.
+  Claude's temporary harness initially omitted the USB transport dependency;
+  fixed the harness and reran successfully. Canonical full audio suite passes,
+  all four affected native TUs compile with Wall/Wextra/Werror, and generated
+  patch reproduces all targets. Receipts: playback-20261023/ios-clocks; reviews
+  remain in claude-startup-cold, hardware-sol/cold-state and install-sol.
+  Current phone remains healthy 8e6697a2 with audio disabled after gate refusal.
+  Actual I2C/DMA idleness, amplifier revisions/clock lock and sound are still
+  unmeasured. No new image or authorization yet; verified HAL-aware rollback
+  and RAM ADB remain available. Do not boot stock Android over iOS userdata.
+
 - **2026-10-23: corrected audio image flashed; inherited clocks block init.**
   Human call_663dd5b5 authorizes exact playback8e6697a2 and conditional
   rollback3ec181c7/RAMADB. Guarded runner flashed boot/reboot OKAY once;

@@ -5,8 +5,15 @@
 
 /* MT6893 continuous speaker AFE backend, derived from reviewed revision5.
  * Selected source Android04d00c2; register/order audit in SOURCE-AUDIT.md.
- * Cold SPM AUDIO domain is powered up; APLL2 is actually programmed to
- * 196.608MHz (PCW/postdivider/tuner), not assumed to inherit that rate.
+ * The AUDIO MTCMOS must be in the exact source power-down end state; we own
+ * its whole power transition. Everything AROUND it is classified from the
+ * real inherited boot state (naf_ownership): ADSP domain, AUDIO bus protect,
+ * infra audio gates, audio muxes and APLL2 are either acquired (gated/cold:
+ * we enable and later re-gate) or borrowed (already live: never gated,
+ * reparented back, powered down or retuned). Every borrowed field is
+ * restored bit-exact on stop and re-verified against the boot snapshot.
+ * Cold APLL2 is programmed to 196.608MHz (PCW/postdivider/tuner); a live
+ * APLL2 is accepted only at exactly that source rate and left untouched.
  * DL1 uses one4KiB SRAM block, stereoS16; I2S3 uses32-bit serial slots as
  * required by selected Android BE fixup. SRAM must reuse AFE16KiB mapping.
  * naf_stream_open/close retain per-object plans; worker feeds SRAM while
@@ -96,21 +103,48 @@ struct naf_amp_evidence {
 	unsigned pwdn, ampe, manstate;
 };
 
+/* Gate bits. A set bit is a refusal; nothing is written. Bits 4/5 are
+ * retired (kept for log stability): the selected AUDIO on-sequence has no
+ * protect precondition (pg.c:3314-3355) and an already-ungated infra gate is
+ * simply borrowed, so neither inherited state is a reason to refuse. */
 enum {
 	NAF_G_SNAPSHOT = 1u << 0,   /* milestone-1a snapshot incomplete/failed */
-	NAF_G_SPM_CFG = 1u << 1,    /* POWERON_CONFIG_EN != selected keyed write */
-	NAF_G_AUDIO_ON = 1u << 2,   /* AUDIO MTCMOS not in the exact cold state */
-	NAF_G_ADSP_ON = 1u << 3,    /* ADSP domain on or not in selected cold state */
-	NAF_G_PROTECT = 1u << 4,    /* AUDIO bus protection not set while cold */
-	NAF_G_INFRA = 1u << 5,      /* ifrao_audio/audio26m already ungated */
-	NAF_G_MUX = 1u << 6,        /* an audio mux ungated or not on 26 MHz */
-	NAF_G_APLL2_ON = 1u << 7,   /* APLL2 enabled/powered or its tuner enabled */
-	NAF_G_APLL2_RATE = 1u << 8, /* measured postdiv/PCW != 196.608 MHz source calc */
-	NAF_G_APLL2_TUNER = 1u << 9,/* tuner != PCW + 1 (clk-pll.c:271-272) */
+	NAF_G_SPM_CFG = 1u << 1,    /* retired: POWERON is rewritten per transition */
+	NAF_G_AUDIO_ON = 1u << 2,   /* AUDIO MTCMOS not in the exact power-down end state */
+	NAF_G_ADSP_ON = 1u << 3,    /* ADSP neither exact off nor exact on (transition/incoherent) */
+	NAF_G_PROTECT = 1u << 4,    /* retired: inherited protect bit4 accepted either way */
+	NAF_G_INFRA = 1u << 5,      /* retired: inherited ungated infra audio gates borrowed */
+	NAF_G_MUX = 1u << 6,        /* an audio mux on a parent we cannot adopt or restore */
+	NAF_G_APLL2_ON = 1u << 7,   /* APLL2 neither exact cold nor exact powered/enabled */
+	NAF_G_APLL2_RATE = 1u << 8, /* live APLL2 not at the 196.608 MHz source rate */
+	NAF_G_APLL2_TUNER = 1u << 9,/* live APLL2 tuner enabled with tuner != PCW + 1 */
 	NAF_G_PINS = 1u << 10,      /* GPIO32/33/35 not idleGPIOinputs or exactI2S3 */
 	NAF_G_AMPS = 1u << 11,      /* no measured power-down for both amplifiers */
 	NAF_G_AFE_SEEN = 1u << 12,  /* snapshot found the AFE readable (not cold) */
 };
+
+/* Inherited ownership, decoded only from snapshot words (pure).
+ * *_gated: 1 = we must ungate and later re-gate; 0 = borrowed live gate.
+ * *_parent: inherited mux index restored exactly on stop. */
+struct naf_own {
+	uint8_t adsp_on, prot_clear, ifr1_gated, ifr3_gated, apll2_borrowed;
+	uint8_t audio_gated, audio_parent, intbus_gated, intbus_parent;
+	uint8_t aud2_gated, aud2_parent, engen2_gated, engen2_parent;
+};
+/* Log summary of struct naf_own (status.ownership); parents in
+ * audio_sel [13:12], intbus [15:14], engen2 [17:16], aud_2 [18]. */
+#define NAF_OWN_ADSP_ON        (1u << 0)
+#define NAF_OWN_PROT_CLEAR     (1u << 1)
+#define NAF_OWN_IFR_AUDIO_ON   (1u << 2)
+#define NAF_OWN_IFR_26M_ON     (1u << 3)
+#define NAF_OWN_APLL2_BORROWED (1u << 4)
+#define NAF_OWN_AUDIO_SEL_ON   (1u << 5)
+#define NAF_OWN_INTBUS_ON      (1u << 6)
+#define NAF_OWN_AUD2_ON        (1u << 7)
+#define NAF_OWN_ENGEN2_ON      (1u << 8)
+#define NAF_OWN_VALID          (1u << 31)
+unsigned naf_ownership(const uint32_t snap[NAU_SNAP_COUNT], struct naf_own *);
+uint32_t naf_own_mask(const struct naf_own *);
 
 /* mtk_pll_calc_values() for the MT6893 PLL() parameters (fin 26 MHz,
  * fmin 1500 MHz, fmax 3800 MHz, pcwbits 32, integer bits 8). Returns the
@@ -124,6 +158,7 @@ unsigned naf_gate(const struct nau_state *, const struct naf_amp_evidence amp[2]
 #define NAF_MAX_OPS 128
 struct naf_plan {
 	unsigned n_up, n_down;
+	struct naf_own own;
 	struct naf_op up[NAF_MAX_OPS];
 	struct naf_op down[NAF_MAX_OPS];
 };
@@ -157,13 +192,13 @@ struct naf_state {
  * One silent-stream cycle: live re-read of every gate register (reads only),
  * gate, plan validation against the write allowlist, bring-up, bounded
  * DL1_CUR observation, source teardown, final read-back verify.
- *   0  streamed, observed, torn down and verified cold
+ *   0  streamed, observed, torn down and verified back to the snapshot
  *  -1  refused before any write (arguments, authorization, gate, live drift, plan)
  *  -2  uncertain: a callback failed or a bring-up/teardown poll timed out; no
  *      cleanup is attempted, state->active/uncertain stay set (Linux return
  *      must be refused, no further call)
  *  -3  bring-up finished but DL1_CUR did not advance in range; teardown and
- *      verify still ran cleanly (functional failure, hardware back to cold)
+ *      verify still ran cleanly (functional failure, hardware restored)
  *  -4  teardown finished but read-back differs from the snapshot (uncertain)
  * A second call on the same state makes no callback.
  */
