@@ -3,6 +3,40 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: balance images fully VERIFIED; exact approval pending.**
+  Source6508982301b417fa99fe5f697ed52acf59747d35; CI40025686247 SUCCESS.
+  Independentbalance-playback/rollback reviewsPASS, pinnedHAL unchanged,
+  currentworkingaudiofallback3b8cb873 rehashed before/aftereachreview.
+  ios-balance/prepared.json complete, runner/testplan/reviewreceipts pinned.
+  Playbackd0b18b64…82475224; rollback55aa2960…ab143973 (fullSHA below).
+  Phone remains currentworking3b8cb873, no actionondevice thisturn.
+  After exactapproval andfastboot: guardedrunnerONCE, HALreuse/cleanstatus/UI,
+  STOP→matchedtone-top/tone-bottom256each, thenprogressivebottom-onlylevels
+  andmedia viaUSB. Currentlevelsdefault256/256 and resetonreboot; record
+  measuredpair before deciding permanentdefault. Do not claimbottomfixedyet.
+  Preferredconditionalrecovery current3b8cb873; HALrollback55aa2960 orRAMADB
+  ifneeded. No stockAndroid. Pipeline finished; no backgroundcollector.
+
+
+- **2026-10-23: balance images built, independent review running.**
+  Pipeline4852 complete exit0. Playbacknord2-ios-audio-balance-playback-stop23.img:
+  33540096B/spare14336, SHA-256
+  `d0b18b640d7bf64d1cbeb89cc19de89560549d2009e4a15708249c5282475224`.
+  Rollback33531904B/spare22528, SHA-256
+  `55aa2960aad11b7813f9d6c978b74e06c34fa7d8e510c4b0bc7ec744ab143973`.
+  Both generic imagechecksPASS; independentprofile imagechecks requested.
+  No exacthumanapproval orflash; prepare.py and reviewreceipts next.
+
+
+- **2026-10-23: balance CI passed; images packing.**
+  CI40025686247 attempt1 SUCCESS on6508982301b417fa99fe5f697ed52acf59747d35.
+  All261generatedtargets verified; kernel17893384B SHA-256
+  `49bbc2d92635a18cddc53c3bd3a1cd5aeac1aee92335c3e6ff5fdd1a9ba91962`.
+  HAL packagebyte-identical. Pipeline4852 nowcompressesplayback thenrollback;
+  neitherpreparednorapproved yet. Independentwrapper run-balance.py ready,
+  agentwaitingforimages. No deviceoperationthisturn; current3b8cb873 remains.
+
+
 - **2026-10-23: speaker balance CI40025686247 running.**
   Source6508982301b417fa99fe5f697ed52acf59747d35 pushedfork. Pipeline4852
   watches exactrun, verifies all generatedtargets andHAL, then packs new
