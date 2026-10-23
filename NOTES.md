@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **2026-10-23: balance image flashed; clean initialization, listening pending.**
+  Exact human approval `call_fe9cf2f2d5ac41d2aeb7065623ae1223:0`; guarded
+  playback runner consumed once. Current boot `d0b18b64…82475224`,
+  source6508982 / CI40025686247. Boot flash/reboot OKAY; USB collector
+  root session68437 active for600s. HAL reuse mode1 phase2 error0;
+  both0c74 amps initialized, gate/error/uncertain/stop_error0. STATUS1:
+  enabled1, running0, queued0, gains256/256, max1024, no PCM yet.
+  Initial log/status receipts saved in ios-balance/hardware-review.
+  UI confirmation requested; no output tone or gain mutation yet. Next:
+  STOP, matched isolated top/bottom tones, then gradual bottom-only tuning
+  via USB with human listening feedback. Values reset on reboot. Current
+  working route3b8cb873 / new HALrollback55aa2960 / RAMADB recovery authorized.
+
 - **2026-10-23: balance images fully VERIFIED; exact approval pending.**
   Source6508982301b417fa99fe5f697ed52acf59747d35; CI40025686247 SUCCESS.
   Independentbalance-playback/rollback reviewsPASS, pinnedHAL unchanged,
