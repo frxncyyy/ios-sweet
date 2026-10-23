@@ -4,6 +4,24 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: scan-cancel image VERIFIED; exact human approval pending.**
+  CI39957914679 attempt1 SUCCESS, exactsource73863296ab59112bc16b67582246886454c31225.
+  All234 generated targets byte-match; genericARMv8.2 commands confirmed;
+  2286075 decoded instructions contain noLDAPUR/STLUR. Kernel17821808B SHA
+  fc3fa197c223ba5af1e504763c6001b39506f66e3c96f5faf28416fc7817707d.
+  Image shim/out/nord2-xnu/nord2-ios-wifi-scan-cancel-stop23.img33497088B SHA
+  55c65bc730e032df8c7645fe4cef922058f5a26e99f59e8cba4c26262152caf6,
+  bootspare57344B. Offline independent content/header/loader/kernel/rescue checkPASS.
+  Stage research/nord2/wifi-ios-scan-cancel/ios has prepared.json, frozen9readers,
+  unused one-use guarded runner and verified618/RAMADB fallbackpins. Collector/build
+  rootexec57808 ended0. NO new authorization.json, NO new flash or hardware success.
+  Phone remains known618 with user-confirmed lockscreen/touch/buttons. Next exact
+  boot-only approval+fastboot, baselineWPA2/DHCP then one OFFduringassociatedscan,
+  wait5s/ON, freshnetworks/rejoin/Safari and observe120s. Stop onfailure and use
+  conditional618 recovery once granted. The earlier ee98 firstswitch succeeded;
+  its OFF failed. Do not confuse that old authorization with this new55c65bc7 image.
+
+
 - **2026-10-23: scan-cancel CI39957914679 dispatched.**
   Exactsource73863296ab59112bc16b67582246886454c31225 pushed to fork/codex/nord2-bringup.
   DEVELOPMENT/SWEET13.5 build; rootexec57808 watches, then downloads/verifies exact
