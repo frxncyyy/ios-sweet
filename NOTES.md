@@ -4,6 +4,14 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: scan-cancel CI39957914679 dispatched.**
+  Exactsource73863296ab59112bc16b67582246886454c31225 pushed to fork/codex/nord2-bringup.
+  DEVELOPMENT/SWEET13.5 build; rootexec57808 watches, then downloads/verifies exact
+  artifacts and packs/independentlychecks the new image offline. Stage
+  research/nord2/wifi-ios-scan-cancel/ios, target nord2-ios-wifi-scan-cancel-stop23.img.
+  No image authorization or flash yet. Phone618 remains user-confirmed healthy.
+
+
 - **2026-10-23: Claude review complete; scan-cancel source ready for CI.**
   Independent actual Claude off-cleanup-error12 audit confirms wrong wireCID04
   vs source1b, same distinction in both hardware crash logs, no255 overflow,
