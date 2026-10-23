@@ -4,6 +4,24 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: exact29d94463 lifecycle image FLASHED, user test pending.**
+  Human call_457cb237a23c4a62b1ddea821e66c658 authorized exactboot-only flash,
+  conditional verified618/RAMADB recovery, and reported fastboot ready. Separate
+  authorization.json saved; one-use runner checked singlefastboot/product/32MiB
+  boot/non-userspace and flash/reboot OKAY. Runner rootexec34783 owns bounded600s
+  USB collector; private PIDfile and client-hardware.log under wifi-ios-lifecycle/ios.
+  NEVER rerun runner. NativeUSB connected, actual iOS surfaces1125x2436 valid.
+  Immutable hardware-review/boot-before-test.log320566B SHA
+  c4fe53320111e3bf548768bc0190f7853b8f42faa5cab70b2f2b65c890c0a6e8;
+  all8readers0; initial37-channel backend scan complete6BSS. iOS subsequently
+  sentSET19state0, nowhonored; liveSTATUSgen0/service1/halt0/error0/join_ready0
+  consistentOFF. DHCPcapturearmed(resultOK,capture1). User asked firstWPA2/
+  privateMACoff/IP/router/Safari and30sothernetworkslist, noOFFtestuntilbaseline
+  collected. Commentary notes toenableWi-Fi ifoff atstartup. No newconnection/
+  DHCP/connectedscan/5GHz/open successclaimed yet. Currentphone is29d94463,
+  NOT618;618remainsverifiedfallback. Recordquestionreply and nextsnapshot before
+  choosing nexttest; readlivecollectorfile, don'tstart secondlogreader.
+
 - **2026-10-23: lifecycle image PREPARED/VERIFIED, exact human approval pending.**
   CI39944476656 attempt1 SUCCESS on source0d9a49340d5c3088519f795397c72d7efd179965.
   All234generatedpatchtargets byte-equal; actualCI genericARMv8.2 compilers checked.
