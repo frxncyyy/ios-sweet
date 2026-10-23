@@ -3,6 +3,28 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: inherited-clock audio images VERIFIED; new approval pending.**
+  Source428e55d47777febe1c97016e9ee1525f6bd91855, CI39998991055attempt1SUCCESS.
+  Kernel17892872B SHA61f94e91c4d4b9bcd5782baf35275e205ba3701d34a956d0e341a076d4ce6737.
+  All260generated targets match; HALpackage82253445...b4aa identical to installed.
+  Generic and independent image reviews PASS, profile-sol/image-review/clocks-*
+  (reviewer-only fix resolves missing local baseline to original pinned ADT).
+  Playback nord2-ios-audio-clocks-playback-stop23.img33538048B SHA
+  7d2ca8f95d1107527e00b4ccaff0b16bf17823647899de8a463c580497230c9c, spare16384B.
+  Rollback nord2-ios-audio-clocks-rollback-stop23.img33527808B SHA
+  864fc70c336c39313c194065aabc27745c864e2266560f8a04004d693a0cd5b8, spare26624B.
+  Both in shim/out/nord2-xnu. ios-clocks/prepared.json, guarded runner and
+  hardware-test-plan ready; NO authorization copied/created, NO device action.
+  Source clock ownership and diagnostics reviewed by Claude plus independent
+  hardware/device reviewers; full host suite and four native TUs pass.
+  Actual amplifier IDs, clock lock, DMA advancement and physical sound unproven.
+  After exact new approval: boot only, validate existing HAL reuse and audio
+  status; clean STOP, one silent DMA test, then one quiet tone, then HAL media.
+  Stop on fault/unknown mutation outcome. Conditional HAL-aware rollback864fc70c
+  or tested RAMADB; old WiFi kernel alone cannot undo installed HAL.
+  Phone remains healthy8e6697a2 with audio disabled. Never boot stock Android.
+
+
 - **2026-10-23: inherited-clock source428e55d in CI39998991055.**
   Exact source428e55d47777febe1c97016e9ee1525f6bd91855 committed/pushed.
   Private ios-clocks/complete.py rootexec79725 waits exact CI and prepares
