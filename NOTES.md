@@ -3,6 +3,34 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: I2S3 route images VERIFIED; exact human approval pending.**
+  Source `6ee28295b28903bebe4b4c1dc14795af8cbf5d1f`, CI `40019831363`
+  attempt1 SUCCESS. All 261 generated targets match; kernel SHA-256
+  `26d9da15bcbc47aeace27645346f63d3ac1993686b4dc6992869ee433831d126`.
+  HAL package is byte-identical. Full sanitizer suite, ten native units,
+  patch generation and two independent source reviews PASS. Independent image
+  reviews `route-playback` / `route-rollback` PASS; `ios-route/prepared.json`
+  verifies exact images, review receipts, runner, test plan and fallbacks.
+  Playback: `shim/out/nord2-xnu/nord2-ios-audio-route-playback-stop23.img`,
+  33,540,096 bytes / 14,336 spare, SHA-256
+  `3b8cb873267d2fa4b6fd53bb907229c1297e1761eaf1dce5116b197d4bec4c46`.
+  Rollback: `nord2-ios-audio-route-rollback-stop23.img`, 33,529,856 bytes /
+  24,576 spare, SHA-256
+  `1f0c672fb9ea3e66a39a3c508abc73a397a765139b945999b307d61310a0d4e9`.
+  No authorization or flash for these new images. After exact approval:
+  guarded runner once, confirm HAL reuse/clean init, STOP, one silent DMA test,
+  one fixed quiet tone, collect both AMP START saved-register lines afterstop,
+  then media/volume/pause/resume and Wi-Fi/UI checks. Gain remains256/32768.
+  Conditional recovery is new HAL-aware rollback above or tested RAM ADB;
+  never stock Android. Current phone remains healthy `d0677caa`, audio disabled.
+  Final prior STATUS token11: initialized1/enabled0/running0/error0/uncertain0/
+  stop_error0; the later123,904 dropped frames were rejected while disabled,
+  not losses during the active media test (which had0 producer drops).
+  Prior collector83639 finished600s exit0, final426145B log SHA-256
+  `3fdc445f92492d6b96d46b18206ef4f6ee815e6837e457a2d7430e603b1b9edd`.
+  Pipeline31261 and independent reviewer4921 completed; no background work left.
+
+
 - **2026-10-23: I2S3 routing correction and saved amp diagnostics validated.**
   Combined source uses CONN0/1, retains historical CONN28/29 observation slots
   and forbids writes to the unrelated I2S1 mixers. Android-derived regression
