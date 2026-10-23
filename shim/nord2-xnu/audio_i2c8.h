@@ -27,6 +27,11 @@ struct na8_io {
  * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
  * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
  * 21 AP-channel I3C mode enabled. */
+/* Read-only AP-channel preflight snapshot. Bit(index) means that read
+ * completed successfully during the latest transfer; missing fields are0. */
+enum na8_ap_field { NA8_AP_START, NA8_AP_CONTROL, NA8_AP_IRQ, NA8_AP_FIFO,
+ NA8_AP_I3C, NA8_AP_FIELDS };
+#define NA8_AP_VALID_ALL ((1u << NA8_AP_FIELDS) - 1u)
 struct na8_state {
 	unsigned entered, inflight, offline, mutated, uncertain, polls, calls;
  unsigned poll_limit; /* 0=2000, streaming monitor uses200 (2ms); maximum2000 */
@@ -39,6 +44,8 @@ struct na8_state {
 	uint32_t ifr1, ifr2, dma_en, sh_start, ccu_start, ccu_ctrl, prior_irq, prior_ack;
 	uint32_t completion_irq;
 	unsigned dma_checked;
+ uint32_t ap_preflight[NA8_AP_FIELDS];
+ unsigned ap_valid;
 };
 
 /* One read of a 16-bit big-endian TFA register (tfa98xx.c:4705-4709).

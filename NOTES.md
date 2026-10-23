@@ -3,6 +3,27 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: AP START2 fix and complete saved preflight validated; CI next.**
+  Source Android04d00c2 i2c-mtk.c404-427 waits only TRANSAC_START bit0;
+  normal transfer writes START1 at1213. RESUME_ARBIT bit1 is not busy.
+  Corrected all four AP checks (initial/priorIRQ/success/NACK) and AP-only
+  readiness; retained shadow/CCU/DMA/FIFO/I3C guards and forbid RESUME/reset.
+  Model retains bit1 across START1/completion. New busy/race/IRQ/NACK tests
+  pass, plus independent three-cycle/1335-transfer shared-state restoration.
+  Collect all five existing read-only AP preflight registers before predicates;
+  preserve exact failed PA/value and validmask, print saved values only.
+  31predicate combinations, five read failures, earlier guards and zero-MMIO
+  diagnostic tests pass. Full canonical suite, generated patch and five strict
+  native TUs pass; receipts ios-i2c, install-sol/i2c-start, hardware-sol/i2c-start.
+  Actual Claude continuation26578 stopped immediately on session limit (resets
+  midnight), no new analysis; parent+existing agents completed this correction.
+  Prior phone test collector69566 completed600s exit0. Immutable final391921B
+  log SHAaa971f11e9c6373e0abcc6afa462515ae24c29f10a9fce2ed3da379ae4a33397
+  in ios-clocks/hardware-review. FinalSTATUS token3 enabled0/running0/error-3/
+  uncertain0/stop_error0. Currentphone7d2ca8f9 UIhealthy, sound still unproven.
+  New ios-i2c pipeline prepared but no images or new authorization yet.
+
+
 - **2026-10-23: clock image flashed; next refusal is AP I2C8 START=2.**
   Human call_1e803ebc authorizes exact7d2ca8f9 and conditional rollback864fc70c/
   RAMADB; call_6298d3b3 confirms fastboot. Guarded runner flashed boot/reboot

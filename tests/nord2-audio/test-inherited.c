@@ -1,6 +1,7 @@
 /* Real 8e6697a2 boot snapshot (all NAU_SNAP_COUNT words) through the actual
  * nau_hw_* lifecycle and actual audio_{hw,afe,id,i2c8,amp,board} code.
- * SIMULATED, never hardware proof: I2C8 shadow/AP/CCU idle, APDMA EN0, IRQ0,
+ * SIMULATED, never hardware proof: I2C8 shadow/CCU idle, APSTART2 as measured
+ * on 7d2ca8f9 (bit1 retained through transfers), APDMA EN0, IRQ0,
  * I3C0 (test-i2c-model.h m_init); TFA9874 0b74/0a74 at POR SYS_CONTROL0
  * 0x0001 with CLKS ready; a register-only SPM/infra/topckgen/AFE model
  * (test-stream.c). Cases: classify plan cycles mixed refuse-rate
@@ -99,6 +100,7 @@ static const struct nah_io audited={audited_read,audited_write,alldelay,allworke
 static void prepare(const uint32_t *words)
 {
  full_prepare(0x0b74,0x0a74,0x80); /* historical NOCLK sticky, source read clears */
+ bm.ch[1][0x24/2]=2;
  memcpy(base,words,sizeof base);
  for (unsigned i=0;i<NAU_SNAP_COUNT;i++) *regp(&cm,nau_snapshot_pa[i])=words[i];
  /* Bus-model views of the same captured words. */
@@ -121,6 +123,7 @@ static void restored(void)
   }
  }
  m_check_restored(&bm);
+ assert(bm.ch[1][0x24/2]==2); /* No RESUME action to restore volatile readback. */
  for (unsigned i=2;i<M_SLAVES;i++) assert(!bm.slave[i].accessed);
  assert(!pend7 && !pend8 && !pend12 && !pend13);
 }

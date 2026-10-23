@@ -41,7 +41,7 @@ struct i2c8_model {
 	unsigned ntx, nrx, rxpos;
 	unsigned behaviour, slow_polls, polls, noclk_persistent;
 	unsigned irq_sticky;             /* INTR_STAT W1C has no effect (fault) */
-	unsigned start_stuck;            /* NACK completion leaves START set */
+	unsigned start_stuck;            /* completion leaves transaction bit0 set */
 	unsigned starts, ntrans, dma_en_reads, gate_reads;
 	unsigned setup_hw_timeout;       /* last programmed 0x4c, before restore */
 	uint16_t saved[15];              /* inherited AP config, for restore check */
@@ -111,6 +111,10 @@ m_start(struct i2c8_model *m)
 {
 	uint16_t *c = m->ch[1];
 	m->starts++;
+	/* START is a command, not an ordinary config register. Model the real
+	 * AP readback2: launching with literal1 sets busybit0 while bit1 can
+	 * persist; completion clears only bit0. No write of RESUME is allowed. */
+	c[0x24 / 2] = (uint16_t)((c[0x24 / 2] & 2u) | 1u);
 	/* The transport's exact WRRD programme (i2c-mtk.c:963-1213 derivative),
 	 * including the source V2 HW timeout computed from LTIMING. */
 	unsigned tv2 = ((c[0x2c / 2] & 0x3f) + 1) *
@@ -124,7 +128,7 @@ m_start(struct i2c8_model *m)
 	    c[0x4c / 2] == (uint16_t)((m->hclk * 2 + tv2 - 1) / tv2));
 	m->setup_hw_timeout = c[0x4c / 2];
 	M_CHECK(m->ntx == (writing?3:1) && m->nrx == 0);
-	if (m->behaviour == M_HANG) { c[0x24 / 2] = 1; return; }
+	if (m->behaviour == M_HANG) { return; }
 	uint8_t addr = (uint8_t)(c[0x04 / 2] >> 1), ptr = m->tx[0];
 	M_CHECK(m->ntrans < 4096);
 	m->trans[m->ntrans].addr = addr;
@@ -132,13 +136,13 @@ m_start(struct i2c8_model *m)
 	m->ntrans++;
 	m->ntx = 0;
 	if (m->behaviour == M_BUSERR) { c[0x0c / 2] = 0x101; return; }
+	if (!m->start_stuck) c[0x24 / 2] &= (uint16_t)~1u;
 	struct m_slave *s = NULL;
 	for (unsigned i = 0; i < M_SLAVES; i++) {
 		if (m->slave[i].addr == addr && m->slave[i].present) { s = &m->slave[i]; }
 	}
 	if (!s || s->nack) { /* clean NACK, no data */
 		c[0x0c / 2] = 0x3;
-		if (m->start_stuck) { c[0x24 / 2] = 1; }
 		return;
 	}
 	s->accessed++;
@@ -153,7 +157,7 @@ m_start(struct i2c8_model *m)
  if (ptr==0x10) s->reg[ptr]&=(uint16_t)~((s->reg[3]&255)==0x74 ? 0x80:0x100);
 	m->nrx = 2;
 	m->rxpos = 0;
-	if (m->behaviour == M_SLOW) { m->polls = 0; return; }
+	if (m->behaviour == M_SLOW) { m->polls = 0; c[0x24 / 2] |= 1u; return; }
 	c[0x0c / 2] = 1;
 }
 
@@ -194,7 +198,10 @@ m_read(struct i2c8_model *m, uint32_t pa, unsigned w)
 	 * DMA_FSM_DEBUG would invalidate the I3C refusal test. */
 	M_CHECK(ch != 1 || off != M_V2_DEBUGSTAT);
 	if (ch == 1 && off == 0x0c && m->behaviour == M_SLOW && m->nrx && !m->ch[1][6]) {
-		if (++m->polls >= m->slow_polls) { m->ch[1][6] = 1; }
+		if (++m->polls >= m->slow_polls) {
+			m->ch[1][6] = 1;
+			if (!m->start_stuck) m->ch[1][0x24 / 2] &= (uint16_t)~1u;
+		}
 	}
 	return m->ch[ch][off / 2];
 }

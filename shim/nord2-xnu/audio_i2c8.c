@@ -100,6 +100,8 @@ na8_fresh(struct na8_state *s)
 	s->ifr1 = s->ifr2 = s->dma_en = s->sh_start = s->ccu_start = s->ccu_ctrl = 0;
 	s->prior_irq = s->prior_ack = s->completion_irq = 0;
 	s->dma_checked = 0;
+ s->ap_valid=0;
+ for(unsigned i=0;i<NA8_AP_FIELDS;i++)s->ap_preflight[i]=0;
 }
 
 int
@@ -234,8 +236,12 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 		if (s->dma_en) { REFUSE(7); }
 	}
 
-	/* 8: all three channels idle; START bit0 TRANSAC_START, bit1 RESUME_ARBIT
-	 * (i2c-mtk.h:55-56, i2c-mtk.c:1253-1256). The source reads bit15 I3C_EN
+	/* 8: AP busy is TRANSAC_START bit0, not RESUME_ARBIT bit1. Android's
+	 * mt_i2c_wait_done masks bit0 (i2c-mtk.c:404-427) and normal transfers
+	 * write START=1 (:1213), including when inherited AP readback is2.
+	 * Never restore/write bit1: shadow START=2 is a separate error-recovery
+	 * action (:1253-1254). Keep the unowned shadow/CCU guards conservative.
+	 * The source reads bit15 I3C_EN
 	 * from V2 DMA_FSM_DEBUG at 0xec, not DEBUGSTAT at 0xe4
 	 * (i2c-mtk.h:275,295; i2c-mtk.c:1040). Refuse that separate mode. */
 	s->stage = 8;
@@ -248,17 +254,29 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
  R(NA8_SH+0x10,2,&v);if(v&4){REFUSE(7);}
  R(NA8_SH+0xf4,2,&v);if(v){REFUSE(9);}
  R(NA8_CCU+0xf4,2,&v);if(v){REFUSE(9);}
-	R(NA8_CH + 0x24, 2, &v);
-	if (v & 3) { REFUSE(6); }
-	R(NA8_CH + 0x10, 2, &v);
-	if (v & 4) { REFUSE(7); } /* I2C_CONTROL_DMA_EN */
-	R(NA8_CH + 0x0c, 2, &v);
-	s->prior_irq = v;
-	if (v != 0 && v != 1) { REFUSE(8); }
-	R(NA8_CH + 0xf4, 2, &v);
-	if (v) { REFUSE(9); }
-	R(NA8_CH + 0xec, 2, &s->i3c);
-	if (s->i3c & NA8_I3C_EN) { REFUSE(21); }
+ /* These are the same five read-only accesses as before. Collect them
+  * before applying predicates, so one safe refusal does not conceal the
+  * other inherited AP conditions. A callback failure exits immediately via
+  * R: never read another register after a failed access. */
+ static const uint32_t ap_offsets[NA8_AP_FIELDS]={0x24,0x10,0x0c,0xf4,0xec};
+ for(unsigned i=0;i<NA8_AP_FIELDS;i++) {
+  R(NA8_CH+ap_offsets[i],2,&v);
+  s->ap_preflight[i]=v;
+  s->ap_valid|=1u<<i;
+ }
+ s->prior_irq=s->ap_preflight[NA8_AP_IRQ];
+ s->i3c=s->ap_preflight[NA8_AP_I3C];
+ /* last_* must identify the refused predicate, not merely the last of the
+  * collected reads. No callback or MMIO occurs while selecting evidence. */
+#define AP_REFUSE(code,field) do { s->last_addr=NA8_CH+ap_offsets[field]; \
+ s->last_width=2;s->last_write=0;s->last_valid=1; \
+ s->last_value=s->ap_preflight[field];REFUSE(code); } while(0)
+ if(s->ap_preflight[NA8_AP_START]&1) {AP_REFUSE(6,NA8_AP_START);}
+ if(s->ap_preflight[NA8_AP_CONTROL]&4) {AP_REFUSE(7,NA8_AP_CONTROL);}
+ if(s->prior_irq!=0 && s->prior_irq!=1) {AP_REFUSE(8,NA8_AP_IRQ);}
+ if(s->ap_preflight[NA8_AP_FIFO]) {AP_REFUSE(9,NA8_AP_FIFO);}
+ if(s->i3c&NA8_I3C_EN) {AP_REFUSE(21,NA8_AP_I3C);}
+#undef AP_REFUSE
 	if (s->prior_irq == 1) {
 		/* Same exact-completion adoption as the reviewed battery handoff;
 		 * every idle condition is re-read before the single W1C. */
@@ -267,7 +285,7 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 		R(NA8_CCU + 0x24, 2, &v);
 		if (v & 3) { REFUSE(17); }
 		R(NA8_CH + 0x24, 2, &v);
-		if (v & 3) { REFUSE(6); }
+		if (v & 1) { REFUSE(6); }
 		R(NA8_CH + 0x10, 2, &v);
 		if (v & 4) { REFUSE(7); }
 		R(NA8_CH + 0xf4, 2, &v);
@@ -315,7 +333,7 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	if (v == 3) {
 		s->stage = 13;
 		R(NA8_CH + 0x24, 2, &v);
-		if (v & 3) { s->failure = 6; goto uncertain; }
+		if (v & 1) { s->failure = 6; goto uncertain; }
 		s->inflight = 0;
 		s->nack = 1; /* also selects the binding's W1C allowlist */
 		s->nacks++;
@@ -328,7 +346,7 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	if (v != 1) { s->failure = v ? 14 : 13; goto uncertain; }
 	s->stage = 13;
 	R(NA8_CH + 0x24, 2, &v);
-	if (v & 3) { s->failure = 6; goto uncertain; }
+	if (v & 1) { s->failure = 6; goto uncertain; }
 	if (!writing) {
 	uint32_t hi = 0, lo = 0;
 	R(NA8_CH + 0x00, 1, &hi);

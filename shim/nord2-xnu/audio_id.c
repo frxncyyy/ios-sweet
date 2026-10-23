@@ -218,7 +218,11 @@ nau_i2c8_ready(const struct nau_state *st)
 	if (st->i2c8_read != NAU_I2C8_COUNT) { return r | NAU_READY_UNREAD; }
 	const uint32_t *c = st->i2c8;
 	for (unsigned ch = 0; ch < NAU_CH_COUNT; ch++) {
-		if (c[NAU_I2C8_INDEX(ch, NAU_C_START)] & 3) { r |= NAU_READY_START; }
+		/* AP START bit1 is readable after an idle transfer; only bit0 is
+		 * transaction-busy. Match the PIO transport without changing the
+		 * conservative checks on unowned shadow/CCU channels. */
+		unsigned mask = ch == NAU_CH_AP ? 1u : 3u;
+		if (c[NAU_I2C8_INDEX(ch, NAU_C_START)] & mask) { r |= NAU_READY_START; }
 	}
 	if ((c[NAU_I2C8_INDEX(NAU_CH_SHADOW, NAU_C_CTRL)] | c[NAU_I2C8_INDEX(NAU_CH_AP, NAU_C_CTRL)] | c[NAU_I2C8_INDEX(NAU_CH_CCU, NAU_C_CTRL)]) & 4) {
 		r |= NAU_READY_DMA;
