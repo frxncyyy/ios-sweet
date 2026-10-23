@@ -4,6 +4,27 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: live balance controls work; normal loudness still unresolved.**
+  Current image d0b18b64, UI confirmed healthy. Matched isolated tones
+  generated post-scale DMA peaks128/0 and0/128, stopped without faults.
+  User still found bottom extremely quiet at top256/bottom362; requested a
+  much larger change. Live bottom1024/top256 (maximum supported) applied
+  cleanly, HAL enabled. User now hears improvement but Android maximum is
+  vastly louder (`call_4a61d6548ac444bdba5c90b5af248274:0`). STATUS14:
+  2,205,696 written,0 dropped, peaks255/1024, all faults0, idle after playback.
+  These are volatile settings; no permanent/default or analog gain change.
+  Do not claim normal volume/balance fixed. All evidence in
+  ios-balance/hardware-review. Source-only re-audit in profile-sol/balance-quiet
+  finds definite artificial attenuation (-30.1dB at1024) but no proven amp
+  register defect or Android gain coefficient. User supplied stock dump at
+  dumps.tadiphone.dev/dumps/oneplus/op515bl1, Android13/1714460719713 IN branch;
+  server currently says Waiting for GitLab to boot. Next inspect bounded
+  NXP extamp/media resources from existing read-only vendor image.
+  REA skill read; engines/MCP unavailable (doctor saved nxp-gain-analysis),
+  no environment repair attempted. Ordinary static analysis is the fallback.
+  Collector68437 still running; collect final log/receipt once it exits.
+
+
 - **2026-10-23: balance image flashed; clean initialization, listening pending.**
   Exact human approval `call_fe9cf2f2d5ac41d2aeb7065623ae1223:0`; guarded
   playback runner consumed once. Current boot `d0b18b64…82475224`,
