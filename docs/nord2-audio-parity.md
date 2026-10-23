@@ -79,7 +79,7 @@ Private audit receipts live under
 The combined image pipeline is `research/nord2/audio/playback-20261023/ios-parity`.
 The earlier `ios-i2c-legacy` candidate was superseded before packing and testing.
 
-## Device result and remaining routing defect
+## First hardware test and routing correction
 
 The authorized parity image (`d0677caa…adb3a0c`, source `23ebee5`, CI
 `40015584829`) initialized both physical amplifiers as revision `0c74`.
@@ -112,3 +112,31 @@ reads or playback-time console output. Neither the HAL nor live USB ABI changes.
 The initial digital ceiling remains 256/32768 (about −42.1 dB); the half-scale
 test tone reaches about −48.2 dBFS. No physical output success or amplifier
 gain in dB is inferred from the container's raw gain fields.
+
+
+## Audible hardware result (2026-10-23)
+
+The route image `3b8cb873…4bec4c46`, source `6ee28295`, CI `40019831363`,
+was flashed after exact authorization. HAL reuse succeeded (mode1/phase2/error0).
+The user heard the diagnostic tone and then confirmed iOS media from **both
+speakers**, with responsive volume and pause/resume. The bottom speaker was
+reported extremely quiet; speaker balance and normal-volume output remain
+unresolved. No gain or speaker-protection setting was changed for this test.
+
+Both 0c74 amplifiers supplied complete startup snapshots (valid mask1ff):
+SYS0018, STATUS10=0016, STATUS11=e2c0, STATUS13=850f, STATUS14=00c8,
+MUTE58=1614, TDM20=2890, TDM23=000b and TDM26=1001/0010. The selected Android
+bitfield definitions decode these as PLL/clocks locked, amps engaged,
+MANOPER1/MANSTATE9, no manual/hard mute, and enabled TDM/speaker inputs.
+These observations were captured before feeding PCM, not sampled continuously.
+
+After media and pause, live STATUS11 showed 3,249,152 accepted frames, zero
+producer drops, 3,205,820 cumulative PCM frames, 14 stream starts and a maximum
+worker gap of3,976us. Playback had stopped with an empty queue and error,
+uncertain and stop_error all zero. The underrun counter includes intentionally
+zero-fed silent tests and stream tails; it is not an audible-glitch count.
+The test did not establish microphones, telephony, full speaker protection,
+or calibrated loudness.
+
+Private immutable evidence is under
+`research/nord2/audio/playback-20261023/ios-route/hardware-review`.

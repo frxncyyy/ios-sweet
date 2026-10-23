@@ -3,6 +3,36 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: route audio hardware test complete; stable working speakers.**
+  Current boot `3b8cb873…4bec4c46`, source6ee28295/CI40019831363. User
+  confirms app audio BOTH speakers and responsive volume/pause/resume
+  (`call_f6569752fa904131a06f5fcf3d536fd2:0`); bottom extremely quiet remains.
+  Final STATUS12:enabled1/running0/queued0, initialized1, error0/uncertain0/
+  stop_error0,3,249,152written/0dropped,3,205,820PCM,14starts,maxgap3,976us.
+  HAL remains enabled; no recovery or further output command was needed.
+  Collector43273 completed600s; immutable final436086B log SHA-256
+  `0509401b978ec324ac46e78d621ee72b87cf86ef32d98a1dd2f2a4d0c9bc0462`.
+  Final receipt/status in `ios-route/hardware-review`; no collector running.
+  Source audit identifies amp34/P/slot1 as bottom,37/Q/slot0 as top. Both
+  identical digital scaling256/32768; Android board raw TDMSPKG differs4/5,
+  plus boost fields. Do not infer a dB law or blindly equalize those fields.
+  No proven remaining route/mute defect; bottom loudness needs diagnosis,
+  normal output gain and speaker protection remain unverified/unimplemented.
+  Agents finishing private `*/route-audible` audit. Preserve unrelated kmod/.
+
+
+- **2026-10-23: iOS APP AUDIO AUDIBLE FROM BOTH SPEAKERS.**
+  User `call_5d18a9852c52429397adae1d33cad427:0` confirms both speakers,
+  but bottom extremely quiet. Current route image `3b8cb873…4bec4c46`;
+  HAL enabled7. Live STATUS8/9:PCM378636→1605832, written419840→1656832,
+  dropped0, starts6→11, error0/uncertain0/stop_error0, maxgap3976us.
+  Gain remains256/32768, not raised. Volume/pause and Wi-Fi user confirmation
+  requested. Hardware/profile agents auditing asymmetry offline; do not
+  infer full-volume balance or speaker protection implemented. Media receipt
+  and immutable log in `ios-route/hardware-review`. No new flash needed for
+  current checks. Collector43273 still active; retain final log when complete.
+
+
 - **2026-10-23: first AUDIBLE speaker tone confirmed on route image.**
   Human `call_4f6a840dc3ce49d79682ea819140aacf:0` heard the one-second tone,
   could not distinguish which speaker(s). Current `3b8cb873…4bec4c46`.
