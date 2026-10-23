@@ -3,6 +3,38 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: corrected audio images VERIFIED; exact approval pending.**
+  Source66fc36e9271b801a028d9180f7672e31149f42bf, CI39987328778attempt1SUCCESS.
+  Kernel17892808B SHA4a1142f950947000fa8507860ce9075624acf63b8d09ecabb87d65581c5a544b.
+  All260generatedtargets byteequal; HALpackage82253445...b4aa/executable/plist
+  byteidentical to committed phone install. Generic+independentreviewsPASS for
+  bothimages, storedprofile-sol/image-review/startup-{playback,rollback}.
+  Playback shim/out/nord2-xnu/nord2-ios-audio-ready-playback-stop23.img33536000B,
+  SHA8e6697a2c59e1d2cd05c67b549c02ca9a664769782643b209df07fef165f0290,
+  spare18432B. Rollback nord2-ios-audio-ready-rollback-stop23.img33527808B,
+  SHA3ec181c751335b4238ae5a0dd8a2cf51d45aec6a16867f1e345c8950852db86e,
+  spare26624B. Exactloader/Linux/rescueramdisk/kernel/ADT/sourcepinsverified;
+  targetedISA has noLDAPUR/STLUR,1443unknownwords notexhaustiveISAproof.
+  ios-startup/prepared.json+runner+receipts ready, noauthorization/noexecution.
+  Rootexec84972 ended0. Currentphone808a0967, UIhealthy, initialHALinstall
+  successfulandnonzeroPCMconfirmed; hardwareinitfailedbeforeMMIOdueNIstartup.
+  LiveSTOPdisabledoutput, no tone/silenttest sent. Initialcollector94316 ended0;
+  final410258B log SHAb40e64d0c90a2c77b5a542fca64aa828fe789cac345ecfc02f5f9a0652d4ff08.
+  Newexacttestapproval required thenfastboot/guardedrunner. Newmode1validates
+  identicalexistingHAL; old0d1438ff rollback remainsalready authorized ifneeded.
+  Do not boot stockAndroid; old55alone doesnotrestoreHAL. Physicalsoundunproven.
+
+
+- **2026-10-23: corrected audio source66fc36e in CI39987328778.**
+  Full source66fc36e9271b801a028d9180f7672e31149f42bf committed/pushed fork.
+  Private ios-startup/complete.py rootexec84972 watches exact CI, downloads
+  artifacts, verifies all260targets/source/ISA and builds distinct ready-playback
+  and ready-rollback images; refuses overwriting existingimages. It pins current
+  HAL package82253445...b4aa exactly. Independent profile review must follow.
+  No newauthorization orflash. Original808a0967 remainshealthyUI, audiooff via
+  liveSTOP; initialinstaller+HALPCMevidence preserved. Currentcollectorcompleted0.
+
+
 - **2026-10-23: startup ordering fix and saved diagnostics validated; CI next.**
   NI now publishes immutable retained MMIO VAs after initial touch/radio/GPIO
   setup, using release/acquire. Audio creates USB mailbox before bounded60s
