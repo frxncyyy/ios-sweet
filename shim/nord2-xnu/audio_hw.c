@@ -176,7 +176,8 @@ static int amps_prepare(struct nau_hw *h)
  struct nau_pin pins[NAU_PIN_COUNT]; nau_pin_decode(h->snapshot.snap,pins);
  if (pins[4].mode || pins[7].mode) return NAH_E_AMPS;
  const struct naf_amp_evidence dummy[2]={{1,1,1,0,0},{1,1,1,0,0}};
- if (naf_gate(&h->snapshot,dummy)) return NAH_E_COLD;
+ h->status.gate=naf_gate(&h->snapshot,dummy);
+ if (h->status.gate) return NAH_E_COLD;
  if (lease(h,1)) return NAH_E_IO;
  if (bus_clock_prepare(h)) { (void)bus_clock_restore(h); (void)lease(h,0); return NAH_E_IO; }
  /* A real read or cleanNACK proves the entire source bus preflight and
@@ -403,6 +404,7 @@ void nau_hw_status(const struct nau_hw *h,struct nah_status *out)
 {
  if (h && out) {
   *out=h->status;
+  out->uncertain=h->status.uncertain || h->afe.uncertain || h->bus.uncertain;
   out->afe_phase=h->afe.phase; out->afe_op=h->afe.op;
   out->i2c_stage=h->bus.stage; out->i2c_failure=h->bus.failure;
   out->last_pa=h->afe.last_pa;

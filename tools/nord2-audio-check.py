@@ -25,5 +25,6 @@ def main():
    exe=d/name;subprocess.run(flags+[str(p)for p in files]+link+['-o',str(exe)],check=True)
    subprocess.run([str(exe)]+[str(x)for x in args],check=True)
  subprocess.run(['python3',str(T/'test_live_cli.py')],check=True)
+ subprocess.run(['python3',str(T/'test_ready.py')],check=True)
  print('PASS software models/ABI only; physical sound remains unverified')
 if __name__=='__main__':main()

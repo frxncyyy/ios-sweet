@@ -190,4 +190,5 @@ int main(int argc,char **argv)
  assert(nau_hw_tick(&hw,2000)==NAH_E_AMP_FAULT); /* 9873 NOCLK is bit8. */
  assert(!bm.slave[5].accessed && !bm.slave[6].accessed);
  printf("PASS: full cold-init/reset/PLL/AFE/silicon+container profile/amp start, continuous PCM+status, stop and reset/clock restoration (%u amp transfers, no rail or MTP commands; persistentNOCLK/TDM and9873mask checked)\n",lifecycle_transfers);
+ return 0;
 }

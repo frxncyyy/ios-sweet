@@ -97,7 +97,8 @@ static void snapshot(struct nal_snapshot *out) {
 }
 static void diagnose(const char *where,int reason,unsigned initial) {
  /* Saved evidence only: never read hardware again after a failed access. */
- const struct nah_status *h=&hardware.status;
+ struct nah_status saved;nau_hw_status(&hardware,&saved);
+ const struct nah_status *h=&saved;
  printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u\n",
   where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
   h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain);
@@ -151,13 +152,34 @@ static int load_board(void) {
  SHA256_CTX ctx;SHA256_Init(&ctx);SHA256_Update(&ctx,data,n);SHA256_Final(hash,&ctx);
  return nah_board_load(data,n,hash);
 }
+/* Dependency waiting does no MMIO and never retries nau_hw_init. USB/live
+ * status is initialized first and commands stay serviceable during this wait. */
+static void native_wait_pause(void)
+{
+ uint64_t deadline;clock_interval_to_deadline(100,NSEC_PER_MSEC,&deadline);
+ assert_wait_deadline((event_t)&device,THREAD_UNINT,deadline);
+ thread_block(THREAD_CONTINUE_NULL);
+}
+static int prepare_native_deferred(struct nah_io *io,void **cookie)
+{
+ const uint64_t limit=60000000;uint64_t begin=now_us();
+ for (;;) {
+  int result=nah_native_prepare(io,cookie);
+  if (result!=NAH_NATIVE_WAIT) return result;
+  hardware.status.error=NAH_NATIVE_WAIT;
+  commands();
+  uint64_t now=now_us();
+  if (now<begin || now-begin>=limit) return NAH_NATIVE_E_TIMEOUT;
+  native_wait_pause();
+ }
+}
 static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
  struct nah_io io;void *cookie=NULL;
+ uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
  int e=load_board()?NAH_E_BOARD_CONFIG:0;
- if(!e)e=nah_native_prepare(&io,&cookie);
+ if(!e)e=prepare_native_deferred(&io,&cookie);
  if(!e)e=nau_hw_init(&hardware,&io,cookie,nah_board_profile());
  if(e)hardware.status.error=e;
- uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
  printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
  hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
  if(e)diagnose("init",e,1);

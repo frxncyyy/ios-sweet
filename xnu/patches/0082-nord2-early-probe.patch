@@ -4868,7 +4868,7 @@
  #endif /* ARM64_BOARD_CONFIG_SWEET */
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -1,3 +1,916 @@
+@@ -1,3 +1,919 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "wifi_common.c"
@@ -4891,6 +4891,7 @@
 +#include <kern/sched_prim.h>
 +#include <machine/machine_routines.h>
 +#include <pexpert/pexpert.h>
++#include "audio_native.h"
 +
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 +extern void sweet_hid_key(int, int);
@@ -5729,6 +5730,8 @@
 +	printf("NORD2 INPUT: FT3518 id=%02x:%02x ready=%d powered=%d idle=%d stage=%u irq=%d; TOPSTATUS=%#x ok=%d\n",
 +	    a, b, touch_ok, powered, bus_idle, ni_stage, ni_level(NI_IRQ), top, key_ok);
 +	printf("NORD2 INPUT: software I2C0, x4 coordinates, PMIC power/up and GPIO155 down; poll=10ms\n");
++	/* Publish retained maps only after this owner finishes initial GPIO writes. */
++	nah_native_publish_ready();
 +	unsigned errors = 0, ticks = 0, key_errors = 0;
 +	int state[3] = {0}, previous[3] = {-1, -1, -1};
 +	for (;;) {
@@ -5785,7 +5788,7 @@
  /*
   * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
   * Call once after the scheduler is running; all work runs on one thread.
-@@ -658,3 +1571,9 @@
+@@ -658,3 +1574,9 @@
  	}
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -19099,7 +19102,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_device.c
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,246 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
@@ -19201,7 +19204,8 @@
 +}
 +static void diagnose(const char *where,int reason,unsigned initial) {
 + /* Saved evidence only: never read hardware again after a failed access. */
-+ const struct nah_status *h=&hardware.status;
++ struct nah_status saved;nau_hw_status(&hardware,&saved);
++ const struct nah_status *h=&saved;
 + printf("NORD2 AUDIO ERROR: where=%s reason=%d gate=%x afe=%u/%u i2c=%u/%u pa=%x stop=%d reset=%d held=%u uncertain=%u\n",
 +  where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
 +  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain);
@@ -19255,13 +19259,34 @@
 + SHA256_CTX ctx;SHA256_Init(&ctx);SHA256_Update(&ctx,data,n);SHA256_Final(hash,&ctx);
 + return nah_board_load(data,n,hash);
 +}
++/* Dependency waiting does no MMIO and never retries nau_hw_init. USB/live
++ * status is initialized first and commands stay serviceable during this wait. */
++static void native_wait_pause(void)
++{
++ uint64_t deadline;clock_interval_to_deadline(100,NSEC_PER_MSEC,&deadline);
++ assert_wait_deadline((event_t)&device,THREAD_UNINT,deadline);
++ thread_block(THREAD_CONTINUE_NULL);
++}
++static int prepare_native_deferred(struct nah_io *io,void **cookie)
++{
++ const uint64_t limit=60000000;uint64_t begin=now_us();
++ for (;;) {
++  int result=nah_native_prepare(io,cookie);
++  if (result!=NAH_NATIVE_WAIT) return result;
++  hardware.status.error=NAH_NATIVE_WAIT;
++  commands();
++  uint64_t now=now_us();
++  if (now<begin || now-begin>=limit) return NAH_NATIVE_E_TIMEOUT;
++  native_wait_pause();
++ }
++}
 +static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
 + struct nah_io io;void *cookie=NULL;
++ uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
 + int e=load_board()?NAH_E_BOARD_CONFIG:0;
-+ if(!e)e=nah_native_prepare(&io,&cookie);
++ if(!e)e=prepare_native_deferred(&io,&cookie);
 + if(!e)e=nau_hw_init(&hardware,&io,cookie,nah_board_profile());
 + if(e)hardware.status.error=e;
-+ uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
 + printf("NORD2 AUDIO: worker=%d initialized=%u gate=%u amp=%04x/%04x\n",e,
 + hardware.status.initialized,hardware.status.gate,hardware.status.amp_revision[0],hardware.status.amp_revision[1]);
 + if(e)diagnose("init",e,1);
@@ -21547,7 +21572,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_hw.c
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,417 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -21728,7 +21753,8 @@
 + struct nau_pin pins[NAU_PIN_COUNT]; nau_pin_decode(h->snapshot.snap,pins);
 + if (pins[4].mode || pins[7].mode) return NAH_E_AMPS;
 + const struct naf_amp_evidence dummy[2]={{1,1,1,0,0},{1,1,1,0,0}};
-+ if (naf_gate(&h->snapshot,dummy)) return NAH_E_COLD;
++ h->status.gate=naf_gate(&h->snapshot,dummy);
++ if (h->status.gate) return NAH_E_COLD;
 + if (lease(h,1)) return NAH_E_IO;
 + if (bus_clock_prepare(h)) { (void)bus_clock_restore(h); (void)lease(h,0); return NAH_E_IO; }
 + /* A real read or cleanNACK proves the entire source bus preflight and
@@ -21955,6 +21981,7 @@
 +{
 + if (h && out) {
 +  *out=h->status;
++  out->uncertain=h->status.uncertain || h->afe.uncertain || h->bus.uncertain;
 +  out->afe_phase=h->afe.phase; out->afe_op=h->afe.op;
 +  out->i2c_stage=h->bus.stage; out->i2c_failure=h->bus.failure;
 +  out->last_pa=h->afe.last_pa;
@@ -26973,7 +27000,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/audio_hw_native.inc
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,183 @@
 +/* Include in the parent's audio-worker TU after kernel thread/vm headers.
 + * Mapping ownership belongs to parent. This bridge NEVER calls ml_io_map.
 + * Populate exactly9 windows with existing16KiB mappings, base list below.
@@ -26982,6 +27009,10 @@
 + * Audio worker calls nau_hw_* with &nah_native_io and &native as cookie.
 + * I2C8 lease callback must serialize AP users and must not touch PMIF. */
 +#include "audio_hw.h"
++#include "audio_native.h"
++#ifndef NAH_NATIVE_BARRIER
++#define NAH_NATIVE_BARRIER() __asm__ __volatile__("dsb sy" ::: "memory")
++#endif
 +#define NAH_NATIVE_WINDOWS 9u
 +struct nah_native_window { uint32_t base; vm_offset_t va; };
 +struct nah_native_context {
@@ -27028,11 +27059,11 @@
 + if (!v || !va) return -1;
 + /* FIFO_DATA is only popped by the polled transport; SRAM is write-only. */
 + if (pa>=NAF_SRAM && pa<NAF_SRAM+NAF_SRAM_BYTES) return -1;
-+ __asm__ __volatile__("dsb sy" ::: "memory");
++ NAH_NATIVE_BARRIER();
 + if (w==1) *v=*(volatile uint8_t *)va;
 + else if (w==2) *v=*(volatile uint16_t *)va;
 + else *v=*(volatile uint32_t *)va;
-+ __asm__ __volatile__("dsb sy" ::: "memory");
++ NAH_NATIVE_BARRIER();
 + return 0;
 +}
 +static int nah_native_bus_write(uint32_t pa,unsigned w)
@@ -27064,11 +27095,11 @@
 + if (!((w==4 && naf_write_allowed(pa)) || nah_native_bus_write(pa,w) || reset || clock)) return -1;
 + vm_offset_t va=nah_native_va(c,pa,w);
 + if (!va) return -1;
-+ __asm__ __volatile__("dsb sy" ::: "memory");
++ NAH_NATIVE_BARRIER();
 + if (w==1) *(volatile uint8_t *)va=(uint8_t)v;
 + else if (w==2) *(volatile uint16_t *)va=(uint16_t)v;
 + else *(volatile uint32_t *)va=v;
-+ __asm__ __volatile__("dsb sy" ::: "memory");
++ NAH_NATIVE_BARRIER();
 + return 0;
 +}
 +static int nah_native_delay(void *cookie,unsigned us)
@@ -27091,6 +27122,37 @@
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 +static struct nah_native_context nah_native;
 +static unsigned nah_native_attempted;
++/* The producer owns NI/NW globals. Audio never reads them while they are
++ * being initialized: immutable retained VAs publish via release/acquire. */
++static struct { vm_offset_t infra,gpio,lt; } nah_native_shared;
++static int nah_native_publication=NAH_NATIVE_WAIT;
++#define NAH_NATIVE_PUBLISHING 2
++int nah_native_dependency_state(void)
++{
++ int state=__atomic_load_n(&nah_native_publication,__ATOMIC_ACQUIRE);
++ return state==NAH_NATIVE_PUBLISHING ? NAH_NATIVE_WAIT:state;
++}
++int nah_native_publish_ready(void)
++{
++ int expected=NAH_NATIVE_WAIT;
++ if (!__atomic_compare_exchange_n(&nah_native_publication,&expected,
++     NAH_NATIVE_PUBLISHING,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
++  return nah_native_dependency_state();
++ int result=NAH_NATIVE_READY;
++ /* Called only by NI after its initial writes. Capture once, never replace
++  * or unmap these windows, even if audio subsequently fails to initialize. */
++ if (PAGE_SIZE!=0x4000u) result=NAH_NATIVE_E_PAGE;
++ else if (!nw.infra || !ni_gpio || !ni_lt) result=NAH_NATIVE_E_DEPENDENCIES;
++ else if (((nw.infra-0x1000)&0x3fff) || ((ni_gpio-0x1000)&0x3fff) ||
++          (ni_lt&0x3fff)) result=NAH_NATIVE_E_WINDOW;
++ if (!result) {
++  nah_native_shared.infra=nw.infra;
++  nah_native_shared.gpio=ni_gpio;
++  nah_native_shared.lt=ni_lt;
++ }
++ __atomic_store_n(&nah_native_publication,result,__ATOMIC_RELEASE);
++ return result;
++}
 +static volatile unsigned nah_native_bus_owned;
 +static int nah_native_bus_lease(unsigned acquire)
 +{
@@ -27100,30 +27162,48 @@
 +}
 +int nah_native_prepare(struct nah_io *out,void **cookie)
 +{
-+ if (!out || !cookie || nah_native_attempted || PAGE_SIZE!=0x4000u ||
-+     !nw.infra || !ni_gpio || !ni_lt || !current_thread()) return -1;
++ if (!out || !cookie) return NAH_NATIVE_E_ARGS;
++ if (PAGE_SIZE!=0x4000u) return NAH_NATIVE_E_PAGE;
++ if (!current_thread()) return NAH_NATIVE_E_CONTEXT;
++ if (nah_native_attempted) return NAH_NATIVE_E_REENTRY;
++ int state=nah_native_dependency_state();
++ if (state!=NAH_NATIVE_READY) return state; /* WAIT has zero side effects. */
 + nah_native_attempted=1;
 + nah_native.worker=current_thread(); nah_native.i2c8_lease=nah_native_bus_lease;
 + for (unsigned i=0;i<NAH_NATIVE_WINDOWS;i++) {
 +  uint32_t pa=nah_native_bases[i]; vm_offset_t va=0;
 +  /* ni_gpio maps logical10005000, offset1000 within16KiB page. */
-+  if (pa==0x10000000) va=nw.infra-0x1000;
-+  else if (pa==0x10004000) va=ni_gpio-0x1000;
-+  else if (pa==0x11f20000) va=ni_lt;
++  if (pa==0x10000000) va=nah_native_shared.infra-0x1000;
++  else if (pa==0x10004000) va=nah_native_shared.gpio-0x1000;
++  else if (pa==0x11f20000) va=nah_native_shared.lt;
 +  else va=ml_io_map(pa,0x4000);
-+  if (!va) return -1;
++  if (!va) return NAH_NATIVE_E_MAP;
 +  nah_native.windows[i]=(struct nah_native_window){pa,va};
 + }
-+ if (!nah_native_valid(&nah_native)) return -1;
++ if (!nah_native_valid(&nah_native)) return NAH_NATIVE_E_WINDOW;
 + *out=nah_native_io; *cookie=&nah_native; return 0;
 +}
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_native.h
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,19 @@
 +#ifndef NORD2_AUDIO_NATIVE_H
 +#define NORD2_AUDIO_NATIVE_H
 +struct nah_io;
++enum {
++ NAH_NATIVE_READY=0, NAH_NATIVE_WAIT=1,
++ NAH_NATIVE_E_ARGS=-32, NAH_NATIVE_E_PAGE=-33,
++ NAH_NATIVE_E_DEPENDENCIES=-34, NAH_NATIVE_E_REENTRY=-35,
++ NAH_NATIVE_E_CONTEXT=-36, NAH_NATIVE_E_MAP=-37,
++ NAH_NATIVE_E_WINDOW=-38, NAH_NATIVE_E_TIMEOUT=-39
++};
++/* Only NI calls publish, after all initial GPIO/WiFi/touch writes, before
++ * polling. No MMIO/map occurs here. Retained dependency VAs publish once. */
++int nah_native_publish_ready(void);
++/* Side-effect-free acquire observation: WAIT, READY, or permanent error. */
++int nah_native_dependency_state(void);
++/* Only WAIT may be retried. Once ready, mapping/validation is one attempt.
++ * No hardware MMIO is performed by prepare; nau_hw_init is called once later. */
 +int nah_native_prepare(struct nah_io *,void **);
 +#endif
 --- /dev/null

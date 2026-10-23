@@ -6,6 +6,10 @@
  * Audio worker calls nau_hw_* with &nah_native_io and &native as cookie.
  * I2C8 lease callback must serialize AP users and must not touch PMIF. */
 #include "audio_hw.h"
+#include "audio_native.h"
+#ifndef NAH_NATIVE_BARRIER
+#define NAH_NATIVE_BARRIER() __asm__ __volatile__("dsb sy" ::: "memory")
+#endif
 #define NAH_NATIVE_WINDOWS 9u
 struct nah_native_window { uint32_t base; vm_offset_t va; };
 struct nah_native_context {
@@ -52,11 +56,11 @@ static int nah_native_read(void *cookie,uint32_t pa,unsigned w,uint32_t *v)
  if (!v || !va) return -1;
  /* FIFO_DATA is only popped by the polled transport; SRAM is write-only. */
  if (pa>=NAF_SRAM && pa<NAF_SRAM+NAF_SRAM_BYTES) return -1;
- __asm__ __volatile__("dsb sy" ::: "memory");
+ NAH_NATIVE_BARRIER();
  if (w==1) *v=*(volatile uint8_t *)va;
  else if (w==2) *v=*(volatile uint16_t *)va;
  else *v=*(volatile uint32_t *)va;
- __asm__ __volatile__("dsb sy" ::: "memory");
+ NAH_NATIVE_BARRIER();
  return 0;
 }
 static int nah_native_bus_write(uint32_t pa,unsigned w)
@@ -88,11 +92,11 @@ static int nah_native_write(void *cookie,uint32_t pa,unsigned w,uint32_t v)
  if (!((w==4 && naf_write_allowed(pa)) || nah_native_bus_write(pa,w) || reset || clock)) return -1;
  vm_offset_t va=nah_native_va(c,pa,w);
  if (!va) return -1;
- __asm__ __volatile__("dsb sy" ::: "memory");
+ NAH_NATIVE_BARRIER();
  if (w==1) *(volatile uint8_t *)va=(uint8_t)v;
  else if (w==2) *(volatile uint16_t *)va=(uint16_t)v;
  else *(volatile uint32_t *)va=v;
- __asm__ __volatile__("dsb sy" ::: "memory");
+ NAH_NATIVE_BARRIER();
  return 0;
 }
 static int nah_native_delay(void *cookie,unsigned us)
@@ -115,6 +119,37 @@ static const struct nah_io nah_native_io={
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 static struct nah_native_context nah_native;
 static unsigned nah_native_attempted;
+/* The producer owns NI/NW globals. Audio never reads them while they are
+ * being initialized: immutable retained VAs publish via release/acquire. */
+static struct { vm_offset_t infra,gpio,lt; } nah_native_shared;
+static int nah_native_publication=NAH_NATIVE_WAIT;
+#define NAH_NATIVE_PUBLISHING 2
+int nah_native_dependency_state(void)
+{
+ int state=__atomic_load_n(&nah_native_publication,__ATOMIC_ACQUIRE);
+ return state==NAH_NATIVE_PUBLISHING ? NAH_NATIVE_WAIT:state;
+}
+int nah_native_publish_ready(void)
+{
+ int expected=NAH_NATIVE_WAIT;
+ if (!__atomic_compare_exchange_n(&nah_native_publication,&expected,
+     NAH_NATIVE_PUBLISHING,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
+  return nah_native_dependency_state();
+ int result=NAH_NATIVE_READY;
+ /* Called only by NI after its initial writes. Capture once, never replace
+  * or unmap these windows, even if audio subsequently fails to initialize. */
+ if (PAGE_SIZE!=0x4000u) result=NAH_NATIVE_E_PAGE;
+ else if (!nw.infra || !ni_gpio || !ni_lt) result=NAH_NATIVE_E_DEPENDENCIES;
+ else if (((nw.infra-0x1000)&0x3fff) || ((ni_gpio-0x1000)&0x3fff) ||
+          (ni_lt&0x3fff)) result=NAH_NATIVE_E_WINDOW;
+ if (!result) {
+  nah_native_shared.infra=nw.infra;
+  nah_native_shared.gpio=ni_gpio;
+  nah_native_shared.lt=ni_lt;
+ }
+ __atomic_store_n(&nah_native_publication,result,__ATOMIC_RELEASE);
+ return result;
+}
 static volatile unsigned nah_native_bus_owned;
 static int nah_native_bus_lease(unsigned acquire)
 {
@@ -124,21 +159,25 @@ static int nah_native_bus_lease(unsigned acquire)
 }
 int nah_native_prepare(struct nah_io *out,void **cookie)
 {
- if (!out || !cookie || nah_native_attempted || PAGE_SIZE!=0x4000u ||
-     !nw.infra || !ni_gpio || !ni_lt || !current_thread()) return -1;
+ if (!out || !cookie) return NAH_NATIVE_E_ARGS;
+ if (PAGE_SIZE!=0x4000u) return NAH_NATIVE_E_PAGE;
+ if (!current_thread()) return NAH_NATIVE_E_CONTEXT;
+ if (nah_native_attempted) return NAH_NATIVE_E_REENTRY;
+ int state=nah_native_dependency_state();
+ if (state!=NAH_NATIVE_READY) return state; /* WAIT has zero side effects. */
  nah_native_attempted=1;
  nah_native.worker=current_thread(); nah_native.i2c8_lease=nah_native_bus_lease;
  for (unsigned i=0;i<NAH_NATIVE_WINDOWS;i++) {
   uint32_t pa=nah_native_bases[i]; vm_offset_t va=0;
   /* ni_gpio maps logical10005000, offset1000 within16KiB page. */
-  if (pa==0x10000000) va=nw.infra-0x1000;
-  else if (pa==0x10004000) va=ni_gpio-0x1000;
-  else if (pa==0x11f20000) va=ni_lt;
+  if (pa==0x10000000) va=nah_native_shared.infra-0x1000;
+  else if (pa==0x10004000) va=nah_native_shared.gpio-0x1000;
+  else if (pa==0x11f20000) va=nah_native_shared.lt;
   else va=ml_io_map(pa,0x4000);
-  if (!va) return -1;
+  if (!va) return NAH_NATIVE_E_MAP;
   nah_native.windows[i]=(struct nah_native_window){pa,va};
  }
- if (!nah_native_valid(&nah_native)) return -1;
+ if (!nah_native_valid(&nah_native)) return NAH_NATIVE_E_WINDOW;
  *out=nah_native_io; *cookie=&nah_native; return 0;
 }
 #endif

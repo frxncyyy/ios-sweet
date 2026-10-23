@@ -3,6 +3,52 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: startup ordering fix and saved diagnostics validated; CI next.**
+  NI now publishes immutable retained MMIO VAs after initial touch/radio/GPIO
+  setup, using release/acquire. Audio creates USB mailbox before bounded60s
+  dependency wait; WAIT does no map/MMIO/attempt latch and services commands.
+  Only once READY does prepare map6 windows and hardware initialize once.
+  Permanent errors differentiated-32..-39, no hardware retries. Saved error
+  logging now derives true AFE/I2C phase/uncertainty and retains early coldgate.
+  Actual bridge/worker9 cases plus actualdiagnose/gate regression PASS under
+  ASan/UBSan; full audio suitePASS. Final3 nativeTUs compileWall/Wextra/Werror
+  after deduplicating malformed repeateddefines in local exported-Makefile
+  helperargs; source unchanged by that harness correction. Generated260targets
+  reproduceexactly. Newstage audio/playback-20261023/ios-startup, unauthorized.
+  Current808a0967 stable, HALPCM1077248frames/4208chunks; liveSTOPtoken3 then
+  statustoken4 enabled0/running0/error-1, no tone/hardwarestart.600scollector
+  rootexec94316 ended0; immutable final.log/receipt saved. UserhealthyUI/media
+  acknowledged. No further phone actions before newexactimageapproval.
+
+
+- **2026-10-23: audio HAL/PCM confirmed; hardware init blocked by startup ordering.**
+  Exact808a0967 install mode1phase6error0; iOS opens redwood-audio once and
+  media test reaches816128 stereo frames/3188 enqueue chunks, peak22576.
+  This proves HAL-to-kernel delivery, not physical sound. Worker init returns-1
+  before snapshot/MMIO, initialized0/board1/gate0/error-1. Source ni_thread waits
+  2s before shared mappings; audio starts prelaunch first. Actual log audioinit
+  line353 precedes input mapping logs700 and radioPERSIST742. No tone/silent or
+  amp start sent. Human call_d7ae1286 confirms healthyUI; call_380c85f0 media done.
+  Immutable391428B snapshot initial-install-hal-pcm.log SHA
+  f130f74e18b0170a76e0cf14c5d87f0e7889fa18295dbe1a11b3073811c9dd48 in
+  audio/playback-20261023/ios/hardware-review. Native dependency publication and
+  bounded side-effect-free deferred init fix in progress; no hardware retry.
+  Existing HAL must match next mode1 package byte-for-byte. Phone remains808,
+  original HAL backup/journal committed; exact0d1438ff rollback already authorized
+  if necessary, old55 alone cannot revertHAL. Collector rootexec94316 stillactive.
+
+
+- **2026-10-23: exact audio playback808a0967 FLASHED; hardware test active.**
+  Human call_7a2dff2cb9b74af18e2d872f2cc34411 authorizes exact playback,
+  persistent HAL install with backup and conditional rollback0d1438ff/RAMADB.
+  Separate authorization.json saved. Guarded single-device/product/partition/
+  SHA checks passed; flash boot and reboot OKAY. One-use playback runner USED;
+  never rerun. Rootexec94316 owns bounded600s USB capture in audio/playback-
+  20261023/ios/hardware-playback. Await installer/audio status, then bounded
+  silent DMA and quiet tone before real app playback. No audio success yet.
+  New rollback reverses HAL; old55 alone cannot undo installed HAL layout.
+
+
 - **2026-10-23: complete speaker images PREPARED/VERIFIED; exact approval pending.**
   Final source a04aa46ae2697707a68ede18eb545792f77a867f; full CI39973001578
   SUCCESS, attempt1. Kernel17892512B SHA
