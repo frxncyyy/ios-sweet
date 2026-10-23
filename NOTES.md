@@ -4,6 +4,18 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: permanent approvedlevel CI40034353275 running.**
+  Source50d13b7c4d0628db9a16fc02b54f25e2e5f43e15 pushedfork. Onlybottom
+  bootdefault1024→5793; generatedpatchupdated, tests/native/reviewPASS.
+  Stageios-calibrated pipeline watchesexactrun, verifies261targets/HAL,
+  packsplayback/rollback. Neithernewimage nor exactapprovalreadyyet.
+  Currentb60647f1 live256/5793 staysuserapproved; lastSTATUS42starts,
+  noerror/uncertainty/stopfault. Collectorcompleted; no devicecommandsneeded.
+  Next independentimagechecks via run-calibrated.py, prepare.py andexact
+  approval; fallbackcurrentb60647f1. No need furtherqualitydiagnosis now.
+
+
+
 - **2026-10-24: live speaker volume USER APPROVED; persisting default next.**
   User call_bfb483ac30c7412b822393aed8e67a5f:0 confirms5793isright;
   qualityconcern withdrawn aspossiblysubjective. Keep top256/bottom5793.
