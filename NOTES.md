@@ -4,6 +4,34 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: lifecycle image PREPARED/VERIFIED, exact human approval pending.**
+  CI39944476656 attempt1 SUCCESS on source0d9a49340d5c3088519f795397c72d7efd179965.
+  All234generatedpatchtargets byte-equal; actualCI genericARMv8.2 compilers checked.
+  Kernel17821744B SHA35d59d018694d20ecf5d36f61683b745c437d9f09744f67cbe664fda4a98afd1;
+  ISA2285688instructions noLDAPUR/STLUR. Image
+  shim/out/nord2-xnu/nord2-ios-wifi-lifecycle-stop23.img33495040B SHA
+  29d94463b471d4356f5bd9df8c4c4c93b44770918d7c2cae2a5877519830447f,
+  bootspare59392B. Payload15027712B SHA
+  1d0bab76c765b3c607794fa2c1b1c541052f14844e07c2cfed2d2f0cbf4e09aa.
+  Independent exact-image review PASS including originalLinux/DTS/RAMADB,
+  sameprivateADT/calibration/cmdline, currentloader and rebasedMachO. Fresh
+  wifi-ios-lifecycle/ios/prepared.json pins CI/image/host/readers/runner evidence.
+  One-use run-authorized-boot.py requires a separately recorded NEW exactimage
+  authorization.json; it has NOT run. Known-good618copy and RAMADB recovery
+  SHA-verified. Phone still618 (workingDHCP); no lifecyclehardware success claimed.
+  Next: obtain exact boot-only approval+fastboot, collect USB before boot, test
+  WPA2/IP/Safari then connectedscan/OFF/ON/5GHz and OPEN when available. New
+  strict collect-snapshot.py uses frozen37/64/history readers; old logs immutable.
+  No keyedWEP support claimed: user means OPEN/no-password. Preserve kmod/.
+
+- **2026-10-23: lifecycle source committed and CI dispatched.**
+  Runtime/tests commit0d9a49340d5c3088519f795397c72d7efd179965 pushed to fork
+  codex/nord2-bringup. CI39944476656 attempt1 queued (DEVELOPMENT/SWEET13.5).
+  All11stationgroups PASS (last service seam updated faithfully), actual IOUC
+  ordinary+power/retention/lifetime tests PASS; no runtime changes after15TU
+  compile. Fullkernel/image verification pending. Phone remains healthy618;
+  no new exactimage authorization requested yet. Stage wifi-ios-lifecycle/ios.
+
 - **2026-10-23: cohesive lifecycle runtime frozen; local native compile PASS.**
   CID4 pending lifetime now remains held until DMA retires, including a real
   SCAN_DONE arriving first; actual-owner hostile regression passes. LongOFF
