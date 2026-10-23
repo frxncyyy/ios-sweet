@@ -24,6 +24,7 @@ static uint64_t njs_uptime_us(void){
 #define NJS_LIVE_CONFIGURE() ((void)0)
 #endif
 #define NJS_JOIN_BUDGET_US UINT64_C(8000000)
+#define NJS_HANDOVER_BUDGET_US UINT64_C(30000000)
 #define NJS_TX_SLOTS 8u
 #define NJS_CACHE_SLOTS 4u
 #define NJS_RX_SLOTS 16u
@@ -45,6 +46,11 @@ static struct {
  uint8_t tx[NJS_TX_SLOTS][NWIL_ETHERNET_MAX];unsigned tx_bytes[NJS_TX_SLOTS];
  uint8_t rx[NJS_RX_SLOTS][NWIL_ETHERNET_MAX];unsigned rx_bytes[NJS_RX_SLOTS];
 } njs_native;
+/* One copied next attempt; old callback/firmware ownership stays intact until
+ * retirement plus the existing real all-queue/fresh-scan barrier. */
+static struct {unsigned state,canceled;uint64_t admitted,deadline,ticket,epoch;
+ void*cookie;njs_completion completion;struct niwj_request request;struct njs_snapshot snapshot;}njs_handover;
+
 /* At most112 samples (five short state parts each), never packet/secret
  * bytes. State rows only on phase/action/outcome/error/readiness transitions. */
 static void njs_trace_locked(unsigned force){
@@ -62,7 +68,7 @@ static void njs_trace_locked(unsigned force){
  printf("NORD2 WIFI IOS STATIONPART: sample=%u part=5 rx_delivered=%u rx_raw=%u rx_raw_eapol=%u rx_raw_drop=%u t_ms=%llu security=%u rx_raw_data=%u\n",njs_native.logs,njs_native.rx_delivered,n->rx_untranslated,n->rx_untranslated_eapol,n->rx_untranslated_drop,(unsigned long long)njs_native.driver.now_ms,njs_native.snapshot.security,n->rx_untranslated_data);
 }
 static void njs_link_error(unsigned up,int error){IOLockLock(nss_native.lock);unsigned log=njs_native.logs<112;if(log)njs_native.logs++;IOLockUnlock(nss_native.lock);if(log)printf("NORD2 WIFI IOS LINK: generation=%llu up=%u error=%d\n",(unsigned long long)njs_native.native_generation,up,error);}
-static int njs_pending_locked(void){return njs_native.queued||njs_native.active;}
+static int njs_pending_locked(void){return njs_native.queued||njs_native.active||njs_handover.state;}
 static int njs_associated_scan_ready_locked(void){return njs_native.active&&njs_native.linked&&!njs_native.queued&&!njs_native.leave&&!njs_native.canceled&&nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!nst_native.state.cleanup_started;}
 static int njs_scan_blocked_locked(void){return !nss_native.powered||njs_native.queued||(njs_native.active&&!njs_associated_scan_ready_locked())||(njs_native.used&&!njs_native.active&&!njs_native.scan_returned);}
 static void njs_cache_scan_locked(const struct nsb_scan*s){
@@ -82,24 +88,40 @@ static int njs_request_ok(const struct niwj_request*q){
  return q&&q->ssid_length&&q->ssid_length<=32&&q->has_target<=1&&q->association_reason<=2&&((q->security==NIWJ_WPA2_PSK_CCMP&&(q->native_flags==0||q->native_flags==4)&&!memcmp(q->station_rsn,rsn,22))||
  (q->security==NIWJ_OPEN&&!q->native_flags&&!memcmp(q->station_rsn,(const uint8_t[22]){0},22)&&!memcmp(q->pmk,(const uint8_t[32]){0},32)))&&(!q->has_target||(!(q->target[0]&1)&&(q->target[0]|q->target[1]|q->target[2]|q->target[3]|q->target[4]|q->target[5])));
 }
-int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
- if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
- if(!nss_available())return 1;uint64_t now_us=njs_uptime_us();if(now_us>UINT64_MAX-NJS_JOIN_BUDGET_US)return 1;IOLockLock(nss_native.lock);
- if(!nss_native.powered||!njs_native.notice_lock||nss_native.failed||(njs_native.used&&!njs_rejoin_ready_locked())||njs_native.serial>=255){IOLockUnlock(nss_native.lock);return 1;}
- unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
- if(busy){IOLockUnlock(nss_native.lock);return 2;}
+static void njs_accept_locked(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t next_ticket,uint64_t now_us){
  njs_native.admitted_us=now_us;njs_native.deadline_us=(now_us/1000+8000)*1000;
- njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=++njs_native.serial;njs_native.native_generation=njs_native.ticket;
+ njs_native.cookie_retired=0;njs_native.request=*q;njs_native.ticket=next_ticket;njs_native.native_generation=njs_native.ticket;
  if(njs_native.used)nsr_native.admitted_generation=njs_native.native_generation;
  njs_native.epoch=epoch;njs_native.cookie=cookie;njs_native.completion=completion;njs_native.queued=1;njs_native.canceled=njs_native.leave=njs_native.detach=njs_native.terminal=njs_native.joined=njs_native.retiring=0;
  njs_native.snapshot=(struct njs_snapshot){.native_generation=njs_native.native_generation,.client_epoch=epoch,.ticket=njs_native.ticket,.phase=NJS_QUEUED,.security=q->security};
+
+}
+int nord2_wifi_join_enqueue(const struct niwj_request*q,void*cookie,uint64_t epoch,njs_completion completion,uint64_t*ticket){
+ if(!njs_request_ok(q)||!cookie||!epoch||!completion||!ticket)return -1;
+ if(!nss_available())return 1;uint64_t now_us=njs_uptime_us();if(now_us>UINT64_MAX-NJS_JOIN_BUDGET_US)return 1;IOLockLock(nss_native.lock);
+ if(!nss_native.powered||!njs_native.notice_lock||nss_native.failed||nst_native.state.halt||nst_native.state.error||nsr_native.bad||njs_native.serial>=255){IOLockUnlock(nss_native.lock);return 1;}
+ if(njs_handover.state){IOLockUnlock(nss_native.lock);return 2;}
+ if(njs_native.used&&!njs_rejoin_ready_locked()){
+  /* Only an explicit old leave or completed teardown awaiting its real scan
+   * permits handover. Never replace a healthy link or overwrite an attempt. */
+  if(!njs_native.leave&&!(njs_native.scan_returned&&!njs_native.active&&!njs_native.queued)){IOLockUnlock(nss_native.lock);return 1;}
+  if(now_us>UINT64_MAX-NJS_HANDOVER_BUDGET_US){IOLockUnlock(nss_native.lock);return 1;}
+  njs_handover.state=1;njs_handover.admitted=now_us;njs_handover.deadline=now_us+NJS_HANDOVER_BUDGET_US;
+  njs_handover.ticket=++njs_native.serial;njs_handover.epoch=epoch;njs_handover.cookie=cookie;njs_handover.completion=completion;njs_handover.request=*q;
+  njs_handover.snapshot=(struct njs_snapshot){.native_generation=njs_handover.ticket,.client_epoch=epoch,.ticket=njs_handover.ticket,.phase=NJS_QUEUED,.security=q->security};
+  *ticket=njs_handover.ticket;IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
+ }
+ unsigned busy=njs_native.active||njs_native.queued||njs_native.retiring||njs_native.completion;
+ if(busy){IOLockUnlock(nss_native.lock);return 2;}
+ njs_accept_locked(q,cookie,epoch,completion,++njs_native.serial,now_us);
  *ticket=njs_native.ticket;IOLockUnlock(nss_native.lock);thread_wakeup((event_t)&nss_native);return 0;
 }
-int nord2_wifi_join_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);int r=1;if(ticket==njs_native.ticket&&(njs_native.queued||njs_native.active)){if(njs_native.linked&&njs_native.snapshot.phase==NJS_AUTHORIZED)njs_native.detach=1;else njs_native.canceled=1;r=0;}IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
+
+int nord2_wifi_join_cancel(uint64_t ticket){if(!ticket||!nss_available())return 1;IOLockLock(nss_native.lock);int r=1;if(njs_handover.state==1&&ticket==njs_handover.ticket){njs_handover.canceled=1;niwj_clear(&njs_handover.request,sizeof njs_handover.request);r=0;}else if(ticket==njs_native.ticket&&(njs_native.queued||njs_native.active)){if(njs_native.linked&&njs_native.snapshot.phase==NJS_AUTHORIZED)njs_native.detach=1;else njs_native.canceled=1;r=0;}IOLockUnlock(nss_native.lock);if(!r)thread_wakeup((event_t)&nss_native);return r;}
 static void njs_drop_tx_locked(void);
 static int njs_disconnect_notice_locked(void){
  IOLockLock(nss_native.lock);
- int r=1;unsigned changed=0;uint64_t generation=0;
+ int r=1;unsigned changed=0,wake=0;uint64_t generation=0;if(njs_handover.state==1){njs_handover.canceled=1;niwj_clear(&njs_handover.request,sizeof njs_handover.request);wake=1;r=0;}
  if(njs_native.queued||njs_native.active){changed=1;njs_native.leave=1;generation=njs_native.native_generation;
   if(njs_native.active)nst_close_port(&nst_native.state);
   njs_drop_tx_locked();njs_native.linked=njs_native.tx_admit=0;njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=njs_native.snapshot.data_ready=0;njs_native.snapshot.phase=NJS_LEAVING;r=0;}
@@ -109,7 +131,7 @@ static int njs_disconnect_notice_locked(void){
  else if(!nss_native.failed&&njs_native.snapshot.phase==NJS_IDLE&&!njs_native.used&&!nst_native.attempted&&!nst_native.active&&!njs_native.retiring&&!njs_native.completion&&!njs_native.cookie&&!njs_native.linked&&!njs_native.tx_admit)r=0;
  IOLockUnlock(nss_native.lock);
  if(changed&&nord2_wifi_ifnet_link(generation,0))r=-1;
- if(changed)thread_wakeup((event_t)&nss_native);return r;
+ if(changed||wake)thread_wakeup((event_t)&nss_native);return r;
 }
 int nord2_wifi_join_disconnect(void){
  if(!nss_available()||!njs_native.notice_lock)return 1;
@@ -159,7 +181,7 @@ int nord2_wifi_join_card_inventory(struct niwc_manifest*out){
   {NIWC_CCMP,NIWC_END_TO_END},{NIWC_RSN_IE,NIWC_END_TO_END}}};
  *out=installed;IOLockUnlock(nss_native.lock);return 0;
 }
-int nord2_wifi_join_copy_state(struct njs_snapshot*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);*out=njs_native.snapshot;IOLockUnlock(nss_native.lock);return 0;}
+int nord2_wifi_join_copy_state(struct njs_snapshot*out){if(!out)return -1;if(!nss_available())return 1;IOLockLock(nss_native.lock);*out=njs_handover.state?njs_handover.snapshot:njs_native.snapshot;IOLockUnlock(nss_native.lock);return 0;}
 int nord2_wifi_link_send(const uint8_t*p,size_t n,uint64_t generation){
  if(!p||n<14||n>NWIL_ETHERNET_MAX||!generation||(p[12]==0x88&&p[13]==0x8e))return NWIL_SEND_INVALID;
  if(!nss_available())return NWIL_SEND_NOT_READY;IOLockLock(nss_native.lock);
@@ -246,8 +268,19 @@ static int njs_start_owner(uint64_t now_us){
  if(result!=1){njs_early_finish(2);return undo?-1:0;}
  IOLockLock(nss_native.lock);njs_trace_locked(1);IOLockUnlock(nss_native.lock);return 1;
 }
-static int njs_fatal_owner(void){
- IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);nst_close_port(&nst_native.state);njs_native.linked=njs_native.tx_admit=0;njs_drop_tx_locked();
+/* One independent terminal sample; routine transition logging can exhaust
+ * during repeated joins. No payload, address, key, nonce or replay bytes. */
+static unsigned njs_fault_logged;
+static int njs_fatal_owner(unsigned source){
+ IOLockLock(njs_native.notice_lock);IOLockLock(nss_native.lock);
+ if(!njs_fault_logged){
+  njs_fault_logged=1;const struct nst*n=&nst_native.state;const struct nwo*o=&njs_native.driver.owner;
+  printf("NORD2 WIFI IOS STATIONFAULT: part=1 source=%u generation=%llu native=%u error=%u halt=%u transaction=%u owner=%u in_kind=%u in_ticket=%llu\n",source,(unsigned long long)n->generation,n->phase,n->error,n->halt,o->transaction.phase,o->halted,o->in_kind,(unsigned long long)o->in_ticket);
+  printf("NORD2 WIFI IOS STATIONFAULT: part=2 last=%llu deadline=%llu operation_deadline=%llu cleanup_deadline_ms=%llu\n",(unsigned long long)n->last,(unsigned long long)n->deadline,(unsigned long long)n->operation_deadline,(unsigned long long)o->transaction.cleanup_deadline);
+  printf("NORD2 WIFI IOS STATIONFAULT: part=3 submit=%u dma=%u busy=%u pub=%u ddone=%u air_pending=%u air_done=%u air_status=%u cleanup=%u associated_scan=%u\n",n->submitted,n->dma_completed,n->wire_busy,n->published,n->dma_done,n->air_pending,n->air_done,n->air_status,n->cleanup_started,(unsigned)(n->associated_scan!=0));
+ }
+ if(njs_handover.state){njs_handover.canceled=1;niwj_clear(&njs_handover.request,sizeof njs_handover.request);}
+ nst_close_port(&nst_native.state);njs_native.linked=njs_native.tx_admit=0;njs_drop_tx_locked();
  nwp_cancel(&njs_native.driver.owner.transaction.wpa);niwj_clear(&njs_native.driver.owner.transaction.action,sizeof njs_native.driver.owner.transaction.action);niwj_clear(njs_native.driver.owner.transaction.queued_eapol,sizeof njs_native.driver.owner.transaction.queued_eapol);niwj_clear(&njs_native.request,sizeof njs_native.request);
  njs_trace_locked(1);
 #ifndef NJS_HOST_TEST
@@ -259,33 +292,51 @@ static int njs_fatal_owner(void){
 }
 /* Returns1 when the actual NSS worker remains occupied by connection;0 idle;
  * -1 uncertain native DMA/lease failure requiring inherited retained drain. */
+/* Worker only; callback delivery never borrows either native lock. */
+static int njs_handover_work(void){
+ IOLockLock(nss_native.lock);if(njs_handover.state!=1){IOLockUnlock(nss_native.lock);return 0;}
+ uint64_t now=njs_uptime_us();unsigned failed=njs_handover.canceled||!nss_native.powered||nss_native.failed||nst_native.state.halt||nst_native.state.error||nsr_native.bad||now<njs_handover.admitted||now>=njs_handover.deadline||now>UINT64_MAX-NJS_JOIN_BUDGET_US;
+ if(failed){
+  njs_handover.state=2;njs_handover.snapshot.phase=NJS_FAILED;njs_handover.snapshot.result=!njs_handover.canceled&&nss_native.powered&&now>=njs_handover.deadline?9:2;
+  niwj_clear(&njs_handover.request,sizeof njs_handover.request);
+  njs_completion fn=njs_handover.completion;void*cookie=njs_handover.cookie;uint64_t epoch=njs_handover.epoch,ticket=njs_handover.ticket;
+  IOLockUnlock(nss_native.lock);fn(cookie,epoch,ticket,NJS_JOIN_FAILED);fn(cookie,epoch,ticket,NJS_RETIRED);
+  IOLockLock(nss_native.lock);niwj_clear(&njs_handover,sizeof njs_handover);IOLockUnlock(nss_native.lock);return 1;
+ }
+ if(!njs_native.active&&!njs_native.queued&&!njs_native.retiring&&!njs_native.completion&&njs_rejoin_ready_locked()){
+  njs_accept_locked(&njs_handover.request,njs_handover.cookie,njs_handover.epoch,njs_handover.completion,njs_handover.ticket,now);
+  niwj_clear(&njs_handover,sizeof njs_handover);
+ }
+ IOLockUnlock(nss_native.lock);return 0;
+}
 static int njs_owner_work(void){
+ if(njs_handover_work())return 1;
  IOLockLock(nss_native.lock);unsigned queued=njs_native.queued,active=njs_native.active,scans=0,canceled=njs_native.canceled||njs_native.leave;
  if(queued&&!active)for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)scans=1;
  uint64_t admitted=njs_native.admitted_us,deadline=njs_native.deadline_us;IOLockUnlock(nss_native.lock);
- if(!queued&&!active){njs_rejoin_refresh();return 0;}
+ if(!queued&&!active){njs_rejoin_refresh();if(njs_handover.state){uint64_t pause;clock_interval_to_deadline(1000,NSEC_PER_USEC,&pause);IOLockLock(nss_native.lock);assert_wait_deadline((event_t)&nss_native,THREAD_UNINT,pause);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);}return 0;}
  if(queued){uint64_t observed=njs_uptime_us();if(canceled||observed<admitted||observed>=deadline){njs_early_finish(!canceled&&observed>=deadline?9:2);return 1;}
   if(scans)return 0; /* Drain only scans admitted before this first join. */
  }
- uint64_t now_us;if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner();
+ uint64_t now_us;if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner(1);
  if(queued){int r=njs_start_owner(now_us);if(r<0)return -1;IOLockLock(nss_native.lock);active=njs_native.active;IOLockUnlock(nss_native.lock);if(!active)return 1;
   /* Pure prepare/RNG may advance beyond the constructor's fresh timestamp.
    * Never feed the pre-constructor sample back into the monotonic engine. */
-  if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner();
+  if(ncd_native_now(&ncd_native,&now_us))return njs_fatal_owner(2);
  }
  unsigned notify_join=0,notify_terminal=0,retire=0,detach=0,link_up=0,link_down=0;
  IOLockLock(nss_native.lock);
  if(njs_native.detach){njs_native.detach=0;detach=1;}
  if(nst_native.state.associated_scan&&(njs_native.canceled||njs_native.leave||nst_native.state.link_lost))(void)nst_associated_scan_cancel(&nst_native.state);
  if((njs_native.canceled||njs_native.leave)&&!nst_native.state.associated_scan){(void)nwn_cancel(&njs_native.driver,njs_native.native_generation,now_us/1000);njs_drop_tx_locked();}
- if(njs_associated_scan_start_locked()<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
+ if(njs_associated_scan_start_locked()<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner(3);}
  int result=(njs_native.canceled||njs_native.leave)&&nst_native.state.associated_scan?0:nwn_pump(&njs_native.driver,now_us/1000);
- if(result<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
+ if(result<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner(4);}
  if(!njs_native.canceled&&!njs_native.leave&&nwo_authorized(&njs_native.driver.owner)&&!nst_native.state.wire_busy&&!nst_native.state.air_pending&&njs_native.tx_count){
   unsigned k=njs_native.tx_head;int sent=nst_data(&nst_native.state,UINT64_MAX,njs_native.tx[k],njs_native.tx_bytes[k]);
   if(sent<=0){if(sent<0)njs_native.queued_drop++;niwj_clear(njs_native.tx[k],sizeof njs_native.tx[k]);njs_native.tx_bytes[k]=0;njs_native.tx_head=(k+1)%NJS_TX_SLOTS;njs_native.tx_count--;}}
  nsr_key_capture(&nsr_native,&nst_native.state);
- if(nst_native.state.halt||nst_step(&nst_native.state,&ncd_io,&ncd_native,16,njs_event,&njs_native)<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner();}
+ if(nst_native.state.halt||nst_step(&nst_native.state,&ncd_io,&ncd_native,16,njs_event,&njs_native)<0){IOLockUnlock(nss_native.lock);return njs_fatal_owner(5);}
  struct nss_slot*scan_done=njs_associated_scan_done_locked();
  njs_snapshot_locked();njs_trace_locked(0);
  if(nwo_authorized(&njs_native.driver.owner)&&nst_native.state.controlled_port&&!njs_native.canceled&&!njs_native.leave&&!njs_native.linked)link_up=1;
@@ -318,7 +369,7 @@ static int njs_owner_work(void){
  if(notify_join&&!detach){IOLockLock(nss_native.lock);unsigned live=njs_native.linked&&!njs_native.canceled&&!njs_native.leave;IOLockUnlock(nss_native.lock);if(live)njs_notice(NJS_JOINED);}
  if(notify_terminal)njs_notice(njs_native.joined?NJS_LEFT:NJS_JOIN_FAILED);
  if(retire)njs_notice(NJS_RETIRED);
- if(terminal&&njs_native.driver.owner.transaction.phase==STC_DONE&&NJS_RETURN_SCANS()<0)return njs_fatal_owner();
+ if(terminal&&njs_native.driver.owner.transaction.phase==STC_DONE&&NJS_RETURN_SCANS()<0)return njs_fatal_owner(6);
  if(!terminal){uint64_t deadline;clock_interval_to_deadline(1000,NSEC_PER_USEC,&deadline);IOLockLock(nss_native.lock);assert_wait_deadline((event_t)&nss_native,THREAD_UNINT,deadline);IOLockUnlock(nss_native.lock);thread_block(THREAD_CONTINUE_NULL);}
  return 1;
 }

@@ -1,0 +1,22 @@
+static void arm(IOUserClient*c){IOExternalMethodArguments a={};assert(!call(c,3,a));static OSAsyncReference64 ref={1};rights++;a={};a.asyncReference=ref;a.asyncReferenceCount=8;a.asyncWakePort=1;assert(!call(c,2,a));}
+static IOReturn setPower(IOUserClient*c,unsigned on){envelope(carrier,0x802869c8,19,24);put(carrier+8,1);put(carrier+12,1);put(carrier+16,on);memset(carrier+20,0xa5,12);IOExternalMethodArguments a={};a.structureInput=carrier;a.structureInputSize=sizeof carrier;return call(c,0,a);}
+static unsigned getPower(IOUserClient*c){uint8_t p[24];envelope(carrier,NIW_GET,19,24);IOExternalMethodArguments a={};a.structureInput=carrier;a.structureInputSize=sizeof carrier;a.structureOutput=p;a.structureOutputSize=sizeof p;assert(!call(c,0,a)&&a.structureOutputSize==24);return niw_u32(p+8);}
+static void queue(IOUserClient*c){envelope(carrier,0x802869c8,10,5456);put(carrier+8,1);put(carrier+12,3);put(carrier+60,1);put(carrier+64,1);IOExternalMethodArguments a={};a.structureInput=carrier;a.structureInputSize=sizeof carrier;assert(!call(c,0,a));}
+static IOReturn row(IOUserClient*c,unsigned size=1164){uint8_t p[1164];envelope(carrier,NIW_GET,11,size);IOExternalMethodArguments a={};a.structureInput=carrier;a.structureInputSize=sizeof carrier;a.structureOutput=p;a.structureOutputSize=sizeof p;return call(c,0,a);}
+int main(){auto*a=make();auto*b=make();arm(a);arm(b);assert(getPower(a)==1&&getPower(b)==1);completeScan();scan.count=scan.frames=1;auto&r=scan.records[0];r.observed_us=150;r.bssid[0]=2;r.subtype=8;r.channel=r.hw_channel=6;r.ssid_present=1;r.interval=100;r.rxv_valid=1;r.group_valid=4;r.rxv[4]=100;r.rxv[5]=90;r.ie_total=r.ie_bytes=3;r.ies[0]=1;r.ies[1]=1;r.ies[2]=2;
+ queue(a);finish();queue(b);finish();assert(!setPower(a,0)&&!getPower(a)&&!getPower(b));assert(row(b)==(IOReturn)0xe0820446&&row(b,1)==kIOReturnBadArgument);assert(!setPower(a,1)&&getPower(a)==1);assert(row(b)==(IOReturn)0xe0820446); /* another client's history cannot survive OFF/ON */
+ queue(b);unsigned notifications_before=notifications;assert(!setPower(a,0));assert(!setPower(a,1));unsigned after_power=notifications;assert(after_power==notifications_before+2);finish();assert(notifications==after_power&&row(b)==(IOReturn)0xe0820446); /* stale completion cannot publish */
+ IOOptionBits options;IOMemoryDescriptor*d,*st;assert(!a->clientMemoryForType(1,&options,&d));assert(!a->clientMemoryForType(2,&options,&st));auto*ring=(uint8_t*)static_cast<IOBufferMemoryDescriptor*>(d)->getBytesNoCopy();auto*indices=(uint32_t*)static_cast<IOBufferMemoryDescriptor*>(st)->getBytesNoCopy();niwe_view v={0,indices[1],4096};niwe_record event={};unsigned powers=0;for(unsigned k=0;k<16;k++){int n=niwe_peek(ring,4096,&v,&event);if(!n)break;assert(n==1||n==2);if(n==2&&event.event==1){assert(!event.primary&&!event.secondary&&event.total==48);powers++;}v.consumer=event.next;}assert(powers==4&&power_calls==4);
+
+ /* Metadata success is committed synchronously, independent of notification
+  * delivery. Ring-full or a failed send cannot block later GET19/status. */
+ sendFail=true;assert(!setPower(a,0)&&!getPower(a));sendFail=false;assert(!setPower(a,1)&&getPower(a)==1);
+ unsigned before_fail=notifications,before_calls=power_calls;uint64_t before_epoch=logical_epoch;
+ power_unavailable=1;nss_native.failed=1;
+ assert(setPower(a,0)==kIOReturnNotReady&&power_calls==before_calls&&logical_epoch==before_epoch&&notifications==before_fail);
+ uint8_t large[4824];memset(large,0xa5,sizeof large);envelope(carrier,NIW_GET,12,13);IOExternalMethodArguments fail={};fail.structureInput=carrier;fail.structureInputSize=sizeof carrier;fail.structureOutput=large;fail.structureOutputSize=sizeof large;
+ assert(call(a,0,fail)==kIOReturnNotReady);for(unsigned j=0;j<sizeof large;j++)assert(large[j]==0xa5);
+ /* This is output capacity4824, not request4824; refusal keeps bytes atomic. */
+ envelope(carrier,NIW_GET,19,24);fail.structureOutputSize=sizeof large;assert(call(a,0,fail)==kIOReturnNotReady);for(unsigned j=0;j<sizeof large;j++)assert(large[j]==0xa5);
+ power_unavailable=0;nss_native.failed=0;assert(getPower(a)==1);
+ assert(!a->clientClose()&&!b->clientClose());a->release();b->release();d->release();st->release();assert(!rights&&!malloc_count&&!buffer_count&&!locks);puts("PASS actual IOUC SET/GET19, four no-primary POWER_CHANGED events, task-bound transport, inactive power slots ignored, two-client OFF/ON cache invalidation + stale callback suppression; native power stub only");return 0;}

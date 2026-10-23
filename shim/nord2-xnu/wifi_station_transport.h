@@ -12,6 +12,9 @@
 /* FRAME_RESULT status0..255 is firmware status. This disjoint local value
  * is negative-only for cleanup management after proved DDONE; it never means air success/ACK. */
 #define NST_TX_LOCAL_TIMEOUT 0x100u
+/* Exact cleanup deauth DDONE+wipe without an observed air status. Negative
+ * only, distinct from the legacy bounded-wait timeout; no authorization. */
+#define NST_TX_LOCAL_RETIRE 0x101u
 /* Source PID range1..127. Disjoint boot-lifetime diagnostic ranges never
  * alias management. Security/data fallback127 remains ambiguous and local
  * receipts remain independent of TXS. Management exhaustion refuses IO. */

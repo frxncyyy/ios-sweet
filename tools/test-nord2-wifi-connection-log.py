@@ -279,9 +279,29 @@ for phase,action in ((13,16),(10,15)):
  no(prefix+security_parts(d))
  for change in ({'security':2,'ptk':0,'gtk':0},{'ptk':0},{'gtk':0},{'port':0},{'ticket':2},{'generation':2},{'t_ms':299}):
   no(prefix+security_parts(security_station(1))+security_parts(dict(d,**change),2))
+# Supplemental terminal faults have their own strict three-part authority.
+# They must not enter the normal STATION schema or its112-row budget.
+fault_rows=[dict(part=1,source=5,generation=1,native=4,error=3,halt=1,transaction=16,owner=0,in_kind=10,in_ticket=20),dict(part=2,last=100,deadline=200,operation_deadline=150,cleanup_deadline_ms=300),dict(part=3,submit=12,dma=11,busy=1,pub=1,ddone=0,air_pending=1,air_done=0,air_status=0,cleanup=1,associated_scan=0)]
+fault=''.join(row('IOS STATIONFAULT',d)for d in fault_rows)
+r=yes(fault,'current_authorized_link_observed',False);assert r['fatal_native_guard_observed']and r['station_fault_diagnostic']['complete']and r['row_counts']=={'IOS STATIONFAULT':3}
+r=yes(complete()+fault,'current_authorized_link_observed',False);assert r['authorized_link_observed']and r['fatal_native_guard_observed']and not r['station_fault_diagnostic']['safe_dma_retirement_claim']
+yes(complete()+fault+row('IOS STATION',ready()),'current_authorized_link_observed',False)
+yes(''.join('console '+x for x in fault.splitlines(keepends=True)),'current_authorized_link_observed',False)
+for badfault in (fault.rstrip('\n'),fault+fault,fault.replace('source=5','source=7'),fault.replace('source=5','source=-1'),fault.replace('in_ticket=20','in_ticket=18446744073709551616'),fault.replace('part=2','part=4'),fault.replace('cleanup=1','cleanup=1 secret=1'),fault.replace('busy=1','busy=1 busy=1'),fault.replace('STATIONFAULT:','STATIONFAULTUNKNOWN:'),fault.splitlines(keepends=True)[0],''.join(fault.splitlines(keepends=True)[1:]),''.join(reversed(fault.splitlines(keepends=True))),fault.replace('source=5','source=000000000000000000000000000000000000005'),fault.replace('error=3','error=3 NORD2 WIFI IOS STATION: generation=1')):
+ no(complete()+badfault);assert any('station fault:' in issue for issue in m.parse((complete()+badfault).encode())['issues'])
+#257 is a negative, historical FRAME_RESULT classification. last_event/status
+#persist until a new event; requiring currentphase/actionDEAUTH is incorrect.
+for d in (local_station(event=2,status=257,service=7,transaction=17,action=11,port=0),local_station(event=2,status=257,generation=2,ticket=2,transaction=1,action=1),local_station(**ready(event=2,status=257))):
+ r=yes(row('IOS STATION',d),'data_air_tx_success_observed',False);assert r['local_cleanup_retirement_status_observed']and not r['data_local_submission_observed']
+for event_id in (0,1,3,8,15,16):no(row('IOS STATION',local_station(event=event_id,status=257)))
+no(row('IOS STATION',station(event=2,status=257))) #old producer cannot emit thiscode
+# The observation does not displace independently proven current keys/port;
+# nor does it create those proofs or change ordinary-data air counters.
+r=yes(complete(local_station(**ready(event=2,status=257))),'current_authorized_link_observed');assert r['local_cleanup_retirement_status_observed']and not r['data_air_tx_success_observed']
+
 # Source-literal format strings, compiled with actual C printf at maximal
 # declared integer widths, reproduce kernel formatting without private data.
-formats=[];source_pins={}
+formats=[];source_pins={'tools/nord2-wifi-station-fault.py':hashlib.sha256((R/'tools/nord2-wifi-station-fault.py').read_bytes()).hexdigest()}
 for relative in ('shim/nord2-xnu/wifi_ios_client.cpp','shim/nord2-xnu/wifi_station_service_bind.inc'):
  source=(R/relative).read_text();source_pins[relative]=hashlib.sha256(source.encode()).hexdigest()
  for match in re.finditer(r'printf\(("(?:[^"\\]|\\.)*")',source):

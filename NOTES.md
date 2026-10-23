@@ -3,6 +3,36 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+
+- **2026-10-23: combined switch/power correction integrated; native compile PASS.**
+  Phone remains verified618; user confirmed lockscreen/touch/buttons restored.
+  Handover queues one copied request after explicit disconnect, preserves old
+  native ownership/callback until real teardown + fresh scan, then grants a new
+  8s connection budget (30s bounded queue). IOUC retains old/new tickets separately;
+  SET22 and successfulOFF retire the old ticket so immediateON+Join is accepted.
+  Cancel/close/OFF wipe pending secrets and balance callbacks. Exact cleanup deauth
+  after genuineDDONE+wiping may finish with negative257 (never airACK); unknownDMA,
+  auth/assoc/key controls remain strict. Independent three-part STATIONFAULT is
+  emitted before fatal mutation even when routine trace budget is exhausted.
+  Root actual-owner two-different-WPA2 handover, pending-negative matrix, full11
+  station suites and ordinaryIOUC PASS. Power owner/transport/client PASS after
+  faithful legacy-fixture migration. Connection reader201+/353- and terminal
+  reader4+/15- PASS; new9-reader frozen collection replays618 (runtime8pass,
+  startup-onlybackend2 on later log). Final six-mode clientOFFON and full ordinaryIOUC rerun PASS. Exact5GHz52
+  associatedscan1..13/OFF/CID4DDONE-without-SCANDONE/deauthDDONE-noTXS,
+  delayed oldSCAN/TXS and subsequentON/rejoin PASS under both previous and new
+  transportpolicy; hardware panic remains unreproduced. Private exact-t1
+  current-verified and previous-verified preserve both executions. Generated0082 applies/byte-matches234
+  targets; actual6 owning/changed ARMv8.2 generic TUs cross-compile PASS.
+  ActualClaude Opus session302ebb20 completed source/log audit (no tests executed
+  byClaude). A6OFFticket omission incorporated. OFF hardware panic cause remains
+  unproven; exactDDONE policy is not claimed to have reproduced/fixed it yet.
+  Legacy managementPID never-reuse ceiling remains (~10connections/boot, fewer
+  with retries); spontaneous-loss retry before terminal retirement still bounded
+  refusal. Do not claim unlimited reconnection. Review disposition and immutable
+  test evidence: research/nord2/wifi-ios-switch-power/ios and
+  research/nord2/wifi/lifecycle-fix-20261023. No newCI/image/flash authorization yet.
+
 - **2026-10-23: verified618 recovery complete; user confirms everything works.**
   After human fastboot-ready reply, checked single fastboot/product/boot size,
   verified618 image SHA and flashed boot only, flash/reboot OKAY. Separate

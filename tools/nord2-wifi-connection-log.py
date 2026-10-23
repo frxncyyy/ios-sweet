@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Bounded numeric connection receipts; carrier/traffic are never DHCP/IP proof."""
 from pathlib import Path
-import argparse,json,re
+import argparse,json,re,importlib.util,sys
+sys.dont_write_bytecode=True
 LIMIT=4*1024*1024
 MAX_ROWS=8192
 U32=(1<<32)-1
@@ -82,19 +83,32 @@ def rekey_transition(row):
  return bool('tx_local' in row and row.get('security',1)==1 and
              (row['transaction'],row['action']) in ((13,16),(10,15)) and
              authorized(dict(row,transaction=15)))
+FAULT_PREFIX='NORD2 WIFI IOS STATIONFAULT'
+def station_fault_parse(data):
+ # Exact supplemental schema has one authority; never parse its fields as a
+ # normal STATION row or silently accept a missing strict-reader dependency.
+ path=Path(__file__).with_name('nord2-wifi-station-fault.py')
+ if not path.is_file():return dict(valid=False,complete=False,observed=False,issues=['missing strict station-fault reader'])
+ spec=importlib.util.spec_from_file_location('connection_station_fault',path)
+ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ return module.parse(data)
 PREFIXES=('NORD2 WIFI IOS STATION','NORD2 WIFI IOS LINK','NORD2 WIFI IOS JOIN','NORD2 WIFI IOS DISASSOC','NORD2 WIFI IFNET','NORD2 WIFI IOS EVENT')
 def parse(data):
  issues=[];rows=[];counts={}
  def bad(message):
   if len(issues)<64:issues.append(message)
  def result_empty(message):
-  return dict(valid=False,issues=[message],status='INVALID',association_observed=False,native_authorized_observed=False,authorized_link_observed=False,current_authorized_link_observed=False,join_notification_observed=False,data_air_tx_success_observed=False,data_local_submission_observed=False,bsd_input_success_observed=False,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,fatal_native_guard_observed=False,attempts=[])
+  return dict(valid=False,issues=[message],status='INVALID',association_observed=False,native_authorized_observed=False,authorized_link_observed=False,current_authorized_link_observed=False,join_notification_observed=False,data_air_tx_success_observed=False,data_local_submission_observed=False,bsd_input_success_observed=False,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,fatal_native_guard_observed=False,local_cleanup_retirement_status_observed=False,station_fault_diagnostic=None,attempts=[])
  if not isinstance(data,bytes)or len(data)>LIMIT:return result_empty('invalid or oversized log')
  try:text=data.decode('utf8')
  except UnicodeDecodeError:return result_empty('non-UTF8 log')
+ fault=station_fault_parse(data)if FAULT_PREFIX in text else dict(valid=True,complete=False,observed=False,parts={},issues=[])
+ for issue in fault['issues']:bad('station fault: '+issue)
+ fatal_fault=bool(fault.get('observed'))
  text,part_issues=expand_station_parts(text)
  for issue in part_issues:bad(issue)
  for index,line in enumerate(text.splitlines(keepends=True)):
+  if FAULT_PREFIX in line:continue # validated exclusively by supplemental strict reader
   start=line.find('NORD2 WIFI ')
   if start<0 or not line[start:].startswith(PREFIXES):continue
   body=line[start:].rstrip('\r\n')
@@ -122,6 +136,7 @@ def parse(data):
   numeric.update(_kind=kind,_line=index);rows.append(numeric);counts[kind]=counts.get(kind,0)+1
  if sum(counts.get(k,0)for k in ('IOS STATION','IOS STATIONGUARD','IOS LINK'))>112:bad('native trace budget exceeded')
  if counts.get('IFNET LINK',0)>32:bad('ifnet trace budget exceeded')
+ if fault.get('parts'):counts['IOS STATIONFAULT']=len(fault['parts'])
  attempts={};notices=[];events=[];links=[];join_groups={};join_owner=set();legacy_join=False;station_formats=set();security_by_attempt={};previous_authorized={}
  for row in rows:
   kind=row['_kind']
@@ -130,6 +145,10 @@ def parse(data):
    if len(station_formats)>1:bad('mixed station counter formats in one boot')
    if local_format and any(row[k]for k in ('tx_result','tx_ok','tx_fail')):bad('local data producer cannot claim air results')
    if row['event'] in (15,16) and row['status'] not in (0,1):bad('local submission status domain')
+   # last_event/status persist until another event, including across phases
+   # and generations.257 identifies historical local cleanup failure only;
+   # never require the current action to still be DEAUTH, or infer an air ACK.
+   if row['status']==257 and (not local_format or row['event']!=2):bad('local cleanup retirement status domain')
    if not row['generation']or not row['ticket']or row['service']>8 or row['result']not in (0,1,2,9,21)or row['transaction']>22 or row['action']>(16 if local_format else 14) or row['outcome']>5 or row['native_phase']>(15 if local_format else 9) or row['event']>(16 if local_format else 14) or row['cid']>255 or row['sequence']>255:bad('station enum/identity domain')
    if any(row[k]>1 for k in ('linked','retired','owner_halt','halt','air_pending','associated','sta','ptk','gtk','port')):bad('station boolean domain')
    if 'security' in row:
@@ -243,7 +262,7 @@ def parse(data):
   counter_keys=('tx_ok','tx_fail','tx_local','rx_delivered')
   baseline={k:0 if g==1 else r[0].get(k,0) for k in counter_keys}
   changed={k:any(((x.get(k,0)-baseline[k])&U32)>0 for x in r) for k in counter_keys}
-  summaries.append(dict(generation=g,ticket=t,callback_epoch=epoch.get((g,t)),station_rows=len(r),last_service=last['service'],last_transaction=last['transaction'],last_result=last['result'],last_outcome=last['outcome'],last_native_error=last['error'],last_owner_halt=last['owner_halt'],last_native_halt=last['halt'],cookie_retired=bool(last['retired']),association_observed=any(x['associated']==1 for x in r),native_authorized_observed=bool(ready_rows),ifnet_up_observed=bool(ups),join_snapshot_observed=bool(joined),join_notification_observed=bool(ready_rows and ups and joined and notified),authorized_link_observed=bool(ready_rows and ups and joined),current_authorized_link_observed=bool(g==newest_generation and authorized(last) and latestlink and latestlink['authorized']==1 and latestlink['error']==0 and joined and notice_ready and not failed_after_ready and not counts.get('IOS STATIONGUARD',0)),data_air_tx_success_observed=changed['tx_ok'],data_air_tx_failure_observed=changed['tx_fail'],data_local_submission_observed=changed['tx_local'],bsd_input_success_observed=changed['rx_delivered'],traffic_counter_baseline=baseline,traffic_baseline_scope='boot-zero for generation1; first observed snapshot for later generations',latest_counters={k:last.get(k,0)for k in ('submitted','dma','events','tx_accept','tx_result','tx_ok','tx_fail','tx_local','queued_drop','rx_delivered')}))
+  summaries.append(dict(generation=g,ticket=t,callback_epoch=epoch.get((g,t)),station_rows=len(r),last_service=last['service'],last_transaction=last['transaction'],last_result=last['result'],last_outcome=last['outcome'],last_native_error=last['error'],last_owner_halt=last['owner_halt'],last_native_halt=last['halt'],cookie_retired=bool(last['retired']),association_observed=any(x['associated']==1 for x in r),native_authorized_observed=bool(ready_rows),ifnet_up_observed=bool(ups),join_snapshot_observed=bool(joined),join_notification_observed=bool(ready_rows and ups and joined and notified),authorized_link_observed=bool(ready_rows and ups and joined),current_authorized_link_observed=bool(g==newest_generation and authorized(last) and latestlink and latestlink['authorized']==1 and latestlink['error']==0 and joined and notice_ready and not failed_after_ready and not(counts.get('IOS STATIONGUARD',0)or fatal_fault)),data_air_tx_success_observed=changed['tx_ok'],data_air_tx_failure_observed=changed['tx_fail'],data_local_submission_observed=changed['tx_local'],bsd_input_success_observed=changed['rx_delivered'],traffic_counter_baseline=baseline,traffic_baseline_scope='boot-zero for generation1; first observed snapshot for later generations',latest_counters={k:last.get(k,0)for k in ('submitted','dma','events','tx_accept','tx_result','tx_ok','tx_fail','tx_local','queued_drop','rx_delivered')}))
  valid=not issues
  claims=('association_observed','native_authorized_observed','authorized_link_observed','current_authorized_link_observed','join_notification_observed','data_air_tx_success_observed','data_local_submission_observed','bsd_input_success_observed')
  if not valid:
@@ -251,6 +270,6 @@ def parse(data):
    for key in claims+('ifnet_up_observed','join_snapshot_observed','data_air_tx_failure_observed'):summary[key]=False
  totals={k:valid and any(s[k]for s in summaries)for k in claims}
  status='INVALID'if not valid else 'AUTHORIZED_LINK_OBSERVED'if totals['current_authorized_link_observed']else 'REVOKED_OR_TERMINAL'if summaries and summaries[-1]['last_service']in(7,8)else 'IN_PROGRESS'if summaries else 'NO_NATIVE_JOIN_RECEIPT'
- return dict(valid=valid,issues=issues,status=status,**totals,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,attempts=summaries,row_counts=counts,join_profile_groups=join_profiles,join_owner_unavailable=len(join_owner),uncorrelated_station_events=sum(x['event']in(2,3,4,9)and'generation'not in x for x in events),stale_callback_notices=sum(not x['current']for x in notices),fatal_native_guard_observed=bool(counts.get('IOS STATIONGUARD',0)),scope='Numeric source-bound driver observations. STATION association/key flags and current IOUC snapshot/ifnet generation are separate proofs. tx_ok is a real ordinary-data TX result; tx_local is local buffer retirement after verified DMA only and is never an air ACK, peer receipt or key readiness. rx_delivered is accepted BSD input. None identifies DHCP, IP configuration or connectivity. Traffic counters are boot-cumulative; later-generation traffic requires observed change within that generation. Only the newest observed native generation can be current. Cookie retirement alone does not close an authorized native connection. Strict startup receipt must be checked independently.')
+ return dict(valid=valid,issues=issues,status=status,**totals,dhcp_exchange_proven=False,ip_acquisition_proven=False,internet_connectivity_proven=False,attempts=summaries,row_counts=counts,join_profile_groups=join_profiles,join_owner_unavailable=len(join_owner),uncorrelated_station_events=sum(x['event']in(2,3,4,9)and'generation'not in x for x in events),stale_callback_notices=sum(not x['current']for x in notices),fatal_native_guard_observed=bool(counts.get('IOS STATIONGUARD',0)or fatal_fault),local_cleanup_retirement_status_observed=bool(valid and any(x['_kind']=='IOS STATION'and x['event']==2 and x['status']==257 for x in rows)),station_fault_diagnostic=fault,scope='Numeric source-bound driver observations. STATION association/key flags and current IOUC snapshot/ifnet generation are separate proofs. tx_ok is a real ordinary-data TX result; tx_local is local buffer retirement after verified DMA only and is never an air ACK, peer receipt or key readiness. rx_delivered is accepted BSD input. None identifies DHCP, IP configuration or connectivity. Traffic counters are boot-cumulative; later-generation traffic requires observed change within that generation. Only the newest observed native generation can be current. Status257 is a persisted local negative cleanup observation, never air success or a new authorization proof. STATIONFAULT is delegated to its strict supplemental reader and marks fatal closure, not safe DMA retirement. Cookie retirement alone does not close an authorized native connection. Strict startup receipt must be checked independently.')
 if __name__=='__main__':
  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('log',type=Path);a=ap.parse_args();print(json.dumps(parse(a.log.read_bytes()),indent=2))

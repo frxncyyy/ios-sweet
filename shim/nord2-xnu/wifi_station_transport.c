@@ -193,12 +193,24 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
  s->phase=NST_TX_READ;if(sy(s,o,c,a,16,2)||mr(s,o,c,a,s->descriptor,16))return -1;if(!(u32(s->descriptor+4)&0x80000000))return 0;
  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,2);nstd_log(&record);}
  unsigned channel_release=s->wire_cid==0x1c&&s->wire[66]==1;
+ /* Cleanup unprotected deauth is best-effort. Only this exact validated
+  *26-byte frame can retire locally after real descriptor DDONE+wiping. */
+ unsigned cleanup_deauth=s->cleanup_started&&s->wire_type==1&&s->wire_bytes==58&&u16(s->wire+32)==0x00c0;
  if(s->internal_wire==2&&s->wire_cid==0x16)s->pm_connected=1;
  if(s->wire_cid==7){unsigned pair=s->wire[66];if(s->wire[64]){if(pair)s->ptk_submitted=1;else{s->gtk_submitted=1;s->gtk_command_index=s->wire[76];s->gtk_submission_serial++;s->gtk_command_added=1;}}else if(!pair){s->gtk_command_added=0;unsigned index=s->wire[76];wipe(&s->gtk_keys[index],sizeof s->gtk_keys[index]);wipe(&s->gtk,sizeof s->gtk);for(unsigned k=0;k<4;k++)if(s->gtk_keys[k].installed){s->gtk=s->gtk_keys[k];break;}}}
  /* DDONE proves host buffer no longer read. Erase key-bearing host/DMA copy now. */
  unsigned bytes=s->wire_bytes;wipe(s->wire,sizeof s->wire);s->phase=NST_TX_WRITE;if(mw(s,o,c,s->init->transport.command,s->wire,bytes)||sy(s,o,c,s->init->transport.command,bytes,1))return -1;
  s->init->transport.tx_index=(s->tx_next+1)%1024;s->tx_next=s->init->transport.tx_index;s->init->transport.completed++;if(!s->wire_type)s->init->transport.next_sequence++;s->init->transport.submit_attempted=0;s->dma_completed++;s->dma_done=1;s->wire_busy=0;s->phase=NST_IDLE;
- if(s->wire_type==1)nsdd_pid_local(s->generation,s->wire_pid,s->wire_wlan);
+ if(s->wire_type==1){
+  nsdd_pid_local(s->generation,s->wire_pid,s->wire_wlan);
+  if(cleanup_deauth){
+   /* Absence of a TXS is explicitly negative, never an air/ACK receipt.
+    * An already consumed genuine result remains exact; late results retain
+    * their old never-reused PID and cannot finish another action/generation. */
+   struct nst_event e={.kind=NST_FRAME_RESULT,.ticket=s->ticket,.status=s->air_done?s->air_status:NST_TX_LOCAL_RETIRE,.pid=(uint8_t)s->wire_pid,.wlan=(uint8_t)s->wire_wlan};
+   s->air_pending=0;return emit(s,fn,ctx,&e);
+  }
+ }
  if(channel_release){s->channel_held=0;s->grant_deadline=0;struct nst_event released={.kind=NST_CHANNEL_RELEASED,.ticket=s->ticket,.token=s->channel_token};if(emit(s,fn,ctx,&released))return -1;}
  if(!s->wire_type){if(s->internal_wire){if(s->internal_wire==1)s->peer_step++;
  if(s->internal_wire==4){if(!s->associated_scan)return fail(s,49);s->associated_scan_canceled=1;s->associated_scan->active=0;s->associated_scan->partial=1;}

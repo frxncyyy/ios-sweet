@@ -6,7 +6,7 @@
 static struct {unsigned mode,windows,pending,peer_attempts;
  uintptr_t peer_selector,peer_entry;} nwl_native;
 static unsigned nwl_join_ready_locked(void){
- return !!(nss_native.powered&&njs_native.notice_lock&&!nss_native.failed&&
+ return !!(!njs_handover.state&&nss_native.powered&&njs_native.notice_lock&&!nss_native.failed&&
   !njs_native.active&&!njs_native.queued&&!njs_native.retiring&&!njs_native.completion&&
   njs_native.serial<255&&(!njs_native.used||njs_rejoin_ready_locked()));
 }

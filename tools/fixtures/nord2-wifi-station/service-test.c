@@ -90,6 +90,10 @@ int nord2_wifi_ifnet_link(uint64_t generation,int authorized){assert(generation)
  ifnet_down++;assert(nord2_wifi_link_send(ethernet,14,generation)==NWIL_SEND_NOT_READY);return 0;}
 
 int nord2_wifi_ifnet_receive(uint64_t generation,const uint8_t*p,size_t n){assert(generation&&p&&n>=14);return 0;}
+static unsigned handover_failed,handover_retired;
+static void handover_canceled(void*cookie,uint64_t epoch,uint64_t ticket,enum njs_notice notice){
+ assert(cookie==(void*)2&&epoch==9&&ticket&&ticket!=njs_native.ticket);struct njs_snapshot v;assert(!nord2_wifi_join_copy_state(&v)&&v.ticket==ticket&&v.phase==NJS_FAILED&&v.result==2&&!v.data_ready);struct niwj_request zero={0};assert(!memcmp(&zero,&njs_handover.request,sizeof zero));if(notice==NJS_JOIN_FAILED)handover_failed++;else{assert(notice==NJS_RETIRED);handover_retired++;}
+}
 static int owner_close(void*p){(void)p;nst_close_port(&nst_native.state);return 0;}
 static int owner_submit(void*p,const struct stc_action*a,const struct nwo_install*m){(void)p;(void)a;(void)m;return -1;}
 static void seed_ready(uint64_t g){
@@ -158,7 +162,9 @@ struct nsb_scan scan={0};scan.entered=scan.done=1;scan.completion.state=7;scan.s
 scan.timed_out=1;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1);scan.timed_out=0;scan.done=0;njs_cache_scan_locked(&scan);assert(njs_native.cache_next==cache_before+1);
 /* Synthetic authoritative-ready seam tests synchronous revoke, not RF readiness. */
 njs_native.active=njs_native.used=njs_native.linked=1;njs_native.native_generation=3;njs_native.ticket=3;njs_native.epoch=7;njs_native.cookie=(void*)1;njs_native.completion=complete;njs_native.snapshot.phase=NJS_AUTHORIZED;njs_native.snapshot.data_ready=njs_native.snapshot.associated=njs_native.snapshot.ptk_ready=njs_native.snapshot.gtk_ready=1;njs_native.leave=njs_native.canceled=0;nst_native.state.controlled_port=1;njs_native.driver.owner.transaction.phase=STC_CONNECTED;njs_native.driver.owner.transaction.outcome=STC_AUTHORIZED;
-uint8_t frame[14]={0};frame[12]=8;uint8_t invalid[14]={0};assert(nord2_wifi_link_send(invalid,14,3)==NWIL_SEND_INVALID);invalid[12]=8;invalid[6]=1;assert(nord2_wifi_link_send(invalid,14,3)==NWIL_SEND_INVALID);assert(!nord2_wifi_link_send(frame,14,3)&&njs_native.tx_count==1);assert(!nord2_wifi_join_disconnect());assert(!nst_native.state.controlled_port&&!njs_native.tx_count&&!njs_native.linked&&!njs_native.snapshot.data_ready&&!njs_native.snapshot.associated&&ifnet_down==2);assert(nord2_wifi_link_send(frame,14,3)==NWIL_SEND_NOT_READY);assert(nord2_wifi_join_enqueue(&q,(void*)1,7,complete,&ticket)==1);
+uint8_t frame[14]={0};frame[12]=8;uint8_t invalid[14]={0};assert(nord2_wifi_link_send(invalid,14,3)==NWIL_SEND_INVALID);invalid[12]=8;invalid[6]=1;assert(nord2_wifi_link_send(invalid,14,3)==NWIL_SEND_INVALID);assert(!nord2_wifi_link_send(frame,14,3)&&njs_native.tx_count==1);assert(!nord2_wifi_join_disconnect());assert(!nst_native.state.controlled_port&&!njs_native.tx_count&&!njs_native.linked&&!njs_native.snapshot.data_ready&&!njs_native.snapshot.associated&&ifnet_down==2);assert(nord2_wifi_link_send(frame,14,3)==NWIL_SEND_NOT_READY);/* Explicit leave now admits ONE bounded next request, without replacing
+ * the old native identity or granting physical readiness in this seam. */
+unsigned before_prepare=prepared_calls;assert(!nord2_wifi_join_enqueue(&q,(void*)2,9,handover_canceled,&ticket)&&njs_handover.state==1&&njs_native.ticket==3&&njs_native.native_generation==3&&prepared_calls==before_prepare);assert(!nord2_wifi_join_cancel(ticket));assert(njs_owner_work()==1&&handover_failed==1&&handover_retired==1&&!njs_handover.state&&prepared_calls==before_prepare&&njs_native.ticket==3&&njs_native.native_generation==3);
 /* Authorized clientclose detaches delivery without closing connection. */
 njs_native.leave=0;njs_native.active=njs_native.linked=1;njs_native.snapshot.phase=NJS_AUTHORIZED;nst_native.state.controlled_port=1;assert(!nord2_wifi_join_cancel(3)&&njs_native.detach&&!njs_native.canceled&&nst_native.state.controlled_port);
 seed_ready(4);assert(njs_owner_work()==1&&njs_native.linked&&njs_native.snapshot.phase==NJS_AUTHORIZED&&njs_native.snapshot.result==1&&njs_native.tx_count==1&&notices[NJS_JOINED]==1);assert(!nord2_wifi_join_disconnect()&&!njs_native.tx_count);

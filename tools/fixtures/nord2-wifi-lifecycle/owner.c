@@ -78,6 +78,16 @@ static void station_completion(unsigned next){
  put32(d,0xffffffffu);put32(d+4,0xffffffffu);put32(d+8,0xdeadbeefu);put32(d+12,0x12345678u);hardware_register(0x1802541c,next);
 }
 static void join_completed(void*c,uint64_t epoch,uint64_t ticket,enum njs_notice notice){assert(c==notices&&epoch==7&&ticket&&notice<5);notices[notice]++;assert(!pthread_mutex_trylock(&nss_native.lock->m));pthread_mutex_unlock(&nss_native.lock->m);if(notice==NJS_RETIRED)assert(!njs_rejoin_ready_locked());}
+/* Pending handover has its own cookie/lifetime; cancellation must not
+ * replace or revive the closed native epoch while its fresh scan is pending. */
+struct power_handover_notes {uint64_t ticket;unsigned failed,retired;};
+static void handover_completed(void*cookie,uint64_t epoch,uint64_t ticket,enum njs_notice notice){
+ struct power_handover_notes*n=cookie;assert(n&&epoch==91&&ticket==n->ticket);
+ assert(!pthread_mutex_trylock(&nss_native.lock->m));pthread_mutex_unlock(&nss_native.lock->m);
+ struct niwj_request zero={0};assert(!memcmp(&njs_handover.request,&zero,sizeof zero));
+ if(notice==NJS_JOIN_FAILED){assert(!n->failed&&!n->retired);n->failed=1;}
+ else{assert(notice==NJS_RETIRED&&n->failed&&!n->retired);n->retired=1;}
+}
 static struct niwj_request request(void){struct niwj_request q={0};q.security=1;q.ssid_length=1;q.ssid[0]='X';memcpy(q.pmk,pmk_vector,32);memcpy(q.station_rsn,rsn,22);return q;}
 static void until_authorized(void){for(unsigned k=0;k<1000&&!njs_native.linked;k++){
  if(njs_native.driver.owner.transaction.phase==STC_EAPOL&&!m1_sent){station_eapol(m1,sizeof m1);uint8_t*early=station_packet(4,7,44);early[28]=36;early[36]=nst_native.state.peer.bss;memcpy(early+38,nst_native.state.peer.ap,6);assert(!nst_native.state.ptk_command&&!nst_native.state.ptk_ready);m1_sent++;}
@@ -132,7 +142,24 @@ int main(int argc,char**argv){setvbuf(stdout,0,_IONBF,0);assert(argc==2);FILE*f=
   for(unsigned k=0;k<1000&&!njs_native.scan_returned;k++)assert(checked_owner()==1);assert(njs_native.scan_returned&&!nsr_native.scan_ready);uint64_t actual_closed=nsr_native.closed_us;drain_now+=UINT64_C(60000000000);assert(checked_owner()==0&&!nsr_native.scan_ready&&nsr_native.closed_us==actual_closed);assert(!nord2_wifi_power_set(1));assert(!nord2_wifi_scan_info(&offinfo)&&offinfo.powered);assert(checked_owner()==0&&nsr_native.scan_state==2&&nsr_native.scan_ticket&&nsr_native.refresh_requested_us>=actual_closed+UINT64_C(60000000)&&nsr_native.closed_us==actual_closed);
   assert(njs_native.scan_returned&&!nsr_native.ptk&&!nsr_native.gtk&&!nsr_native.pending&&!nsr_native.bad&&key_deletes==(cycle+1)*3&&notices[NJS_RETIRED]==cycle+1);
   assert(njs_native.used&&nst_native.attempted&&njs_native.arbiter.connection_used&&!njs_rejoin_ready_locked());saved_pid=nst_native.state.next_pid;saved_token=nst_native.state.normal.token_next;saved_hw=nst_native.state.normal.next;
-  q=request();uint64_t untouched=123;assert(nord2_wifi_join_enqueue(&q,notices,7,join_completed,&untouched)==1&&untouched==123);
+  q=request();
+  /* Handover admission is now correct here: test it in a child so the parent
+   * still completes the original OFF/ON/freshscan/two-epoch sequence. */
+  {pid_t child=fork();assert(child>=0);if(!child){
+   struct power_handover_notes hn={0};uint64_t old_generation=njs_native.native_generation,old_ticket=njs_native.ticket,old_serial=njs_native.serial;
+   unsigned reads=mmio_reads,writes=mmio_writes,pubs=station_pubs,deletes=key_deletes,submit=nst_native.state.submitted,dma=nst_native.state.dma_completed;
+   assert(!nord2_wifi_join_enqueue(&q,&hn,91,handover_completed,&hn.ticket));
+   assert(hn.ticket==old_serial+1&&njs_handover.state==1&&!hn.failed&&!hn.retired&&!njs_native.queued&&!njs_native.active&&!nst_native.active);
+   assert(njs_native.native_generation==old_generation&&njs_native.ticket==old_ticket&&!njs_rejoin_ready_locked());
+   uint64_t untouched=123;assert(nord2_wifi_join_enqueue(&q,&hn,91,handover_completed,&untouched)==2&&untouched==123);
+   niwj_clear(&q,sizeof q);assert(!nord2_wifi_join_cancel(hn.ticket));
+   struct niwj_request zero={0};assert(njs_handover.canceled&&!memcmp(&njs_handover.request,&zero,sizeof zero)&&!hn.failed&&!hn.retired);
+   assert(checked_owner()==1&&hn.failed==1&&hn.retired==1&&!njs_handover.state);
+   assert(nord2_wifi_join_cancel(hn.ticket)==1&&njs_native.native_generation==old_generation&&njs_native.ticket==old_ticket&&!njs_native.queued&&!njs_native.active&&!nst_native.active);
+   assert(njs_native.used&&nst_native.attempted&&njs_native.arbiter.connection_used&&njs_native.scan_returned&&!nsr_native.scan_ready);
+   assert(mmio_reads==reads&&mmio_writes==writes&&station_pubs==pubs&&key_deletes==deletes&&nst_native.state.submitted==submit&&nst_native.state.dma_completed==dma);
+   _exit(0);
+  }int status;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&!WEXITSTATUS(status));}
   /* Late TXS is copied into old queue then genuinely drained by return scan. */
   uint8_t*r=station_packet(1,7,124);r[28]=15;r[36]=1;r[40]=5;
   if(cycle==1)assert(!nord2_wifi_scan_cancel(nsr_native.scan_ticket));

@@ -21,6 +21,10 @@ struct njs_snapshot {
 typedef void (*njs_completion)(void*,uint64_t client_epoch,uint64_t ticket,enum njs_notice);
 /* 0 accepted,1 unavailable,2 busy,-1 invalid; rejection must be atomic.
  * Native immediately copies the complete secret input and owns/wipes its copy.
+ * One next request may queue after explicit disconnect; old native ownership
+ * and callbacks retire plus a real fresh scan precede its prepare. The new
+ * ticket waits at most30s, then receives a fresh8s connection budget. Explicit
+ * cancel/OFF wipes its request under lock; callback scalars live until RETIRED.
  * No inline completion. Cookie retained by IOUC until final RETIRED notice,
  * exactly once, even on canceled/closed delivery. Callbacks outside native queue
  * lock, actual retained worker only; no radio calls from callback/client thread.
