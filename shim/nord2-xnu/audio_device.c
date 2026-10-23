@@ -33,7 +33,7 @@ static struct nsa_stream stream;
 static struct nau_hw hardware;
 static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
  unsigned tone_active, tone_mode, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
-static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_GAIN_Q15};
+static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_BOTTOM_GAIN_Q15};
 static void mask_disabled_channels(int16_t *pcm,unsigned frames) {
  /* Called under producer mutex; gain edits require disabled, empty queues. */
  for(unsigned c=0;c<2;c++)if(!output_gain[c])
@@ -130,6 +130,14 @@ static void diagnose(const char *where,int reason,unsigned initial) {
   where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
   h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain,
   h->i2c_last_pa,h->i2c_last_value,h->ownership,h->amp_status[0],h->amp_status[1]);
+ for(unsigned a=0;a<2;a++) {
+  const struct nah_amp_start *d=&h->amp_start[a];
+  if(!d->stage)continue;
+  printf("NORD2 AUDIO AMP SETTLE: amp=%u stage=%u samples=%u valid=%x status=%04x clocks=%04x error=%d reg=%02x pa=%x value=%x first=%x/%u/%u/%04x/%04x\n",
+   a,d->stage,d->attempts,d->valid,d->status,d->clocks,d->error,
+   d->failure_reg,d->failure_pa,d->failure_value,d->first_bad_valid,
+   d->first_bad_stage,d->first_bad_attempt,d->first_bad_status,d->first_bad_clocks);
+ }
  /* Worker-owned saved values only; diagnostics never perform MMIO. */
  printf("NORD2 AUDIO AP: valid=%x start=%x ctrl=%x irq=%x fifo=%x i3c=%x\n",
   hardware.bus.ap_valid,hardware.bus.ap_preflight[NA8_AP_START],

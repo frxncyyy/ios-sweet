@@ -71,16 +71,17 @@ int main(int argc,char **argv)
  assert(fread(blob,1,sizeof blob,f)==sizeof blob&&fgetc(f)==EOF);fclose(f);
  const uint8_t digest[32]={0x63,0x53,0x00,0xfb,0xc9,0x6f,0x25,0x8f,0xf9,0xa3,0x5f,0x82,0x43,0x5f,0x2e,0x9d,0x3f,0xf6,0xf1,0x37,0x0c,0x15,0x60,0x67,0xb4,0x01,0x46,0xe0,0x11,0x03,0x86,0x92};
  assert(!nah_board_load(blob,sizeof blob,digest));
- const unsigned gains[]={0,128,256,362,512,724,1024};
- for(unsigned a=0;a<7;a++)for(unsigned b=0;b<7;b++)lifecycle(gains[a],gains[b],0);
- for(unsigned a=0;a<7;a++)lifecycle(gains[a],gains[a],1);
+ const unsigned gains[]={0,128,256,362,512,724,1024,2048,2896,4096,5793,8192,11585,16384,23170,32768};
+ const unsigned count=sizeof gains/sizeof gains[0];
+ for(unsigned a=0;a<count;a++)for(unsigned b=0;b<count;b++)lifecycle(gains[a],gains[b],0);
+ for(unsigned a=0;a<count;a++)lifecycle(gains[a],gains[a],1);
  /* Gain validation is before AFE/controller reads OR writes, for eachside. */
  full_prepare(0x0c74,0x0c74,0);assert(!nau_hw_init(&hw,&allio,0,nah_board_profile()));
  unsigned writes=cm.writes,reads=cm.reads,transactions=bm.ntrans;
- assert(nau_hw_start_channels(&hw,48000,2,16,0,1025,256,0,0)==NAH_E_ARG);
- assert(nau_hw_start_channels(&hw,48000,2,16,0,256,1025,0,0)==NAH_E_ARG);
+ assert(nau_hw_start_channels(&hw,48000,2,16,0,NAH_MAX_GAIN_Q15+1,256,0,0)==NAH_E_ARG);
+ assert(nau_hw_start_channels(&hw,48000,2,16,0,256,NAH_MAX_GAIN_Q15+1,0,0)==NAH_E_ARG);
  assert(nau_hw_start_channels(&hw,48000,2,16,0,UINT32_MAX,0,0,0)==NAH_E_ARG);
- assert(nau_hw_start(&hw,48000,2,16,0,1025,0,0)==NAH_E_ARG);
+ assert(nau_hw_start(&hw,48000,2,16,0,NAH_MAX_GAIN_Q15+1,0,0)==NAH_E_ARG);
  assert(cm.writes==writes&&cm.reads==reads&&bm.ntrans==transactions);
  /* Gain0 on one channel plus input solely there must not advance fade-in. */
  tick_time=100000;begin(0,1024,0);
@@ -106,5 +107,5 @@ int main(int argc,char **argv)
  assert(!hw.status.dma_peak[0]&&!hw.status.dma_peak[1]);
  for(unsigned i=0;i<96;i++)assert(!cm.sram[i]);
  assert(!nau_hw_stop(&hw));
- puts("PASS 49 channel pairs +7legacy, exact packedDMA/ramp/zero/isolation/peaks/restart/refusal, real0c74 boardtransport (not acoustic safety)");
+ puts("PASS 256 channel pairs +16legacy, exact packedDMA/ramp/zero/isolation/peaks/restart/refusal through unity, real0c74 boardtransport (not acoustic safety)");
 }

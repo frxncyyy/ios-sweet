@@ -4,6 +4,50 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: combined startup settling and digital calibration candidate validated locally.**
+  Full ASan/UBSan suite PASS, including256gainpairs/16legacy settings,
+  all65536USBencodings, oldkernel range refusal, actual producer policy,
+  transient/persistentclock/TDM/NOCLK startup and cleanup evidence tests.
+  Eleven native units compile; patch28928lines cleanapplies/exactmatches.
+  Stage ios-gainrange, source-only; hardware/CI/image validation remains.
+  Startup uses MANSCONF before PWDN, CLKS/TDM settle with AMPE0, then
+  AMPE and Android-ordered NOCLK read; bounded two-clean-sample guards,
+  persistentfault/IO still stop, firstfailed state survives cleanup.
+  Expanded16Q15levels through32768unity, no amplification above PCM;
+  bootdefaults top256/bottom1024. No analog/protection/register gain change.
+  These are experimental calibration controls, not Android protectedmax.
+  USB capabilities preserve legacyindexes; old kernels reject newlevels
+  before writes. User listening and repeated startup tests still required.
+  Phone remains balance d0b18b64 with audio explicitly STOPped afterfault;
+  no new authorization or device write. Next commit/push/CI, pack playback
+  androllback, independentchecks, then exactimageapproval.
+
+
+
+- **2026-10-23: audio stopped after intermittent amplifier startup fault; combined fix in progress.**
+  Current boot remains authorized balance d0b18b64. User confirms gain1024
+  improves bottom but Android is still vastly louder. After14 healthy starts,
+  STATUS15 error=-11 (AMP_FAULT), running0, uncertain0, stop_error0.
+  STOP16 completed: enabled0, queue0, stopped; do not re-enable sticky fault.
+  Complete log ios-balance/amp-fault-full/xnu-live.log (SHA256
+  c6eb6d71cca96ff938969011bcd69dc7c587d37980d65d2eaf752c5927ebb636)
+  reports where=start, before new PCM; old cleanup lost exact amp flag.
+  No evidence this was caused by gain. final-receipt.json and stage updated;
+  both collectors completed, no background device operation remains.
+  Offline candidate combines Android-ordered clock settling/immutable fault
+  evidence and16 digital gain steps through unity; low startup defaults
+  top256/bottom1024. Not built, not approved, not hardware-tested.
+  Local vendor NXP library only selects board firmware; DSP packets include
+  excursion/algorithm/MBDRC/model data and Android hostDSP IPI path. No
+  calibrated speaker protection or safe acoustic maximum established.
+  Evidence nxp-gain-analysis/DSP-SOURCE-RECEIPT.md; supplied remote stock
+  dump unavailable, existing phone vendor image used explicitly instead.
+  Next: complete startup tests/review, native compile, CI and one combined
+  verified candidate. Recovery route3b8cb873/rollback55aa2960/RAMADB already
+  authorized if needed; never stock Android over iOS userdata.
+
+
+
 - **2026-10-23: live balance controls work; normal loudness still unresolved.**
   Current image d0b18b64, UI confirmed healthy. Matched isolated tones
   generated post-scale DMA peaks128/0 and0/128, stopped without faults.

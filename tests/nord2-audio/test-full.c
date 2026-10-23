@@ -168,12 +168,15 @@ int main(int argc,char **argv)
  assert((*regp(&cm,0x10005130)&(1u<<15)) && (*regp(&cm,0x10005140)&(1u<<20)));
  assert((*regp(&cm,0x10005030)&(1u<<15)) && (*regp(&cm,0x10005040)&(1u<<20)));
  assert(!bm.slave[5].accessed && !bm.slave[6].accessed);
- /* A persistent current NOCLK survives baseline clearing and must refuse
-  * AMPE before either output comes on; TDM format errors also refuse. */
+ /* Persistent current NOCLK must refuse PCM after the Android-ordered
+  * post-OPERATING clear/settle, then disable both outputs during cleanup.
+  * A persistent pre-enable TDM error refuses before AMPE. */
  full_prepare(0x0b74,0x0a74,0x80);bm.noclk_persistent=1;
  assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);
  assert(nau_hw_start(&hw,48000,2,16,0,256,0,0)==NAH_E_AMP_FAULT);
  assert(!(bm.slave[0].reg[0]&8) && !(bm.slave[1].reg[0]&8));
+ assert(hw.status.amp_start[0].stage==NAH_AS_POST_WAIT && hw.status.amp_start[0].error==NAH_E_AMP_FAULT);
+ assert(hw.status.amp_start[0].status&0x80); /* retained despite cleanup */
  assert(!hw.status.running && !hw.status.uncertain);
  full_prepare(0x0b74,0x0a74,0x40);
  assert(nau_hw_init(&hw,&allio,0,nah_board_profile())==0);

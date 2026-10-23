@@ -53,33 +53,80 @@ static int amp_cold(struct nau_hw *h,unsigned amp)
  }
  return NAH_E_AMPS;
 }
+static int amp_start_failure(struct nau_hw *h,unsigned amp,int error,unsigned reg)
+{
+ struct nah_amp_start *d=&h->status.amp_start[amp];
+ if (!d->error) {
+  d->error=error;d->failure_reg=reg;
+  d->failure_pa=h->bus.last_addr;d->failure_value=h->bus.last_value;
+ }
+ return error;
+}
+static void amp_start_bad(struct nah_amp_start *d)
+{
+ if (!d->first_bad_valid && d->valid) {
+  d->first_bad_valid=d->valid;d->first_bad_stage=d->stage;
+  d->first_bad_attempt=d->attempts;
+  d->first_bad_status=d->status;d->first_bad_clocks=d->clocks;
+ }
+}
+static int amp_start_wait(struct nau_hw *h,unsigned amp,unsigned post)
+{
+ struct nah_amp_start *d=&h->status.amp_start[amp];
+ unsigned is74=(h->amps[amp].rev&255)==0x74;
+ unsigned clockreg=is74?0x11:0x10,clockmask=is74?0x80:0x40;
+ unsigned tdmmask=is74?0x40:0x400,noclkmask=is74?0x80:0x100,clean=0;
+ d->stage=post?NAH_AS_POST_WAIT:NAH_AS_PRE_WAIT;
+ /* Port settling guard: <=100 one-ms waits,101 samples, two consecutive
+  * healthy samples. Every transfer also has the existing I2C hard bound.
+  * Before AMPE, historical NOCLK is expected during cold startup; TDM and
+  * CLKS must settle. After Android's post-OPERATING read-clear, NOCLK must
+  * remain clear too. Persistent/reasserting faults never authorize PCM. */
+ for (unsigned k=0;k<=100;k++) {
+  d->attempts++;d->valid=0;d->status=d->clocks=0;
+  if (amp_read(h,amp,0x10,&d->status)) {
+   amp_start_bad(d);return amp_start_failure(h,amp,NAH_E_IO,0x10);
+  }
+  d->valid=1;
+  if (is74) {
+   if (amp_read(h,amp,clockreg,&d->clocks)) {
+    amp_start_bad(d);return amp_start_failure(h,amp,NAH_E_IO,clockreg);
+   }
+  } else d->clocks=d->status; /* 9873 shares STATUS10; avoid a second destructive read. */
+  d->valid|=2;
+  if ((d->status&(tdmmask|noclkmask)) || !(d->clocks&clockmask))amp_start_bad(d);
+  unsigned healthy=!(d->status&(tdmmask|(post?noclkmask:0))) && (d->clocks&clockmask);
+  if (!healthy) {amp_start_bad(d);clean=0;}
+  else if (++clean==2)return 0;
+  if (k==100)break;
+  if (delay(h,1000))return amp_start_failure(h,amp,NAH_E_IO,0);
+ }
+ return amp_start_failure(h,amp,NAH_E_AMP_FAULT,
+  !(d->clocks&clockmask)?clockreg:0x10);
+}
 static int amp_enable(struct nau_hw *h,unsigned amp)
 {
- /* tfa_dev_set_state(OPERATING): PWDN0 -> MANSCONF1 -> AMPE1.
-  * Stable clocks verified before output enable, exact family CLKS field. */
- if (amp_rmw(h,amp,0x00,1,0) || amp_rmw(h,amp,0x01,4,4)) return NAH_E_IO;
- unsigned is74=(h->amps[amp].rev & 255)==0x74;
- unsigned clockreg=is74 ? 0x11:0x10, clockmask=is74 ? 0x80:0x40;
- unsigned ready=0;
- for (unsigned k=0;k<50;k++) {
-  uint16_t v=0;
-  if (amp_read(h,amp,clockreg,&v)) return NAH_E_IO;
-  if (v & clockmask) { ready=1; break; }
-  if (delay(h,1000)) return NAH_E_IO;
- }
- if (!ready) return NAH_E_AMPS;
- /* Selected tfa98xx.c956 explicitly removes cold-start NOCLK sticky by
-  * reading once. Otherwise our first monitor would misclassify historical
-  * startup loss as a runtime failure. Never discard a current TDM fault;
-  * reread NOCLK and CLKS before enabling the output. */
- uint16_t status=0,clocks=0;
- unsigned tdmmask=is74 ? 0x40:0x400, noclkmask=is74 ? 0x80:0x100;
- if (amp_read(h,amp,0x10,&status)) return NAH_E_IO;
- if (status&tdmmask) return NAH_E_AMP_FAULT;
- if (amp_read(h,amp,0x10,&status) || amp_read(h,amp,clockreg,&clocks)) return NAH_E_IO;
- h->status.amp_status[amp]=status;
- if ((status&(tdmmask|noclkmask)) || !(clocks&clockmask)) return NAH_E_AMP_FAULT;
- return amp_rmw(h,amp,0x00,8,8);
+ struct nah_amp_start *d=&h->status.amp_start[amp];
+ d->stage=NAH_AS_CONFIG;
+ /* Selected Android cold startup: tfaRunStartup -> INIT_CF sets
+  * MANSCONF before PWDN (tfa_dsp.c4307-4322). AMPE stays disabled. */
+ if (amp_rmw(h,amp,0x01,4,4))return amp_start_failure(h,amp,NAH_E_IO,0x01);
+ if (amp_rmw(h,amp,0x00,1,0))return amp_start_failure(h,amp,NAH_E_IO,0x00);
+ int rc=amp_start_wait(h,amp,0);if(rc)return rc;
+ d->stage=NAH_AS_ENABLE;
+ /* OPERATING's remaining proBus action is AMPE1 (tfa_dsp.c4330-4345). */
+ if (amp_rmw(h,amp,0x00,8,8))return amp_start_failure(h,amp,NAH_E_IO,0x00);
+ d->stage=NAH_AS_POST_CLEAR;d->valid=0;d->status=d->clocks=0;
+ /* Match tfa98xx_tfa_start: read NOCLK once AFTER tfa_dev_start/
+  * OPERATING (tfa98xx.c914-970), never via raw flag-clear writes. */
+ if (amp_read(h,amp,0x10,&d->status))return amp_start_failure(h,amp,NAH_E_IO,0x10);
+ d->valid=1;
+ unsigned is74=(h->amps[amp].rev&255)==0x74;
+ if (d->status&(is74?0xc0:0x500))amp_start_bad(d);
+ rc=amp_start_wait(h,amp,1);if(rc)return rc;
+ d->stage=NAH_AS_READY;
+ h->status.amp_status[amp]=d->status;
+ return 0;
 }
 static int amp_observe_startup(struct nau_hw *h)
 {
@@ -90,13 +137,19 @@ static int amp_observe_startup(struct nau_hw *h)
  static const uint8_t regs[NAH_O_FIELDS]={0x00,0x10,0x11,0x13,0x14,0x58,0x20,0x23,0x26};
  for (unsigned a=0;a<2;a++) for (unsigned i=0;i<NAH_O_FIELDS;i++) {
   uint16_t v=0;
-  if (amp_read(h,a,regs[i],&v)) return NAH_E_IO;
+  if (amp_read(h,a,regs[i],&v)) {
+   h->status.amp_start[a].stage=NAH_AS_OBSERVE;
+   return amp_start_failure(h,a,NAH_E_IO,regs[i]);
+  }
   h->status.amp_observed[a][i]=v;
   h->status.amp_observed_valid[a]|=1u<<i;
   /* STATUS10 clears NOCLK on read. Preserve and act on that evidence,
    * rather than accidentally consuming a new fault as diagnostics. */
-  if (i==NAH_O_STATUS10 && (v&((h->amps[a].rev&255)==0x74?0xc0:0x500)))
-   return NAH_E_AMP_FAULT;
+  if (i==NAH_O_STATUS10 && (v&((h->amps[a].rev&255)==0x74?0xc0:0x500))) {
+   struct nah_amp_start *d=&h->status.amp_start[a];
+   d->stage=NAH_AS_OBSERVE;d->status=v;d->valid=1;d->clocks=0;
+   amp_start_bad(d);return amp_start_failure(h,a,NAH_E_AMP_FAULT,0x10);
+  }
  }
  return 0;
 }
@@ -271,14 +324,15 @@ int nau_hw_start_channels(struct nau_hw *h,unsigned rate,unsigned channels,unsig
      duration>NAH_MAX_TEST_US || now>UINT64_MAX-duration) return NAH_E_ARG;
  /* This refusal must happen before any mutation or controller programming. */
  if (!silent && !board_valid(h)) return h->status.error=NAH_E_BOARD_CONFIG;
+ if (!++h->status.amp_observed_seq) h->status.amp_observed_seq=1;
+ for (unsigned a=0;a<2;a++) {
+  h->status.amp_start[a]=(struct nah_amp_start){0};
+  h->status.amp_observed_valid[a]=0;
+  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
+ }
  if (!silent && !h->reset_changed) {
   int prep=amps_prepare(h);
   if (prep) return h->status.error=prep;
- }
- if (!++h->status.amp_observed_seq) h->status.amp_observed_seq=1;
- for (unsigned a=0;a<2;a++) {
-  h->status.amp_observed_valid[a]=0;
-  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
  }
  h->status.silent_only=silent; h->gain_q15[0]=top; h->gain_q15[1]=bottom;
  h->status.gain_ramp_frames=0; h->status.dma_peak[0]=h->status.dma_peak[1]=0;

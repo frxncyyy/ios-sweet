@@ -13,7 +13,7 @@ class Fake:
    s=Snapshot();s.word[10]=1;s.word[14]=0xfffffff9;s.word[21]=5;s.word[22]=2;s.word[41]=1
    s.word[42]=self.lib.nal_gain_value(q.generation&15) if q.op==6 else 256
    s.word[43]=self.lib.nal_gain_value((q.generation>>4)&15) if q.op==6 else 256
-   s.word[44]=1024;s.word[45]=128;s.word[46]=12;s.word[47]=34
+   s.word[44]=32768;s.word[45]=128;s.word[46]=12;s.word[47]=34
    assert self.lib.nal_complete(C.byref(q),0,C.byref(s))==0
   b=C.create_string_buffer(size)
   n=(self.lib.nal_caps if code==0x64 else self.lib.nal_reply)(b,size)
@@ -42,9 +42,9 @@ class Tests(unittest.TestCase):
   for top in cli.GAIN_STEPS:
    for bottom in cli.GAIN_STEPS:
     out=cli.command(t,'gain',.5,top,bottom)
-    self.assertEqual((out['gain_top'],out['gain_bottom'],out['gain_max']),(top,bottom,1024))
+    self.assertEqual((out['gain_top'],out['gain_bottom'],out['gain_max']),(top,bottom,32768))
     self.assertEqual((out['ramp_frames'],out['dma_peak_top'],out['dma_peak_bottom']),(128,12,34))
-  self.assertEqual(t.writes,49)
+  self.assertEqual(t.writes,256)
  def test_gain_ack_loss_no_resubmit(self):
   t=Fake(self.lib,True);out=cli.command(t,'gain',.5,1024,128)
   self.assertEqual((out['gain_top'],out['gain_bottom']),(1024,128));self.assertEqual(t.writes,1)
@@ -53,7 +53,7 @@ class Tests(unittest.TestCase):
    def read(self,code,size):
     data=super().read(code,size)
     if code==0x64:
-     w=list(struct.unpack('<16I',data));w[4]=0x3e;data=struct.pack('<16I',*w)
+     w=list(struct.unpack('<16I',data));w[4]=0x3e;w[14]=w[15]=0;data=struct.pack('<16I',*w)
     return data
   t=Legacy(self.lib)
   for name in ('status','enable','stop','tone','silent'):
@@ -64,15 +64,52 @@ class Tests(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'not supported'):
     cli.command(t,name,.5,256,512) if name=='gain' else cli.command(t,name,.5)
    self.assertEqual(t.writes,before)
+ def test_legacy_balance_range_blocks_high_gain_before_write(self):
+  class LegacyBalance(Fake):
+   def read(self,code,size):
+    data=super().read(code,size)
+    if code==0x64:
+     w=list(struct.unpack('<16I',data));w[14]=w[15]=0;data=struct.pack('<16I',*w)
+    return data
+  t=LegacyBalance(self.lib)
+  for top in cli.GAIN_STEPS[:7]:
+   for bottom in cli.GAIN_STEPS[:7]:cli.command(t,'gain',.5,top,bottom)
+  self.assertEqual(t.writes,49)
+  for gain in cli.GAIN_STEPS[7:]:
+   for top,bottom in ((gain,256),(256,gain)):
+    before=t.writes
+    with self.assertRaisesRegex(ValueError,'range'):cli.command(t,'gain',.5,top,bottom)
+    self.assertEqual(t.writes,before)
+ def test_malformed_range_refused_before_write(self):
+  for limits in ((0,16),(32768,0),(32769,16),(32768,17),(1024,7),(32768,7)):
+   class BadRange(Fake):
+    def read(self,code,size):
+     data=super().read(code,size)
+     if code==0x64:
+      w=list(struct.unpack('<16I',data));w[14:16]=limits;data=struct.pack('<16I',*w)
+     return data
+   t=BadRange(self.lib)
+   with self.assertRaisesRegex(ValueError,'range'):cli.command(t,'gain',.5,256,256)
+   self.assertEqual(t.writes,0)
+ def test_range_change_during_command_never_retries(self):
+  class ChangedRange(Fake):
+   def read(self,code,size):
+    data=super().read(code,size)
+    if self.writes and code==0x64:
+     w=list(struct.unpack('<16I',data));w[14]=w[15]=0;data=struct.pack('<16I',*w)
+    return data
+  t=ChangedRange(self.lib,True)
+  with self.assertRaisesRegex(ValueError,'range changed'):cli.command(t,'gain',.5,32768,256)
+  self.assertEqual(t.writes,1)
  def test_invalid_gain_arguments_never_write(self):
   t=Fake(self.lib)
-  for top,bottom in ((None,None),(256,None),(None,256),(-1,256),(256,2048),(True,256),(256.0,256),(7,0)):
+  for top,bottom in ((None,None),(256,None),(None,256),(-1,256),(256,32769),(True,256),(256.0,256),(7,0)):
    with self.assertRaises(ValueError):cli.command(t,'gain',.5,top,bottom)
   with self.assertRaises(ValueError):cli.command(t,'tone',.5,256,256)
   self.assertEqual(t.writes,0)
  def test_cli_argument_parser(self):
   a=cli.parse_args(['gain','--top','0','--bottom','1024']);self.assertEqual((a.top,a.bottom),(0,1024))
-  for argv in (['gain'],['gain','--top','256'],['gain','--bottom','256'],['gain','--top','256.0','--bottom','256'],['gain','--top','2048','--bottom','0'],['tone-top','--top','256']):
+  for argv in (['gain'],['gain','--top','256'],['gain','--bottom','256'],['gain','--top','256.0','--bottom','256'],['gain','--top','32769','--bottom','0'],['tone-top','--top','256']):
    with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):cli.parse_args(argv)
  def test_mismatched_argument_after_single_write(self):
   class WrongArgument(Fake):

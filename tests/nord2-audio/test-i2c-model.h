@@ -18,6 +18,10 @@
 #define M_SLAVES 7
 
 enum { M_NORMAL, M_HANG, M_BUSERR, M_SLOW };
+/* Test-only temporal amplifier responses; no extra register interface. */
+enum { M_START_CLEAN,M_START_CLOCK_DIP,M_START_DELAY_CLOCK,M_START_PRE_TDM,
+ M_START_POST_NOCLK,M_START_PERSIST_NOCLK,M_START_POST_TDM,
+ M_START_POST_IO,M_START_PERSIST_CLOCK,M_START_POST_CLOCK_DIP };
 /* Selected V2 map: DEBUGSTAT is 0xe4; I3C_EN is read by the driver from
  * DMA_FSM_DEBUG at 0xec (i2c-mtk.h:275,295; i2c-mtk.c:1040). */
 enum { M_V2_DEBUGSTAT = 0xe4, M_V2_DMA_FSM_DEBUG = 0xec };
@@ -29,6 +33,7 @@ struct m_slave {
 	uint16_t reg[256];
 	unsigned accessed;
  unsigned i2crs, reset_reads, container_keys;
+ unsigned startup_mode,startup_enabled,pre_samples,post_samples;
 };
 
 struct i2c8_model {
@@ -167,6 +172,7 @@ m_start(struct i2c8_model *m)
          s->reg[0]=3; /* PWDN1 while I2CR selfclear is pending. */
          s->reg[2]=0x25c8; /* tfa9874_specific POR comments. */
          s->i2crs++;s->reset_reads=0;
+         s->startup_enabled=s->pre_samples=s->post_samples=0;
         } else {
          if(ptr==0x0f)M_CHECK(value==0 || value==0x5a6b);
          if(ptr==0xa1)M_CHECK(value==0 || value==0x5a);
@@ -179,6 +185,11 @@ m_start(struct i2c8_model *m)
            s->container_keys++;
           }
          }
+         if(ptr==0 && s->i2crs) {
+          if((s->reg[0]&1) && !(value&1))M_CHECK(s->reg[1]&4); /* INIT_CF order */
+          if(!(s->reg[0]&8) && (value&8))s->post_samples=0;
+          s->startup_enabled=!!(value&8);
+         }
          s->reg[ptr]=value;
         }
         c[0x0c/2]=1; return;
@@ -187,9 +198,25 @@ m_start(struct i2c8_model *m)
      s->reset_reads++;
      if(!m->i2cr_stuck && s->reset_reads>=(m->i2cr_clear_after?m->i2cr_clear_after:3))s->reg[0]&=(uint16_t)~2u;
     }
+    uint16_t temporal_clock=0;
+    if(s->startup_mode && !(s->reg[0]&1)) {
+     if(ptr==0x10) {
+      unsigned sample=s->startup_enabled?++s->post_samples:++s->pre_samples;
+      s->reg[0x10]&=(uint16_t)~0xc0u;
+      if(!s->startup_enabled && s->startup_mode==M_START_PRE_TDM && sample<=2)s->reg[0x10]|=0x40;
+      if(s->startup_enabled && ((s->startup_mode==M_START_POST_NOCLK && sample<=2) || s->startup_mode==M_START_PERSIST_NOCLK))s->reg[0x10]|=0x80;
+      if(s->startup_enabled && s->startup_mode==M_START_POST_TDM)s->reg[0x10]|=0x40;
+      if(s->startup_enabled && s->startup_mode==M_START_POST_IO && sample==2){c[0x0c/2]=3;return;}
+     }
+     if(ptr==0x11 && !s->startup_enabled &&
+       ((s->startup_mode==M_START_CLOCK_DIP && s->pre_samples==2) ||
+        (s->startup_mode==M_START_DELAY_CLOCK && s->pre_samples<=3) ||
+        s->startup_mode==M_START_PERSIST_CLOCK))temporal_clock=0x80;
+     if(ptr==0x11 && s->startup_enabled && s->startup_mode==M_START_POST_CLOCK_DIP && s->post_samples==2)temporal_clock=0x80;
+    }
     if (ptr==0x10 && m->noclk_persistent) s->reg[ptr]|=(s->reg[3]&255)==0x74 ? 0x80:0x100;
-    m->rx[0] = (uint8_t)(s->reg[ptr] >> 8);
-	m->rx[1] = (uint8_t)s->reg[ptr];
+    m->rx[0] = (uint8_t)((s->reg[ptr] & (uint16_t)~temporal_clock) >> 8);
+	m->rx[1] = (uint8_t)(s->reg[ptr] & (uint16_t)~temporal_clock);
  /* Selected tfa98xx.c956 and tfa_dsp.c4654: NOCLK is clear-on-read. */
  if (ptr==0x10) s->reg[ptr]&=(uint16_t)~((s->reg[3]&255)==0x74 ? 0x80:0x100);
 	m->nrx = 2;

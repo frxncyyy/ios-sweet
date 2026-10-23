@@ -9,7 +9,11 @@
 #define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
 #define NAH_QUEUE_FRAMES 8192u
 #define NAH_DEFAULT_GAIN_Q15 256u /* original tested bringup level */
-#define NAH_MAX_GAIN_Q15 1024u /* absolute full-scale DMA ceiling: -30.1dBFS */
+#define NAH_DEFAULT_BOTTOM_GAIN_Q15 1024u /* listening-tested live setting */
+/* Digital calibration range, not a calibrated acoustic/protection limit.
+ * Unity is the upper bound: never amplify beyond the incoming signed PCM.
+ * Startup defaults remain the physically tested low levels above. */
+#define NAH_MAX_GAIN_Q15 32768u
 #define NAH_GAIN_RAMP_FRAMES 480u /* ten-ms PCM ramp; no busy wait */
 #define NAH_MAX_TEST_US 2000000u
 /* Failure values are stable public worker status, never a kernel panic. */
@@ -47,6 +51,18 @@ struct nah_board {
  * No generic register access or live ABI is exposed. */
 enum { NAH_O_SYS0,NAH_O_STATUS10,NAH_O_STATUS11,NAH_O_STATUS13,
  NAH_O_STATUS14,NAH_O_MUTE58,NAH_O_TDM20,NAH_O_TDM23,NAH_O_TDM26,NAH_O_FIELDS };
+enum { NAH_AS_CONFIG=1,NAH_AS_PRE_WAIT,NAH_AS_ENABLE,NAH_AS_POST_CLEAR,
+ NAH_AS_POST_WAIT,NAH_AS_READY,NAH_AS_OBSERVE };
+/* Worker-owned startup evidence. Cleanup never changes this record.
+ * valid/first_bad_valid bit0=status10, bit1=family clock register.
+ * attempts counts complete/partial sample attempts across both waits. */
+struct nah_amp_start {
+ unsigned stage,attempts,valid,first_bad_valid,first_bad_stage,first_bad_attempt;
+ uint16_t status,clocks,first_bad_status,first_bad_clocks;
+ int error;
+ unsigned failure_reg;
+ uint32_t failure_pa,failure_value;
+};
 struct nah_status {
  unsigned initialized, running, silent_only, uncertain, gate, retained_shared_clock;
  unsigned amp_reset_held; /* uncertain amp transport: local GPIO reset latched high */
@@ -57,6 +73,7 @@ struct nah_status {
  uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
  uint32_t gain_ramp_frames, dma_peak[2];
  uint16_t amp_revision[2], amp_status[2];
+ struct nah_amp_start amp_start[2];
  uint16_t amp_observed[2][NAH_O_FIELDS];
  unsigned amp_observed_valid[2], amp_observed_seq;
  /* Saved-state diagnostics only: naf_own_mask of the boot snapshot and the
@@ -91,7 +108,7 @@ int nau_hw_init(struct nau_hw *, const struct nah_io *, void *, const struct nah
  * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.
  * Both modes run actual continuous DMA and tick. duration_us=0 is continuous
  * HAL playback with 750ms input-idle watchdog; nonzero tests are capped2s.
- * rate must be48000/channels2/bits16. gain0..1024 scales queue PCM; no amp gain
+ * rate must be48000/channels2/bits16. gain0..32768 scales queue PCM; no amp gain
  * guessed or modified. now_us is monotonic microseconds from worker clock. */
 int nau_hw_start(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
  unsigned silent_only, unsigned gain_q15, unsigned duration_us, uint64_t now_us);

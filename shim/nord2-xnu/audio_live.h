@@ -35,8 +35,8 @@ struct nal_snapshot {uint32_t word[NAL_WORDS];};
  * writes, executable upload, I2C commands or PCM leave/enter through USB. */
 /* Fixed absolute Q15 step table. Encoded GAIN index: top low nibble,
  * bottom next nibble; no other bits. Invalid step returns UINT32_MAX. */
-#define NAL_GAIN_MAX 1024u
-#define NAL_GAIN_STEPS 7u
+#define NAL_GAIN_MAX 32768u
+#define NAL_GAIN_STEPS 16u
 unsigned nal_gain_value(unsigned index);
 int nal_gain_index_valid(unsigned encoded);
 int nal_initialize(uint64_t nonce);

@@ -14,8 +14,7 @@ static struct nal_request request;
 #define lck_mtx_lock(x) ((void)(x))
 #define lck_mtx_unlock(x) ((void)(x))
 static int nsa_lock;
-unsigned nal_gain_value(unsigned i){static const unsigned v[]={0,128,256,362,512,724,1024};return i<7?v[i]:UINT32_MAX;}
-int nal_gain_index_valid(unsigned n){return n<256&&(n&15)<7&&(n>>4)<7;}
+#include "live-gain.inc"
 int nal_take(struct nal_request *r){if(!pending)return 0;*r=request;pending=0;return 1;}
 int nal_complete(const struct nal_request*r,unsigned v,const struct nal_snapshot*s){(void)r;(void)s;result=v;return 0;}
 static void snapshot(struct nal_snapshot*s){memset(s,0,sizeof*s);}
@@ -70,7 +69,8 @@ int main(void){
  stream.count=0;hardware.status.running=1;pending=1;commands();assert(result==NAL_REFUSED);
  hardware.status.running=0;pending=1;commands();assert(result==NAL_OK&&output_gain[0]==256&&output_gain[1]==512);
  hardware.status.error=NAH_E_IO;request.generation=0x66;pending=1;commands();assert(result==NAL_UNAVAILABLE&&output_gain[1]==512);
- hardware.status.error=0;request.generation=0xf2;pending=1;commands();assert(result==NAL_REFUSED&&output_gain[1]==512);
+ hardware.status.error=0;request.generation=0xf2;pending=1;commands();assert(result==NAL_OK&&output_gain[0]==256&&output_gain[1]==32768);
+ request.generation=0x100;pending=1;commands();assert(result==NAL_REFUSED&&output_gain[1]==32768);
  /* Muted channel PCM must not keep producer sound/idle bookkeeping alive. */
  output_gain[0]=0;output_gain[1]=256;
  int16_t channel_data[]={32767,0,-32768,0};mask_disabled_channels(channel_data,2);

@@ -18,7 +18,7 @@ assert start.index('amp_enable(h,i)')<start.index('amp_observe_startup(h)')<star
 assert 'amp_observe_startup('not in extract(hw,'int nau_hw_tick(')
 assert dev.count('report_amp_observed();')==1
 with tempfile.TemporaryDirectory(prefix='nord2-observed-')as tmp:
- t=Path(tmp);(t/'observed-capture.inc').write_text(extract(hw,'static int amp_observe_startup('));(t/'observed-report.inc').write_text(extract(dev,'static void report_amp_observed('))
+ t=Path(tmp);(t/'observed-capture.inc').write_text(extract(hw,'static int amp_start_failure(')+extract(hw,'static void amp_start_bad(')+extract(hw,'static int amp_observe_startup('));(t/'observed-report.inc').write_text(extract(dev,'static void report_amp_observed('))
  exe=t/'test';subprocess.run(['clang','-std=c11','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=all','-include',str(S/'audio_hw.h'),'-I'+str(R/'shim/nord2-xnu'),'-I'+str(t),str(D/'test-observed.c'),'-o',str(exe)],check=True);subprocess.run([str(exe)],check=True)
 
 with tempfile.TemporaryDirectory(prefix='nord2-observed-i2c-')as tmp:

@@ -19124,7 +19124,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_device.c
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,339 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
@@ -19162,7 +19162,7 @@
 +static struct nau_hw hardware;
 +static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
 + unsigned tone_active, tone_mode, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
-+static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_GAIN_Q15};
++static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_BOTTOM_GAIN_Q15};
 +static void mask_disabled_channels(int16_t *pcm,unsigned frames) {
 + /* Called under producer mutex; gain edits require disabled, empty queues. */
 + for(unsigned c=0;c<2;c++)if(!output_gain[c])
@@ -19259,6 +19259,14 @@
 +  where,reason,h->gate,h->afe_phase,h->afe_op,h->i2c_stage,h->i2c_failure,
 +  h->last_pa,h->stop_error,h->reset_error,h->amp_reset_held,h->uncertain,
 +  h->i2c_last_pa,h->i2c_last_value,h->ownership,h->amp_status[0],h->amp_status[1]);
++ for(unsigned a=0;a<2;a++) {
++  const struct nah_amp_start *d=&h->amp_start[a];
++  if(!d->stage)continue;
++  printf("NORD2 AUDIO AMP SETTLE: amp=%u stage=%u samples=%u valid=%x status=%04x clocks=%04x error=%d reg=%02x pa=%x value=%x first=%x/%u/%u/%04x/%04x\n",
++   a,d->stage,d->attempts,d->valid,d->status,d->clocks,d->error,
++   d->failure_reg,d->failure_pa,d->failure_value,d->first_bad_valid,
++   d->first_bad_stage,d->first_bad_attempt,d->first_bad_status,d->first_bad_clocks);
++ }
 + /* Worker-owned saved values only; diagnostics never perform MMIO. */
 + printf("NORD2 AUDIO AP: valid=%x start=%x ctrl=%x irq=%x fifo=%x i3c=%x\n",
 +  hardware.bus.ap_valid,hardware.bus.ap_preflight[NA8_AP_START],
@@ -19588,7 +19596,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_live.c
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,83 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "audio_live.h"
@@ -19608,7 +19616,7 @@
 + put(&live.enabled,1);return 0;
 +}
 +unsigned nal_gain_value(unsigned index){
-+ static const unsigned steps[NAL_GAIN_STEPS]={0,128,256,362,512,724,NAL_GAIN_MAX};
++ static const unsigned steps[NAL_GAIN_STEPS]={0,128,256,362,512,724,1024,2048,2896,4096,5793,8192,11585,16384,23170,32768};
 + return index<NAL_GAIN_STEPS?steps[index]:UINT32_MAX;
 +}
 +int nal_gain_index_valid(unsigned encoded){
@@ -19647,6 +19655,8 @@
 + if(!out||size<NAL_CAP_BYTES)return 0;
 + uint32_t v[NAL_CAP_WORDS]={NAL_MAGIC,NAL_VERSION,NAL_CAP_BYTES,NAL_BYTES,
 + NAL_COMMANDS,NAL_MAX_TOKEN,0u,0,0,0,0,0,0,0,0,0};
++ /* Additive range metadata: last-op/argument remain at12/13. */
++ v[14]=NAL_GAIN_MAX;v[15]=NAL_GAIN_STEPS;
 + v[9]=nal_enabled();if(v[9]){v[7]=get(&live.boot[0]);v[8]=get(&live.boot[1]);
 + v[10]=get(&live.pending);v[11]=get(&live.token);v[12]=get(&live.op);v[13]=get(&live.generation);}
 + for(unsigned k=0;k<NAL_CAP_WORDS;k++)le32(out+k*4,v[k]);return NAL_CAP_BYTES;
@@ -19710,8 +19720,8 @@
 + * writes, executable upload, I2C commands or PCM leave/enter through USB. */
 +/* Fixed absolute Q15 step table. Encoded GAIN index: top low nibble,
 + * bottom next nibble; no other bits. Invalid step returns UINT32_MAX. */
-+#define NAL_GAIN_MAX 1024u
-+#define NAL_GAIN_STEPS 7u
++#define NAL_GAIN_MAX 32768u
++#define NAL_GAIN_STEPS 16u
 +unsigned nal_gain_value(unsigned index);
 +int nal_gain_index_valid(unsigned encoded);
 +int nal_initialize(uint64_t nonce);
@@ -21985,7 +21995,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_hw.c
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,547 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -22043,33 +22053,80 @@
 + }
 + return NAH_E_AMPS;
 +}
++static int amp_start_failure(struct nau_hw *h,unsigned amp,int error,unsigned reg)
++{
++ struct nah_amp_start *d=&h->status.amp_start[amp];
++ if (!d->error) {
++  d->error=error;d->failure_reg=reg;
++  d->failure_pa=h->bus.last_addr;d->failure_value=h->bus.last_value;
++ }
++ return error;
++}
++static void amp_start_bad(struct nah_amp_start *d)
++{
++ if (!d->first_bad_valid && d->valid) {
++  d->first_bad_valid=d->valid;d->first_bad_stage=d->stage;
++  d->first_bad_attempt=d->attempts;
++  d->first_bad_status=d->status;d->first_bad_clocks=d->clocks;
++ }
++}
++static int amp_start_wait(struct nau_hw *h,unsigned amp,unsigned post)
++{
++ struct nah_amp_start *d=&h->status.amp_start[amp];
++ unsigned is74=(h->amps[amp].rev&255)==0x74;
++ unsigned clockreg=is74?0x11:0x10,clockmask=is74?0x80:0x40;
++ unsigned tdmmask=is74?0x40:0x400,noclkmask=is74?0x80:0x100,clean=0;
++ d->stage=post?NAH_AS_POST_WAIT:NAH_AS_PRE_WAIT;
++ /* Port settling guard: <=100 one-ms waits,101 samples, two consecutive
++  * healthy samples. Every transfer also has the existing I2C hard bound.
++  * Before AMPE, historical NOCLK is expected during cold startup; TDM and
++  * CLKS must settle. After Android's post-OPERATING read-clear, NOCLK must
++  * remain clear too. Persistent/reasserting faults never authorize PCM. */
++ for (unsigned k=0;k<=100;k++) {
++  d->attempts++;d->valid=0;d->status=d->clocks=0;
++  if (amp_read(h,amp,0x10,&d->status)) {
++   amp_start_bad(d);return amp_start_failure(h,amp,NAH_E_IO,0x10);
++  }
++  d->valid=1;
++  if (is74) {
++   if (amp_read(h,amp,clockreg,&d->clocks)) {
++    amp_start_bad(d);return amp_start_failure(h,amp,NAH_E_IO,clockreg);
++   }
++  } else d->clocks=d->status; /* 9873 shares STATUS10; avoid a second destructive read. */
++  d->valid|=2;
++  if ((d->status&(tdmmask|noclkmask)) || !(d->clocks&clockmask))amp_start_bad(d);
++  unsigned healthy=!(d->status&(tdmmask|(post?noclkmask:0))) && (d->clocks&clockmask);
++  if (!healthy) {amp_start_bad(d);clean=0;}
++  else if (++clean==2)return 0;
++  if (k==100)break;
++  if (delay(h,1000))return amp_start_failure(h,amp,NAH_E_IO,0);
++ }
++ return amp_start_failure(h,amp,NAH_E_AMP_FAULT,
++  !(d->clocks&clockmask)?clockreg:0x10);
++}
 +static int amp_enable(struct nau_hw *h,unsigned amp)
 +{
-+ /* tfa_dev_set_state(OPERATING): PWDN0 -> MANSCONF1 -> AMPE1.
-+  * Stable clocks verified before output enable, exact family CLKS field. */
-+ if (amp_rmw(h,amp,0x00,1,0) || amp_rmw(h,amp,0x01,4,4)) return NAH_E_IO;
-+ unsigned is74=(h->amps[amp].rev & 255)==0x74;
-+ unsigned clockreg=is74 ? 0x11:0x10, clockmask=is74 ? 0x80:0x40;
-+ unsigned ready=0;
-+ for (unsigned k=0;k<50;k++) {
-+  uint16_t v=0;
-+  if (amp_read(h,amp,clockreg,&v)) return NAH_E_IO;
-+  if (v & clockmask) { ready=1; break; }
-+  if (delay(h,1000)) return NAH_E_IO;
-+ }
-+ if (!ready) return NAH_E_AMPS;
-+ /* Selected tfa98xx.c956 explicitly removes cold-start NOCLK sticky by
-+  * reading once. Otherwise our first monitor would misclassify historical
-+  * startup loss as a runtime failure. Never discard a current TDM fault;
-+  * reread NOCLK and CLKS before enabling the output. */
-+ uint16_t status=0,clocks=0;
-+ unsigned tdmmask=is74 ? 0x40:0x400, noclkmask=is74 ? 0x80:0x100;
-+ if (amp_read(h,amp,0x10,&status)) return NAH_E_IO;
-+ if (status&tdmmask) return NAH_E_AMP_FAULT;
-+ if (amp_read(h,amp,0x10,&status) || amp_read(h,amp,clockreg,&clocks)) return NAH_E_IO;
-+ h->status.amp_status[amp]=status;
-+ if ((status&(tdmmask|noclkmask)) || !(clocks&clockmask)) return NAH_E_AMP_FAULT;
-+ return amp_rmw(h,amp,0x00,8,8);
++ struct nah_amp_start *d=&h->status.amp_start[amp];
++ d->stage=NAH_AS_CONFIG;
++ /* Selected Android cold startup: tfaRunStartup -> INIT_CF sets
++  * MANSCONF before PWDN (tfa_dsp.c4307-4322). AMPE stays disabled. */
++ if (amp_rmw(h,amp,0x01,4,4))return amp_start_failure(h,amp,NAH_E_IO,0x01);
++ if (amp_rmw(h,amp,0x00,1,0))return amp_start_failure(h,amp,NAH_E_IO,0x00);
++ int rc=amp_start_wait(h,amp,0);if(rc)return rc;
++ d->stage=NAH_AS_ENABLE;
++ /* OPERATING's remaining proBus action is AMPE1 (tfa_dsp.c4330-4345). */
++ if (amp_rmw(h,amp,0x00,8,8))return amp_start_failure(h,amp,NAH_E_IO,0x00);
++ d->stage=NAH_AS_POST_CLEAR;d->valid=0;d->status=d->clocks=0;
++ /* Match tfa98xx_tfa_start: read NOCLK once AFTER tfa_dev_start/
++  * OPERATING (tfa98xx.c914-970), never via raw flag-clear writes. */
++ if (amp_read(h,amp,0x10,&d->status))return amp_start_failure(h,amp,NAH_E_IO,0x10);
++ d->valid=1;
++ unsigned is74=(h->amps[amp].rev&255)==0x74;
++ if (d->status&(is74?0xc0:0x500))amp_start_bad(d);
++ rc=amp_start_wait(h,amp,1);if(rc)return rc;
++ d->stage=NAH_AS_READY;
++ h->status.amp_status[amp]=d->status;
++ return 0;
 +}
 +static int amp_observe_startup(struct nau_hw *h)
 +{
@@ -22080,13 +22137,19 @@
 + static const uint8_t regs[NAH_O_FIELDS]={0x00,0x10,0x11,0x13,0x14,0x58,0x20,0x23,0x26};
 + for (unsigned a=0;a<2;a++) for (unsigned i=0;i<NAH_O_FIELDS;i++) {
 +  uint16_t v=0;
-+  if (amp_read(h,a,regs[i],&v)) return NAH_E_IO;
++  if (amp_read(h,a,regs[i],&v)) {
++   h->status.amp_start[a].stage=NAH_AS_OBSERVE;
++   return amp_start_failure(h,a,NAH_E_IO,regs[i]);
++  }
 +  h->status.amp_observed[a][i]=v;
 +  h->status.amp_observed_valid[a]|=1u<<i;
 +  /* STATUS10 clears NOCLK on read. Preserve and act on that evidence,
 +   * rather than accidentally consuming a new fault as diagnostics. */
-+  if (i==NAH_O_STATUS10 && (v&((h->amps[a].rev&255)==0x74?0xc0:0x500)))
-+   return NAH_E_AMP_FAULT;
++  if (i==NAH_O_STATUS10 && (v&((h->amps[a].rev&255)==0x74?0xc0:0x500))) {
++   struct nah_amp_start *d=&h->status.amp_start[a];
++   d->stage=NAH_AS_OBSERVE;d->status=v;d->valid=1;d->clocks=0;
++   amp_start_bad(d);return amp_start_failure(h,a,NAH_E_AMP_FAULT,0x10);
++  }
 + }
 + return 0;
 +}
@@ -22261,14 +22324,15 @@
 +     duration>NAH_MAX_TEST_US || now>UINT64_MAX-duration) return NAH_E_ARG;
 + /* This refusal must happen before any mutation or controller programming. */
 + if (!silent && !board_valid(h)) return h->status.error=NAH_E_BOARD_CONFIG;
++ if (!++h->status.amp_observed_seq) h->status.amp_observed_seq=1;
++ for (unsigned a=0;a<2;a++) {
++  h->status.amp_start[a]=(struct nah_amp_start){0};
++  h->status.amp_observed_valid[a]=0;
++  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
++ }
 + if (!silent && !h->reset_changed) {
 +  int prep=amps_prepare(h);
 +  if (prep) return h->status.error=prep;
-+ }
-+ if (!++h->status.amp_observed_seq) h->status.amp_observed_seq=1;
-+ for (unsigned a=0;a<2;a++) {
-+  h->status.amp_observed_valid[a]=0;
-+  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
 + }
 + h->status.silent_only=silent; h->gain_q15[0]=top; h->gain_q15[1]=bottom;
 + h->status.gain_ramp_frames=0; h->status.dma_peak[0]=h->status.dma_peak[1]=0;
@@ -22481,7 +22545,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_hw.h
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,132 @@
 +#ifndef NORD2_AUDIO_HW_H
 +#define NORD2_AUDIO_HW_H
 +#include <stdint.h>
@@ -22493,7 +22557,11 @@
 +#define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
 +#define NAH_QUEUE_FRAMES 8192u
 +#define NAH_DEFAULT_GAIN_Q15 256u /* original tested bringup level */
-+#define NAH_MAX_GAIN_Q15 1024u /* absolute full-scale DMA ceiling: -30.1dBFS */
++#define NAH_DEFAULT_BOTTOM_GAIN_Q15 1024u /* listening-tested live setting */
++/* Digital calibration range, not a calibrated acoustic/protection limit.
++ * Unity is the upper bound: never amplify beyond the incoming signed PCM.
++ * Startup defaults remain the physically tested low levels above. */
++#define NAH_MAX_GAIN_Q15 32768u
 +#define NAH_GAIN_RAMP_FRAMES 480u /* ten-ms PCM ramp; no busy wait */
 +#define NAH_MAX_TEST_US 2000000u
 +/* Failure values are stable public worker status, never a kernel panic. */
@@ -22531,6 +22599,18 @@
 + * No generic register access or live ABI is exposed. */
 +enum { NAH_O_SYS0,NAH_O_STATUS10,NAH_O_STATUS11,NAH_O_STATUS13,
 + NAH_O_STATUS14,NAH_O_MUTE58,NAH_O_TDM20,NAH_O_TDM23,NAH_O_TDM26,NAH_O_FIELDS };
++enum { NAH_AS_CONFIG=1,NAH_AS_PRE_WAIT,NAH_AS_ENABLE,NAH_AS_POST_CLEAR,
++ NAH_AS_POST_WAIT,NAH_AS_READY,NAH_AS_OBSERVE };
++/* Worker-owned startup evidence. Cleanup never changes this record.
++ * valid/first_bad_valid bit0=status10, bit1=family clock register.
++ * attempts counts complete/partial sample attempts across both waits. */
++struct nah_amp_start {
++ unsigned stage,attempts,valid,first_bad_valid,first_bad_stage,first_bad_attempt;
++ uint16_t status,clocks,first_bad_status,first_bad_clocks;
++ int error;
++ unsigned failure_reg;
++ uint32_t failure_pa,failure_value;
++};
 +struct nah_status {
 + unsigned initialized, running, silent_only, uncertain, gate, retained_shared_clock;
 + unsigned amp_reset_held; /* uncertain amp transport: local GPIO reset latched high */
@@ -22541,6 +22621,7 @@
 + uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
 + uint32_t gain_ramp_frames, dma_peak[2];
 + uint16_t amp_revision[2], amp_status[2];
++ struct nah_amp_start amp_start[2];
 + uint16_t amp_observed[2][NAH_O_FIELDS];
 + unsigned amp_observed_valid[2], amp_observed_seq;
 + /* Saved-state diagnostics only: naf_own_mask of the boot snapshot and the
@@ -22575,7 +22656,7 @@
 + * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.
 + * Both modes run actual continuous DMA and tick. duration_us=0 is continuous
 + * HAL playback with 750ms input-idle watchdog; nonzero tests are capped2s.
-+ * rate must be48000/channels2/bits16. gain0..1024 scales queue PCM; no amp gain
++ * rate must be48000/channels2/bits16. gain0..32768 scales queue PCM; no amp gain
 + * guessed or modified. now_us is monotonic microseconds from worker clock. */
 +int nau_hw_start(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
 + unsigned silent_only, unsigned gain_q15, unsigned duration_us, uint64_t now_us);

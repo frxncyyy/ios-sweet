@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Bounded speaker controls over the native Nord2 USB console. No flash or raw writes.
 status: public counters only. enable: allow HAL PCM. stop: flush/stop playback.
-tone: fixed quiet1kHz/1second. silent:1second DMA/clock test, no speaker enable.
-gain: absolute top/bottom digital Q15 steps while stopped/disabled.
-tone-top/tone-bottom: isolated1second test at configured gain.
+tone: fixed1kHz/1second at legacy gain256. silent:1second DMA/clock test, no speaker enable.
+gain: live digital calibration Q15 steps while stopped/disabled; not Android protection.
+tone-top/tone-bottom: isolated1second test at configured gain; loudness is not calibrated.
 """
 import argparse,fcntl,importlib.util,json,os,pathlib,struct,time
 spec=importlib.util.spec_from_file_location('wifi_usb',pathlib.Path(__file__).with_name('nord2-wifi-live.py'))
 usb=importlib.util.module_from_spec(spec);spec.loader.exec_module(usb)
 MAGIC=0x4c41444e
 OPS={'status':1,'enable':2,'stop':3,'tone':4,'silent':5,'gain':6,'tone-top':7,'tone-bottom':8}
-GAIN_STEPS=(0,128,256,362,512,724,1024)
+GAIN_STEPS=(0,128,256,362,512,724,1024,2048,2896,4096,5793,8192,11585,16384,23170,32768)
 FIELDS=('magic version bytes boot_lo boot_hi token op reserved result enabled initialized running silent uncertain error stop_error gate amp0 amp1 status0 status1 written_lo written_hi queued dropped_lo dropped_hi pcm silence underruns ticks max_gap peak volume muted opens writes time_lo time_hi stream_starts tone_frames hal_status board_status gain_top gain_bottom gain_max ramp_frames dma_peak_top dma_peak_bottom').split()
 def words(data,n):
  if len(data)!=n*4:raise ValueError('short audio reply')
@@ -18,7 +18,11 @@ def words(data,n):
 def caps(t):
  w=words(t.read(0x64,64),16)
  if w[:4]!=(MAGIC,1,64,192) or w[4]not in(0x3e,0x1fe) or w[5:7]!=(4095,0) or w[9]!=1:raise ValueError('audio protocol unavailable or incompatible')
+ if tuple(w[14:16])not in((0,0),(32768,16)):raise ValueError('malformed or unsupported audio gain range')
+ if w[4]==0x3e and tuple(w[14:16])!=(0,0):raise ValueError('gain range advertised without gain command')
  return w
+def gain_range(w):
+ return (1024,7) if tuple(w[14:16])==(0,0) else tuple(w[14:16])
 def gain_index(top,bottom):
  if type(top)is not int or type(bottom)is not int or top not in GAIN_STEPS or bottom not in GAIN_STEPS:
   raise ValueError('gain requires both top and bottom from '+','.join(map(str,GAIN_STEPS)))
@@ -31,6 +35,10 @@ def command(t,name,timeout,top=None,bottom=None):
   index=0
  first=caps(t);boot=first[7:9];op=OPS[name]
  if not(first[4]&(1<<op)):raise ValueError('audio command not supported by this kernel')
+ if name=='gain':
+  maximum,count=gain_range(first)
+  if (index&15)>=count or (index>>4)>=count or top>maximum or bottom>maximum:
+   raise ValueError('requested gain not supported by this kernel range')
  if first[10]:raise ValueError('another audio command is pending; do not resubmit a mutation')
  token=first[11]+1
  if token>4095:raise ValueError('audio token budget exhausted')
@@ -41,6 +49,7 @@ def command(t,name,timeout,top=None,bottom=None):
  while time.monotonic()<deadline:
   current=caps(t)
   if current[7:9]!=boot:raise ValueError('phone rebooted while command was pending')
+  if current[4]!=first[4] or current[14:16]!=first[14:16]:raise ValueError('audio capability range changed while command was pending')
   if current[11]>token:raise ValueError('another client changed the command token')
   try:w=words(t.read(0x66,192),48)
   except usb.USBError:time.sleep(.05);continue
