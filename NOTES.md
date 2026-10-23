@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: corrected audio image flashed; inherited clocks block init.**
+  Human call_663dd5b5 authorizes exact playback8e6697a2 and conditional
+  rollback3ec181c7/RAMADB. Guarded runner flashed boot/reboot OKAY once;
+  rootexec81674 owns600s USB capture in ios-startup/hardware-playback.
+  User call_9e1cc0e8 confirms lockscreen/touch/buttons healthy and explicitly
+  requests Claude fix this plus downstream startup blockers before next build.
+  Installed HAL reused successfully mode1phase2error0. Readiness race resolved:
+  full69-register snapshot now captured, worker=-4 gate0xf8 BEFORE reset/amp/AFE
+  writes. AUDIOoff1112 but ADSPon224d, protectionbit4clear, infra/mux/APLL2already
+  enabled. Actual APLL2 already correct196.608MHz, tunerPCW+1; preserve borrowed
+  clocks and ADSP, do not simply remove gates or disable/retune inherited PLL.
+  Immutable hardware-review/init.log+receipt+status-initial saved. USB STOPtoken2
+  succeeded enabled0/running0/uncertain0/stop_error0, no tone/silent test sent.
+  Actual Claude Opus5.5 session14f85f3b-0a44-42f8-a2ab-0bbc2fe3ec79/PID658863
+  runs restricted source/log/private candidate work in playback-20261023/
+  claude-startup-cold, rootexec17606. No device or canonical edits delegated.
+  Independent hardware-sol/cold-state and profile-sol/cold-state findings cover
+  all5 failed state assumptions, borrowed-resource shutdown and actual69-word
+  gate regression. Claude leads implementation; parent must review/run tests.
+  No new image prepared/authorized yet. Phone remains8e with audio disabled;
+  no physical sound proven. Preserve installed HAL/backups; old WiFi kernel
+  alone does not undo persistent HAL installation. Never stock Android.
+
 - **2026-10-23: corrected audio images VERIFIED; exact approval pending.**
   Source66fc36e9271b801a028d9180f7672e31149f42bf, CI39987328778attempt1SUCCESS.
   Kernel17892808B SHA4a1142f950947000fa8507860ce9075624acf63b8d09ecabb87d65581c5a544b.
