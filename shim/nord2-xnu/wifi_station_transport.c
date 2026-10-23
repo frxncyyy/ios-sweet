@@ -11,12 +11,16 @@ static int mac(const uint8_t*p){unsigned any=0;for(unsigned i=0;i<6;i++)any|=p[i
 void nst_close_port(struct nst*s){if(s){if(s->controlled_port&&!s->cleanup_started)s->deadline=s->last>UINT64_MAX-UINT64_C(30000000)?UINT64_MAX:s->last+UINT64_C(30000000);s->controlled_port=0;if(s->wire_busy&&s->wire_type==3&&!s->published){wipe(s->wire,sizeof s->wire);s->wire_busy=0;}}}
 static int fail(struct nst*s,unsigned e){nsdd_summary(&s->data_diag,s->generation);{struct nstd_record record;nstd_summary(&record,s->generation,s->ticket);nstd_log(&record);}nst_close_port(s);s->halt=1;s->error=e;s->phase=NST_HALTED;if(s->init&&s->mutated){s->init->halt=1;s->init->transport.halt=1;s->init->transport.dirty=1;}return -1;}
 static int source(const struct nst*s){return s&&s->prepared&&s->init&&s->previous&&s->previous_rx&&!s->halt&&!s->init->halt&&!s->init->transport.halt;}
-int nst_lease_window(const struct nst*s,const struct nwi_state*i){
- if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||!s->active||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed-s->normal.dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
+static int lease_window(const struct nst*s,const struct nwi_state*i,unsigned active){
+ if(!source(s)||s->credit_available+s->credit_reserved!=s->credit_capacity||s->credit_reserved>1||s->credit_released>s->credit_acquired||s->credit_acquired-s->credit_released!=s->credit_reserved||s->active!=active||s->data_profile>NST_DATA_TODS||s->init!=i||!i->initialized||s->tx_next>=1024||s->dma_completed>s->submitted||s->submitted-s->dma_completed>1||s->peer.bss||i->transport.tx_index!=s->tx_next||i->transport.completed!=s->base_completed+s->dma_completed-s->normal.dma_completed||i->transport.rx_index!=s->queue[1].next)return 0;
  if(s->normal.credit_available+s->normal.credit_reserved!=1||s->normal.credit_reserved>1||s->normal.credit_released>s->normal.credit_acquired||s->normal.credit_acquired-s->normal.credit_released!=s->normal.credit_reserved)return 0;
  if(s->normal.next>=1024||s->normal.token_next>=NSTX_TOKEN_COUNT||s->normal.token>=NSTX_TOKEN_COUNT||s->normal.ring!=i->rings[0].descriptors||s->normal.buffer!=i->data_buffer||!s->normal.ring||s->normal.buffer+4096!=i->end||s->normal.completed>s->normal.dma_completed||s->normal.dma_completed>s->normal.submitted||s->normal.submitted-s->normal.completed>1||s->normal.dma_completed>s->dma_completed||s->normal.submitted>s->submitted)return 0;
  for(unsigned k=0;k<5;k++){const struct ncr_queue*q=&s->queue[k];const struct nwi_ring*r=&i->rings[k+4];if(q->next>=r->count||q->ring.descriptors!=r->descriptors||q->ring.buffers!=r->buffers||q->ring.base!=r->base||q->ring.count!=r->count)return 0;}
  return 1;
+}
+int nst_lease_window(const struct nst*s,const struct nwi_state*i){return lease_window(s,i,1);}
+int nst_idle_window(const struct nst*s,const struct nwi_state*i){
+ return lease_window(s,i,0)&&!s->error&&s->ptk.installed&&s->phase==NST_IDLE&&!s->callback_active&&!s->wire_busy&&!s->air_pending&&!s->peer_kind&&!s->cleanup_started&&!s->link_lost&&s->controlled_port&&s->sta_active&&s->ptk_ready&&s->gtk.installed&&!s->bss_absent&&!s->pm_pending&&!s->activation_pending&&s->submitted==s->dma_completed&&!s->credit_reserved&&s->credit_available==s->credit_capacity&&nstx_idle(&s->normal)&&!s->normal.credit_reserved&&s->normal.credit_available==1;
 }
 /* nsb_scan.partial is aggregate: overflow drops whole excess records but never
  * damages retained rows. Terminal state7 excludes firmware failure; timed_out
@@ -69,7 +73,8 @@ static int frame(struct nst*s,uint64_t ticket,const uint8_t*p,size_t n,unsigned 
  if(type==1&&(!s->next_pid||s->next_pid>NST_PID_MANAGEMENT_MAX))return -1;
  struct sw_txd d=s->txd;if(type==1&&(u16(p)==0xb0||u16(p)==0))d.queue=16;d.pid=(uint8_t)(type==1?s->next_pid:NST_PID_HOST);d.protected_frame=(uint8_t)protect;size_t used=0;uint8_t txd[32];int e;
  if(type==1)e=sw_management_txd(txd,sizeof txd,&used,&d,p,n);else if(type==2)e=sw_security_txd(txd,sizeof txd,&used,&d,p,n);else e=sw_data_txd(txd,sizeof txd,&used,&d,p,n);
- if(e||used!=32)return -1;
+ if(e||used!=32||s->data_profile>NST_DATA_TODS)return -1;
+ if(type==3&&s->data_profile==NST_DATA_TODS){struct sw_peer peer;cp(peer.self,s->peer.self,6);cp(peer.ap,s->peer.ap,6);if(sw_tods_ethernet_valid(&peer,p,n))return -1;}
  if(type==1){if(n<24||!eq(p+4,s->peer.ap,6)||!eq(p+10,s->peer.self,6)||!eq(p+16,s->peer.ap,6))return -1;}
  else if(!eq(p+6,s->peer.self,6)||(type==2&&!eq(p,s->peer.ap,6)))return -1;
  unsigned pid=nsdd_pid_reserve(s->generation,d.wlan,type,protect,p,n);if(!pid)return -1;
@@ -111,7 +116,9 @@ static int data_transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn 
   if(!nstx_idle(d)||rr(s,o,c,0x180600f0,&v)||(v&3)!=3||coherent(s,o,c)||rr(s,o,c,0x18025308,&v)||v!=d->next||rr(s,o,c,0x1802530c,&v)||v!=d->next)return fail(s,40);
   s->phase=NST_DATA_READ;if(sy(s,o,c,cell,16,2)||mr(s,o,c,cell,d->descriptor,16))return -1;if(!(u32(d->descriptor+4)&0x80000000))return fail(s,41);
   size_t used=0;d->token=d->token_next;struct sw_txd options=s->txd;options.pid=(uint8_t)s->wire_pid;options.protected_frame=(uint8_t)!!(u32(s->wire+12)&2);
-  if(nstx_build(d->page,sizeof d->page,&used,&options,s->wire+32,s->wire_bytes-32,s->wire_type==2,d->token,d->buffer)||used!=s->wire_bytes+32||nwt_tx_desc(d->descriptor,d->buffer,64))return fail(s,42);
+  struct sw_peer peer;cp(peer.self,s->peer.self,6);cp(peer.ap,s->peer.ap,6);
+  unsigned profile=s->wire_type==3?s->data_profile:NST_DATA_ETHERNET;unsigned extra=profile==NST_DATA_TODS?18:0;
+  if(nstx_build_profile(d->page,sizeof d->page,&used,&options,s->wire+32,s->wire_bytes-32,s->wire_type==2,d->token,d->buffer,profile,&peer)||used!=s->wire_bytes+32+extra||nwt_tx_desc(d->descriptor,d->buffer,64))return fail(s,42);
   s->phase=NST_DATA_WRITE;if(mw(s,o,c,d->buffer,d->page,sizeof d->page)||sy(s,o,c,d->buffer,sizeof d->page,1))return -1;
   s->phase=NST_DATA_VERIFY;if(sy(s,o,c,d->buffer,sizeof d->page,2)||mr(s,o,c,d->buffer,s->data_verify,sizeof s->data_verify)||!eq(d->page,s->data_verify,sizeof d->page))return fail(s,43);wipe(s->data_verify,sizeof s->data_verify);
   s->phase=NST_DATA_WRITE;if(mw(s,o,c,cell,d->descriptor,16)||sy(s,o,c,cell,16,1))return -1;
@@ -126,13 +133,13 @@ static int data_transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn 
   d->published=1;d->submitted++;d->token_next=(d->token_next+1)%NSTX_TOKEN_COUNT;s->published=1;s->submitted++;
   nsdd_pid_publish(s->generation,s->wire_pid,s->peer.wlan,s->submitted);
   nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
-  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
+  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes+(s->wire_type==3&&s->data_profile==NST_DATA_TODS?18:0),s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes+(s->wire_type==3&&s->data_profile==NST_DATA_TODS?18:0),s->wire_type,1);nstd_log(&record);}
  }
  if(!d->dma_done){
   s->phase=NST_DATA_WAIT;if(rr(s,o,c,0x1802530c,&v))return -1;if(v!=d->next&&v!=(d->next+1)%1024)return fail(s,45);
   if(v==d->next)return 0;s->phase=NST_DATA_READ;if(sy(s,o,c,cell,16,2)||mr(s,o,c,cell,d->descriptor,16))return -1;if(!(u32(d->descriptor+4)&0x80000000))return 0;
   d->dma_done=1;d->dma_completed++;s->dma_completed++;
-  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes,s->wire_type,2);nstd_log(&record);}
+  {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,d->page,s->wire_bytes+(s->wire_type==3&&s->data_profile==NST_DATA_TODS?18:0),s->wire_type,2);nstd_log(&record);}
  }
  if(!d->report_done)return 0;
  /* The report proves payload retirement only, not air success. Wipe after it
@@ -163,7 +170,7 @@ static int transmit(struct nst*s,const struct ncd_io*o,void*c,nst_event_fn fn,vo
   if(s->wire_type==1){s->air_pending=1;}
   nsdd_publish(&s->data_diag,s->generation,s->submitted,s->wire_type,s->wire+32,s->wire_bytes-32);
   {struct nstd_record record;nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,0);nstd_log(&record);nstd_tx(&record,s->generation,s->ticket,s->wire,s->wire_bytes,s->wire_type,1);nstd_log(&record);}
-  if(s->wire_cid==0x13&&s->wire[64+20]==3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
+  if(s->wire_cid==0x13&&s->wire[64+20]==SW_STA_CLASS_3&&s->wire[64+51]){s->activation_pending=1;s->activation_sequence=s->wire_sequence;}
   if(s->wire_cid==7&&s->wire[64]&&s->wire[64+2])s->ptk_command=1;
   if(s->wire_cid==0x1c&&!s->wire[66]){s->channel_token=s->wire[65];s->channel_held=1;}
  }
@@ -316,7 +323,7 @@ static int peer_progress(struct nst*s,nst_event_fn fn,void*ctx){
  struct sw_rlm r={s->peer.bss,s->peer.band,s->peer.channel,s->profile.erp_protect,(uint8_t)!!(s->profile.assoc.capability&32),(uint8_t)!!(s->profile.assoc.capability&1024),1,1};
  struct sw_bss b={.rlm=r,.ssid=s->ssid,.ssid_len=s->profile.assoc.ssid_len,.connected=(uint8_t)(kind==NST_CONFIGURE_PEER),.ap_sta=s->peer.sta,.bmc_wlan=s->peer.group_wlan,.nonht_phy=(uint8_t)(s->peer.band==2?3:(phy(s)==1?0:1)),.phy_set=(uint8_t)phy(s),.dbdc_band=4,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(b.ap,s->peer.ap,6);
  /* cnm_mem.c1141-1142: STA-record BMC is WTBL_RESERVED_ENTRY; BSS b above keeps real BMC. */
- struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=SW_WTBL_RESERVED_ENTRY,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?3:1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
+ struct sw_sta a={.bss=s->peer.bss,.sta=s->peer.sta,.wlan=s->peer.wlan,.bmc_wlan=SW_WTBL_RESERVED_ENTRY,.sta_type=65,.state=(uint8_t)(kind==NST_CONFIGURE_PEER?SW_STA_CLASS_3:SW_STA_CLASS_1),.need_response=(uint8_t)(kind==NST_CONFIGURE_PEER),.phy_set=(uint8_t)phy(s),.rcpi=s->profile.rcpi,.rts_policy=3,.version=s->profile.sta_version,.aid=s->aid,.listen_interval=s->profile.assoc.listen_interval,.rates=s->negotiated_rates,.basic_rates=s->basic_rates,.fixed_rate=s->txd.fixed_rate};cp(a.ap,s->peer.ap,6);
  if(kind==NST_PREPARE_PEER&&step==0){wipe(payload,68);p32(payload,13);return command(s,s->peer_ticket,0x0a,payload,68,1);}
  if(kind==NST_PREPARE_PEER)step--;
  if(kind==NST_RETIRE_PEER){

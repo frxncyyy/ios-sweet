@@ -17,7 +17,7 @@ int nwl_initialize(uint64_t nonce){
 int nwl_submit(unsigned value,unsigned index){
  if(!nwl_enabled()||value>65535||index>NWL_MAX_GENERATION)return 0;
  unsigned token=value&NWL_MAX_TOKEN,op=value>>12;
- if(!token||op<NWL_STATUS||op>NWL_DISCONNECT||(op==NWL_STATUS&&index))return 0;
+ if(!token||op<NWL_STATUS||op>NWL_DATA_TODS||(op==NWL_STATUS&&index))return 0;
  unsigned previous=get(&live.token);
  if(token==previous)return op==get(&live.op)&&index==get(&live.generation);
  if(previous==NWL_MAX_TOKEN||token!=previous+1||get(&live.pending))return 0;

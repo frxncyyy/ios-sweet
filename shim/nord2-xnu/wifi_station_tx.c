@@ -16,17 +16,24 @@ static int special(const uint8_t*p,size_t n){
  if(un<248||un>z-h||(port!=67&&port!=68))return 0;
  const uint8_t*b=u+8;return b[236]==99&&b[237]==130&&b[238]==83&&b[239]==99;
 }
-int nstx_build(uint8_t*out,size_t cap,size_t*used,const struct sw_txd*d,const uint8_t*f,size_t n,unsigned security,unsigned token,uint64_t buffer){
- if(used)*used=0;if(!out||cap!=NSTX_PAGE_BYTES||!used||!d||!f||security>1||token>=NSTX_TOKEN_COUNT||buffer>UINT32_MAX-NSTX_PAGE_BYTES||buffer&4095)return -1;
- uint8_t b[1600]={0};size_t z=0;int r=security?sw_security_txd(b,32,&z,d,f,n):sw_data_txd(b,32,&z,d,f,n);
- if(r||z!=32||n>sizeof b-64)return -1;
+int nstx_build_profile(uint8_t*out,size_t cap,size_t*used,const struct sw_txd*d,const uint8_t*f,size_t n,unsigned security,unsigned token,uint64_t buffer,unsigned profile,const struct sw_peer*peer){
+ if(used)*used=0;if(!out||cap!=NSTX_PAGE_BYTES||!used||!d||!f||security>1||profile>NSTX_PROFILE_TODS||(profile&&security)||token>=NSTX_TOKEN_COUNT||buffer>UINT32_MAX-NSTX_PAGE_BYTES||buffer&4095)return -1;
+ uint8_t b[1600]={0};size_t z=0,payload=n;int r;
+ if(profile==NSTX_PROFILE_TODS){
+  if(sw_data_tods(b+64,sizeof b-64,&payload,peer,f,n))return -1;
+  r=sw_tods_data_txd(b,32,&z,d,b+64,payload);
+ }else r=security?sw_security_txd(b,32,&z,d,f,n):sw_data_txd(b,32,&z,d,f,n);
+ if(r||z!=32||payload>sizeof b-64)return -1;
  /* Selected AXI soc3_0: formatTXD0, LMAC TC1/AC1 WMM0, VTA1;
-  * TX byte count excludes append32; Ethernet remains byte-exact. */
+  * TX byte count excludes append32; payload is fixed before publication. */
  uint32_t w=l32(b)&~((3u<<23)|(127u<<25));w|=1u<<25;p32(b,w);p32(b+4,l32(b+4)|(1u<<10));
  if(special(f,n))p32(b+12,l32(b+12)|(1u<<28));
  else {p32(b+8,l32(b+8)&~((1u<<31)|(1u<<30)));p32(b+24,0);}
- p16(b+32,token|0x8000u);p32(b+40,(uint32_t)(buffer+64));p16(b+44,(unsigned)n|0x8000u);
- memcpy(b+64,f,n);memset(out,0,cap);memcpy(out,b,n+64);*used=n+64;return 0;
+ p16(b+32,token|0x8000u);p32(b+40,(uint32_t)(buffer+64));p16(b+44,(unsigned)payload|0x8000u);
+ if(!profile)memcpy(b+64,f,n);memset(out,0,cap);memcpy(out,b,payload+64);*used=payload+64;return 0;
+}
+int nstx_build(uint8_t*out,size_t cap,size_t*used,const struct sw_txd*d,const uint8_t*f,size_t n,unsigned security,unsigned token,uint64_t buffer){
+ return nstx_build_profile(out,cap,used,d,f,n,security,token,buffer,NSTX_PROFILE_ETHERNET,0);
 }
 int nstx_decode_report(struct nstx_report*out,const uint8_t*p,size_t n){
  if(!out||!p||n<8||n>3840||l16(p)<8||l16(p)>n||(l16(p+2)>>11)!=6)return -1;n=l16(p);

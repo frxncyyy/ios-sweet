@@ -19,6 +19,7 @@
 #define NST_PID_MANAGEMENT_MAX NSDD_PID_MANAGEMENT_MAX
 /* Only the actual CAP worker may prepare/run this object. The native binder
  * authenticates exact addresses/thread; these public structs alone grant no IO. */
+enum nst_data_profile {NST_DATA_ETHERNET=NSTX_PROFILE_ETHERNET,NST_DATA_TODS=NSTX_PROFILE_TODS};
 enum nst_kind {NST_NONE,NST_COMMAND_DMA,NST_FRAME_RESULT,NST_CHANNEL_GRANT,
  NST_STA_ACTIVE,NST_KEY_READY,NST_MANAGEMENT,NST_EAPOL,NST_ETHERNET,NST_PEER_PREPARED,NST_PEER_CONFIGURED,NST_PEER_RETIRED,NST_CHANNEL_RELEASED,NST_LINK_LOST,NST_FATAL,NST_SECURITY_SUBMITTED,NST_DATA_SUBMITTED};
 enum nst_phase {NST_IDLE,NST_TX_READ,NST_TX_WRITE,NST_TX_PUBLISH,NST_TX_WAIT,
@@ -45,6 +46,9 @@ struct nst {
  /* Optional development comparison with the former OFLD drop policy.
   * This can only reject additional frames; all secure RX checks still run. */
  unsigned ofld_drop;
+ /* Set only by pure prepare. Ordinary data may use explicit legacy ToDS;
+  * EAPOL and management retain their existing descriptor/header contracts. */
+ unsigned data_profile;
  unsigned wire_bytes,wire_cid,wire_sequence,wire_pid,wire_wlan,wire_type;
  unsigned published,dma_done,air_done,air_status,callback_active;
  uint64_t generation,ticket,last,deadline,operation_deadline;
@@ -87,6 +91,8 @@ int nst_data(struct nst *,uint64_t ticket,const uint8_t *ethernet,size_t);
 int nst_step(struct nst *,const struct ncd_io *,void *,unsigned budget,
  nst_event_fn,void *);
 /* Precise slots for the retained owner's normal-stage allowlist extension. */
+/* Read-only idle owner proof; grants neither RX memory nor register writes. */
+int nst_idle_window(const struct nst *,const struct nwi_state *);
 int nst_lease_window(const struct nst *,const struct nwi_state *);
 int nst_memory_range(const struct nst *,uint64_t,uint32_t,unsigned write);
 int nst_register_write(const struct nst *,uint32_t,uint32_t);

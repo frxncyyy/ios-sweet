@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Bounded development Wi-Fi mailbox. Passwords remain on the phone.
 
-Only compiled STATUS/capture/OFLD/disconnect operations exist. No shell, memory,
+Only compiled STATUS/capture/OFLD/disconnect/peer metadata and next-join data profiles exist.
+Version1 remains usable for its original commands; new commands require version2.
+A version1 host explicitly rejects the version2 kernel before sending commands. No shell, memory,
 key, reset, join/retry, arbitrary register or packet operation is available.
 A reply reports native counters; carrier, DHCP counts and ACK are NOT an IP lease.
 """
@@ -17,7 +19,8 @@ import time
 
 MAGIC=0x4c57444e
 OPS={'status':1,'capture-dhcp':2,'capture-headers':3,'capture-off':4,
-     'ofld-allow':5,'ofld-drop':6,'disconnect':7}
+     'ofld-allow':5,'ofld-drop':6,'disconnect':7,'peer':8,
+     'data-ethernet':9,'data-tods':10}
 RESULTS=('OK','UNAVAILABLE','STALE','REFUSED','LIMIT')
 FIELDS=('magic version bytes boot_lo boot_hi token op expected result generation_lo '
         'generation_hi service native_phase error halt flags tx_pending rx_pending '
@@ -25,7 +28,8 @@ FIELDS=('magic version bytes boot_lo boot_hi token op expected result generation
         'offer ack nak rx_error rx_peer rx_key rx_replay rx_plain txs_ok txs_fail '
         'txs_ambiguous time_lo time_hi capture windows_left ofld_drop data_cursor '
         'command_cursor rx0 rx1 rx2 rx3 rx4 data_published data_report data_ddone '
-        'air_pending wire_busy tx_accepted tx_local rx_delivered join_ready').split()
+        'air_pending wire_busy tx_accepted tx_local rx_delivered join_ready '
+        'next_data_profile data_profile peer_valid peer_meta peer_error').split()
 class ProtocolError(Exception):pass
 class Busy(ProtocolError):pass
 class Rebooted(ProtocolError):pass
@@ -38,35 +42,44 @@ def words(raw,count):
     return struct.unpack('<'+str(count)+'I',raw)
 def caps(raw):
     w=words(raw,16)
-    if w[:7]!=(MAGIC,1,64,256,0xfe,4095,65535) or any(w[14:]):raise ProtocolError('unsupported capability ABI')
+    if w[1] not in(1,2) or w[:7]!=(MAGIC,w[1],64,256,0xfe if w[1]==1 else 0x7fe,4095,65535) or any(w[14:]):raise ProtocolError('unsupported capability ABI')
     if w[9] not in(0,1) or w[10]>2 or w[11]>4095 or w[13]>65535:raise ProtocolError('capability bounds')
     if not w[9]:raise ProtocolError('live mailbox disabled or unavailable')
     nonce=w[7]|w[8]<<32
     if not nonce:raise ProtocolError('missing boot nonce')
     if not w[11]:
         if w[10] or w[12] or w[13]:raise ProtocolError('uninitialized token state')
-    elif not 1<=w[12]<=7 or (w[12]==1 and w[13]):raise ProtocolError('invalid last-command identity')
-    return {'boot':nonce,'pending':w[10],'token':w[11],'op':w[12],'expected':w[13]}
+    elif not 1<=w[12]<=(7 if w[1]==1 else 10) or (w[12]==1 and w[13]):raise ProtocolError('invalid last-command identity')
+    return {'abi':w[1],'commands':w[4],'boot':nonce,'pending':w[10],'token':w[11],'op':w[12],'expected':w[13]}
 def reply(raw):
     w=words(raw,64)
-    if w[:3]!=(MAGIC,1,256) or any(w[len(FIELDS):]):raise ProtocolError('reply ABI/reserved fields')
+    if w[1] not in(1,2) or w[:3]!=(MAGIC,w[1],256) or any(w[58 if w[1]==1 else len(FIELDS):]):raise ProtocolError('reply ABI/reserved fields')
     d=dict(zip(FIELDS,w));d['boot']=d['boot_lo']|d['boot_hi']<<32
     d['generation']=d['generation_lo']|d['generation_hi']<<32
     d['time_ms']=d['time_lo']|d['time_hi']<<32
-    if not d['boot'] or not 1<=d['token']<=4095 or not 1<=d['op']<=7 or d['expected']>65535 or d['result']>4:raise ProtocolError('reply identity/result bounds')
+    if not d['boot'] or not 1<=d['token']<=4095 or not 1<=d['op']<=(7 if d['version']==1 else 10) or d['expected']>65535 or d['result']>4:raise ProtocolError('reply identity/result bounds')
     if d['op']==1 and d['expected']:raise ProtocolError('STATUS expected generation must be zero')
     if d['service']>8:raise ProtocolError('service state bounds')
     if d['flags']&~511 or d['capture']>2 or d['windows_left']>32:raise ProtocolError('snapshot bounds')
-    for k in ('halt','ofld_drop','data_published','data_report','data_ddone','air_pending','wire_busy','join_ready'):
+    for k in ('halt','ofld_drop','data_published','data_report','data_ddone','air_pending','wire_busy','join_ready','next_data_profile','data_profile','peer_valid'):
         if d[k]>1:raise ProtocolError('snapshot boolean')
     for k in ('data_cursor','command_cursor','rx0','rx1','rx2','rx3','rx4'):
         if d[k]>=1024:raise ProtocolError('ring cursor bounds')
+    if d['peer_meta']&~0x3fff or d['peer_error']>5:raise ProtocolError('peer metadata bounds')
+    if d['op']!=8 and any(d[k] for k in ('peer_valid','peer_meta','peer_error')):raise ProtocolError('peer metadata outside probe')
+    if d['op']==8:
+        if d['result']==0 and (not d['peer_valid'] or d['peer_error']):raise ProtocolError('incomplete peer result')
+        if d['result']!=0 and (d['peer_valid'] or d['peer_meta']):raise ProtocolError('failed peer result exposes metadata')
     return d
 
 def public(d):
     # Boot nonce is checked internally, never used as a device identifier.
     out={k:v for k,v in d.items() if k not in('magic','version','bytes','boot','boot_lo','boot_hi','generation_lo','generation_hi','time_lo','time_hi')}
     out['result_name']=RESULTS[d['result']]
+    if d['peer_valid']:
+        v=d['peer_meta'];out['peer']={'wlan':5,'from_ds':v&1,'to_ds':(v>>1)&1,'muar':(v>>2)&63,'cipher':(v>>8)&31,'qos':(v>>13)&1}
+    out['next_data_profile_name']=('ethernet','tods')[d['next_data_profile']]
+    out['data_profile_name']=('ethernet','tods')[d['data_profile']]
     out.update(same_boot_verified=True,command_ack_is_execution_result=False,
                counters_prove_dhcp_lease=False,carrier_proves_ip=False,
                local_retirement_proves_air_success=False,internet_proven=False)
@@ -75,7 +88,7 @@ def public(d):
 class Mailbox:
     def __init__(self,transport,timeout=45,clock=time.monotonic,sleep=time.sleep):
         if not 0<timeout<=45:raise ValueError('timeout must be >0 and <=45 seconds')
-        self.t=transport;self.clock=clock;self.sleep=sleep;self.deadline=clock()+timeout;self.boot=None;self.command_may_execute=False
+        self.t=transport;self.clock=clock;self.sleep=sleep;self.deadline=clock()+timeout;self.boot=None;self.abi=None;self.commands=0;self.command_may_execute=False
     def remaining(self):
         n=self.deadline-self.clock()
         if n<=0:raise Ambiguous('deadline: execution may be unknown; do not issue a new disconnect token')
@@ -90,11 +103,13 @@ class Mailbox:
                 if e.code==-7:
                     self.sleep(min(.05,self.remaining()));continue
                 raise
-            if self.boot is None:self.boot=d['boot']
+            if self.boot is None:self.boot=d['boot'];self.abi=d['abi'];self.commands=d['commands']
             elif d['boot']!=self.boot:raise Rebooted('boot changed: stop; never replay a command into the new boot')
+            if d['abi']!=self.abi:raise ProtocolError('mailbox ABI changed within boot')
             return d
     def exchange(self,op,expected=0):
         c=self.read_caps()
+        if not c['commands']&(1<<op):raise ProtocolError('operation not supported by this kernel ABI')
         if c['pending']:raise Busy('owner already has a pending command; no new command was sent')
         if c['token']==4095:raise ProtocolError('boot command-token budget exhausted')
         token=c['token']+1;value=op<<12|token
@@ -129,6 +144,7 @@ class Mailbox:
                 else:raise Ambiguous('reply transfer failed; execution may be unknown') from e
             if raw:
                 d=reply(raw)
+                if d['version']!=self.abi:raise ProtocolError('reply/capability ABI mismatch')
                 if d['boot']!=self.boot:raise Rebooted('reply boot changed; stop')
                 if d['token']==token:
                     if (d['op'],d['expected'])!=(op,expected):raise ProtocolError('reply command mismatch')
@@ -140,6 +156,7 @@ class Mailbox:
         if name=='status':return self.exchange(1)
         status=self.exchange(1)
         if status['result']!=0:raise ProtocolError('fresh STATUS unavailable; mutation refused')
+        if name.startswith('data-') and not status['join_ready']:raise ProtocolError('data profile requires fully retired/join-ready owner; disconnect and await fresh scan first')
         g=status['generation']
         if not 0<=g<=65535:raise ProtocolError('generation outside exact mutation domain; mutation refused')
         return self.exchange(OPS[name],g)
@@ -206,7 +223,8 @@ def main(argv=None):
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--timeout',type=float,default=45);sp=ap.add_subparsers(dest='cmd',required=True)
     s=sp.add_parser('status');s.add_argument('--watch',type=float,default=0)
     s=sp.add_parser('capture');s.add_argument('mode',choices=('dhcp','headers','off'))
-    s=sp.add_parser('rx-ofld');s.add_argument('mode',choices=('allow','drop'));sp.add_parser('disconnect')
+    s=sp.add_parser('rx-ofld');s.add_argument('mode',choices=('allow','drop'));sp.add_parser('disconnect');sp.add_parser('peer')
+    s=sp.add_parser('data-profile');s.add_argument('mode',choices=('ethernet','tods'))
     a=ap.parse_args(argv)
     if not 0<a.timeout<=45:ap.error('--timeout must be >0 and <=45 seconds')
     watch=getattr(a,'watch',0)
@@ -214,7 +232,7 @@ def main(argv=None):
     lock=None;t=None;m=None
     try:
         lock=lock_file();t=USB();m=Mailbox(t,a.timeout);end=m.clock()+watch
-        name=a.cmd if a.cmd in('status','disconnect') else ('capture-' if a.cmd=='capture' else 'ofld-')+a.mode
+        name=a.cmd if a.cmd in('status','disconnect','peer') else ('capture-' if a.cmd=='capture' else 'data-' if a.cmd=='data-profile' else 'ofld-')+a.mode
         while True:
             d=m.command(name);out=public(d)
             if name=='disconnect':out['async_leave_requested']=d['result']==0;out['firmware_retirement_proven']=False

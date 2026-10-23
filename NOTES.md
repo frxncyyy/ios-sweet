@@ -4,6 +4,37 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: received Wi-Fi patch series reveals a confirmed STA wire-state bug.**
+  User archive wifi.zip SHA6286cb70bd73891f149fa0f376a580796359039c94b6f18ea0d6beaad02594aa
+  safely inspected/extracted to research/nord2/wifi/received-20261023; all23
+  patches compared, none blindly applied or executed. Patch0135 identifies
+  STA_STATE_1/2/3=0/1/2, independently confirmed in selected Android commit
+  04d00c2565764c3922c9b4826b5acff1106e533f include/nic/mac.h339/341/343.
+  Our prepare/configure emitted1/3. Corrected codec, sole command writer and
+  activation_pending check to named0/2; undefined3 now rejected. NeedResp,
+  exact activation matching, BSS/STA/GTK indices and actual teardown preserved.
+  This is a proven ABI bug; its effect on WTBL conversion/DHCP is untested.
+  Other supplied changes are already covered or foreign-platform/optional
+  features (private MAC, power lifecycle, LQM); no second mandatory DHCP fix
+  established. Independent final source review7491885d, manifestdc3f6358.
+  Added opt-in, next-Join-only raw ToDS ordinary data profile (Ethernet stays
+  default), and bounded read-only WLAN5 DS/MUAR/cipher/QoS metadata query.
+  Live mailboxv2 retains original operations with updated host v1 compatibility;
+  no arbitrary writes, active DMA changes or host credential/Join command.
+  Final wire evidence raw-data-candidate/v2 manifest466d1b42; actual composed
+  two-WPA2-epoch peer/profile evidence post-state-fix-manifesta0791d79.
+  Source-class regression256, actual STA59738, normal TX182472 and both-profile
+  owner runs pass. Regenerated0082 applies cleanly; five changed/owning generic
+  ARMv8.2 units compile, all11 full station suites pass. New private image stage
+  research/nord2/wifi-ios-live-tods/ios has no inherited approval/device gates.
+  Phone remains authorized ee8b6da0, generation2 connected but link-local.
+  Both bounded USB collectors finished0; capture disabled successfully without
+  disconnect/reboot. Final second collector575956B SHA
+  fdfd29a23be88ded18b9c99a6a14c2eb654979ade95da54e7b23f8dd378cd1a6.
+  New image still needs successful fullCI, byte verification and exact user
+  approval. DHCP lease/router/Internet remain unproven.
+
+
 - **2026-10-23: live disconnect/rejoin works on hardware; DHCP still fails.**
   Phone remains authorized ee8b6da0 (CI39924876139), no second flash or reboot.
   First Join completed WPA2 but user reports 169.254/no router. Immutable

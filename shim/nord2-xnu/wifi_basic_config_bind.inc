@@ -3,7 +3,7 @@
 static struct {struct nbc_state state;unsigned attempted,enabled;}nbc_native;
 #ifdef NCT_AFTER_BASIC
 #include "wifi_normal_transport_bind.inc"
-#define NCT_OWNER_WINDOW(n) (nct_native_owner_window(n)||nst_native_owner_window(n))
+#define NCT_OWNER_WINDOW(n) (nct_native_owner_window(n)||nst_native_owner_window(n)||nst_native_probe_window(n))
 #else
 #define NCT_AFTER_BASIC() 0
 #define NCT_OWNER_WINDOW(n) 0

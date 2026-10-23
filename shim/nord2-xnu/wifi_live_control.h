@@ -5,7 +5,7 @@
 /* Development-only, fixed public words. No addresses, credentials or packet
  * contents cross this ABI. The USB decoder never takes a driver lock. */
 #define NWL_MAGIC UINT32_C(0x4c57444e)
-#define NWL_VERSION 1u
+#define NWL_VERSION 2u
 #define NWL_CAP_WORDS 16u
 #define NWL_WORDS 64u
 #define NWL_CAP_BYTES (NWL_CAP_WORDS * 4u)
@@ -17,8 +17,14 @@
 #define NWL_USB_COMMAND 0x61u
 #define NWL_USB_REPLY 0x62u
 enum nwl_op {NWL_STATUS=1,NWL_CAPTURE_DHCP,NWL_CAPTURE_HEADERS,
- NWL_CAPTURE_STOP,NWL_OFLD_ALLOW,NWL_OFLD_DROP,NWL_DISCONNECT};
-#define NWL_COMMANDS UINT32_C(0xfe)
+ NWL_CAPTURE_STOP,NWL_OFLD_ALLOW,NWL_OFLD_DROP,NWL_DISCONNECT,NWL_PEER_PROBE,
+ NWL_DATA_ETHERNET,NWL_DATA_TODS};
+#define NWL_COMMANDS UINT32_C(0x7fe)
+#define NWL_PEER_PROBES 16u
+/* Metadata: FD0,TD1,MUAR[7:2],cipher[12:8],QoS13. No raw WTBL words. */
+#define NWL_PEER_META_MASK UINT32_C(0x3fff)
+enum nwl_peer_error {NWL_PEER_NONE,NWL_PEER_PRECONDITION,NWL_PEER_MAP,
+ NWL_PEER_OWNER,NWL_PEER_SELECTOR,NWL_PEER_CHANGED};
 enum nwl_result {NWL_OK,NWL_UNAVAILABLE,NWL_STALE,NWL_REFUSED,NWL_LIMIT};
 enum nwl_field {
  NWL_F_MAGIC,NWL_F_VERSION,NWL_F_BYTES,NWL_F_BOOT_LO,NWL_F_BOOT_HI,
@@ -33,7 +39,8 @@ enum nwl_field {
  NWL_F_COMMAND_CURSOR,NWL_F_RX0,NWL_F_RX1,NWL_F_RX2,NWL_F_RX3,NWL_F_RX4,
  NWL_F_DATA_PUBLISHED,NWL_F_DATA_REPORT,NWL_F_DATA_DDONE,NWL_F_AIR_PENDING,
  NWL_F_WIRE_BUSY,NWL_F_TX_ACCEPTED,NWL_F_TX_LOCAL,NWL_F_RX_DELIVERED,NWL_F_JOIN_READY,
- NWL_F_END
+ NWL_F_NEXT_DATA_PROFILE,NWL_F_DATA_PROFILE,NWL_F_PEER_VALID,
+ NWL_F_PEER_META,NWL_F_PEER_ERROR,NWL_F_END
 };
 /* flags: active, linked, associated, PTK, GTK, controlled port, used,
  * callback retiring, backend failed. None is a DHCP lease assertion. */
@@ -44,7 +51,8 @@ int nwl_initialize(uint64_t nonce);
 int nwl_enabled(void);
 /* Sole USB producer. token must be last+1 (no wrap). Exact last-command
  * repeats are idempotent, including after completion. No payload stage.
- * STATUS requires generation0; mutations require an exact16bit generation.
+ * Version2 extends fixed reserved reply words; version1 hosts reject it.
+ * STATUS requires generation0; mutations/probe require exact16bit generation.
  * ACK means queued only; execute outcome is obtained from REPLY. */
 int nwl_submit(unsigned value,unsigned index);
 /* Sole retained worker. A successful take owns the one slot until complete. */

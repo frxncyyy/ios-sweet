@@ -58,6 +58,11 @@ int sw_bss(uint8_t *, size_t, size_t *, const struct sw_bss *);
 /* Selected cnmStaSendUpdateCmd (cnm_mem.c1141-1142) sends the peer WLAN and
  * unconditionally WTBL_RESERVED_ENTRY(255) as STA-record ucBMCWlanIndex.
  * BSS-info ucBMCWlanIndex is a different field and keeps the real BMC slot. */
+/* Selected gen4m mac.h:802.11 classes are zero-based wire values,
+ * independent of the native peer sequencer's host phase/kind enum. */
+#define SW_STA_CLASS_1 0u
+#define SW_STA_CLASS_2 1u
+#define SW_STA_CLASS_3 2u
 #define SW_WTBL_RESERVED_ENTRY 255
 struct sw_sta {
     uint8_t bss, sta, wlan, bmc_wlan, sta_type, state, need_response; /* bmc_wlan==SW_WTBL_RESERVED_ENTRY */
@@ -86,4 +91,11 @@ int sw_management_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
 int sw_security_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,
                     const uint8_t *,size_t);
 int sw_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
+/* Controlled legacy data alternative: original Ethernet is admitted first,
+ * then copied as protected non-QoS ToDS with AP/self/original-DA and RFC1042
+ * SNAP. Hardware supplies sequence/CCMP PN/IV/MIC; no software encryption.
+ * AARP/IPX SNAP exceptions and EAPOL are deliberately outside this profile. */
+int sw_tods_ethernet_valid(const struct sw_peer *,const uint8_t *,size_t);
+int sw_data_tods(uint8_t *,size_t,size_t *,const struct sw_peer *,const uint8_t *,size_t);
+int sw_tods_data_txd(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t);
 #endif

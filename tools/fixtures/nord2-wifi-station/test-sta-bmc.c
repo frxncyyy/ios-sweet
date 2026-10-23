@@ -47,13 +47,19 @@ static void profile_of(struct test*t,struct nst_profile*profile,uint8_t*rates,ui
 static void codec(void){
  /* Direct builder: fail-closed for any non-reserved STA BMC, exact placement. */
  uint8_t out[SW_SIZE_CMD_UPDATE_STA_RECORD];memset(out,0xcc,sizeof out);size_t used=7;
- struct sw_sta a={.bss=0,.sta=0,.wlan=5,.bmc_wlan=4,.sta_type=65,.state=1,.need_response=0,.phy_set=1,.rcpi=100,.rts_policy=3,.version=1,.aid=0,.listen_interval=10,.rates=0x000f,.basic_rates=0x0003,.fixed_rate=0};a.ap[0]=2;a.ap[5]=2;
+ struct sw_sta a={.bss=0,.sta=0,.wlan=5,.bmc_wlan=4,.sta_type=65,.state=SW_STA_CLASS_1,.need_response=0,.phy_set=1,.rcpi=100,.rts_policy=3,.version=1,.aid=0,.listen_interval=10,.rates=0x000f,.basic_rates=0x0003,.fixed_rate=0};a.ap[0]=2;a.ap[5]=2;
  C(sw_sta(out,sizeof out,&used,&a)==SW_INVALID);C(used==0);for(size_t k=0;k<sizeof out;k++)C(out[k]==0xcc);
  a.bmc_wlan=SW_WTBL_RESERVED_ENTRY;C(sw_sta(out,sizeof out,&used,&a)==SW_OK);C(used==SW_SIZE_CMD_UPDATE_STA_RECORD);
  C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucBMCWlanIndex]==255);C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucWlanIndex]==5);
- C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState]==1);C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaType]==65);
- a.state=3;a.need_response=1;a.aid=1;C(sw_sta(out,sizeof out,&used,&a)==SW_OK);
- C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucBMCWlanIndex]==255&&out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState]==3&&out[SW_OFF_CMD_UPDATE_STA_RECORD_ucNeedResp]==1);
+ C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState]==SW_STA_CLASS_1);C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaType]==65);
+ a.state=SW_STA_CLASS_3;a.need_response=1;a.aid=1;C(sw_sta(out,sizeof out,&used,&a)==SW_OK);
+ C(out[SW_OFF_CMD_UPDATE_STA_RECORD_ucBMCWlanIndex]==255&&out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState]==SW_STA_CLASS_3&&out[SW_OFF_CMD_UPDATE_STA_RECORD_ucNeedResp]==1);
+ /* Exact wire state values: all valid classes accepted, undefined3..255
+  * refused atomically. Host phase/kind numbers must never leak into this ABI. */
+ for(unsigned state=0;state<256;state++){a.state=(uint8_t)state;memset(out,0xcc,sizeof out);used=7;
+  if(state<=SW_STA_CLASS_3){C(sw_sta(out,sizeof out,&used,&a)==SW_OK&&out[SW_OFF_CMD_UPDATE_STA_RECORD_ucStaState]==state);}
+  else{C(sw_sta(out,sizeof out,&used,&a)==SW_INVALID&&!used);for(unsigned k=0;k<sizeof out;k++)C(out[k]==0xcc);}}
+ a.state=SW_STA_CLASS_3;
  a.wlan=255;C(sw_sta(out,sizeof out,&used,&a)==SW_INVALID); /* peer WLAN is never the reserved entry */
  /* BSS-info BMC is a different field: real group slot is preserved. */
  uint8_t bss[SW_SIZE_CMD_SET_BSS_INFO];uint8_t ssid[3]={'l','a','b'};
@@ -76,7 +82,7 @@ int main(void){
  /* STA state1 (prepare): STA-record BMC reserved, BSS BMC real slot4. */
  C(!nst_peer_begin(&t->s,1,NST_PREPARE_PEER,&profile,NULL,0));drive(t,NST_PEER_PREPARED,&w);
  C(t->published==4&&w.other_n==1&&w.bss_n==1&&w.rlm_n==1&&w.sta_n==1);
- C(w.sta_state[0]==1&&w.sta_resp[0]==0&&w.sta_wlan[0]==5&&w.sta_index[0]==0);
+ C(w.sta_state[0]==SW_STA_CLASS_1&&w.sta_resp[0]==0&&w.sta_wlan[0]==5&&w.sta_index[0]==0);
  C(w.sta_bmc[0]==SW_WTBL_RESERVED_ENTRY);
  C(w.bss_bmc[0]==4&&w.bss_conn[0]==1);
  C(t->s.peer.group_wlan==4&&t->s.peer.wlan==5&&t->s.group_spare[0]==6&&t->s.group_spare[1]==7&&t->s.group_spare[2]==8);
@@ -88,7 +94,7 @@ int main(void){
  uint8_t response[38];association(response,t);
  C(!nst_peer_begin(&t->s,4,NST_CONFIGURE_PEER,NULL,response,sizeof response));drive(t,NST_PEER_CONFIGURED,&w);
  C(w.sta_n==2&&w.bss_n==2);
- C(w.sta_state[1]==3&&w.sta_resp[1]==1&&w.sta_wlan[1]==5&&w.sta_bmc[1]==SW_WTBL_RESERVED_ENTRY);
+ C(w.sta_state[1]==SW_STA_CLASS_3&&w.sta_resp[1]==1&&w.sta_wlan[1]==5&&w.sta_bmc[1]==SW_WTBL_RESERVED_ENTRY);
  C(w.bss_bmc[1]==4&&w.bss_conn[1]==0);
  C(t->s.sta_active&&!t->s.channel_held&&t->events[NST_CHANNEL_RELEASED]);
 

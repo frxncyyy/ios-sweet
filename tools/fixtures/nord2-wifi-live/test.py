@@ -50,6 +50,7 @@ class Mock:
 def box(t,timeout=5):
  c=Clock();return m.Mailbox(t,timeout,c.clock,c.sleep),c
 for name,op in m.OPS.items():
+ if op>7:continue
  t=Mock();b,c=box(t);r=b.command(name);check(r['result']==0 and r['op']==op);check(t.executed==([(1,1,0)] if op==1 else [(1,1,0),(2,op,1)]));check(not m.public(r)['counters_prove_dhcp_lease'])
 # Generation0 is valid for pre-Join capture; never truncate a high generation.
 t=Mock();t.generation=0;b,c=box(t);check(b.command('capture-dhcp')['expected']==0)
@@ -90,12 +91,38 @@ t.pump=busy_disconnect;b.command('disconnect');throws(m.Ambiguous,b.wait_disconn
 t=Mock();t.ready_after=10000;b,c=box(t,.5);b.command('disconnect');throws(m.Ambiguous,b.wait_disconnected);check(t.ready==0 and t.ready_polls>0);check(sum(x[1]==7 for x in t.calls)==1)
 t=Mock();t.generation=0;b,c=box(t);r=b.command('status');check(r['join_ready']==1 and r['generation']==0);check('time_ms' in m.public(r) and 'time_us' not in m.public(r))
 # Source/header contract pins are checked by the runner; parser mutations stay strict.
-t=Mock();b,c=box(t);r=b.command('status');raw=t.read(0x62,256);check(len(m.FIELDS)==58)
-for k,v in [(0,0),(1,2),(2,255),(5,0),(5,4096),(6,0),(6,8),(7,65536),(8,5),(11,9),(15,512),(39,3),(40,33),(41,2),(42,1024),(57,2),(58,1),(63,1)]:
+t=Mock();b,c=box(t);r=b.command('status');raw=t.read(0x62,256);check(len(m.FIELDS)==63)
+for k,v in [(0,0),(1,3),(2,255),(5,0),(5,4096),(6,0),(6,8),(7,65536),(8,5),(11,9),(15,512),(39,3),(40,33),(41,2),(42,1024),(57,2),(58,1),(63,1)]:
  w=list(struct.unpack('<64I',raw));w[k]=v;throws(m.ProtocolError,lambda w=w:m.reply(struct.pack('<64I',*w)))
 for n in(0,1,255,257,512):throws(m.ProtocolError,lambda n=n:m.reply(bytes(n)))
 for k,v in [(0,0),(1,2),(2,63),(3,255),(4,0),(5,4096),(6,65536),(7,0),(9,0),(9,2),(10,3),(11,4096),(12,8),(13,65536),(14,1),(15,1)]:
  w=t.cap();w[k]=v;throws(m.ProtocolError,lambda w=w:m.caps(struct.pack('<16I',*w)))
+# Version2 extension: old STATUS remains strict; new commands require support.
+t=Mock();b,c=box(t);throws(m.ProtocolError,lambda:b.command('peer'));check(all(x[1]==1 for x in t.calls))
+class V2(Mock):
+ def __init__(self):super().__init__();self.profile=0
+ def cap(self):
+  w=super().cap();w[1]=2;w[4]=0x7fe;return w
+ def pump(self):
+  super().pump()
+  if not self.reply:return
+  w=self.reply;w[1]=2
+  if self.op in(9,10):self.profile=self.op==10
+  w[58]=int(self.profile)
+  if self.op==8:w[60]=1;w[61]=2|(1<<2)|(4<<8);w[62]=0
+for name,op in [('peer',8),('data-ethernet',9),('data-tods',10)]:
+ t=V2();b,c=box(t);d=b.command(name);check(d['op']==op and t.calls[-1][1]==op)
+ if op==8:check(m.public(d)['peer']==dict(wlan=5,from_ds=0,to_ds=1,muar=1,cipher=4,qos=0))
+ if op==10:check(d['next_data_profile']==1 and d['data_profile']==0)
+t=V2();t.ready=0;b,c=box(t);throws(m.ProtocolError,lambda:b.command('data-tods'));check(all(q[1]==1 for q in t.calls))
+t=V2();b,c=box(t);b.command('peer');raw=t.read(0x62,256)
+for k,v in [(58,2),(59,2),(60,2),(61,16384),(62,6),(63,1),(60,0),(62,1)]:
+ w=list(struct.unpack('<64I',raw));w[k]=v;throws(m.ProtocolError,lambda w=w:m.reply(struct.pack('<64I',*w)))
+for result in range(1,5):
+ w=list(struct.unpack('<64I',raw));w[8]=result;throws(m.ProtocolError,lambda w=w:m.reply(struct.pack('<64I',*w)))
+ w[60]=w[61]=0;check(m.reply(struct.pack('<64I',*w))['result']==result)
+w=list(struct.unpack('<64I',raw));w[6]=1;throws(m.ProtocolError,lambda:m.reply(struct.pack('<64I',*w)))
+t=V2();b,c=box(t);b.command('status');t.cap=lambda:[m.MAGIC,1,64,256,254,4095,65535,t.boot,0,1,0,t.token,1,0,0,0];throws(m.ProtocolError,b.read_caps)
 # Token exhaustion refuses before OUT, and new process starts at last+1.
 t=Mock();t.token=4095;t.op=1;b,c=box(t);throws(m.ProtocolError,lambda:b.command('status'));check(not t.calls)
 t=Mock();t.token=18;t.op=6;t.expected=1;b,c=box(t);check(b.command('status')['token']==19)
@@ -135,5 +162,8 @@ with tempfile.TemporaryDirectory(prefix='nord2-live-host-') as td:
  check(b.exchange(7,42)['result']==0);check(lib.mock_executed()==before+1)
  check(b.wait_disconnected()['join_ready']==1);check(lib.mock_ready_polls()==2)
  check(b.exchange(5,41)['result']==2)
+ check(b.command('peer')['peer_valid']==1)
+ check(b.command('data-tods')['next_data_profile']==1)
+ check(b.command('data-ethernet')['next_data_profile']==0)
  check(len(t.writes)==lib.mock_executed())
 print(json.dumps({'passed':True,'checks':checks,'USB_device_calls':False,'mocked_transport_only':True,'actual_c_mailbox_bridge':True,'dhcp_or_internet_claim':False}))

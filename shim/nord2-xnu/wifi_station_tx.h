@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "wifi_station_wire.h"
+#define NSTX_PROFILE_ETHERNET 0u
+#define NSTX_PROFILE_TODS 1u
 #define NSTX_PAGE_BYTES 4096u
 #define NSTX_TOKEN_COUNT 2048u
 #define NSTX_RING_COUNT 1024u
@@ -19,6 +21,9 @@ struct nstx {
 /* Output is atomic on failure. Complete source host-V2 object, zero tail.
  * Caller supplies actual AP/WLAN/ownMAC and source-derived basic rate. */
 int nstx_build(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t,unsigned security,unsigned token,uint64_t buffer);
+/* Profile is immutable for a native generation. Raw ToDS applies only to
+ * ordinary DATA, while classification remains based on the original Ethernet. */
+int nstx_build_profile(uint8_t *,size_t,size_t *,const struct sw_txd *,const uint8_t *,size_t,unsigned security,unsigned token,uint64_t buffer,unsigned profile,const struct sw_peer *);
 /* Entire RX type6 packet, bounded source version0..3. No ledger mutation. */
 int nstx_decode_report(struct nstx_report *,const uint8_t *,size_t);
 /* A foreign, repeated or malformed report never releases an owned token.

@@ -3,10 +3,33 @@
 #include "wifi_station_transport.h"
 #include "wifi_ios_join.h"
 #include "wifi_station_rejoin.h"
-static struct {struct nst state,staging,saved;struct nsr_ledger saved_ledger;unsigned attempted,active,undo,saved_attempted,saved_active,saved_return[3];}nst_native;
+static struct {struct nst state,staging,saved;struct nsr_ledger saved_ledger;unsigned attempted,active,undo,saved_attempted,saved_active,saved_return[3],next_data_profile,probe;}nst_native;
 static struct nsr_ledger nsr_native;
 static int njs_rejoin_ready_locked(void);
 static void njs_rejoin_refresh(void);
+
+/* Called only by the retained worker under the NSS admission lock. Selection
+ * affects a future pure constructor, never the active wire/page/profile. */
+static inline int nst_native_set_next_data_profile(unsigned profile){
+ if(profile>NST_DATA_TODS||nst_native.probe||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||(nst_native.attempted&&!njs_rejoin_ready_locked()))return -1;
+ nst_native.next_data_profile=profile;return 0;
+}
+static inline unsigned nst_native_next_data_profile(void){return nst_native.next_data_profile;}
+static inline unsigned nst_native_data_profile(void){return nst_native.state.prepared?nst_native.state.data_profile:NST_DATA_ETHERNET;}
+/* The fixed metadata probe extends only the outer physical owner predicate.
+ * This read-only idle proof does not grant any NST memory/register-write window.
+ * Do not call ncd_native_owner here: that predicate calls this hook itself. */
+static int nst_native_probe_window(const struct nwfn_native*n){
+ return n==&nwfn_native&&nst_native.probe==1&&nst_native.attempted==1&&nst_native.active==1&&
+ ncd_native.active==1&&!ncd_native.parked&&!ncd_native.halt&&ncd_native.worker==current_thread()&&!nct_native.active&&
+ nst_native.state.init==&nwfn_native.init&&nst_native.state.previous==&nct_native.session&&nst_native.state.previous_rx==&ncb_native.rx&&
+ nst_idle_window(&nst_native.state,&nwfn_native.init);
+}
+static inline int nst_native_probe_begin(void){
+ if(nst_native.probe)return -1;nst_native.probe=1;
+ if(!nst_native_probe_window(&nwfn_native)){nst_native.probe=0;return -1;}return 0;
+}
+static inline void nst_native_probe_end(void){nst_native.probe=0;}
 
 static int nst_native_owner_window(const struct nwfn_native*n){
  return n==&nwfn_native&&nst_native.attempted==1&&nst_native.active==1&&
@@ -20,7 +43,7 @@ static int nst_native_rx_active(const struct nwfn_native*n){return nst_native_ow
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t bytes,unsigned write){return nst_native_owner_window(n)&&nst_memory_range(&nst_native.state,a,bytes,write);}
 static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){return nst_native_owner_window(n)&&nst_register_write(&nst_native.state,a,v);}
 static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uint64_t now,uint64_t deadline,struct nst_profile*out){
- if(!t||!out||!generation||generation>255||(nst_native.attempted&&(!nsr_native.scan_ready||nsr_native.admitted_generation!=generation||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nst_native.active))||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
+ if(nst_native.probe||nst_native.next_data_profile>NST_DATA_TODS||!t||!out||!generation||generation>255||(nst_native.attempted&&(!nsr_native.scan_ready||nsr_native.admitted_generation!=generation||nsr_native.bad||nsr_native.ptk||nsr_native.gtk||nsr_native.pending||nst_native.active))||ncd_native.worker!=current_thread()||!ncd_native.active||ncd_native.parked||ncd_native.halt||nct_native.active||!nss_available()||nss_native.failed||!ncb_native.prepared||!nbc_native.state.plan.pse_data||ncb_native.rx.active||!nst_scan_admissible(&ncb_native.rx.scan)||!nct_done_receipt(&nct_native.session))return -1;
  for(unsigned k=0;k<NSS_SLOTS;k++)if(nss_native.slot[k].state==NSS_QUEUED||nss_native.slot[k].state==NSS_RUNNING)return 1;
  struct ncs_cap cap;if(!ncd_native.diag.events||ncd_native.diag.events>sizeof(ncd_native.diag.history)/sizeof(ncd_native.diag.history[0])||ncs_cap_mac(ncd_native.diag.frame,ncd_native.diag.frame_bytes,ncd_native.diag.history[ncd_native.diag.events-1].sequence,&cap)||cap.bmc!=4||cap.wtbl<7)return -1;
  unsigned allowed=0;for(unsigned k=0;k<nss_native.info.count;k++)if(nss_native.info.channels[k].band==t->band&&nss_native.info.channels[k].channel==t->channel)allowed=1;
@@ -50,6 +73,7 @@ static int nst_native_prepare(const struct niwj_target*t,uint64_t generation,uin
  if(again&&(generation<=nsr_native.closed_generation||generation>255||nsr_native.next_pid>NST_PID_MANAGEMENT_MAX-4))return -1;
  memset(&nst_native.staging,0,sizeof nst_native.staging);
  if(nst_prepare(&nst_native.staging,&nwfn_native.init,&nct_native.session,&ncb_native.rx,&cap,&peer,&txd,generation,now,deadline))return -1;
+ nst_native.staging.data_profile=nst_native.next_data_profile;
  if(again){nst_native.staging.normal.next=nsr_native.hw0_next;nst_native.staging.normal.token_next=nsr_native.token_next;nst_native.staging.next_pid=nsr_native.next_pid;}
  nst_native.saved=nst_native.state;nst_native.saved_ledger=nsr_native;nst_native.saved_attempted=nst_native.attempted;nst_native.saved_active=nst_native.active;
  nst_native.saved_return[0]=nss_return.attempted;nst_native.saved_return[1]=nss_return.ready;nst_native.saved_return[2]=nss_return.consumed;nst_native.undo=1;

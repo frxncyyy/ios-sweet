@@ -25,7 +25,7 @@ static void station_completion(unsigned next){
  assert(station_hardware&&s->wire_busy);station_pubs++;
  if(s->wire_type){station_frames++;/* Synthetic genuine air result only for management; security uses local DDONE. */if(s->wire_type==1)station_packet(1,7,124,1,s->wire_pid,s->wire_wlan);}
  else{station_commands++;assert(p[37]==0xa0&&p[39]==t->next_sequence);
- if(p[36]==0x13&&p[84]==3&&p[115]){station_packet(1,7,44,1,0,0);struct ncr_queue*q=&s->queue[1];uint8_t*e=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;e[28]=12;e[29]=p[39];memcpy(e+36,s->peer.ap,6);e[42]=s->peer.sta;e[43]=s->peer.bss;}
+ if(p[36]==0x13&&p[84]==SW_STA_CLASS_3&&p[115]){station_packet(1,7,44,1,0,0);struct ncr_queue*q=&s->queue[1];uint8_t*e=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;e[28]=12;e[29]=p[39];memcpy(e+36,s->peer.ap,6);e[42]=s->peer.sta;e[43]=s->peer.bss;}
  if(p[36]==7&&p[64]&&p[66]){station_packet(1,7,44,1,0,0);struct ncr_queue*q=&s->queue[1];uint8_t*e=pool_memory+(q->ring.buffers-NDP_POOL_BASE)+4096*q->next;e[28]=36;e[36]=s->peer.bss;memcpy(e+38,s->peer.ap,6);}
  if(p[36]==7&&!p[64])key_deletes++;
  }

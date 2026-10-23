@@ -1,7 +1,7 @@
 /* Host-only USB model uses the actual kernel mailbox C implementation. */
 #include "wifi_live_control.h"
 static unsigned executed,disconnected,ready_polls;
-static uint32_t generation=42,capture,windows=32,drop;
+static uint32_t generation=42,capture,windows=32,drop,profile;
 int mock_initialize(void){return nwl_initialize(UINT64_C(0x12345678));}
 int mock_write(unsigned value,unsigned index){
  uint8_t setup[8]={0x40,0x61,(uint8_t)value,(uint8_t)(value>>8),(uint8_t)index,(uint8_t)(index>>8),0,0},out[256];uint32_t n;
@@ -17,6 +17,9 @@ int mock_read(unsigned code,uint8_t*out,unsigned size){
   if(q.op==NWL_DISCONNECT&&result==NWL_OK){disconnected=1;ready_polls=0;}
   if(q.op==NWL_STATUS&&disconnected&&++ready_polls>=2)disconnected=0;
   s.word[NWL_F_JOIN_READY]=!disconnected;
+  if(result==NWL_OK&&q.op==NWL_PEER_PROBE){s.word[NWL_F_PEER_VALID]=1;s.word[NWL_F_PEER_META]=2|(4<<8);}
+  if(result==NWL_OK&&(q.op==NWL_DATA_ETHERNET||q.op==NWL_DATA_TODS))profile=q.op==NWL_DATA_TODS;
+  s.word[NWL_F_NEXT_DATA_PROFILE]=profile;
   s.word[NWL_F_GENERATION_LO]=generation;s.word[NWL_F_CAPTURE]=capture;s.word[NWL_F_WINDOWS_LEFT]=windows;s.word[NWL_F_OFLD_DROP]=drop;
   if(nwl_complete(&q,result,&s))return -1;executed++;
  }}

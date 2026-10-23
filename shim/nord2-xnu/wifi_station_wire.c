@@ -144,7 +144,7 @@ int sw_bss(uint8_t *out,size_t cap,size_t *used,const struct sw_bss *p) {
 }
 int sw_sta(uint8_t *out,size_t cap,size_t *used,const struct sw_sta *p) {
     uint8_t b[SW_SIZE_CMD_UPDATE_STA_RECORD]={0};
-    if(!start(used)||!p||!unicast(p->ap)||p->state<1||p->state>3||p->need_response>1||
+    if(!start(used)||!p||!unicast(p->ap)||p->state>SW_STA_CLASS_3||p->need_response>1||
        p->sta_type!=65||p->aid>2007||!p->listen_interval||p->wlan==255||p->bmc_wlan!=SW_WTBL_RESERVED_ENTRY||p->version>1||
        !rates_ok(p->rates,p->basic_rates,p->phy_set))return SW_INVALID;
     P8(CMD_UPDATE_STA_RECORD,ucStaIndex,p->sta);P8(CMD_UPDATE_STA_RECORD,ucStaType,p->sta_type);
@@ -168,7 +168,15 @@ static int txd(uint8_t *out,size_t cap,size_t *used,const struct sw_txd *p,
        p->wlan==255||!p->pid||p->pid>=128||p->retry_limit>31||!p->retry_limit||
        p->fixed_rate>0x3fff||p->protected_frame>1||p->spe_index>31||p->pse_header_len>230||
        (p->pse_header_len&1)||!p->lifetime_ms||p->lifetime_ms>60000)return SW_INVALID;
-    if(security==1) {
+    if(security==3) {
+        if(len<32||len>1532||!p->protected_frame||rd16(frame)!=0x4108||rd16(frame+2)||
+           !unicast(frame+4)||!unicast(frame+10)||rd16(frame+22)||
+           memcmp(frame+24,(const uint8_t *)"\xaa\xaa\x03\x00\x00\x00",6)||
+           ((unsigned)frame[30]<<8|frame[31])<1536||
+           (frame[30]==0x88&&frame[31]==0x8e)||
+           (frame[30]==0x80&&frame[31]==0xf3)||(frame[30]==0x81&&frame[31]==0x37))return SW_INVALID;
+        fc=rd16(frame);
+    } else if(security==1) {
         if(len<18||len>1518||frame[12]!=0x88||frame[13]!=0x8e||
            (((size_t)frame[16]<<8)|frame[17])!=len-18)return SW_INVALID;
     } else if(security==2) {
@@ -187,13 +195,14 @@ static int txd(uint8_t *out,size_t cap,size_t *used,const struct sw_txd *p,
      * Reject life=0 instead of silently encoding no timeout. */
     if(!life)return SW_INVALID;
     if(life>127)life=127;
-    d0=(uint32_t)(32+len)|(((p->pse_header_len+(security?12u:24u))>>1)<<16)|
+    d0=(uint32_t)(32+len)|(((p->pse_header_len+(security==3?30u:security?12u:24u))>>1)<<16)|
         (2u<<23)|((uint32_t)p->queue<<25);
     d1=p->wlan|(UINT32_C(1)<<31)|((uint32_t)p->own_mac<<24);
-    if(security){d1|=1u<<15;if(security==2)d1|=1u<<10;}
+    if(security==3)d1|=(1u<<10)|(2u<<16)|(12u<<11);
+    else if(security){d1|=1u<<15;if(security==2)d1|=1u<<10;}
     else d1|=(1u<<10)|(2u<<16)|(12u<<11);
     d2=(life<<16)|(UINT32_C(1)<<31);
-    if(!security) {d2|=(fc>>4)&15u;d7=(((uint32_t)(fc>>4)&15u)<<16)|((uint32_t)p->spe_index<<11);}
+    if(!security||security==3) {d2|=((fc>>4)&15u)|(((fc>>2)&3u)<<4);d7=(((uint32_t)(fc>>4)&15u)<<16)|(((uint32_t)(fc>>2)&3u)<<20)|((uint32_t)p->spe_index<<11);}
     d3=((uint32_t)p->retry_limit<<11)|(p->protected_frame?2u:0u);
     d5=p->pid|(1u<<9);d6=(uint32_t)p->fixed_rate<<16;
     le32(b,d0);le32(b+4,d1);le32(b+8,d2);le32(b+12,d3);
@@ -204,3 +213,22 @@ int sw_management_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const
 int sw_security_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,1);}
 
 int sw_data_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,2);}
+int sw_tods_data_txd(uint8_t *o,size_t c,size_t *u,const struct sw_txd *p,const uint8_t *f,size_t n) {return txd(o,c,u,p,f,n,3);}
+int sw_tods_ethernet_valid(const struct sw_peer*p,const uint8_t*f,size_t n){
+    unsigned any=0;
+    if(!p||!f||n<14||n>1514||!peer_ok(p)||
+       memcmp(f+6,p->self,6))return SW_INVALID;
+    for(unsigned k=0;k<6;k++)any|=f[k];
+    unsigned ether=(unsigned)f[12]<<8|f[13];
+    return any&&ether>=1536&&ether!=0x888e&&ether!=0x80f3&&ether!=0x8137?SW_OK:SW_INVALID;
+}
+int sw_data_tods(uint8_t*out,size_t cap,size_t*used,const struct sw_peer*p,const uint8_t*f,size_t n){
+    if(!start(used)||!out||sw_tods_ethernet_valid(p,f,n))return SW_INVALID;
+    if(cap<n+18)return SW_CAPACITY;
+    /* Preserve bounded address inputs before a possible overlapping move. */
+    struct sw_peer peer=*p;uint8_t da[6];memcpy(da,f,6);
+    memmove(out+30,f+12,n-12);memset(out,0,24);
+    le16(out,0x4108);memcpy(out+4,peer.ap,6);memcpy(out+10,peer.self,6);memcpy(out+16,da,6);
+    memcpy(out+24,(const uint8_t *)"\xaa\xaa\x03\x00\x00\x00",6);
+    *used=n+18;return SW_OK;
+}

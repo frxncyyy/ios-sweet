@@ -31,6 +31,11 @@ static void make_m3(uint8_t*out){
 static void station_data_completion(unsigned next){
  struct nst*s=&nst_native.state;uint8_t*d=pool_memory+(s->normal.ring-NDP_POOL_BASE)+16*s->normal.next;
  assert(station_hardware&&s->wire_busy&&(s->wire_type==2||s->wire_type==3));station_pubs++;station_frames++;
+ uint8_t*page=pool_memory+(s->normal.buffer-NDP_POOL_BASE);unsigned wirelen=(page[44]|(unsigned)page[45]<<8)&32767;
+ if(s->wire_type==3&&s->data_profile==NST_DATA_TODS){const uint8_t*raw=page+64;
+  assert(wirelen==s->wire_bytes-14&&raw[0]==8&&raw[1]==65&&!memcmp(raw+4,s->peer.ap,6)&&!memcmp(raw+10,s->peer.self,6)&&!memcmp(raw+16,s->wire+32,6)&&!memcmp(raw+30,s->wire+44,s->wire_bytes-44));
+  assert(((get32(page+4)>>16)&3)==2&&((get32(page+8)&63)==32)&&((get32(page+28)>>20)&3)==2);
+ }else{assert(wirelen==s->wire_bytes-32&&!memcmp(page+64,s->wire+32,wirelen)&&!((get32(page+4)>>16)&3));}
  uint8_t*r=station_packet(3,6,12);w16(r+2,(6u<<11)|1);put32(r+4,2u<<16);put32(r+8,s->normal.token);
  /* Inject valid M3 before local M2 receipt: actual bounded pending queue. */
  if(s->wire_type==2&&njs_native.driver.owner.transaction.wpa.tx_kind==1&&!m3_sent){uint8_t packet[sizeof m3];make_m3(packet);station_eapol(packet,sizeof packet);m3_sent++;}
@@ -43,7 +48,7 @@ static void station_completion(unsigned next){
  unsigned fc=s->wire[32];if(fc==0xb0||fc==0)station_mgmt(fc==0xb0?0xb0:0x10);}
  else{station_commands++;assert(p[37]==0xa0&&p[39]==t->next_sequence);
  if(p[36]==0x1c&&!p[66]){uint8_t*r=station_packet(1,7,60);r[28]=16;r[36]=s->peer.bss;r[37]=p[65];r[39]=s->peer.channel;r[41]=s->peer.band;put32(r+48,4000);}
- if(p[36]==0x13&&p[84]==3&&p[115]){uint8_t*r=station_packet(1,7,44);r[28]=12;r[29]=p[39];memcpy(r+36,s->peer.ap,6);r[42]=s->peer.sta;r[43]=s->peer.bss;}
+ if(p[36]==0x13&&p[84]==SW_STA_CLASS_3&&p[115]){uint8_t*r=station_packet(1,7,44);r[28]=12;r[29]=p[39];memcpy(r+36,s->peer.ap,6);r[42]=s->peer.sta;r[43]=s->peer.bss;}
  if(p[36]==7&&p[64]&&p[66]){uint8_t*r=station_packet(1,7,44);r[28]=36;r[36]=s->peer.bss;memcpy(r+38,s->peer.ap,6);}
  if(p[36]==7&&!p[64])key_deletes++;
  }
@@ -68,9 +73,15 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
  ledger_negatives();setup(0);run_worker();assert(nss_native.ready);worker_thread=2;
  /* Actual received synthetic beacon exposes real WPA2 selection inputs. */
  struct niwj_request q=request();uint64_t ticket=0;unsigned saved_pid=0,saved_token=0,saved_hw=0;
+ assert(nst_native_next_data_profile()==NST_DATA_ETHERNET&&nst_native_data_profile()==NST_DATA_ETHERNET);
+ assert(nst_native_set_next_data_profile(2)<0);
  for(unsigned cycle=0;cycle<2;cycle++){
+  assert(!nst_native_set_next_data_profile(cycle)&&nst_native_next_data_profile()==cycle);
   assert(!nord2_wifi_join_enqueue(&q,notices,7,join_completed,&ticket)&&ticket==cycle+1);niwj_clear(&q,sizeof q);
   station_hardware=1;until_authorized();assert(random_calls==cycle+1&&nst_native.state.generation==ticket&&nst_native.state.channel_token==ticket);
+  assert(nst_native_data_profile()==cycle&&nst_native_set_next_data_profile(1-cycle)<0&&nst_native_next_data_profile()==cycle);
+  assert(!nst_native_probe_window(&nwfn_native));assert(!nst_native_probe_begin()&&nst_native_probe_window(&nwfn_native));assert(nst_native_probe_begin()<0&&nst_native_set_next_data_profile(cycle)<0);
+  assert(!nst_native_owner_window(&nwfn_native)&&!nst_native_rx_memory(&nwfn_native,nst_native.state.normal.buffer,4096,0));nst_native_probe_end();assert(!nst_native_probe_window(&nwfn_native));
   if(cycle){assert(nst_native.state.next_pid>saved_pid&&nst_native.state.normal.token_next>saved_token&&nst_native.state.normal.next>saved_hw);}
   uint8_t data[60]={0};memcpy(data,nst_native.state.peer.ap,6);memcpy(data+6,nss_native.info.mac,6);data[12]=8;assert(!nord2_wifi_link_send(data,sizeof data,ticket));while(njs_native.tx_count||nst_native.state.wire_busy)assert(njs_owner_work()==1);
   /* Pending DMA/keys/port/cookie cannot become a reusable session. */
@@ -125,4 +136,4 @@ int main(int argc,char**argv){assert(argc==2);FILE*f=fopen(argv[1],"rb");assert(
  assert(delivered&&nrd_calls&&nrd_calls==nrd_restored&&nrd_checked==nrd_calls&&station_pubs>station_frames&&link_down_calls>=2);
  assert(notices[NJS_JOINED]==2&&notices[NJS_LEFT]==2&&link_up_calls==2&&key_deletes==4&&notices[NJS_JOIN_FAILED]==3);
  IOLock*notice=njs_native.notice_lock;assert(!pthread_mutex_destroy(&notice->m));free(notice);assert(!pthread_mutex_destroy(&nss_native.lock->m));free(nss_native.lock);
- puts("PASS two actual owner WPA2 joins plus stale-MIC failed third: fresh nonce/MIC/key/port, HW0 token+DDONE, real disconnect/PTK+GTK deletes/peer teardown/RETIRED, automatic NSS scan barrier, preserved cursors/PIDs/generation; closed/halt/key/callback negatives; synthetic hardware only");return 0;}
+ puts("PASS two actual owner WPA2 joins using Ethernet then raw ToDS plus stale-MIC failed third: fresh nonce/MIC/key/port, HW0 token+DDONE, real disconnect/PTK+GTK deletes/peer teardown/RETIRED, automatic NSS scan barrier, preserved cursors/PIDs/generation; closed/halt/key/callback negatives; synthetic hardware only");return 0;}

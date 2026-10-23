@@ -123,6 +123,7 @@ static void nwl_configure_station(void);
 #else
 static int nss_scan_return_origin_valid(const struct nct_session*s){return !s->scan_return;}
 static int nst_native_owner_window(const struct nwfn_native*n){(void)n;return 0;}
+static int nst_native_probe_window(const struct nwfn_native*n){(void)n;return 0;}
 static int nst_native_rx_active(const struct nwfn_native*n){(void)n;return 0;}
 static int nst_native_rx_memory(const struct nwfn_native*n,uint64_t a,uint32_t b,unsigned w){(void)n;(void)a;(void)b;(void)w;return 0;}
 static int nst_native_rx_write(const struct nwfn_native*n,uint32_t a,uint32_t v){(void)n;(void)a;(void)v;return 0;}
