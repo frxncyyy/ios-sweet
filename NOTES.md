@@ -4,6 +4,23 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: switch/power image VERIFIED, awaiting new exact human approval.**
+  CI39952094220 attempt1 SUCCESS on f8e4daca68b4c2b12cc59c91106006032cfce68a.
+  All234 generated targets byte-equal; actual genericARMv8.2 commands verified.
+  Kernel17821808B SHAcf102207627bb3dcede17ae19a41a4d1e1e6cde47b305b3db363c107438ff3ad;
+  2286079 decoded instructions with noLDAPUR/STLUR. New image
+  shim/out/nord2-xnu/nord2-ios-wifi-switch-power-stop23.img33497088B SHA
+  ee98bd7cb786bdc610f7164c910b77f10da89004b169f32b7e5fa5828b98dd5f;
+  bootspare57344B. PayloadSHAcfd71fd66b5c6b31681ff67ceff1b26eeed209006fa8f75227ce96532b463b34.
+  Independent image verification PASS (sameoriginalLinux/DTS/RAMADB, privateADT,
+  currentloader and rebasedkernel segments). Fresh prepared.json/9frozenreaders/
+  guardedone-use runner at research/nord2/wifi-ios-switch-power/ios.
+  NOauthorization.json, NOnewflash, NOnewhardware/DHCP success. Phone remains
+  healthy618. Verified618/RAMADB fallbackpins retained. Next request exactboot-only
+  approval+fastboot, collect logs, then baselineWPA2, onefirst-try networkswitch,
+  OFF/ON separately. Crashrootcause stillunknown; finitePID ceiling unchanged.
+
+
 - **2026-10-23: switch/power source pushed; CI39952094220 dispatched.**
   Source f8e4daca68b4c2b12cc59c91106006032cfce68a on fork/codex/nord2-bringup.
   Fullkernel build DEVELOPMENT/SWEET13.5 queued; no newimage or authorization.
