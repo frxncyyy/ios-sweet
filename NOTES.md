@@ -18,7 +18,9 @@
   plus boost fields. Do not infer a dB law or blindly equalize those fields.
   No proven remaining route/mute defect; bottom loudness needs diagnosis,
   normal output gain and speaker protection remain unverified/unimplemented.
-  Agents finishing private `*/route-audible` audit. Preserve unrelated kmod/.
+  Follow-up agents stopped while pending initialization; no completed new
+  review is claimed. Preliminary profile evidence is saved under
+  `profile-sol/route-audible`; preserve unrelated kmod/.
 
 
 - **2026-10-23: iOS APP AUDIO AUDIBLE FROM BOTH SPEAKERS.**
