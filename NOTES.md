@@ -3,6 +3,25 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: lifecycle hardware test finds handover and OFF regressions.**
+  User confirms many more 5GHz networks, successful connections, but first switch
+  between networks fails and second succeeds after old connection closes. Initial
+  OFF->ON worked; later OFF worked, ON became unavailable and phone crashed.
+  Immutable hardware-review/user-switch-power-crash.log657595B SHA
+  954e2ec596e7493b29c9aed87725a96ee2296e6354ef2ec032cbb4c7ecc6c86b;
+  seven runtime readers exit0, boot-only backend reader2. Collector ended early
+  USBtimeout; final literal panic not captured. Log shows SET20 Busy while old
+  ticket is retiring (e.g.241297ms vs retirement241304ms), and finalOFF370750ms
+  followed by deauth DMA retired/noTXS and retained_halt/panic-pending373756ms.
+  Native agents investigate bounded handover and power cleanup in private
+  research/nord2/wifi/lifecycle-fix-20261023 proposals; no canonical runtime edits
+  yet. Conditional boot-only recovery618 remains authorized by original test.
+  Phone appeared briefly in fastboot but vanished before device preflight;
+  recovery attempt performed NO flash. Empty recovery-618-after-lifecycle folder
+  is reserved evidence, not a completed recovery. Asked user to return fastboot.
+  Current installed image remains29d94463 until successful recovery recorded.
+  Previous pending-user statements below are historical and superseded.
+
 
 - **2026-10-23: real lifecycle scans observed, first user result still pending.**
   iOS requestedON after initialOFF; human action not yet confirmed. Scan tickets
