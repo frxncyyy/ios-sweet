@@ -4,6 +4,15 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: user-requested CI rerun accepted.**
+  CI39932615713 first attempt concluded failure; its build job120344331892
+  was cancelled with zero steps. Saved attempt1-result.json. Ran gh run rerun
+  on the same run/source a92be30891637cc8be7b435e3d67cebcd8a3dafd;
+  latest response attempt2, status queued, conclusion ''.
+  Saved retry-dispatch.json under research/ci-39932615713. No source changes,
+  additional dispatch or device action. Full kernel/image still pending.
+
+
 - **2026-10-23: patch review/fix committed; full CI queued, no new flash.**
   Commit a92be30891637cc8be7b435e3d67cebcd8a3dafd pushed to fork only.
   CI39932615713 created09:32:32UTC on exacta92be30; latest read is queued,
