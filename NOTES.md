@@ -3,6 +3,31 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: I2C audio images VERIFIED; exact approval pending.**
+  Source d7cb0124f075847ce137659e5ed99b28e0af20d4, CI40008878528 attempt1 SUCCESS.
+  Kernel SHA e78464aee09cfdad57dfa2547b198261306ed1893566a53e49ea905d9df510d6;
+  all260 generated targets match, installed HAL package remains byte-identical.
+  Full host suite, strict native compilation and independent lifecycle tests PASS.
+  Independent image reviews i2c-playback/i2c-rollback both PASS; no hardware test.
+  Playback shim/out/nord2-xnu/nord2-ios-audio-i2c-playback-stop23.img,33538048B,
+  SHA62a89dcc902bdab2e553701667ed123d140083b1bb21339c84bb5b3b7782735c,16384B spare.
+  Rollback nord2-ios-audio-i2c-rollback-stop23.img,33529856B,
+  SHAffd83e98d8f2a10e46a587f43e345883002f407b4be9cca9e292622bd4182007,24576B spare.
+  ios-i2c/prepared.json verifies both exact images, reviews, runner and fallback.
+  No new authorization or phone action. Phone remains healthy7d2ca8f9, audio off.
+  After approval: boot-only guarded runner once, check HAL reuse and clean audio
+  init; STOP, one silent DMA test, then one fixed quiet tone and HAL playback.
+  Physical sound remains unproven. Conditional HAL-aware rollbackffd83e98 or
+  tested RAM ADB; old WiFi kernel alone cannot undo HAL. Never stock Android.
+
+- **2026-10-23: I2C source d7cb012 in CI40008878528.**
+  Full source d7cb0124f075847ce137659e5ed99b28e0af20d4 committed/pushed.
+  ios-i2c/complete.py rootexec47624 watches exact run, verifies artifacts and
+  prepares distinct i2c playback/rollback images. Independent profile reviewer
+  will follow. No new authorization/imageflash. Phone remains7d2ca8f9 healthy,
+  audio off; immutable completed hardware log and STOP/status saved.
+
+
 - **2026-10-23: AP START2 fix and complete saved preflight validated; CI next.**
   Source Android04d00c2 i2c-mtk.c404-427 waits only TRANSAC_START bit0;
   normal transfer writes START1 at1213. RESUME_ARBIT bit1 is not busy.
