@@ -4,6 +4,20 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: first-try network switch SUCCESS on ee98; OFF/ON requested.**
+  Human call_c489452a23c94af29ba0b2a26e5c01b0 confirms "ha funzionato correttamente"
+  tobaselineIP/router/Safari +oneothernetwork switch. Immutablefirst-switch-success
+  snapshot559649B SHAf23f15b2a40200cbc77942177584a81990cbb618100b86547aea0690d15ed0a8.
+  SET22 accepted315594ms; nextSET20 accepted315617ms beforeoldretirement.
+  Oldgeneration1 LEFT/RETIRED315617, realSCANRETURN, newgeneration2
+  authorized319802ms, matchedDHCPoffer+ACK and currentlinkvalid. NoFAULT.
+  Connectionreader valid incl negative257cleanup; runtime7otherreaderspass;
+  priorstartupbackend2/strictsupplementalinterleavedline1 limitations unchanged.
+  Asked ONEcycle OFF,5swait,ON, scan/reconnect/Safari, observe60s responsiveness;
+  iffailure no repeat. Collector15956 still600s capture from14:34. Phoneee98;
+  fallback618/RAMADB conditionalapproval stillvalid. Do not markOFFfixed yet.
+
+
 - **2026-10-23: ee98 boot healthy; firstWPA2/DHCP receipts observed; switch requested.**
   USBcollector15956 remainsactive (600s from14:34Europe/Rome). Boot-before-test
   snapshot349173B SHA441d8feabe0d3fd7fb9089b3c97c6145a78b0629f38b70b46c6e8ad538c3b88b
