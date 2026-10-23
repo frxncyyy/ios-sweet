@@ -4,6 +4,33 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: Claude review complete; OFLD receive correction integrated locally.**
+  C=research/nord2/wifi/claude-opus-dhcp-ecb0/resume-20261023. Actual Opus
+  finished successfully; report f2386fa9 and candidate a790d902. It identifies
+  OFLD metadata being treated as a hard RX error, not a proven DHCP cause:
+  observed OFLD3 is TDLS-class and no rejected EtherType was captured.
+  Root removed only that hard-drop term and retained bounded RXD observations;
+  all header/peer/key/replay/controlled-port rules remain. Durable rx-ofld
+  station fixture includes the focused controls plus354 layout/security cases.
+  Original Claude fixture had a nonexistent member; preserved original failed
+  receipt, corrected private test passes exact baseline/candidate distinction.
+  Station10 groups and normal-TX regressions pass; independent security review
+  a4934d5f/manifest52fdef62 passes and root verified all15 members. Final canonical
+  focused test and actual owning ARM64 TU compile pass. Regenerated0082 applies
+  cleanly and matches its buildtree. Full CI/image/device test NOT performed.
+  Followup actual Claude under protected-data-followup-20261023 stopped at
+  quota after two reads: wrapper20484 EXIT1/is_error=true despite subtype
+  'success'; no second candidate. Finite independent TX/peer review at
+  D/hardware-review/tx-peer-review-20261023 (reportbb5277b9/manifest57f6d9fb)
+  found no further proven fix; rate0/DESC/PTK peer selection match Android,
+  conditional antenna defaults do not justify an arbitrary bit change.
+  User now specifically requests fresh ios-topaz/HackiOS comparison for DHCP;
+  research/nord2/wifi/upstream-dhcp-20261023 owns new pinned remote references.
+  Continue comparing actual BSD/DHCP TX/RX contracts and relevant updated code.
+  Phone remains ecb026c7; no new Join/USB/flash/recovery. DHCP not solved; do not
+  present this RX correction alone as a verified DHCP fix or reuse old approval.
+
+
 - **2026-10-23: user resumed; actual Claude Opus investigating the failed DHCP test.**
   User explicitly asks Claude to fix DHCP from the new logs. Actual Claude Code
   PID561634, model claude-opus-5-5, resumed session
