@@ -4,6 +4,17 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: real lifecycle scans observed, first user result still pending.**
+  User enabledWi-Fi after initialiOSOFF. Live scan tickets through18 succeeded;
+  observer confirms17 completed UI requests and displayed-cache union up to21
+  real retainedBSS, original30sTTL. Immutable scans-before-user-report.log482178B
+  SHAa7c1ef44998ad7a404f56e221c6fb6ea7c3f26dd7c5afd938767a2822080a0fb.
+  IOS/connection/WPA/data/extended/RX/TX readers0; boot-onlybackendreader2 after
+  laterrequests is distinct from initial8readerPASS. No userGUI/connection/IP/
+  connectedscan/OFFthenON/open report yet. Collector34783 stillbounded600s;
+  pending firsthumanquestion asksWPA2/IP/Safari/list30s, and says noOFFuntil
+  baseline captured. Preservephone29d94463; don'trestart/restore without evidence.
+
 - **2026-10-23: exact29d94463 lifecycle image FLASHED, user test pending.**
   Human call_457cb237a23c4a62b1ddea821e66c658 authorized exactboot-only flash,
   conditional verified618/RAMADB recovery, and reported fastboot ready. Separate
