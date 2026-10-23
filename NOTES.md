@@ -4,6 +4,25 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: ee98 OFF cleanup halted; known618 boot restored, UI check pending.**
+  User reports OFF could not restart, then the phone crashed/rebooted. Complete
+  final log 575016B SHA65a98a38a00cc261856bd8fe97b5a7e7b8581b579008dcf03297e1dda524a972
+  is saved under wifi-ios-switch-power/ios/hardware-review/off-on-final-after-crash.
+  Exact STATIONFAULT source5/native9/error12/transaction17(deletePTK), gen2,
+  submitted=dma255, busy1/pub0, cleanup1, no airpending. This localizes the failure
+  to the command prepublication guard; raw failing register is not yet known.
+  255 is aggregate normal+command publications, NOT a proven sequence wrap.
+  First network switch remains a hardware success; do not mark OFF fixed.
+  Original collector15956 ended0. Seven readers0; startupbackend2 and strict
+  extended1 (interleaved RXCOUNTS line) preserved without weakening readers.
+  Human ready call_833140f31565499da6d382bdb7097231; existing conditional recovery
+  authorization reused. Verified618 hash/single fastboot/product/boot size;
+  flash boot and reboot OKAY. Unique recovery-618-after-off-crash holds receipts.
+  Rootexec56724 recovery USB capture ended0, valid iOS surfaces observed. Phone618; UI confirmation
+  pending. Native agents audit transport and power separately; fresh Claude source
+  review prepared in lifecycle-fix-20261023/claude-review/off-cleanup-error12.
+
+
 - **2026-10-23: first-try network switch SUCCESS on ee98; OFF/ON requested.**
   Human call_c489452a23c94af29ba0b2a26e5c01b0 confirms "ha funzionato correttamente"
   tobaselineIP/router/Safari +oneothernetwork switch. Immutablefirst-switch-success
@@ -11,7 +30,7 @@
   SET22 accepted315594ms; nextSET20 accepted315617ms beforeoldretirement.
   Oldgeneration1 LEFT/RETIRED315617, realSCANRETURN, newgeneration2
   authorized319802ms, matchedDHCPoffer+ACK and currentlinkvalid. NoFAULT.
-  Connectionreader valid incl negative257cleanup; runtime7otherreaderspass;
+  Connectionreader valid incl negative257cleanup; sevenreaderspass total;
   priorstartupbackend2/strictsupplementalinterleavedline1 limitations unchanged.
   Asked ONEcycle OFF,5swait,ON, scan/reconnect/Safari, observe60s responsiveness;
   iffailure no repeat. Collector15956 still600s capture from14:34. Phoneee98;
