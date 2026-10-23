@@ -4,6 +4,22 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: exact618e62b5 image flashed; USBv2 active, user Join pending.**
+  Human call_789ff96268dd43009c36a5d029b68678 authorized exact prepared image
+  and conditional d9a/RAMADB recovery. Verified singlefastboot/product/32MiBboot;
+  boot-only flash and reboot OKAY at12:22:49Europe/Rome. D=research/nord2/
+  wifi-ios-live-tods/ios; authorization.json and one-use RUNNER_EXECUTION_USED
+  savedprivately. Rootsession48659 owns bounded600s collector, separatePIDfile.
+  Nativeconsole connected. LIVE protocol2 STATUS token1 gen0/service1/join_ready1,
+  halt0/error0; next/currentprofileEthernet. CaptureDHCP token3 result0,
+  capture1/windows31 armed beforeJoin. GUI presents validframe4.
+  Immutable hardware-review/boot-before-join.log358608B SHA
+  16ed6261479b4a3e861fe164245247ace3ac5b09a58970a310e2cdf99f6ce1ea;
+  all8 readers exit0. User asked oneWPA2Join/privateaddressoff and IP/router/
+  Safari result, leavingradio unchanged. Noassociation/DHCPsuccess claimedyet.
+  Current phone is now618e62b5 (replaces ee8b6da0). Do not re-run flashrunner.
+
+
 - **2026-10-23: corrected STA/live-diagnostics image built and independently verified.**
   CI39932615713 attempt3 success on a92be30891637cc8be7b435e3d67cebcd8a3dafd.
   Kernel17804664B SHA066348b1f945b9ea803041852bdea7c166e2d5426dd06c9a6df93ff4fbd5cc49;
