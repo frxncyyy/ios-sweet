@@ -20,6 +20,14 @@ int main(void){
  idle_fresh(2001000);assert(s.count==2);
  /* Zero-only idle queue is still bounded and discarded. */
  nsa_initialize(&s,1);int16_t zeros[4]={0};assert(nsa_enqueue(&s,zeros,2,3000000)==2);idle_fresh(3000001);assert(!s.count);
- nsa_initialize(&s,1);assert(nsa_enqueue(&s,click,2,4000000)==2);idle_fresh(4750000);assert(!s.count);
- puts("PASS: reproducedacceptedclickloss; freshlockedidlecheckpreservesnewPCM andstillflushesstale/zeroqueues");
+ /* Deliberate policy: age never discards meaningful queued PCM. */
+ nsa_initialize(&s,1);assert(nsa_enqueue(&s,click,2,4000000)==2);
+ idle_fresh(4750000);assert(s.count==2&&s.sound_frames==2);
+ assert(nsa_dequeue(&s,out,2)==2&&out[0]==12000&&out[1]==-12000);
+ assert(!s.count&&!s.sound_frames);
+ /* After that old sound drains, fresh HALzero tails are still discarded:
+  * zero-writes must not reset last_sound_us or keep the amplifieralive. */
+ assert(nsa_enqueue(&s,zeros,2,4750001)==2);idle_fresh(4750001);
+ assert(!s.count&&!s.sound_frames&&s.last_sound_us==4000000);
+ puts("PASS: reproducedacceptedclickloss; freshlockedidlecheckpreservesnewandoldPCM;drainedsoundzerotailsstillflush");
 }

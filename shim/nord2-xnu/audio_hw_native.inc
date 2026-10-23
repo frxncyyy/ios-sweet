@@ -49,11 +49,21 @@ static vm_offset_t nah_native_va(struct nah_native_context *c,uint32_t pa,unsign
   if (c->windows[i].base==base) return c->windows[i].va+(pa-base);
  return 0;
 }
+/* Reuse the PE-owned distributor mapping; do not create a tenth alias. */
+extern int nord2_audio_gic_read(uint32_t *);
 static int nah_native_read(void *cookie,uint32_t pa,unsigned w,uint32_t *v)
 {
  struct nah_native_context *c=cookie;
+ if (!v || !nah_native_worker(c)) return -1;
+ if (pa==0x0c000110) {
+  if (w!=4) return -1;
+  NAH_NATIVE_BARRIER();
+  int rc=nord2_audio_gic_read(v);
+  NAH_NATIVE_BARRIER();
+  return rc;
+ }
  vm_offset_t va=nah_native_va(c,pa,w);
- if (!v || !va) return -1;
+ if (!va) return -1;
  /* FIFO_DATA is only popped by the polled transport; SRAM is write-only. */
  if (pa>=NAF_SRAM && pa<NAF_SRAM+NAF_SRAM_BYTES) return -1;
  NAH_NATIVE_BARRIER();

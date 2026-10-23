@@ -58,6 +58,8 @@ enum nau_snap {
 	/* Revision5: SPM POWERON_CONFIG_EN, read only, for the audio_afe.c gate
 	 * (clk-mt6885-pg.c:166, 263, 3267). */
 	NAU_S_SPM_POWERON,
+	/* Append-only: protection request, distinct from asynchronous STA1 ack. */
+	NAU_S_PROT2_EN,
 	NAU_SNAP_COUNT
 };
 

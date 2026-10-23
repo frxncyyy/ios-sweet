@@ -17,12 +17,22 @@ void nsa_initialize(struct nsa_stream *s, unsigned enabled) {
 }
 void nsa_flush(struct nsa_stream *s) {
  if (!s) return;
- s->read = s->write = s->count = 0; s->flushes++;
+ s->read = s->write = s->count = s->sound_frames = 0; s->flushes++;
 }
 void nsa_flush_idle(struct nsa_stream *s, uint64_t now) {
- if (!s) return;
+ if (!s || s->sound_frames) return;
  uint64_t sound=s->last_sound_us;
  if (!sound || (now>=sound && now-sound>=750000)) nsa_flush(s);
+}
+int nsa_idle_ready(const struct nsa_stream *s, uint64_t now, unsigned pending_output,
+ uint64_t *last_pending, uint64_t drain_us) {
+ if (!s || !last_pending) return 0;
+ if (s->sound_frames || pending_output) { *last_pending=now; return 0; }
+ if (s->last_sound_us && (now<s->last_sound_us || now-s->last_sound_us<750000)) return 0;
+ return !*last_pending || (now>=*last_pending && now-*last_pending>=drain_us);
+}
+static unsigned sound_frame(int16_t left,int16_t right) {
+ return left>8 || left<-8 || right>8 || right<-8;
 }
 void nsa_enable(struct nsa_stream *s, unsigned enabled) {
  if (!s) return;
@@ -43,6 +53,7 @@ unsigned nsa_enqueue(struct nsa_stream *s, const int16_t *p, unsigned n, uint64_
  else if (take > NSA_QUEUE_FRAMES - s->count) take = NSA_QUEUE_FRAMES - s->count;
  s->writes++; s->written += n; s->accepted += take; s->dropped += n - take;
  for (unsigned i = 0; i < take; i++) {
+  s->sound_frames += sound_frame(p[i*2],p[i*2+1]);
   for (unsigned c = 0; c < 2; c++) {
    int32_t x = p[i * 2 + c]; unsigned level = x < 0 ? (unsigned)-x : (unsigned)x;
    if (level > peak) peak = level;
@@ -59,6 +70,7 @@ unsigned nsa_dequeue(struct nsa_stream *s, int16_t *out, unsigned cap) {
  if (!s || !out) return 0;
  unsigned n = cap < s->count ? cap : s->count;
  for (unsigned i = 0; i < n; i++) {
+  s->sound_frames -= sound_frame(s->pcm[s->read*2],s->pcm[s->read*2+1]);
   for (unsigned c = 0; c < 2; c++) {
    int32_t x = s->pcm[s->read * 2 + c];
    /* Division rounds negative samples towards zero, just as positive ones. */

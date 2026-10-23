@@ -3,8 +3,13 @@
 #include "audio_i2c8.h"
 #include "audio_id.h"
 #include "test-i2c-model.h"
-static unsigned io_writes,start_reads,race_read;
+static unsigned io_writes,start_reads,race_read,gic_reads,gic_race,gic_failure;
 static int readio(void *c,uint32_t pa,unsigned w,uint32_t *v) {
+ if(pa==0x0c000110) {
+  gic_reads++;
+  if(gic_reads==gic_failure)return -1;
+  if(gic_reads==gic_race)((struct i2c8_model *)c)->gic_enable|=1u<<24;
+ }
  if(pa==0x11d04124 && ++start_reads==race_read)((struct i2c8_model *)c)->ch[1][0x24/2]|=1u;
  *v=m_read(c,pa,w);return 0;
 }
@@ -12,7 +17,7 @@ static int writeio(void *c,uint32_t pa,unsigned w,uint32_t v) { io_writes++;m_wr
 static int delayio(void *c,unsigned us) { (void)c;assert(us<=10);return 0; }
 static const struct na8_io io={readio,writeio,delayio};
 static void fresh(struct i2c8_model *m,struct na8_state *s) {
- m_init(m);*s=(struct na8_state){0};io_writes=start_reads=race_read=0;
+ m_init(m);*s=(struct na8_state){0};io_writes=start_reads=race_read=gic_reads=gic_race=gic_failure=0;
  m->ch[1][0x24/2]=2; /* Measured on Nord2 7d2ca8f9, not an idle-zero fixture. */
  m->ch[1][0xec/2]=0x8800; /* Measured capability/debug word, preserved at100k. */
 }
@@ -81,8 +86,30 @@ static void test_start_readback(void) {
  assert(nau_i2c8_ready(&n)==NAU_READY_START);
  puts("PASS AP START2 and DEBUG8800 across read/write/NACK/adoption, START1/3 busy and races, sticky error, all unowned/DMA/FIFO guards");
 }
+static void test_gic_ownership(void) {
+ struct i2c8_model m;struct na8_state s;uint16_t v=0;
+ fresh(&m,&s);m.gic_enable=1u<<24;
+ assert(na8_read16(&io,&m,&s,0x34,3,&v)==-1 && s.failure==22);
+ assert(!io_writes&&!m.starts&&!s.uncertain&&s.last_addr==0x0c000110);
+ fresh(&m,&s);gic_failure=1;
+ assert(na8_read16(&io,&m,&s,0x34,3,&v)==-1 && s.failure==10&&!io_writes);
+ for(unsigned kind=0;kind<2;kind++) {
+  fresh(&m,&s);if(kind)gic_failure=2;else gic_race=2;
+  assert(na8_read16(&io,&m,&s,0x34,3,&v)==-2 && s.uncertain&&!m.starts);
+  assert(s.failure==(kind?10u:22u));
+  unsigned n=io_writes;
+  assert(na8_read16(&io,&m,&s,0x37,3,&v)==-1 && io_writes==n);
+ }
+ /* Unrelated IRQs do not cause a global distributor takeover/refusal. */
+ fresh(&m,&s);m.gic_enable=~(1u<<24);
+ assert(!na8_read16(&io,&m,&s,0x34,3,&v)&&v==0xb74&&gic_reads==2);
+ assert(m.gic_enable==~(1u<<24));m_check_restored(&m);
+ puts("PASS source AP peripheral mask with GIC masked, foreign owner/read failure/race refuses, no GIC write");
+ fresh(&m,&s);
+}
 int main(void)
 {
+ test_gic_ownership();
  test_start_readback();race_read=0;
  struct i2c8_model m; struct na8_state s={0}; uint16_t v=0;
  m_init(&m);

@@ -59,6 +59,12 @@ static int apply(void *cookie,const struct na8_io *io,struct na8_state *bus,unsi
 {
  struct nau_hw *h=cookie;
  if(!h||!io||!bus||amp>1||h->amps[amp].addr!=(amp?0x37:0x34)||!supports(h->amps[amp].rev,h->amps[amp].addr))return NAH_E_BOARD_CONFIG;
+ /* Exact pinned device preamble, replayed by Android's
+  * tfaContWriteRegsDev_v6 AFTER silicon init and before all bitfields.
+  * These are volatile key latches, not MTP programming commands. */
+ if(na8_write16(io,h,bus,h->amps[amp].addr,0x0f,0x5a6b) ||
+    na8_write16(io,h,bus,h->amps[amp].addr,0xa1,0x005a) ||
+    na8_write16(io,h,bus,h->amps[amp].addr,0xa0,0x005a))return NAH_E_IO;
  for(unsigned i=0;i<52;i++) {
   const struct board_op *p=&plan[amp][i];uint16_t old=0,check=0;
   if(na8_read16(io,h,bus,h->amps[amp].addr,p->reg,&old))return NAH_E_IO;

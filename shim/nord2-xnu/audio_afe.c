@@ -47,6 +47,10 @@ naf_pll_rate(uint32_t pcw, uint32_t postdiv_code)
 	return (uint32_t)((vco + postdiv - 1) / postdiv);
 }
 
+/* Request and ACK are distinct (pg.c:231-235). Release ACK is ignored by
+ * selected source3351-3353; SET still requires ACK before power-down. */
+#define NAF_IFR_PROT2_EN 0x10001710u
+
 /* ---- inherited-state classification ---- */
 #define NAF_ST_AUDIO (1u << 21)      /* AUDIO_PWR_STA_MASK, pg.c:563 */
 #define NAF_ST_ADSP (1u << 22)       /* ADSP_PWR_STA_MASK, pg.c:564 */
@@ -82,7 +86,7 @@ naf_ownership(const uint32_t *s, struct naf_own *own)
 	/* The selected on-sequence releases protect bit4 after power-up and has
 	 * no precondition on it (pg.c:3314-3355); off sets it (pg.c:3271-3281).
 	 * Record the inherited value so stop can restore it after power-off. */
-	o.prot_clear = !(s[NAU_S_PROT2_STA1] & (1u << 4));
+	o.prot_clear = !(s[NAU_S_PROT2_EN] & (1u << 4));
 	/* PG_AUDIO parents ifrao_audio / ifrao_audio26m (pg.c:5001-5003). */
 	o.ifr1_gated = !!(s[NAU_S_IFR1_CG] & (1u << 25));
 	o.ifr3_gated = !!(s[NAU_S_IFR3_CG] & (1u << 4));
@@ -200,7 +204,7 @@ static const struct {
 	{NAU_S_AUDIO_PWR_CON, 0x111fu},
 	{NAU_S_IFR1_CG, 1u << 25},
 	{NAU_S_IFR3_CG, 1u << 4},
-	{NAU_S_PROT2_STA1, 1u << 4},
+	{NAU_S_PROT2_EN, 1u << 4},
 	{NAU_S_CLK_CFG_7, (1u << 31) | (3u << 24)},
 	{NAU_S_CLK_CFG_8, (1u << 7) | 3u},
 	{NAU_S_CLK_CFG_12, (1u << 7) | 3u},
@@ -323,9 +327,9 @@ naf_build_up(struct naf_builder *b, const struct naf_own *o)
 	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 8, 0);        /* SRAM_PDN */
 	POLL(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 12, 0, 1000, 10);
 	WR(NAF_PH_POWER, NAF_IFR_PROT2_CLR, 1u << 4);
-	/* Source ignores this ack (pg.c:3351-3353); waiting is strictly safer.
-	 * Already clear when the inherited protection was released. */
-	POLL(NAF_PH_POWER, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
+	/* Source ignores release ACK (pg.c:3351-3353). Verify the owned
+	 * request cleared; an asynchronous/stale ACK is retained as evidence. */
+	POLL(NAF_PH_POWER, NAF_IFR_PROT2_EN, 1u << 4, 0, 1000, 10);
 
 	/* 2. mt6885_afe_enable_clock (afe-clk.c:212-279): audio_sel enabled and
 	 * reparented to clk26m (:240-253), aud_intbus enabled (PG step above) and
@@ -506,6 +510,8 @@ naf_build_down(struct naf_builder *b, const uint32_t *s, const struct naf_own *o
 	 * ISO steps regardless of the inherited value. */
 	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, poweron);
 	WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_SET, 1u << 4);
+	/* A stale release ACK1 cannot substitute for a committed SET request. */
+	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_EN, 1u << 4, 1u << 4, 1000, 10);
 	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 1u << 4, 1000, 10);
 	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 8, 1u << 8);
 	POLL(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 12, 1u << 12, 1000, 10);
@@ -520,7 +526,7 @@ naf_build_down(struct naf_builder *b, const uint32_t *s, const struct naf_own *o
 	 * whole boot ran with, as the selected on-path releases it (pg.c:3349). */
 	if (o->prot_clear) {
 		WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_CLR, 1u << 4);
-		POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
+		POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_EN, 1u << 4, 0, 1000, 10);
 	}
 	/* PG parents in reverse (pg.c:5001-5003): intbus to its inherited parent
 	 * (afe-clk.c:308 also reparents before disable), then re-gate only what

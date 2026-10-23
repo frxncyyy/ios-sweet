@@ -17,7 +17,7 @@ FILES="osfmk/arm64/sweet_early.c osfmk/arm64/sweet_early.h osfmk/arm64/start.s o
 osfmk/arm/arm_init.c osfmk/arm64/arm_vm_init.c osfmk/console/serial_console.c \
 bsd/conf/files bsd/kern/bsd_init.c bsd/dev/sweet_ufs.c bsd/dev/sweet_usb.c bsd/dev/sweet_touch.c osfmk/arm64/sleh.c osfmk/kern/startup.c \
 iokit/conf/files.arm64 iokit/Kernel/arm/SweetBattery.cpp iokit/Kernel/arm/SweetFramebuffer.cpp iokit/Kernel/IOStartIOKit.cpp iokit/Kernel/IOService.cpp iokit/KernelConfigTables.cpp \
-pexpert/pexpert/arm64/SWEET.h makedefs/MakeInc.def"
+pexpert/pexpert/arm64/SWEET.h pexpert/arm/pe_fiq.c makedefs/MakeInc.def"
 
 # Canonical firmware sources live beside the shim for focused host tests.
 # Generate guarded XNU copies so this patch also links without NORD2.

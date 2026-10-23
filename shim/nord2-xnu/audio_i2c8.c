@@ -133,14 +133,12 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	 * HW_TIMEOUT (i2c-mtk.h:252-282, i2c-mtk.c:963-1055, 978-1203). */
 	static const uint32_t offs[15] = {4, 8, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x28, 0x2c,
 	    0x30, 0x34, 0x40, 0x44, 0x48, 0x4c};
-	/* mask 0 (polled), CONTROL ACKERR_DET|CLK_EXT|DIR_CHANGE|RS = 0x3a, write 1,
-	 * transac 2, DELAY_LEN 0x0a, ST start 0x8001, HS 0, open drain 3, MCU_INTR 1,
-	 * aux read 2, clock-div 5 -> 0x404 (DT:9466-9488, i2c-mtk.c:983-1203).
-	 * INTR_MASK=0 is deliberate: this diagnostic polls and must not assert the
-	 * controller IRQ; the source's own IRQ handler masks all interrupts and
-	 * then reads INTR_STAT, so status latching does not depend on the mask
-	 * (i2c-mtk.c:1697-1701). HW_TIMEOUT is filled in below. */
-	uint32_t next[15] = {(uint32_t)slave << 1, 0, 0x3a, 1, 2, 10, 0, 0x8001, 0,
+	/* Selected Android AP-channel mask (i2c-mtk.c1063-1081): COMP,
+     * arbitration loss, hardware timeout and bus error. Poll INTR_STAT
+     * with CPU delivery disabled at GIC INTID152; masking the peripheral
+     * itself is not a documented guarantee of completion latching.
+     * The GIC is observed only, never modified by this driver. */
+	uint32_t next[15] = {(uint32_t)slave << 1, 0x129, 0x3a, 1, 2, 10, 0, 0x8001, 0,
 	    0, 3, 1, 2, 0x404, 0};
 	/* Standard source ST_OP write: CONTROL ACKERR_DET|CLK_EXT (0x28),
      * one transaction, three payload bytes. No DIR_CHANGE/repeated-start. */
@@ -154,6 +152,11 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	s->last_value = (val); s->last_valid = 1; s->mutated = 1; wrote = 1; \
 	if (o->write(c, (pa), (w), (val))) { s->failure = 11; goto uncertain; } } while (0)
 #define REFUSE(code) do { s->failure = (code); goto fail; } while (0)
+
+    /* mt6893.dts6913 SPI120 -> GIC INTID152, ISENABLER4 bit24.
+     * Refuse a live interrupt owner before even acknowledging old status. */
+    R(0x0c000110,4,&v);
+    if(v&(1u<<24)) {REFUSE(22);}
 
 	/* 1-3: clock source and timing, as reviewed in mtk_i2c_read.c:24-49
 	 * (i2c_sel CLK_CFG_10 [9:8], pdn15, clk-mt6885.c:1886-1890, 1102-1106). */
@@ -301,20 +304,31 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 
 	s->stage = 9;
 	for (unsigned i = 0; i < 15; i++) { R(NA8_CH + offs[i], 2, &old[i]); }
-	/* Source clears the multi-channel FIFO before programming a new transfer
-	 * (i2c-mtk.c:1071-1077). */
-	W(NA8_CH + 0x38, 2, 5); /* FIFO_ADDR_CLR_MCH|FIFO_ADDR_CLR */
-	s->stage = 10;
-	for (unsigned i = 0; i < 15; i++) {
-		touched = i + 1;
-		W(NA8_CH + offs[i], 2, next[i]);
-	}
+	/* Preserve Android's setup order (i2c-mtk.c:963-1203): timeout/div,
+     * control, start/delay/IO/timing, address, FIFO, mask, lengths. The
+     * CPU IRQ delivery was verified masked above. Only clean completion
+     * reaches restore, after all15 words. */
+    static const unsigned order[14]={14,13,2,7,5,10,6,8,9,0,1,3,12,4};
+    s->stage=10;
+    for(unsigned k=0;k<14;k++) {
+     unsigned i=order[k];
+     if(i==1) W(NA8_CH+0x38,2,5); /* source FIFO clear before mask/lengths */
+     touched++;
+     W(NA8_CH+offs[i],2,next[i]);
+    }
+
 	s->stage = 11;
 	W(NA8_CH + 0x00, 1, reg);
     if (writing) {
         W(NA8_CH + 0x00, 1, (unsigned)(*value >> 8));
         W(NA8_CH + 0x00, 1, (unsigned)(*value & 255));
     }
+    /* Source c1202-1213 puts MCU_INTR after FIFO data and immediately
+     * before the ordered START. Native callbacks provide the barrier. */
+    touched++;
+    W(NA8_CH+offs[11],2,next[11]);
+    R(0x0c000110,4,&v);
+    if(v&(1u<<24)) {s->failure=22;goto uncertain;}
 	s->inflight = 1;
 	W(NA8_CH + 0x24, 2, 1);
 	s->stage = 12;
@@ -358,6 +372,10 @@ na8_transfer16(const struct na8_io *o, void *c, struct na8_state *s,
 	s->inflight = 0;
 	s->stage = 14;
 	W(NA8_CH + 0x0c, 2, 1);
+    /* Do not restore an inherited interrupt mask over a pending/sticky
+     * completion. Match the already-verified adoption/NACK clear paths. */
+    R(NA8_CH+0x0c,2,&v);
+    if(v) {s->failure=8;goto uncertain;}
 	W(NA8_CH + 0x38, 2, 5);
 restore:
 	s->stage = 15;
@@ -399,6 +417,21 @@ int na8_read16(const struct na8_io *o, void *c, struct na8_state *s,
  }
  return rc;
 }
+int na8_amp_i2cr(const struct na8_io *o, void *c, struct na8_state *s,
+    unsigned slave)
+{
+ /* tfa98xx_init writes I2CR as literal2, not a runtime RMW. Do not add
+  * bit1 to the ordinary reg00 allowlist: only this cold-init primitive
+  * may reset defaults, and only after fresh output-disabled evidence. */
+ if (!s || s->offline || s->inflight) return -1;
+ unsigned allowed=(slave==0x34 || slave==0x37) && s->prior_amp_valid &&
+  s->prior_amp_slave==slave && s->prior_amp_reg==0 &&
+  (s->prior_amp_value&11)==1;
+ s->prior_amp_valid=0;
+ if (!allowed) { s->failure=19; return -1; }
+ uint16_t value=2;
+ return na8_transfer16(o,c,s,slave,0,&value,1);
+}
 int na8_write16(const struct na8_io *o, void *c, struct na8_state *s,
     unsigned slave, unsigned reg, uint16_t value)
 {
@@ -415,6 +448,8 @@ int na8_write16(const struct na8_io *o, void *c, struct na8_state *s,
    (reg==0x02 && !((old^value)&~15u) && (value&15)==8) ||
    (reg==0x04 && !((old^value)&~256u) && !(value&256));
  }
+ /* Runtime/profile paths must never reassert the self-clearing I2CR. */
+ if (reg==0 && (value&2)) allowed=0;
  s->prior_amp_valid=0;
  if (!allowed) { s->failure=19; return -1; }
  return na8_transfer16(o,c,s,slave,reg,&value,1);

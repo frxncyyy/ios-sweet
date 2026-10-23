@@ -3,6 +3,51 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: complete audio parity candidate validated; CI next.**
+  Integrated Android I2C order/mask129+readonlyGICguard/W1Cverification,
+  amplifier I2CR+containerkeys,100msstop/resetbounds, both-outputmute-first,
+  immediate localreset for runtimeDMA/IO/clockfaults, protection request-vs-ACK,
+  full16384HALburst capacity and pendingPCM/drain/ENABLEerror policy.
+  docs/nord2-audio-parity.md records exact sources, deliberate differences,
+  limits and tests. Full canonical ASan/UBSan suite PASS including11new durable
+  regression files. Nine audio/native TUs and PEhelper compile strictly.
+  PE first used BSDtemplate and hid existingml_io_map; corrected testflags to
+  actualCI PEXPERT_KERNEL_PRIVATE and it passed, no source workaround.
+  Patch28727lines cleanapplies/matchesbuildtree, includesPEreadonlyhelper.
+  Independent hardware/install/profile source reviews PASS; physical audio
+  remainsunverified. ios-parity holds receipts/pipeline; no image/authorization.
+  Current phone62a89dcc healthy/audiooff, conditionalrollbackffd83e98/RAMADB.
+
+
+- **2026-10-23: comprehensive Android audio parity audit; NO next flash yet.**
+  User explicitly requests all credible remaining divergences fixed together.
+  Current phone62a89dcc is UI/touch/button healthy, audio disabled/initialized0;
+  final collector63543 completed600s exit0. Immutable final388799B log in
+  ios-i2c/hardware-review/final.log SHAa765f455ae7e5a53652bd50cde17f8fa7aab4e4faf04b3c43138f2bbc1cf5438.
+  Final STATUS token4 enabled0/running0/uncertain0/error-3/stop_error0.
+  Partial f777b2a CI40012343511 SUCCESS but packing deliberately paused and
+  superseded; do not authorize/test that partial candidate. New ios-parity stage
+  is integration only, no image/authorization. Existing audio_i2c rollbackffd83e98
+  or tested RAMADB remain available; no recovery needed while phone healthy.
+  Parent integrated private Android I2C ordering/W1C, ampI2CR/key preamble,
+  both-amps-muted-before-wait, fatalDMA localreset. Parent resolving IRQmask:
+  Android APmask129 with read-only GIC SPI120/INTID152-disabled guard, reusing
+  PE distributor mapping. Hardware agent audits AFE protect request/ack;
+  install agent adds real reset model, durable regressions and timing parity;
+  profile agent fixes legal HALburst capacity, queuedaudio idle and ENABLEerror.
+  All three reports/candidates under {hardware,install,profile}-sol/android-parity-20261023.
+  No physical ampID, DMA or sound success claimed. Full integrated host/native,
+  independent review, generatedpatch, new sourceCI/images required before asking.
+
+
+- **2026-10-23: legacy100k source f777b2a in CI40012343511.**
+  Full source f777b2a85a2a00ca9b0e6f9a92484b15b6ec986e committed/pushed.
+  ios-i2c-legacy/complete.py rootexec26533 waits exact CI, verifies and builds
+  distinct i2c-legacy playback/rollback images. Independent reviewer waits for
+  build-result.json and produces image-review/i2c-legacy-{playback,rollback}.
+  No new authorization. User call_d52666b3 confirms current62a89dcc lockscreen,
+  touch/buttons healthy; audio remains disabled. Collector63543 still running.
+
 - **2026-10-23: legacy100k I2C correction validated; CI next.**
   Removed the false DMA_FSM_DEBUG bit15 prerequisite: Android uses it only
   for an optional HFIFO high-speed header above1MHz, never for our fixed100k

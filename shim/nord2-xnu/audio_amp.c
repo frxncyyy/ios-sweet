@@ -27,6 +27,20 @@ int nah_amp_cold_init(const struct na8_io *io,void *cookie,struct na8_state *bus
  }
  uint16_t system=0,key=0;
  if (na8_read16(io,cookie,bus,slave,0x00,&system) || (system&9)!=1) return -1;
+ /* Selected Android tfa_dsp.c611: reset I2C defaults BEFORE silicon
+  * optimal settings. I2CR is self clearing; literal2 must not be compared
+  * as retained state or reissued while waiting for completion. Android
+  * specifies no reset wait; allow up100ms here with outputs disabled,
+  * then fail closed if reset/default evidence never arrives. */
+ if (na8_amp_i2cr(io,cookie,bus,slave)) return -2;
+ unsigned reset_ready=0;
+ for (unsigned k=0;k<=100;k++) {
+  if (na8_read16(io,cookie,bus,slave,0,&system)) return -2;
+  if (!(system&2)) { reset_ready=(system&9)==1; break; }
+  if (k==100) break;
+  if (io->delay_us(cookie,1000)) return -2;
+ }
+ if (!reset_ready) return -2;
  #define WRITE(r,v) do { if (na8_write16(io,cookie,bus,slave,(r),(v))) return -2; } while (0)
  WRITE(0x0f,0x5a6b);
  if (na8_read16(io,cookie,bus,slave,0xfb,&key)) return -2;

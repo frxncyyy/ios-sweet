@@ -1,5 +1,6 @@
 /* Image 8e6697a2 boot, init.log lines 1093-1161 ("NORD2 AUDIO SNAP"), all
- * NAU_SNAP_COUNT words in nau_snapshot_pa order. Immutable evidence copy. */
+ * Original69 measured words in nau_snapshot_pa order, unchanged.
+ * Appended PROT2_EN was not captured: explicit SYNTHETIC request0 assumption. */
 static const uint32_t actual_snapshot[NAU_SNAP_COUNT]={
  0x10580e03u, /* 0: 1000616c */
  0x10580e03u, /* 1: 10006170 */
@@ -70,4 +71,5 @@ static const uint32_t actual_snapshot[NAU_SNAP_COUNT]={
  0x00007f06u, /* 66: 11f20060 */
  0x000b80c0u, /* 67: 11f20080 */
  0x00000001u, /* 68: 10006000 */
+ [NAU_S_PROT2_EN]=0, /* SYNTHETIC, NOT measured: requestbit4clear */
 };

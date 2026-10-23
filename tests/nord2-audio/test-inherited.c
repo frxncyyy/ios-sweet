@@ -1,4 +1,4 @@
-/* Real 8e6697a2 boot snapshot (all NAU_SNAP_COUNT words) through the actual
+/* Real 8e6697a2 boot snapshot (original69 words; appended request SYNTHETIC0) through the actual
  * nau_hw_* lifecycle and actual audio_{hw,afe,id,i2c8,amp,board} code.
  * SIMULATED, never hardware proof: I2C8 shadow/CCU idle, APSTART2 as measured
  * on 7d2ca8f9 (bit1 retained through transfers), APDMA EN0. AP CONTROL28,
@@ -26,7 +26,7 @@ static void afe_window(uint32_t pa)
   * (pg.c:3314-3355, afe-clk.c:212-262, clk-mux.c:178-224). */
  assert((reg(NAF_SPM_PWR_STATUS)&(1u<<21)) && (reg(NAF_SPM_PWR_STATUS2)&(1u<<21)));
  assert((reg(NAF_SPM_AUDIO_PWR)&0x111fu)==0x000du);
- assert(!(reg(NAF_IFR_PROT2_STA1)&(1u<<4)));
+ assert(!(reg(0x10001710)&(1u<<4)));
  assert(!(reg(NAF_IFR_CG1_STA)&(1u<<25)) && !(reg(NAF_IFR_CG3_STA)&(1u<<4)));
  assert(!(reg(NAF_TOP_CFG7)&((1u<<31)|(3u<<24))) && !(reg(NAF_TOP_CFG8)&((1u<<7)|3u)));
  assert(!pend7 && !pend8);
@@ -88,7 +88,7 @@ static int audited_write(void *c,uint32_t pa,unsigned w,uint32_t v)
   if (v&(1u<<17)) pend12=0;
   if (v&(1u<<21)) pend13=0;
  }
- if (fault==F_PROTECT_STOP && pa==NAF_IFR_PROT2_SET) { cm.writes++; return 0; } /* ack never arrives */
+ if (fault==F_PROTECT_STOP && pa==NAF_IFR_PROT2_SET) { cm.writes++; *regp(&cm,0x10001710)|=v; return 0; } /* request commits, ack never arrives */
  int r=allwrite(c,pa,w,v);
  if (fault==F_POWERUP && pa==NAF_SPM_AUDIO_PWR) {
   *regp(&cm,NAF_SPM_PWR_STATUS)&=~(1u<<21); *regp(&cm,NAF_SPM_PWR_STATUS2)&=~(1u<<21);
@@ -117,6 +117,7 @@ static void restored(void)
   * high half is a write-only key (pg.c:3267). */
  for (unsigned i=0;i<NAU_SNAP_COUNT;i++) {
   uint32_t v=0,mask=i==NAU_S_SPM_POWERON ? 1u:0xffffffffu;
+  if(i==NAU_S_PROT2_STA1) mask&=~(1u<<4); /* releaseACK is diagnostic, source ignores */
   assert(!allread(0,nau_snapshot_pa[i],4,&v));
   if ((v^base[i])&mask) {
    fprintf(stderr,"restore index%u pa%x got%x expected%x\n",i,nau_snapshot_pa[i],v,base[i]);
@@ -224,7 +225,7 @@ static void classify(void)
  /* Protect and infra gates: every inherited combination is acceptable. */
  for (unsigned m=0;m<8;m++) {
   memcpy(w,actual_snapshot,sizeof w);
-  if (m&1) w[NAU_S_PROT2_STA1]|=1u<<4;
+  if (m&1) {w[NAU_S_PROT2_STA1]|=1u<<4;w[NAU_S_PROT2_EN]|=1u<<4;}
   if (m&2) w[NAU_S_IFR1_CG]|=1u<<25;
   if (m&4) w[NAU_S_IFR3_CG]|=1u<<4;
   assert(!gate_of(w));
@@ -293,7 +294,7 @@ static void plan(void)
  struct nau_state s; memset(&s,0,sizeof s); s.snap_read=NAU_SNAP_COUNT;
  memcpy(s.snap,actual_snapshot,sizeof s.snap);
  assert(!naf_build(&s,amps,&p));
- assert(p.n_up==48 && p.n_down==34);
+ assert(p.n_up==48 && p.n_down==35);
  const struct naf_op *u=p.up,*d=p.down;
  for (unsigned l=0;l<2;l++) {
   const struct naf_op *ops=l ? d:u; unsigned n=l ? p.n_down:p.n_up;
@@ -326,13 +327,14 @@ static void plan(void)
  assert(g<h && h<k && k<m && m<q && q<p.n_down);
  assert(d[g+1].pa==NAF_TOP_UPDATE1 && d[g+1].value==1u && d[q+1].pa==NAF_TOP_UPDATE1 && d[q+1].value==2u);
  assert(d[p.n_down-1].pa==NAF_SPM_POWERON && d[p.n_down-1].value==((NAF_SPM_PROJECT_CODE<<16)|1u));
- /* Cold fixture plan size is the pre-change canonical plan (73/49). */
+ /* Cold fixture plan size is the cold plan remains source-equivalent with SET-request verification (73/50). */
  cold(&s);
- assert(!naf_build(&s,amps,&p) && p.n_up==73 && p.n_down==49);
+ assert(!naf_build(&s,amps,&p) && p.n_up==73 && p.n_down==50);
  assert(find(p.up,p.n_up,NAF_W,NAF_APM_APLL2_CON2,naf_pll_pcw(NAF_APLL2_HZ,0),0)<p.n_up);
- puts("PASS plan: real snapshot 48/34 ops, no APLL2/ADSP/infra/consumer writes, 26MHz bus route ordered, exact restore order; cold plan 73/49");
+ puts("PASS plan: real snapshot 48/35 ops, no APLL2/ADSP/infra/consumer writes, 26MHz bus route ordered, exact restore order; cold plan 73/50");
 }
 
+#ifndef INHERITED_MODEL_ONLY
 int main(int argc,char **argv)
 {
  assert(argc==2 || argc==3);
@@ -361,7 +363,7 @@ int main(int argc,char **argv)
    * protect set, infra gated, muxes gated on non-26MHz/26MHz parents. */
   uint32_t w[NAU_SNAP_COUNT]; memcpy(w,actual_snapshot,sizeof w);
   w[NAU_S_ADSP_PWR_CON]=0x32u; w[NAU_S_PWR_STATUS]&=~(1u<<22); w[NAU_S_PWR_STATUS_2ND]&=~(1u<<22);
-  w[NAU_S_PROT2_STA1]|=1u<<4; w[NAU_S_IFR1_CG]|=1u<<25; w[NAU_S_IFR3_CG]|=1u<<4;
+  w[NAU_S_PROT2_STA1]|=1u<<4; w[NAU_S_PROT2_EN]|=1u<<4; w[NAU_S_IFR1_CG]|=1u<<25; w[NAU_S_IFR3_CG]|=1u<<4;
   w[NAU_S_CLK_CFG_7]=(w[NAU_S_CLK_CFG_7]&~((1u<<31)|(3u<<24)))|(1u<<31)|(2u<<24);
   w[NAU_S_CLK_CFG_8]=(w[NAU_S_CLK_CFG_8]&~0x83u)|0x82u;
   w[NAU_S_CLK_CFG_12]=(w[NAU_S_CLK_CFG_12]&~0x83u)|0x80u;
@@ -458,3 +460,5 @@ int main(int argc,char **argv)
  fprintf(stderr,"unknown case %s\n",k);
  return 2;
 }
+
+#endif /* INHERITED_MODEL_ONLY */

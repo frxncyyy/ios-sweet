@@ -40,12 +40,16 @@ static int amp_cold(struct nau_hw *h,unsigned amp)
 {
  /* tfa98xx_powerdown + probus AMPE, no fake no-DSP mute callback. */
  if (amp_rmw(h,amp,0x00,8,0) || amp_rmw(h,amp,0x00,1,1)) return NAH_E_IO;
- for (unsigned k=0;k<50;k++) {
+ /* Selected Android stop:20 waits of5ms, plus final state read.
+  * Split each5ms into bounded1ms native delays; both outputs are muted
+  * before this path is used by normal stop. */
+ for (unsigned k=0;k<=20;k++) {
   uint16_t v=0;
   if (amp_read(h,amp,0x14,&v)) return NAH_E_IO;
   h->status.amp_status[amp]=v;
   if (!(v & 0x78)) return 0;
-  if (delay(h,1000)) return NAH_E_IO;
+  if (k==20) break;
+  for (unsigned ms=0;ms<5;ms++) if (delay(h,1000)) return NAH_E_IO;
  }
  return NAH_E_AMPS;
 }
@@ -298,7 +302,25 @@ int nau_hw_feed(struct nau_hw *h,const int16_t *pcm,unsigned frames)
  return (int)frames;
 }
 static int terminate(struct nau_hw *h,int reason)
-{ h->status.error=reason; (void)nau_hw_stop(h); return reason; }
+{
+ h->status.error=reason;
+ if (reason==NAH_E_DEADLINE || reason==NAH_E_POINTER || reason==NAH_E_CLOCK_STALLED ||
+     reason==NAH_E_IO || reason==NAH_E_AMP_FAULT) {
+  /* DMA ownership or runtime clock/output health is lost or unverified:
+   * silence the two already-owned local
+   * outputs before any I2C poll/state wait. Never retry this stream.
+   * Keep reset pins and I2C clock ownership for inspection; no shared
+   * controller access is needed to remove excitation. */
+  int err=0;
+  if (!h->status.silent_only && reset_hold_fault(h)) err=NAH_E_IO;
+  if (naf_stream_close(&afe_io,h,&h->snapshot,&h->plan,&h->afe)) err=NAH_E_UNCERTAIN;
+  h->status.running=0; h->qcount=0; h->status.queued_frames=0;
+  h->status.uncertain=1;
+  h->status.stop_error=err ? err:NAH_E_UNCERTAIN;
+  return reason;
+ }
+ (void)nau_hw_stop(h); return reason;
+}
 int nau_hw_tick(struct nau_hw *h,uint64_t now)
 {
  if (!worker(h)) return NAH_E_WORKER;
@@ -358,7 +380,7 @@ int nau_hw_tick(struct nau_hw *h,uint64_t now)
  if (starved) h->status.underruns++;
  h->last_frame=current; h->last_us=now;
  h->status.consumed_frames+=consumed; h->status.queued_frames=h->qcount; h->status.ticks++;
- /* Every20ms inspect source-defined TDM fault/no-clock status. */
+ /* Every fourth tick inspect source-defined TDM fault/no-clock status. */
  if (!h->status.silent_only && !(h->status.ticks%4)) {
   if (lease(h,1)) return terminate(h,NAH_E_IO);
   int fault=0; h->bus.poll_limit=200; /* <=2ms, fit within DMA headroom */
@@ -386,8 +408,14 @@ int nau_hw_stop(struct nau_hw *h)
    /* A refused preflight can latch offline before any controller write,
     * but output disable is still unverified for amps already running. */
    if (h->bus.offline) err=NAH_E_IO;
-   /* A bus failure is sticky: no next-slave access after uncertainty. */
+   /* Mute BOTH outputs before any per-amp powerdown/state wait. The
+    * worker cannot refill DMA while stopping; a slow first amp must not
+    * leave the second replaying the old ring during the state wait.
+    * A bus failure remains sticky: no next slave after uncertainty. */
    for (unsigned i=0;i<2 && !h->bus.offline;i++)
+    if (amp_rmw(h,i,0x00,8,0)) err=NAH_E_IO;
+   /* An unverified mute goes directly to the existing local-reset path. */
+   if (!err) for (unsigned i=0;i<2 && !h->bus.offline;i++)
     if (amp_cold(h,i) || nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { err=NAH_E_IO; if (h->bus.offline) break; }
   }
   if (lease(h,0)) err=NAH_E_IO;

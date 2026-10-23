@@ -27,7 +27,7 @@ struct na8_io {
  * 12 delay, 13 timeout, 14 completion error, 15 byte bounds,
  * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
  * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
- * 21 reserved (former unsupported I3C_EN refusal). */
+ * 21 reserved (former unsupported I3C_EN refusal), 22 GIC IRQ owned. */
 /* Read-only AP-channel preflight snapshot. Bit(index) means that read
  * completed successfully during the latest transfer; missing fields are0. */
 enum na8_ap_field { NA8_AP_START, NA8_AP_CONTROL, NA8_AP_IRQ, NA8_AP_FIFO,
@@ -92,6 +92,8 @@ struct na8_amp {
  * amplifier is probed only after clean completions. */
 int na8_probe(const struct na8_io *, void *, struct na8_state *, struct na8_amp amp[2]);
 unsigned na8_classify(uint16_t rev);
+/* Cold-init only: fixed reg00=2, requires preceding same-amp PWDN1/AMPE0 read. */
+int na8_amp_i2cr(const struct na8_io *, void *, struct na8_state *, unsigned slave);
 int na8_write16(const struct na8_io *, void *, struct na8_state *,
     unsigned slave, unsigned reg, uint16_t value);
 #endif

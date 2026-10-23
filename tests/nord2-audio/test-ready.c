@@ -18,6 +18,8 @@ static struct nau_hw hardware;
 static _Alignas(16384) unsigned char memory[9][16384];
 static void barrier(void) { barriers++;__atomic_thread_fence(__ATOMIC_SEQ_CST); }
 #define NAH_NATIVE_BARRIER() barrier()
+static unsigned gic_reads;
+int nord2_audio_gic_read(uint32_t *v) { gic_reads++;*v=0x12345678;return 0; }
 static void delay(unsigned us) { (void)us;delays++; }
 int naf_write_allowed(uint32_t pa) { return pa==NAF_AFE_DAC_CON0; }
 #define NAH_NATIVE_DEFINE_PREPARE 1
@@ -62,8 +64,14 @@ int main(int argc,char **argv)
   assert(nah_native_prepare(&out,&cookie)==NAH_NATIVE_READY && maps==6);
   assert(nah_native_valid(cookie));
   assert(nah_native_prepare(&out,&cookie)==NAH_NATIVE_E_REENTRY && maps==6);
-  caller=3;
   uint32_t value=0;
+  assert(!out.read(cookie,0x0c000110,4,&value)&&value==0x12345678&&gic_reads==1);
+  assert(out.read(cookie,0x0c000110,2,&value)==-1&&gic_reads==1);
+  assert(out.read(cookie,0x0c000114,4,&value)==-1&&gic_reads==1);
+  assert(out.write(cookie,0x0c000110,4,0)==-1);
+  assert(barriers==2);barriers=0;
+  caller=3;
+  assert(out.read(cookie,0x0c000110,4,&value)==-1&&gic_reads==1);
   assert(out.worker(cookie)==0);
   assert(out.read(cookie,NAF_AFE_DAC_CON0,4,&value)==-1);
   assert(out.write(cookie,NAF_AFE_DAC_CON0,4,0)==-1);

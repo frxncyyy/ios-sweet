@@ -28,11 +28,12 @@ struct m_slave {
 	int nack;
 	uint16_t reg[256];
 	unsigned accessed;
+ unsigned i2crs, reset_reads, container_keys;
 };
 
 struct i2c8_model {
 	uint16_t ch[3][0x80];            /* 16-bit registers, index = offset / 2 */
-	uint32_t pads,ies;
+	uint32_t pads,ies,gic_enable;
 	uint32_t mux, mainpll[4], univpll[4], pinmux, pwr, pwr2, gate, ifr1, ifr2;
 	uint32_t dma[8];                 /* APDMA 0x11000780.. by offset / 4 */
 	unsigned hclk;                   /* parent/div/1000, default 26 MHz/5 */
@@ -40,12 +41,14 @@ struct i2c8_model {
 	uint8_t tx[8], rx[8];
 	unsigned ntx, nrx, rxpos;
 	unsigned behaviour, slow_polls, polls, noclk_persistent;
+	unsigned i2cr_clear_after;       /*0 uses three SYS0 reads; boundary override */
+	unsigned i2cr_stuck;             /* fixed reset bit never self-clears (fault) */
 	unsigned irq_sticky;             /* INTR_STAT W1C has no effect (fault) */
 	unsigned start_stuck;            /* completion leaves transaction bit0 set */
 	unsigned starts, ntrans, dma_en_reads, gate_reads;
 	unsigned setup_hw_timeout;       /* last programmed 0x4c, before restore */
 	uint16_t saved[15];              /* inherited AP config, for restore check */
-	struct { uint8_t addr, ptr; } trans[4096];
+	struct { uint8_t addr, ptr, writing; uint16_t value; } trans[4096];
 };
 
 static inline void
@@ -120,7 +123,7 @@ m_start(struct i2c8_model *m)
 	unsigned tv2 = ((c[0x2c / 2] & 0x3f) + 1) *
 	    (((c[0x2c / 2] & 0x1c0) >> 6) + 1);
 	unsigned writing=c[0x10/2]==0x28;
-    M_CHECK(c[0x08 / 2] == 0 && (writing || c[0x10/2]==0x3a) &&
+    M_CHECK(c[0x08 / 2] == 0x129 && (writing || c[0x10/2]==0x3a) &&
         c[0x14/2]==(writing?3:1) && c[0x18/2]==(writing?1:2) &&
         c[0x44/2]==(writing?0:2) && c[0x34 / 2] == 3 &&
 	    c[0x48 / 2] == 0x404 && c[0x28 / 2] == 0x8001 && c[0x30 / 2] == 0 &&
@@ -133,6 +136,8 @@ m_start(struct i2c8_model *m)
 	M_CHECK(m->ntrans < 4096);
 	m->trans[m->ntrans].addr = addr;
 	m->trans[m->ntrans].ptr = ptr;
+ m->trans[m->ntrans].writing=(uint8_t)writing;
+ m->trans[m->ntrans].value=writing?(uint16_t)((m->tx[1]<<8)|m->tx[2]):0;
 	m->ntrans++;
 	m->ntx = 0;
 	if (m->behaviour == M_BUSERR) { c[0x0c / 2] = 0x101; return; }
@@ -147,8 +152,40 @@ m_start(struct i2c8_model *m)
 	}
 	s->accessed++;
 	if (writing) {
-        s->reg[ptr]=(uint16_t)((m->tx[1]<<8)|m->tx[2]);
+        uint16_t value=(uint16_t)((m->tx[1]<<8)|m->tx[2]);
+        M_CHECK(addr==0x34 || addr==0x37);
+        M_CHECK(ptr!=0xa3 && ptr!=0xa7 && ptr!=0xa8 && ptr!=0xf0);
+        if(ptr==0 && (value&2)) {
+         /* Selected Android tfa_dsp.c611-633 writes full SYS0 literal2.
+          * Ordinary runtime RMWs cannot assert I2CR. Reset erases stale
+          * writable tuning while REV/status/factory data remain external
+          * inputs. Apart from documented SYS0/02 below, zero reset values
+          * are SYNTHETIC test values, not a complete TFA9874 POR map. */
+         M_CHECK(value==2 && (s->reg[0]&11)==1);
+         for(unsigned reg=0;reg<256;reg++)
+          if(reg!=3 && !(reg>=0x10 && reg<=0x17) && reg<0xf0)s->reg[reg]=0;
+         s->reg[0]=3; /* PWDN1 while I2CR selfclear is pending. */
+         s->reg[2]=0x25c8; /* tfa9874_specific POR comments. */
+         s->i2crs++;s->reset_reads=0;
+        } else {
+         if(ptr==0x0f)M_CHECK(value==0 || value==0x5a6b);
+         if(ptr==0xa1)M_CHECK(value==0 || value==0x5a);
+         if(ptr==0xa0) {
+          M_CHECK(value==(uint16_t)(s->reg[0xfb]^0x5a) || value==0x5a);
+          if(value==0x5a && s->i2crs) {
+           unsigned n=m->ntrans;M_CHECK(n>=3);
+           M_CHECK(m->trans[n-3].addr==addr && m->trans[n-3].writing && m->trans[n-3].ptr==0x0f && m->trans[n-3].value==0x5a6b);
+           M_CHECK(m->trans[n-2].addr==addr && m->trans[n-2].writing && m->trans[n-2].ptr==0xa1 && m->trans[n-2].value==0x5a);
+           s->container_keys++;
+          }
+         }
+         s->reg[ptr]=value;
+        }
         c[0x0c/2]=1; return;
+    }
+    if(ptr==0 && (s->reg[0]&2) && s->i2crs) {
+     s->reset_reads++;
+     if(!m->i2cr_stuck && s->reset_reads>=(m->i2cr_clear_after?m->i2cr_clear_after:3))s->reg[0]&=(uint16_t)~2u;
     }
     if (ptr==0x10 && m->noclk_persistent) s->reg[ptr]|=(s->reg[3]&255)==0x74 ? 0x80:0x100;
     m->rx[0] = (uint8_t)(s->reg[ptr] >> 8);
@@ -165,6 +202,7 @@ static inline uint32_t
 m_read(struct i2c8_model *m, uint32_t pa, unsigned w)
 {
 	switch (pa) {
+    case 0x0c000110: M_CHECK(w==4);return m->gic_enable;
 	case 0x100000b0: M_CHECK(w == 4); return m->mux;
 	case 0x1000c340: case 0x1000c344: case 0x1000c348: case 0x1000c34c:
 		M_CHECK(w == 4); return m->mainpll[(pa - 0x1000c340) / 4];

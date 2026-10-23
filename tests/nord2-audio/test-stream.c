@@ -16,6 +16,7 @@ static void cold(struct nau_state *s)
 	s->snap[NAU_S_IFR1_CG] = 1u << 25;
 	s->snap[NAU_S_IFR3_CG] = 1u << 4;
 	s->snap[NAU_S_PROT2_STA1] = 1u << 4;
+ s->snap[NAU_S_PROT2_EN] = 1u << 4;
 	s->snap[NAU_S_CLK_CFG_7] = 1u << 31;
 	s->snap[NAU_S_CLK_CFG_8] = 1u << 7;
 	s->snap[NAU_S_CLK_CFG_12] = 1u << 7;
@@ -73,8 +74,8 @@ static int model_write(void *p, uint32_t pa, uint32_t v)
 	else if (pa==NAF_IFR_CG1_SET) *regp(m,NAF_IFR_CG1_STA)|=v;
 	else if (pa==NAF_IFR_CG3_CLR) *regp(m,NAF_IFR_CG3_STA)&=~v;
 	else if (pa==NAF_IFR_CG3_SET) *regp(m,NAF_IFR_CG3_STA)|=v;
-	else if (pa==NAF_IFR_PROT2_CLR) *regp(m,NAF_IFR_PROT2_STA1)&=~v;
-	else if (pa==NAF_IFR_PROT2_SET) *regp(m,NAF_IFR_PROT2_STA1)|=v;
+	else if (pa==NAF_IFR_PROT2_CLR) { *regp(m,0x10001710)&=~v; *regp(m,NAF_IFR_PROT2_STA1)&=~v; }
+	else if (pa==NAF_IFR_PROT2_SET) { *regp(m,0x10001710)|=v; *regp(m,NAF_IFR_PROT2_STA1)|=v; }
 	else if (pa==NAF_TOP_UPDATE1) { /* write-only trigger */ }
 	else if (pa==NAF_TOP_SET(NAF_TOP_CFG7)||pa==NAF_TOP_SET(NAF_TOP_CFG8)||
 	         pa==NAF_TOP_SET(NAF_TOP_CFG12)||pa==NAF_TOP_SET(NAF_TOP_CFG13))
@@ -174,14 +175,25 @@ int main(void)
  setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,0)==0);
  assert(nau_hw_tick(&hw,0)==0);
  cm.current=NAF_SRAM-4; assert(nau_hw_tick(&hw,5000)==NAH_E_POINTER);
- assert(!hw.status.running && !hw.status.uncertain);
+ assert(!hw.status.running && hw.status.uncertain && hw.status.stop_error);
+ calls=cm.reads+cm.writes;
+ assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,5001)==NAH_E_ARG);
+ assert(cm.reads+cm.writes==calls);
  setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,0)==0);
  assert(nau_hw_tick(&hw,0)==0);
- assert(nau_hw_tick(&hw,20000)==NAH_E_DEADLINE); assert(!hw.status.running);
+ assert(nau_hw_tick(&hw,20000)==NAH_E_DEADLINE);
+ assert(!hw.status.running && hw.status.uncertain && hw.status.stop_error);
+ calls=cm.reads+cm.writes;
+ assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,20001)==NAH_E_ARG);
+ assert(cm.reads+cm.writes==calls);
  setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,0)==0);
  assert(nau_hw_tick(&hw,0)==0);
  for (unsigned i=1;i<=2;i++) assert(nau_hw_tick(&hw,i*5000)==0);
- assert(nau_hw_tick(&hw,15000)==NAH_E_CLOCK_STALLED); assert(!hw.status.running);
+ assert(nau_hw_tick(&hw,15000)==NAH_E_CLOCK_STALLED);
+ assert(!hw.status.running && hw.status.uncertain && hw.status.stop_error);
+ calls=cm.reads+cm.writes;
+ assert(nau_hw_start(&hw,48000,2,16,1,1,2000000,15001)==NAH_E_ARG);
+ assert(cm.reads+cm.writes==calls);
  /* Startup zero-only work must not pollute the active DMA cadence metric. */
  setup(); assert(nau_hw_start(&hw,48000,2,16,1,1,0,0)==0);
  assert(nau_hw_tick(&hw,200000)==0 && hw.status.max_tick_gap_us==0);

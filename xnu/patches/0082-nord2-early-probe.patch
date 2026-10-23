@@ -6434,6 +6434,28 @@
  
  /*
   * All eight cores (six A55 + two A76) as one homogeneous SMP cluster:
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -50,6 +50,19 @@
+ #define gicr_write32(offset, data) (_gic_write32(gicr_pe_base + (offset), (data)))
+ #define gicr_read64(offset) (_gic_read64(gicr_pe_base + (offset)))
+ 
++#if defined(NORD2)
++/* Audio uses polled I2C8 (DTS SPI120). Inspect the existing PE mapping,
++ * without enabling/disabling any interrupt or accessing redistributors. */
++int nord2_audio_gic_read(uint32_t *);
++int
++nord2_audio_gic_read(uint32_t *value)
++{
++    if (!value || !gicd_base) { return -1; }
++    *value = gicd_read32(0x110); /* GICD_ISENABLER4: INTID152 is bit24. */
++    return 0;
++}
++#endif
++
+ static vm_offset_t
+ find_gicr_pe_base()
+ {
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
 @@ -61,7 +61,8 @@
@@ -19102,7 +19124,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_device.c
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,287 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
@@ -19139,7 +19161,7 @@
 +static struct nsa_stream stream;
 +static struct nau_hw hardware;
 +static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
-+ unsigned tone_active, hal_status; uint64_t report_us; } device;
++ unsigned tone_active, hal_status; uint64_t report_us, last_pending_us; } device;
 +static uint64_t now_us(void) {
 + uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
 +}
@@ -19246,7 +19268,7 @@
 + struct nal_request q;if(!nal_take(&q))return;
 + unsigned result=NAL_OK;
 + if(q.op==NAL_ENABLE) {
-+  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.stop_error)result=NAL_UNAVAILABLE;
++  if(!hardware.status.initialized || hardware.status.error || hardware.status.uncertain || hardware.status.stop_error)result=NAL_UNAVAILABLE;
 +  else {lck_mtx_lock(&nsa_lock);nsa_enable(&stream,1);lck_mtx_unlock(&nsa_lock);}
 + } else if(q.op==NAL_STOP) {
 +  lck_mtx_lock(&nsa_lock);nsa_enable(&stream,0);lck_mtx_unlock(&nsa_lock);
@@ -19302,6 +19324,16 @@
 +  native_wait_pause();
 + }
 +}
++/* Worker-owned queue: inspect memory only, never MMIO or producer state.
++ * Test the final ceiling-scaled sample, so zero downstream PCM is not sound. */
++static unsigned hardware_sound_pending(void) {
++ for(unsigned i=0;i<hardware.qcount && i<NAH_QUEUE_FRAMES;i++) {
++  unsigned frame=(hardware.qr+i)%NAH_QUEUE_FRAMES;
++  for(unsigned c=0;c<2;c++)
++   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15/32768) return 1;
++ }
++ return 0;
++}
 +static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
 + struct nah_io io;void *cookie=NULL;
 + uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
@@ -19317,10 +19349,14 @@
 + if(e)diagnose("init",e,1);
 + for(;;) {
 +  commands();
-+  unsigned stop=0,enabled=0,queued=0;uint64_t last_sound=0,t;
++  unsigned stop=0,enabled=0,queued=0,sound_queued=0,idle=0;
++  unsigned downstream=hardware_sound_pending();uint64_t t;
++  const uint64_t drain_us=((uint64_t)NAH_RING_FRAMES*1000000+NSA_RATE-1)/NSA_RATE+2000;
 +  lck_mtx_lock(&nsa_lock);stop=device.stop;device.stop=0;enabled=stream.enabled;
-+  queued=stream.count;last_sound=stream.last_sound_us;lck_mtx_unlock(&nsa_lock);t=now_us();
-+  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || !last_sound || t-last_sound>=750000)))) {
++  queued=stream.count;sound_queued=stream.sound_frames;t=now_us();
++  idle=nsa_idle_ready(&stream,t,downstream,&device.last_pending_us,drain_us);
++  lck_mtx_unlock(&nsa_lock);
++  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || idle)))) {
 +   device.tone_active=0;(void)nau_hw_stop(&hardware);
 +   /* Mute/disable already flush their producer queue. Preserve PCM that
 +    * arrived during the bounded hardware stop; fresh idle checks below
@@ -19331,7 +19367,7 @@
 +   * and do not spin restarting hardware. Live ENABLE after a clean stop can
 +   * accept subsequent playback; uncertain bus state is never retried. */
 +  if(!hardware.status.running && !hardware.status.error && enabled && queued &&
-+     last_sound && t-last_sound<750000 && !device.tone_active)(void)start(0,0);
++     sound_queued && !device.tone_active)(void)start(0,0);
 +  if(hardware.status.running) {
 +   if(device.tone_active)feed_tone();
 +   else {
@@ -19341,6 +19377,8 @@
 +    if(n)(void)nau_hw_feed(&hardware,pcm,n);
 +   }
 +   e=nau_hw_tick(&hardware,now_us());
++   /* Anchor ring drain after PCM writes/monitor work, not at loop entry. */
++   if(hardware.status.running && (sound_queued || downstream))device.last_pending_us=now_us();
 +   if(!hardware.status.running){device.tone_active=0;
 +    if(e==NAH_E_IDLE && !hardware.status.uncertain && !hardware.status.stop_error)hardware.status.error=0;
 +    printf("NORD2 AUDIO: stopped=%d error=%d uncertain=%u pcm=%u silence=%u\n",e,hardware.status.error,
@@ -19383,7 +19421,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_stream.c
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,86 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "audio_stream.h"
@@ -19405,12 +19443,22 @@
 +}
 +void nsa_flush(struct nsa_stream *s) {
 + if (!s) return;
-+ s->read = s->write = s->count = 0; s->flushes++;
++ s->read = s->write = s->count = s->sound_frames = 0; s->flushes++;
 +}
 +void nsa_flush_idle(struct nsa_stream *s, uint64_t now) {
-+ if (!s) return;
++ if (!s || s->sound_frames) return;
 + uint64_t sound=s->last_sound_us;
 + if (!sound || (now>=sound && now-sound>=750000)) nsa_flush(s);
++}
++int nsa_idle_ready(const struct nsa_stream *s, uint64_t now, unsigned pending_output,
++ uint64_t *last_pending, uint64_t drain_us) {
++ if (!s || !last_pending) return 0;
++ if (s->sound_frames || pending_output) { *last_pending=now; return 0; }
++ if (s->last_sound_us && (now<s->last_sound_us || now-s->last_sound_us<750000)) return 0;
++ return !*last_pending || (now>=*last_pending && now-*last_pending>=drain_us);
++}
++static unsigned sound_frame(int16_t left,int16_t right) {
++ return left>8 || left<-8 || right>8 || right<-8;
 +}
 +void nsa_enable(struct nsa_stream *s, unsigned enabled) {
 + if (!s) return;
@@ -19431,6 +19479,7 @@
 + else if (take > NSA_QUEUE_FRAMES - s->count) take = NSA_QUEUE_FRAMES - s->count;
 + s->writes++; s->written += n; s->accepted += take; s->dropped += n - take;
 + for (unsigned i = 0; i < take; i++) {
++  s->sound_frames += sound_frame(p[i*2],p[i*2+1]);
 +  for (unsigned c = 0; c < 2; c++) {
 +   int32_t x = p[i * 2 + c]; unsigned level = x < 0 ? (unsigned)-x : (unsigned)x;
 +   if (level > peak) peak = level;
@@ -19447,6 +19496,7 @@
 + if (!s || !out) return 0;
 + unsigned n = cap < s->count ? cap : s->count;
 + for (unsigned i = 0; i < n; i++) {
++  s->sound_frames -= sound_frame(s->pcm[s->read*2],s->pcm[s->read*2+1]);
 +  for (unsigned c = 0; c < 2; c++) {
 +   int32_t x = s->pcm[s->read * 2 + c];
 +   /* Division rounds negative samples towards zero, just as positive ones. */
@@ -19460,19 +19510,21 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_stream.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,31 @@
 +#ifndef NORD2_AUDIO_STREAM_H
 +#define NORD2_AUDIO_STREAM_H
 +#include <stdint.h>
 +#define NSA_RATE 48000u
 +#define NSA_CHANNELS 2u
 +#define NSA_FRAME_BYTES 4u
-+#define NSA_QUEUE_FRAMES 8192u
++/* Pinned HAL advertises up to16384 frames per period. Retain two
++ * periods across bounded cold startup; writes remain nonblocking. */
++#define NSA_QUEUE_FRAMES 32768u
 +/* The native wrapper serializes these operations with one short mutex. No
 + * allocation, hardware access or blocking operation belongs in this queue. */
 +struct nsa_stream {
 + int16_t pcm[NSA_QUEUE_FRAMES * NSA_CHANNELS];
-+ uint32_t read, write, count, enabled, below, muted, gain_q15;
++ uint32_t read, write, count, enabled, below, muted, gain_q15, sound_frames;
 + uint64_t written, accepted, dropped, delivered, nonzero, last_sound_us;
 + uint32_t peak, opens, writes, volume_generation, flushes;
 +};
@@ -19484,6 +19536,10 @@
 +void nsa_flush(struct nsa_stream *);
 +/* Caller holds the producer lock and samples now while holding it. */
 +void nsa_flush_idle(struct nsa_stream *, uint64_t now_us);
++/* Producer lock held. pending_output describes downstream PCM; drain_us
++ * additionally covers the SRAM ring after the last queued sound leaves it. */
++int nsa_idle_ready(const struct nsa_stream *, uint64_t now_us,
++ unsigned pending_output, uint64_t *last_pending_us, uint64_t drain_us);
 +unsigned nsa_gain(unsigned eighth_db_below);
 +#endif
 --- /dev/null
@@ -19608,7 +19664,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_id.c
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,317 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -19694,6 +19750,7 @@
 +	[NAU_S_LT_PD32] = 0x11f20060,
 +	[NAU_S_LT_PU32] = 0x11f20080,
 +	[NAU_S_SPM_POWERON] = 0x10006000, /* POWERON_CONFIG_EN; read only here */
++	[NAU_S_PROT2_EN] = 0x10001710, /* request bit4; pg.c:231 */
 +};
 +
 +const uint32_t nau_afe_pa[NAU_AFE_COUNT] = {
@@ -19782,7 +19839,7 @@
 +	if ((s[NAU_S_IFR1_CG] & (1u << 25)) || (s[NAU_S_IFR3_CG] & (1u << 4))) {
 +		block |= NAU_AFE_BLOCK_INFRA;
 +	}
-+	if (s[NAU_S_PROT2_STA1] & (1u << 4)) { block |= NAU_AFE_BLOCK_PROTECT; }
++	if (s[NAU_S_PROT2_EN] & (1u << 4)) { block |= NAU_AFE_BLOCK_PROTECT; }
 +	if ((s[NAU_S_CLK_CFG_7] & (1u << 31)) || (s[NAU_S_CLK_CFG_8] & (1u << 7))) {
 +		block |= NAU_AFE_BLOCK_MUX;
 +	}
@@ -19927,7 +19984,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_id.h
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,162 @@
 +#ifndef NORD2_AUDIO_ID_H
 +#define NORD2_AUDIO_ID_H
 +#include <stdint.h>
@@ -19988,6 +20045,8 @@
 +	/* Revision5: SPM POWERON_CONFIG_EN, read only, for the audio_afe.c gate
 +	 * (clk-mt6885-pg.c:166, 263, 3267). */
 +	NAU_S_SPM_POWERON,
++	/* Append-only: protection request, distinct from asynchronous STA1 ack. */
++	NAU_S_PROT2_EN,
 +	NAU_SNAP_COUNT
 +};
 +
@@ -20090,7 +20149,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_i2c8.c
-@@ -0,0 +1,486 @@
+@@ -0,0 +1,521 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -20228,14 +20287,12 @@
 +	 * HW_TIMEOUT (i2c-mtk.h:252-282, i2c-mtk.c:963-1055, 978-1203). */
 +	static const uint32_t offs[15] = {4, 8, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x28, 0x2c,
 +	    0x30, 0x34, 0x40, 0x44, 0x48, 0x4c};
-+	/* mask 0 (polled), CONTROL ACKERR_DET|CLK_EXT|DIR_CHANGE|RS = 0x3a, write 1,
-+	 * transac 2, DELAY_LEN 0x0a, ST start 0x8001, HS 0, open drain 3, MCU_INTR 1,
-+	 * aux read 2, clock-div 5 -> 0x404 (DT:9466-9488, i2c-mtk.c:983-1203).
-+	 * INTR_MASK=0 is deliberate: this diagnostic polls and must not assert the
-+	 * controller IRQ; the source's own IRQ handler masks all interrupts and
-+	 * then reads INTR_STAT, so status latching does not depend on the mask
-+	 * (i2c-mtk.c:1697-1701). HW_TIMEOUT is filled in below. */
-+	uint32_t next[15] = {(uint32_t)slave << 1, 0, 0x3a, 1, 2, 10, 0, 0x8001, 0,
++	/* Selected Android AP-channel mask (i2c-mtk.c1063-1081): COMP,
++     * arbitration loss, hardware timeout and bus error. Poll INTR_STAT
++     * with CPU delivery disabled at GIC INTID152; masking the peripheral
++     * itself is not a documented guarantee of completion latching.
++     * The GIC is observed only, never modified by this driver. */
++	uint32_t next[15] = {(uint32_t)slave << 1, 0x129, 0x3a, 1, 2, 10, 0, 0x8001, 0,
 +	    0, 3, 1, 2, 0x404, 0};
 +	/* Standard source ST_OP write: CONTROL ACKERR_DET|CLK_EXT (0x28),
 +     * one transaction, three payload bytes. No DIR_CHANGE/repeated-start. */
@@ -20249,6 +20306,11 @@
 +	s->last_value = (val); s->last_valid = 1; s->mutated = 1; wrote = 1; \
 +	if (o->write(c, (pa), (w), (val))) { s->failure = 11; goto uncertain; } } while (0)
 +#define REFUSE(code) do { s->failure = (code); goto fail; } while (0)
++
++    /* mt6893.dts6913 SPI120 -> GIC INTID152, ISENABLER4 bit24.
++     * Refuse a live interrupt owner before even acknowledging old status. */
++    R(0x0c000110,4,&v);
++    if(v&(1u<<24)) {REFUSE(22);}
 +
 +	/* 1-3: clock source and timing, as reviewed in mtk_i2c_read.c:24-49
 +	 * (i2c_sel CLK_CFG_10 [9:8], pdn15, clk-mt6885.c:1886-1890, 1102-1106). */
@@ -20396,20 +20458,31 @@
 +
 +	s->stage = 9;
 +	for (unsigned i = 0; i < 15; i++) { R(NA8_CH + offs[i], 2, &old[i]); }
-+	/* Source clears the multi-channel FIFO before programming a new transfer
-+	 * (i2c-mtk.c:1071-1077). */
-+	W(NA8_CH + 0x38, 2, 5); /* FIFO_ADDR_CLR_MCH|FIFO_ADDR_CLR */
-+	s->stage = 10;
-+	for (unsigned i = 0; i < 15; i++) {
-+		touched = i + 1;
-+		W(NA8_CH + offs[i], 2, next[i]);
-+	}
++	/* Preserve Android's setup order (i2c-mtk.c:963-1203): timeout/div,
++     * control, start/delay/IO/timing, address, FIFO, mask, lengths. The
++     * CPU IRQ delivery was verified masked above. Only clean completion
++     * reaches restore, after all15 words. */
++    static const unsigned order[14]={14,13,2,7,5,10,6,8,9,0,1,3,12,4};
++    s->stage=10;
++    for(unsigned k=0;k<14;k++) {
++     unsigned i=order[k];
++     if(i==1) W(NA8_CH+0x38,2,5); /* source FIFO clear before mask/lengths */
++     touched++;
++     W(NA8_CH+offs[i],2,next[i]);
++    }
++
 +	s->stage = 11;
 +	W(NA8_CH + 0x00, 1, reg);
 +    if (writing) {
 +        W(NA8_CH + 0x00, 1, (unsigned)(*value >> 8));
 +        W(NA8_CH + 0x00, 1, (unsigned)(*value & 255));
 +    }
++    /* Source c1202-1213 puts MCU_INTR after FIFO data and immediately
++     * before the ordered START. Native callbacks provide the barrier. */
++    touched++;
++    W(NA8_CH+offs[11],2,next[11]);
++    R(0x0c000110,4,&v);
++    if(v&(1u<<24)) {s->failure=22;goto uncertain;}
 +	s->inflight = 1;
 +	W(NA8_CH + 0x24, 2, 1);
 +	s->stage = 12;
@@ -20453,6 +20526,10 @@
 +	s->inflight = 0;
 +	s->stage = 14;
 +	W(NA8_CH + 0x0c, 2, 1);
++    /* Do not restore an inherited interrupt mask over a pending/sticky
++     * completion. Match the already-verified adoption/NACK clear paths. */
++    R(NA8_CH+0x0c,2,&v);
++    if(v) {s->failure=8;goto uncertain;}
 +	W(NA8_CH + 0x38, 2, 5);
 +restore:
 +	s->stage = 15;
@@ -20494,6 +20571,21 @@
 + }
 + return rc;
 +}
++int na8_amp_i2cr(const struct na8_io *o, void *c, struct na8_state *s,
++    unsigned slave)
++{
++ /* tfa98xx_init writes I2CR as literal2, not a runtime RMW. Do not add
++  * bit1 to the ordinary reg00 allowlist: only this cold-init primitive
++  * may reset defaults, and only after fresh output-disabled evidence. */
++ if (!s || s->offline || s->inflight) return -1;
++ unsigned allowed=(slave==0x34 || slave==0x37) && s->prior_amp_valid &&
++  s->prior_amp_slave==slave && s->prior_amp_reg==0 &&
++  (s->prior_amp_value&11)==1;
++ s->prior_amp_valid=0;
++ if (!allowed) { s->failure=19; return -1; }
++ uint16_t value=2;
++ return na8_transfer16(o,c,s,slave,0,&value,1);
++}
 +int na8_write16(const struct na8_io *o, void *c, struct na8_state *s,
 +    unsigned slave, unsigned reg, uint16_t value)
 +{
@@ -20510,6 +20602,8 @@
 +   (reg==0x02 && !((old^value)&~15u) && (value&15)==8) ||
 +   (reg==0x04 && !((old^value)&~256u) && !(value&256));
 + }
++ /* Runtime/profile paths must never reassert the self-clearing I2CR. */
++ if (reg==0 && (value&2)) allowed=0;
 + s->prior_amp_valid=0;
 + if (!allowed) { s->failure=19; return -1; }
 + return na8_transfer16(o,c,s,slave,reg,&value,1);
@@ -20579,7 +20673,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_i2c8.h
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,99 @@
 +#ifndef NORD2_AUDIO_I2C8_H
 +#define NORD2_AUDIO_I2C8_H
 +#include <stdint.h>
@@ -20609,7 +20703,7 @@
 + * 12 delay, 13 timeout, 14 completion error, 15 byte bounds,
 + * 16 CAM power (CCU may run), 17 CCU channel busy, 18 shadow START,
 + * 19 argument not allowed, 20 existing GPIO input-enable/pads not high,
-+ * 21 reserved (former unsupported I3C_EN refusal). */
++ * 21 reserved (former unsupported I3C_EN refusal), 22 GIC IRQ owned. */
 +/* Read-only AP-channel preflight snapshot. Bit(index) means that read
 + * completed successfully during the latest transfer; missing fields are0. */
 +enum na8_ap_field { NA8_AP_START, NA8_AP_CONTROL, NA8_AP_IRQ, NA8_AP_FIFO,
@@ -20674,12 +20768,14 @@
 + * amplifier is probed only after clean completions. */
 +int na8_probe(const struct na8_io *, void *, struct na8_state *, struct na8_amp amp[2]);
 +unsigned na8_classify(uint16_t rev);
++/* Cold-init only: fixed reg00=2, requires preceding same-amp PWDN1/AMPE0 read. */
++int na8_amp_i2cr(const struct na8_io *, void *, struct na8_state *, unsigned slave);
 +int na8_write16(const struct na8_io *, void *, struct na8_state *,
 +    unsigned slave, unsigned reg, uint16_t value);
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_amp.c
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,71 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -20711,6 +20807,20 @@
 + }
 + uint16_t system=0,key=0;
 + if (na8_read16(io,cookie,bus,slave,0x00,&system) || (system&9)!=1) return -1;
++ /* Selected Android tfa_dsp.c611: reset I2C defaults BEFORE silicon
++  * optimal settings. I2CR is self clearing; literal2 must not be compared
++  * as retained state or reissued while waiting for completion. Android
++  * specifies no reset wait; allow up100ms here with outputs disabled,
++  * then fail closed if reset/default evidence never arrives. */
++ if (na8_amp_i2cr(io,cookie,bus,slave)) return -2;
++ unsigned reset_ready=0;
++ for (unsigned k=0;k<=100;k++) {
++  if (na8_read16(io,cookie,bus,slave,0,&system)) return -2;
++  if (!(system&2)) { reset_ready=(system&9)==1; break; }
++  if (k==100) break;
++  if (io->delay_us(cookie,1000)) return -2;
++ }
++ if (!reset_ready) return -2;
 + #define WRITE(r,v) do { if (na8_write16(io,cookie,bus,slave,(r),(v))) return -2; } while (0)
 + WRITE(0x0f,0x5a6b);
 + if (na8_read16(io,cookie,bus,slave,0xfb,&key)) return -2;
@@ -20754,7 +20864,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_afe.c
-@@ -0,0 +1,828 @@
+@@ -0,0 +1,834 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -20806,6 +20916,10 @@
 +	return (uint32_t)((vco + postdiv - 1) / postdiv);
 +}
 +
++/* Request and ACK are distinct (pg.c:231-235). Release ACK is ignored by
++ * selected source3351-3353; SET still requires ACK before power-down. */
++#define NAF_IFR_PROT2_EN 0x10001710u
++
 +/* ---- inherited-state classification ---- */
 +#define NAF_ST_AUDIO (1u << 21)      /* AUDIO_PWR_STA_MASK, pg.c:563 */
 +#define NAF_ST_ADSP (1u << 22)       /* ADSP_PWR_STA_MASK, pg.c:564 */
@@ -20841,7 +20955,7 @@
 +	/* The selected on-sequence releases protect bit4 after power-up and has
 +	 * no precondition on it (pg.c:3314-3355); off sets it (pg.c:3271-3281).
 +	 * Record the inherited value so stop can restore it after power-off. */
-+	o.prot_clear = !(s[NAU_S_PROT2_STA1] & (1u << 4));
++	o.prot_clear = !(s[NAU_S_PROT2_EN] & (1u << 4));
 +	/* PG_AUDIO parents ifrao_audio / ifrao_audio26m (pg.c:5001-5003). */
 +	o.ifr1_gated = !!(s[NAU_S_IFR1_CG] & (1u << 25));
 +	o.ifr3_gated = !!(s[NAU_S_IFR3_CG] & (1u << 4));
@@ -20959,7 +21073,7 @@
 +	{NAU_S_AUDIO_PWR_CON, 0x111fu},
 +	{NAU_S_IFR1_CG, 1u << 25},
 +	{NAU_S_IFR3_CG, 1u << 4},
-+	{NAU_S_PROT2_STA1, 1u << 4},
++	{NAU_S_PROT2_EN, 1u << 4},
 +	{NAU_S_CLK_CFG_7, (1u << 31) | (3u << 24)},
 +	{NAU_S_CLK_CFG_8, (1u << 7) | 3u},
 +	{NAU_S_CLK_CFG_12, (1u << 7) | 3u},
@@ -21082,9 +21196,9 @@
 +	RMW(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 8, 0);        /* SRAM_PDN */
 +	POLL(NAF_PH_POWER, NAF_SPM_AUDIO_PWR, 1u << 12, 0, 1000, 10);
 +	WR(NAF_PH_POWER, NAF_IFR_PROT2_CLR, 1u << 4);
-+	/* Source ignores this ack (pg.c:3351-3353); waiting is strictly safer.
-+	 * Already clear when the inherited protection was released. */
-+	POLL(NAF_PH_POWER, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
++	/* Source ignores release ACK (pg.c:3351-3353). Verify the owned
++	 * request cleared; an asynchronous/stale ACK is retained as evidence. */
++	POLL(NAF_PH_POWER, NAF_IFR_PROT2_EN, 1u << 4, 0, 1000, 10);
 +
 +	/* 2. mt6885_afe_enable_clock (afe-clk.c:212-279): audio_sel enabled and
 +	 * reparented to clk26m (:240-253), aud_intbus enabled (PG step above) and
@@ -21265,6 +21379,8 @@
 +	 * ISO steps regardless of the inherited value. */
 +	WR(NAF_PH_POWER_OFF, NAF_SPM_POWERON, poweron);
 +	WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_SET, 1u << 4);
++	/* A stale release ACK1 cannot substitute for a committed SET request. */
++	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_EN, 1u << 4, 1u << 4, 1000, 10);
 +	POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 1u << 4, 1000, 10);
 +	RMW(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 8, 1u << 8);
 +	POLL(NAF_PH_POWER_OFF, NAF_SPM_AUDIO_PWR, 1u << 12, 1u << 12, 1000, 10);
@@ -21279,7 +21395,7 @@
 +	 * whole boot ran with, as the selected on-path releases it (pg.c:3349). */
 +	if (o->prot_clear) {
 +		WR(NAF_PH_POWER_OFF, NAF_IFR_PROT2_CLR, 1u << 4);
-+		POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_STA1, 1u << 4, 0, 1000, 10);
++		POLL(NAF_PH_POWER_OFF, NAF_IFR_PROT2_EN, 1u << 4, 0, 1000, 10);
 +	}
 +	/* PG parents in reverse (pg.c:5001-5003): intbus to its inherited parent
 +	 * (afe-clk.c:308 also reparents before disable), then re-gate only what
@@ -21801,7 +21917,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_hw.c
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,455 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -21846,12 +21962,16 @@
 +{
 + /* tfa98xx_powerdown + probus AMPE, no fake no-DSP mute callback. */
 + if (amp_rmw(h,amp,0x00,8,0) || amp_rmw(h,amp,0x00,1,1)) return NAH_E_IO;
-+ for (unsigned k=0;k<50;k++) {
++ /* Selected Android stop:20 waits of5ms, plus final state read.
++  * Split each5ms into bounded1ms native delays; both outputs are muted
++  * before this path is used by normal stop. */
++ for (unsigned k=0;k<=20;k++) {
 +  uint16_t v=0;
 +  if (amp_read(h,amp,0x14,&v)) return NAH_E_IO;
 +  h->status.amp_status[amp]=v;
 +  if (!(v & 0x78)) return 0;
-+  if (delay(h,1000)) return NAH_E_IO;
++  if (k==20) break;
++  for (unsigned ms=0;ms<5;ms++) if (delay(h,1000)) return NAH_E_IO;
 + }
 + return NAH_E_AMPS;
 +}
@@ -22104,7 +22224,25 @@
 + return (int)frames;
 +}
 +static int terminate(struct nau_hw *h,int reason)
-+{ h->status.error=reason; (void)nau_hw_stop(h); return reason; }
++{
++ h->status.error=reason;
++ if (reason==NAH_E_DEADLINE || reason==NAH_E_POINTER || reason==NAH_E_CLOCK_STALLED ||
++     reason==NAH_E_IO || reason==NAH_E_AMP_FAULT) {
++  /* DMA ownership or runtime clock/output health is lost or unverified:
++   * silence the two already-owned local
++   * outputs before any I2C poll/state wait. Never retry this stream.
++   * Keep reset pins and I2C clock ownership for inspection; no shared
++   * controller access is needed to remove excitation. */
++  int err=0;
++  if (!h->status.silent_only && reset_hold_fault(h)) err=NAH_E_IO;
++  if (naf_stream_close(&afe_io,h,&h->snapshot,&h->plan,&h->afe)) err=NAH_E_UNCERTAIN;
++  h->status.running=0; h->qcount=0; h->status.queued_frames=0;
++  h->status.uncertain=1;
++  h->status.stop_error=err ? err:NAH_E_UNCERTAIN;
++  return reason;
++ }
++ (void)nau_hw_stop(h); return reason;
++}
 +int nau_hw_tick(struct nau_hw *h,uint64_t now)
 +{
 + if (!worker(h)) return NAH_E_WORKER;
@@ -22164,7 +22302,7 @@
 + if (starved) h->status.underruns++;
 + h->last_frame=current; h->last_us=now;
 + h->status.consumed_frames+=consumed; h->status.queued_frames=h->qcount; h->status.ticks++;
-+ /* Every20ms inspect source-defined TDM fault/no-clock status. */
++ /* Every fourth tick inspect source-defined TDM fault/no-clock status. */
 + if (!h->status.silent_only && !(h->status.ticks%4)) {
 +  if (lease(h,1)) return terminate(h,NAH_E_IO);
 +  int fault=0; h->bus.poll_limit=200; /* <=2ms, fit within DMA headroom */
@@ -22192,8 +22330,14 @@
 +   /* A refused preflight can latch offline before any controller write,
 +    * but output disable is still unverified for amps already running. */
 +   if (h->bus.offline) err=NAH_E_IO;
-+   /* A bus failure is sticky: no next-slave access after uncertainty. */
++   /* Mute BOTH outputs before any per-amp powerdown/state wait. The
++    * worker cannot refill DMA while stopping; a slow first amp must not
++    * leave the second replaying the old ring during the state wait.
++    * A bus failure remains sticky: no next slave after uncertainty. */
 +   for (unsigned i=0;i<2 && !h->bus.offline;i++)
++    if (amp_rmw(h,i,0x00,8,0)) err=NAH_E_IO;
++   /* An unverified mute goes directly to the existing local-reset path. */
++   if (!err) for (unsigned i=0;i<2 && !h->bus.offline;i++)
 +    if (amp_cold(h,i) || nah_amp_lock(&bus_io,h,&h->bus,h->amps[i].addr)) { err=NAH_E_IO; if (h->bus.offline) break; }
 +  }
 +  if (lease(h,0)) err=NAH_E_IO;
@@ -22335,7 +22479,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_board.c
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,82 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -22399,6 +22543,12 @@
 +{
 + struct nau_hw *h=cookie;
 + if(!h||!io||!bus||amp>1||h->amps[amp].addr!=(amp?0x37:0x34)||!supports(h->amps[amp].rev,h->amps[amp].addr))return NAH_E_BOARD_CONFIG;
++ /* Exact pinned device preamble, replayed by Android's
++  * tfaContWriteRegsDev_v6 AFTER silicon init and before all bitfields.
++  * These are volatile key latches, not MTP programming commands. */
++ if(na8_write16(io,h,bus,h->amps[amp].addr,0x0f,0x5a6b) ||
++    na8_write16(io,h,bus,h->amps[amp].addr,0xa1,0x005a) ||
++    na8_write16(io,h,bus,h->amps[amp].addr,0xa0,0x005a))return NAH_E_IO;
 + for(unsigned i=0;i<52;i++) {
 +  const struct board_op *p=&plan[amp][i];uint16_t old=0,check=0;
 +  if(na8_read16(io,h,bus,h->amps[amp].addr,p->reg,&old))return NAH_E_IO;
@@ -27246,7 +27396,7 @@
 +}
 --- /dev/null
 +++ b/bsd/dev/audio_hw_native.inc
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,193 @@
 +/* Include in the parent's audio-worker TU after kernel thread/vm headers.
 + * Mapping ownership belongs to parent. This bridge NEVER calls ml_io_map.
 + * Populate exactly9 windows with existing16KiB mappings, base list below.
@@ -27298,11 +27448,21 @@
 +  if (c->windows[i].base==base) return c->windows[i].va+(pa-base);
 + return 0;
 +}
++/* Reuse the PE-owned distributor mapping; do not create a tenth alias. */
++extern int nord2_audio_gic_read(uint32_t *);
 +static int nah_native_read(void *cookie,uint32_t pa,unsigned w,uint32_t *v)
 +{
 + struct nah_native_context *c=cookie;
++ if (!v || !nah_native_worker(c)) return -1;
++ if (pa==0x0c000110) {
++  if (w!=4) return -1;
++  NAH_NATIVE_BARRIER();
++  int rc=nord2_audio_gic_read(v);
++  NAH_NATIVE_BARRIER();
++  return rc;
++ }
 + vm_offset_t va=nah_native_va(c,pa,w);
-+ if (!v || !va) return -1;
++ if (!va) return -1;
 + /* FIFO_DATA is only popped by the polled transport; SRAM is write-only. */
 + if (pa>=NAF_SRAM && pa<NAF_SRAM+NAF_SRAM_BYTES) return -1;
 + NAH_NATIVE_BARRIER();

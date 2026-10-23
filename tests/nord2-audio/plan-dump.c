@@ -17,6 +17,7 @@ static void cold(uint32_t *s, unsigned setup)
 	s[NAU_S_IFR1_CG] = 1u << 25;
 	s[NAU_S_IFR3_CG] = 1u << 4;
 	s[NAU_S_PROT2_STA1] = 1u << 4;
+ s[NAU_S_PROT2_EN] = 1u << 4;
 	s[NAU_S_CLK_CFG_7] = 1u << 31;
 	s[NAU_S_CLK_CFG_8] = 1u << 7;
 	s[NAU_S_CLK_CFG_12] = 1u << 7;

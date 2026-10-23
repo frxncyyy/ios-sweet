@@ -32,7 +32,7 @@ static LCK_MTX_DECLARE(nsa_lock, &nsa_group);
 static struct nsa_stream stream;
 static struct nau_hw hardware;
 static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
- unsigned tone_active, hal_status; uint64_t report_us; } device;
+ unsigned tone_active, hal_status; uint64_t report_us, last_pending_us; } device;
 static uint64_t now_us(void) {
  uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
 }
@@ -139,7 +139,7 @@ static void commands(void) {
  struct nal_request q;if(!nal_take(&q))return;
  unsigned result=NAL_OK;
  if(q.op==NAL_ENABLE) {
-  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.stop_error)result=NAL_UNAVAILABLE;
+  if(!hardware.status.initialized || hardware.status.error || hardware.status.uncertain || hardware.status.stop_error)result=NAL_UNAVAILABLE;
   else {lck_mtx_lock(&nsa_lock);nsa_enable(&stream,1);lck_mtx_unlock(&nsa_lock);}
  } else if(q.op==NAL_STOP) {
   lck_mtx_lock(&nsa_lock);nsa_enable(&stream,0);lck_mtx_unlock(&nsa_lock);
@@ -195,6 +195,16 @@ static int prepare_native_deferred(struct nah_io *io,void **cookie)
   native_wait_pause();
  }
 }
+/* Worker-owned queue: inspect memory only, never MMIO or producer state.
+ * Test the final ceiling-scaled sample, so zero downstream PCM is not sound. */
+static unsigned hardware_sound_pending(void) {
+ for(unsigned i=0;i<hardware.qcount && i<NAH_QUEUE_FRAMES;i++) {
+  unsigned frame=(hardware.qr+i)%NAH_QUEUE_FRAMES;
+  for(unsigned c=0;c<2;c++)
+   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15/32768) return 1;
+ }
+ return 0;
+}
 static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
  struct nah_io io;void *cookie=NULL;
  uint64_t nonce=0;read_random(&nonce,sizeof nonce);if(nonce)(void)nal_initialize(nonce);
@@ -210,10 +220,14 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
  if(e)diagnose("init",e,1);
  for(;;) {
   commands();
-  unsigned stop=0,enabled=0,queued=0;uint64_t last_sound=0,t;
+  unsigned stop=0,enabled=0,queued=0,sound_queued=0,idle=0;
+  unsigned downstream=hardware_sound_pending();uint64_t t;
+  const uint64_t drain_us=((uint64_t)NAH_RING_FRAMES*1000000+NSA_RATE-1)/NSA_RATE+2000;
   lck_mtx_lock(&nsa_lock);stop=device.stop;device.stop=0;enabled=stream.enabled;
-  queued=stream.count;last_sound=stream.last_sound_us;lck_mtx_unlock(&nsa_lock);t=now_us();
-  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || !last_sound || t-last_sound>=750000)))) {
+  queued=stream.count;sound_queued=stream.sound_frames;t=now_us();
+  idle=nsa_idle_ready(&stream,t,downstream,&device.last_pending_us,drain_us);
+  lck_mtx_unlock(&nsa_lock);
+  if(hardware.status.running && (stop || (!device.tone_active && (!enabled || idle)))) {
    device.tone_active=0;(void)nau_hw_stop(&hardware);
    /* Mute/disable already flush their producer queue. Preserve PCM that
     * arrived during the bounded hardware stop; fresh idle checks below
@@ -224,7 +238,7 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
    * and do not spin restarting hardware. Live ENABLE after a clean stop can
    * accept subsequent playback; uncertain bus state is never retried. */
   if(!hardware.status.running && !hardware.status.error && enabled && queued &&
-     last_sound && t-last_sound<750000 && !device.tone_active)(void)start(0,0);
+     sound_queued && !device.tone_active)(void)start(0,0);
   if(hardware.status.running) {
    if(device.tone_active)feed_tone();
    else {
@@ -234,6 +248,8 @@ static void audio_worker(__unused void *arg,__unused wait_result_t wr) {
     if(n)(void)nau_hw_feed(&hardware,pcm,n);
    }
    e=nau_hw_tick(&hardware,now_us());
+   /* Anchor ring drain after PCM writes/monitor work, not at loop entry. */
+   if(hardware.status.running && (sound_queued || downstream))device.last_pending_us=now_us();
    if(!hardware.status.running){device.tone_active=0;
     if(e==NAH_E_IDLE && !hardware.status.uncertain && !hardware.status.stop_error)hardware.status.error=0;
     printf("NORD2 AUDIO: stopped=%d error=%d uncertain=%u pcm=%u silence=%u\n",e,hardware.status.error,

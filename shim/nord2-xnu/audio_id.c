@@ -81,6 +81,7 @@ const uint32_t nau_snapshot_pa[NAU_SNAP_COUNT] = {
 	[NAU_S_LT_PD32] = 0x11f20060,
 	[NAU_S_LT_PU32] = 0x11f20080,
 	[NAU_S_SPM_POWERON] = 0x10006000, /* POWERON_CONFIG_EN; read only here */
+	[NAU_S_PROT2_EN] = 0x10001710, /* request bit4; pg.c:231 */
 };
 
 const uint32_t nau_afe_pa[NAU_AFE_COUNT] = {
@@ -169,7 +170,7 @@ nau_afe_block(const uint32_t s[NAU_SNAP_COUNT], unsigned snap_read)
 	if ((s[NAU_S_IFR1_CG] & (1u << 25)) || (s[NAU_S_IFR3_CG] & (1u << 4))) {
 		block |= NAU_AFE_BLOCK_INFRA;
 	}
-	if (s[NAU_S_PROT2_STA1] & (1u << 4)) { block |= NAU_AFE_BLOCK_PROTECT; }
+	if (s[NAU_S_PROT2_EN] & (1u << 4)) { block |= NAU_AFE_BLOCK_PROTECT; }
 	if ((s[NAU_S_CLK_CFG_7] & (1u << 31)) || (s[NAU_S_CLK_CFG_8] & (1u << 7))) {
 		block |= NAU_AFE_BLOCK_MUX;
 	}
