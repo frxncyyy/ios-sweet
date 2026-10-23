@@ -5,7 +5,8 @@
 
 
 - **2026-10-23: real lifecycle scans observed, first user result still pending.**
-  User enabledWi-Fi after initialiOSOFF. Live scan tickets through18 succeeded;
+  iOS requestedON after initialOFF; human action not yet confirmed. Scan tickets
+  through18 succeeded;
   observer confirms17 completed UI requests and displayed-cache union up to21
   real retainedBSS, original30sTTL. Immutable scans-before-user-report.log482178B
   SHAa7c1ef44998ad7a404f56e221c6fb6ea7c3f26dd7c5afd938767a2822080a0fb.
