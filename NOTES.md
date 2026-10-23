@@ -4,6 +4,31 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: corrected STA/live-diagnostics image built and independently verified.**
+  CI39932615713 attempt3 success on a92be30891637cc8be7b435e3d67cebcd8a3dafd.
+  Kernel17804664B SHA066348b1f945b9ea803041852bdea7c166e2d5426dd06c9a6df93ff4fbd5cc49;
+  all234 generated patch targets equal; changed/owning compile lines generic
+  ARMv8.2. ISA guard:2282809 decoded instructions, no LDAPUR/STLUR.
+  Image shim/out/nord2-xnu/nord2-ios-wifi-live-tods-stop23.img33488896B,
+  SHA618e62b541d4cf57b0b5db21e6f7a5d89855ea14338663d905ba42282d61c9fa.
+  Payload15010752B SHAc3a2ae8cda5e6fd8760512d0acf7c8bc71c5bdd03d910b4da368c4849247c4a1.
+  Boot spare65536B. D=research/nord2/wifi-ios-live-tods/ios: build-result.json,
+  ci-verification.json, independent-image-review/final/report.json allPASS;
+  prepared.json records PREPARED_NOT_AUTHORIZED. Verified fresh rebuilt loader,
+  all rebased kernel segments, exact executedee8b ADT/calibration/commandline,
+  original Linux/both DTS/tested RAM-ADB contents and d9a recovery image.
+  Private CI verifier needed source-path end-of-line matching, not a kernel fix;
+  no source/runtime modifications after a92be30. Build/image tools bound to
+  exact CI source while allowing later NOTES-only commits.
+  Next: exact human approval for new boot-only flash, capture startup and
+  user-driven WPA2 Join with private addressoff. First use corrected Ethernet
+  profile; peer metadata and next-Join raw ToDS are fallback diagnostics only.
+  Current phone remains ee8b6da0; no flash or USB action performed this turn.
+  New image, peer query, raw profile and DHCP/Internet untested on hardware.
+  If approved test blocks, recover with verified d9a44316 or RAMADB d78bf9fe;
+  never boot stock Android over iOS userdata.
+
+
 - **2026-10-23: second user-requested rerun accepted, now attempt3.**
   CI39932615713 attempt2 ended with cancelled build120350840616 after15min,
   zero steps and no runner name assigned. Saved attempt2-result.json and
