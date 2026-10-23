@@ -4,6 +4,16 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-24: gainrange/startup CI40031037519 running.**
+  Source7ed29f2d5c8cf44d02eb50cdad4a133bb3011791 pushedfork; independent
+  review no concreteblocker (profile-sol/gainrange-review/REVIEW.md).
+  Stage ios-gainrange watches exactrun, verifies261generatedtargets and
+  pinnedHAL then packs playback/rollback. No image/authorization yet.
+  Phone remains balance d0b18b64, audio STOPped; no phoneoperation.
+  AfterCI: run-gainrange.py independentreviews, prepare.py, exactapproval.
+
+
+
 - **2026-10-24: combined startup settling and digital calibration candidate validated locally.**
   Full ASan/UBSan suite PASS, including256gainpairs/16legacy settings,
   all65536USBencodings, oldkernel range refusal, actual producer policy,
