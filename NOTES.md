@@ -3,6 +3,39 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: first AUDIBLE speaker tone confirmed on route image.**
+  Human `call_4f6a840dc3ce49d79682ea819140aacf:0` heard the one-second tone,
+  could not distinguish which speaker(s). Current `3b8cb873…4bec4c46`.
+  I2S3 CONN0/1 fix now has audible hardware evidence; both startup amp states
+  were operating/unmuted. ENABLE7 successful, all faults0. App media,
+  volume/pause/resume and speaker-side confirmation requested; do not claim
+  those verified yet. `ios-route/hardware-review/human-tone.json` saved.
+
+
+- **2026-10-23: route image clean startup, silent DMA and tone complete.**
+  Current `3b8cb873…4bec4c46`; user confirms UI/controls healthy
+  (`call_c0a12391ca474302a545a6c74e1e788f:0`). HAL reuse mode1 phase2 error0,
+  both0c74 amps initialized, gate0/error0/uncertain0/stop_error0. STOP2,
+  SILENT3/STATUS4:47,908 silent frames,429ticks,maxgap2,392us. TONE5/STATUS6:
+  48,000generated/47,992PCM frames,806cumulative ticks,maxgap3,638us,
+  stopped cleanly. Human audibility pending; no retry issued. Saved startup
+  registers valid1ff both:SYS0018,10=0016,11=e2c0,13=850f,14=00c8,
+  58=1614,20=2890,23=000b,26=1001/0010. Android fields decode clocks locked,
+  amps engaged,MANOPER1/MANSTATE9,unmuted,TDM/speaker input enabled.
+  These prove requested operating state, not audible sound. Evidence in
+  `ios-route/hardware-review`; collector43273 active, HAL disabled pending
+  human tone reply then enable/media/volume/pause tests.
+
+
+- **2026-10-23: I2S3 route image flashed; collecting hardware evidence.**
+  Human `call_1b00ce7dbf234ba39418f35786dc5626:0` authorized playback
+  `3b8cb873…4bec4c46`, HAL reuse, bounded quiet tests and conditional recovery
+  `1f0c672f…10a0d4e9` / tested RAM ADB. Guarded `ios-route` runner flashed
+  boot and rebooted OKAY. Rootexec43273 collects USB for600seconds after
+  enumeration. Playback runner consumed; never rerun. No audio command yet;
+  require clean HAL reuse/amp init and UI confirmation before live tests.
+
+
 - **2026-10-23: I2S3 route images VERIFIED; exact human approval pending.**
   Source `6ee28295b28903bebe4b4c1dc14795af8cbf5d1f`, CI `40019831363`
   attempt1 SUCCESS. All 261 generated targets match; kernel SHA-256
