@@ -3,6 +3,27 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-24: speaker volume persistence COMPLETE, confirmed on phone.**
+  Current boot `nord2-ios-audio-calibrated-playback-stop23.img`, SHA-256
+  `a5b6e6e3c86a825e2828018597e687922496f82dbd1ff705113a99db1fb6be41`.
+  Source 50d13b7c / CI 40034353275. User call_a38d62d1f3704ee3ab22f8369fc7a2c2:0
+  confirms UI/controls and the same approved speaker volume after reboot.
+  First STATUS proved defaults top256/bottom5793 before playback; no USB
+  GAIN/ENABLE/STOP/tone mutations were needed. Final STATUS: enabled1,
+  paused/queue0, 2 stream starts, 189440 written frames, dropped0,
+  error/stop_error/uncertain/gate all0. Existing underrun counter108 and
+  silence13628 are recorded as reported, not claimed zero; no audible fault
+  reported. Full final receipt/log hash saved under
+  ios-calibrated/hardware-review/final-receipt.json.
+  Capture stopped intentionally after validation with SIGINT to the owned
+  read-only collector; exit-2 is expected, not a phone fault. USB closed;
+  no collector or flash process remains. No further gain/quality work needed
+  unless requested. Keep this boot as the current working audio image;
+  b60647f1 remains fallback, f7537a1f is audio rollback, RAM ADB verified.
+  Microphone/telephony and Android host-DSP speaker protection remain outside
+  the implemented playback scope. Do not reboot stock Android over iOS.
+
+
 - **2026-10-24: calibrated audio flashed; boot defaults VERIFIED.**
   Exact approval call_be0c06e695124a07ac0bd81853ccf006:0, “autorizzo”.
   Fastboot detected; ios-calibrated guarded playback runner consumed once.
