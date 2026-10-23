@@ -3,6 +3,20 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: verified618 recovery complete; user confirms everything works.**
+  After human fastboot-ready reply, checked single fastboot/product/boot size,
+  verified618 image SHA and flashed boot only, flash/reboot OKAY. Separate
+  recovery-618-after-lifecycle/flash.log and bounded180s USB capture ended0;
+  current phone is618e62b5, NOT failed29d94463. User reply call_5feeada52332428cad23f778dc166a48
+  confirms lockscreen/touch/buttons all okay. Recovery has valid iOS frames;
+  no preserved prior panic marker. Immutable restored-618-after-lifecycle snapshot
+  under hardware-review records exact hash/readers. No device actions pending.
+  Handover failure reproduced from actual busy/retired ordering. Missing deauth
+  TXS alone does NOT reproduce OFF failure in host owner test; root cause still
+  under investigation, not claimed fixed. Actual Claude Opus session302ebb20
+  running independent audit after13:50 quota reset; earlier9ed344b0 attempt hit
+  quota and performed no review. Private proposals remain unmerged.
+
 - **2026-10-23: lifecycle hardware test finds handover and OFF regressions.**
   User confirms many more 5GHz networks, successful connections, but first switch
   between networks fails and second succeeds after old connection closes. Initial
