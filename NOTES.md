@@ -4,6 +4,50 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: live disconnect/rejoin works on hardware; DHCP still fails.**
+  Phone remains authorized ee8b6da0 (CI39924876139), no second flash or reboot.
+  First Join completed WPA2 but user reports 169.254/no router. Immutable
+  first-join-linklocal log SHA8456ea1d86d5c319a9e5de465f35e97db33e7ce6f7b959a8b734ca0a9441dd64.
+  First live disconnect completed real cleanup and fresh scan: generation1,
+  service8, flags64, join_ready1, no pending work or halt. User rejoined from
+  iOS; STATUS shows generation2/service6/flags127/error0, again link-local.
+  Rejoin snapshot SHAda124c78b49a1cea3043ba9cd0b8da9d1d60da4661d59325ecf93ce86caea17c.
+  All evidence under research/nord2/wifi-ios-live/ios/hardware-review and
+  hardware-live{,-second}. First collector23319 completed0; replacement20442
+  is read-only, bounded600s. Its complete retained-buffer prefix matches first.
+  Unique PID evidence: 63 ordinary group/broadcast frames all TXS3/count30,
+  including27 DHCP DISCOVERs. M2/M4 and protected group-key reply PID34 succeed.
+  Selected enum3 is MPDU_ERROR; it does not identify a cipher-specific cause.
+  Same-LAN PC direct ARP probes caused phone ordinary-unicast ARP responses;
+  aggregate TXS success rose, but PC neighbor stayed unresolved/no ping reply.
+  Generation2 data PIDs already exhausted and fallback127 is ambiguous, so
+  aggregate timing is not unique per-packet attribution. No DHCP lease proven.
+  Source BSS operation0=INFRASTRUCTURE and STA type65=AP are already correct.
+  Wrong ToDS/RA conversion is a coherent hypothesis, not established fact.
+  Agents preparing bounded WTBL metadata query and source-supported alternate
+  raw non-QoS ToDS data profile selectable only between cleanly retired joins.
+  Ethernet remains default; no raw register/packet shell or active DMA rewrite.
+  New code will need full CI and exact-image approval; current image unchanged.
+  OPEN-network comparison was not attempted (unavailable); current codec is
+  WPA2-only, so an OPEN failure would not test the data path. User credentials
+  must not enter notes, tools, logs or agent prompts; host Join is unsupported.
+
+
+- **2026-10-23: ee8b6da0 flashed with exact user approval; native live USB works.**
+  Human reply call_4483ff5303744980855c753a08639861 authorized exactimage and
+  reported fastboot. D=research/nord2/wifi-ios-live/ios; runner23319 still owns
+ 600s USB collector, PID recorded privately in D/client-hardware.pid. Boot-only
+  flash/reboot OKAY at10:51Europe/Rome. No otherpartition flash. First-GUI log
+  observed; user UI/Join feedback pending. New live STATUS token1 returnsOK,
+  generation0/ready1/halt0; CAPTURE_DHCP token3 returnsOK/windows31, armed before
+  first Join. Immutable startup D/hardware-review/boot-before-join.log348136B
+  SHA88267b44e515c921b245b95e08d77d4cc3f1ef12374393f7508a92591b1f66aa,
+  all8readersPASS. User asked to attempt oneWPA2Join/privateaddressoff, report
+  IP/router/Safari and leave radio untouched. Hardware rejoin and DHCP remain
+  unverified. No automatic fallback; recovery d9a/RAMADB already authorized if
+  this test blocks. Current phone now ee8b6da0, replacing prior ecb026c7.
+
+
 - **2026-10-23: new live-control image prepared and independently verified; NOT flashed.**
   Image shim/out/nord2-xnu/nord2-ios-wifi-live-stop23.img,33486848 bytes,
   SHAee8b6da014367d8adad5ba934da453f2c5f5eba0de87acbf7c3464eebe881138.
