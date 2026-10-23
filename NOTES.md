@@ -4,6 +4,24 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: patch review/fix committed; full CI queued, no new flash.**
+  Commit a92be30891637cc8be7b435e3d67cebcd8a3dafd pushed to fork only.
+  CI39932615713 created09:32:32UTC on exacta92be30; latest read is queued,
+  job has no steps/running runner yet. Do not cancel or duplicate dispatch.
+  All11 station suites and final original-source class256 checks pass; final
+  five-unit native compile and generated guarded-source comparison pass.
+  D=research/nord2/wifi-ios-live-tods/ios; build-image.py, verify-ci.py and
+  independently prepared verify-image.py are ready, but no new kernel/image
+  exists. Next: await CI; save successful run.json/build.log, download
+  xnu-kernel and xnu-buildtree under research/ci-39932615713, run verify-ci.py,
+  then build-image.py --source a92be30891637cc8be7b435e3d67cebcd8a3dafd
+  --ci-run 39932615713, then independently verify per
+  VERIFY-IMAGE.md. Require exact new-image approval only after checks pass.
+  Current phone ee8b6da0 stays unchanged; no collector or device action running.
+  Baseline corrected Ethernet is first test; raw ToDS remains opt-in, only
+  selectable between fully retired joins. Never claim DHCP fixed from tests.
+
+
 - **2026-10-23: received Wi-Fi patch series reveals a confirmed STA wire-state bug.**
   User archive wifi.zip SHA6286cb70bd73891f149fa0f376a580796359039c94b6f18ea0d6beaad02594aa
   safely inspected/extracted to research/nord2/wifi/received-20261023; all23
