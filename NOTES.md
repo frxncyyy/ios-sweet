@@ -4,6 +4,20 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: exactee98bd7c switch/power image FLASHED; boot capture active.**
+  Human call_844ebfbf2f034fc787674fc3fd8de8b9 authorized exactimage boot-only and
+  conditional618/RAMADB recovery, phone readyfastboot. Separateauthorization.json
+  saved, runneridentity and image/recovery hashes checked; singledevice/product/
+  32MiBboot/nonuserspace preflight PASS; flash/reboot OKAY at14:34Europe/Rome.
+  Currentphone ee98bd7cb786bdc610f7164c910b77f10da89004b169f32b7e5fa5828b98dd5f,
+  NOT618. Stage research/nord2/wifi-ios-switch-power/ios. One-use runner USED;
+  NEVER rerun it. Rootexec15956 owns bounded600s USBcollector, logfile
+  hardware-live/xnu-live.log and client-hardware.pid. NativeUSB/UI/connection
+  result not yet known. Next inspect boot then ask onebaselineWPA2 test; no
+  networkswitch orOFF/ON until baseline snapshot. Conditionalrecovery already
+  authorized; onlyrequest physicalfastboot ifneeded, not duplicatepermission.
+
+
 - **2026-10-23: switch/power image VERIFIED, awaiting new exact human approval.**
   CI39952094220 attempt1 SUCCESS on f8e4daca68b4c2b12cc59c91106006032cfce68a.
   All234 generated targets byte-equal; actual genericARMv8.2 commands verified.
