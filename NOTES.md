@@ -4,6 +4,13 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: second user-requested rerun accepted, now attempt3.**
+  CI39932615713 attempt2 ended with cancelled build120350840616 after15min,
+  zero steps and no runner name assigned. Saved attempt2-result.json and
+  attempt2-annotations.json. Reran same run/source a92be30; confirmed attempt3
+  queued. No code or device change; image still awaits a successful kernel.
+
+
 - **2026-10-23: user-requested CI rerun accepted.**
   CI39932615713 first attempt concluded failure; its build job120344331892
   was cancelled with zero steps. Saved attempt1-result.json. Ran gh run rerun
