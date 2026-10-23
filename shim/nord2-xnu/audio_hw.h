@@ -8,7 +8,9 @@
 #define NAH_RATE 48000u
 #define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
 #define NAH_QUEUE_FRAMES 8192u
-#define NAH_MAX_GAIN_Q15 256u /* full-scale input <= -42dBFS at DMA */
+#define NAH_DEFAULT_GAIN_Q15 256u /* original tested bringup level */
+#define NAH_MAX_GAIN_Q15 1024u /* absolute full-scale DMA ceiling: -30.1dBFS */
+#define NAH_GAIN_RAMP_FRAMES 480u /* ten-ms PCM ramp; no busy wait */
 #define NAH_MAX_TEST_US 2000000u
 /* Failure values are stable public worker status, never a kernel panic. */
 enum { NAH_OK=0, NAH_E_ARG=-1, NAH_E_WORKER=-2, NAH_E_IO=-3,
@@ -53,6 +55,7 @@ struct nah_status {
  int error, stop_error, reset_error;
  uint32_t current_pa, consumed_frames, queued_frames, fed_frames;
  uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
+ uint32_t gain_ramp_frames, dma_peak[2];
  uint16_t amp_revision[2], amp_status[2];
  uint16_t amp_observed[2][NAH_O_FIELDS];
  unsigned amp_observed_valid[2], amp_observed_seq;
@@ -73,7 +76,7 @@ struct nau_hw {
  int16_t queue[NAH_QUEUE_FRAMES * 2u];
  uint32_t qr, qw, qcount, last_frame, idle_ticks;
  uint64_t last_us, deadline_us, last_feed_us, last_progress_us;
- unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
+ unsigned gain_q15[2], leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
 };
 /* h must be static/heap, zeroed once per boot; never place on kernel stack.
  * init snapshots original reset GPIO111/148 fields and the inherited clock/
@@ -88,10 +91,15 @@ int nau_hw_init(struct nau_hw *, const struct nah_io *, void *, const struct nah
  * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.
  * Both modes run actual continuous DMA and tick. duration_us=0 is continuous
  * HAL playback with 750ms input-idle watchdog; nonzero tests are capped2s.
- * rate must be48000/channels2/bits16. gain0..256 scales queue PCM; no amp gain
+ * rate must be48000/channels2/bits16. gain0..1024 scales queue PCM; no amp gain
  * guessed or modified. now_us is monotonic microseconds from worker clock. */
 int nau_hw_start(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
  unsigned silent_only, unsigned gain_q15, unsigned duration_us, uint64_t now_us);
+/* Physical top=left/slot0/amp37; bottom=right/slot1/amp34. Absolute
+ * gains, never multipliers; each startup ramps only meaningful PCM. */
+int nau_hw_start_channels(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
+ unsigned silent_only, unsigned top_q15, unsigned bottom_q15,
+ unsigned duration_us, uint64_t now_us);
 /* feed returns accepted frames (0 if full), or negative error. Only worker;
  * producer/devfs queues its data externally before this call. */
 int nau_hw_feed(struct nau_hw *, const int16_t *, unsigned frames);

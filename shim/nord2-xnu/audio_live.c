@@ -14,10 +14,19 @@ int nal_initialize(uint64_t nonce){
  put(&live.boot[0],(uint32_t)nonce);put(&live.boot[1],(uint32_t)(nonce>>32));
  put(&live.enabled,1);return 0;
 }
+unsigned nal_gain_value(unsigned index){
+ static const unsigned steps[NAL_GAIN_STEPS]={0,128,256,362,512,724,NAL_GAIN_MAX};
+ return index<NAL_GAIN_STEPS?steps[index]:UINT32_MAX;
+}
+int nal_gain_index_valid(unsigned encoded){
+ return !(encoded&~255u) && (encoded&15u)<NAL_GAIN_STEPS &&
+  ((encoded>>4)&15u)<NAL_GAIN_STEPS;
+}
 int nal_submit(unsigned value,unsigned index){
- if(!nal_enabled()||value>65535||index!=0)return 0;
+ if(!nal_enabled()||value>65535||index>65535)return 0;
  unsigned token=value&NAL_MAX_TOKEN,op=value>>12;
- if(!token||op<NAL_STATUS||op>NAL_SILENT_TEST||(op==NAL_STATUS&&index))return 0;
+ if(!token||op<NAL_STATUS||op>NAL_TONE_BOTTOM)return 0;
+ if(op==NAL_GAIN ? !nal_gain_index_valid(index) : index!=0)return 0;
  unsigned previous=get(&live.token);
  if(token==previous)return op==get(&live.op)&&index==get(&live.generation);
  if(previous==NAL_MAX_TOKEN||token!=previous+1||get(&live.pending))return 0;

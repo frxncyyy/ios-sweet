@@ -7,16 +7,19 @@
 #include "audio_live.h"
 static struct nau_hw hardware;
 static struct nsa_stream stream;
-static struct {unsigned tone_active,tone_frames,tone_phase;uint64_t last_pending_us;}device;
+static unsigned output_gain[2]={256,256};
+static struct {unsigned tone_active,tone_frames,tone_phase,tone_mode,stop;uint64_t last_pending_us;}device;
 static unsigned pending,result;
 static struct nal_request request;
 #define lck_mtx_lock(x) ((void)(x))
 #define lck_mtx_unlock(x) ((void)(x))
 static int nsa_lock;
+unsigned nal_gain_value(unsigned i){static const unsigned v[]={0,128,256,362,512,724,1024};return i<7?v[i]:UINT32_MAX;}
+int nal_gain_index_valid(unsigned n){return n<256&&(n&15)<7&&(n>>4)<7;}
 int nal_take(struct nal_request *r){if(!pending)return 0;*r=request;pending=0;return 1;}
 int nal_complete(const struct nal_request*r,unsigned v,const struct nal_snapshot*s){(void)r;(void)s;result=v;return 0;}
 static void snapshot(struct nal_snapshot*s){memset(s,0,sizeof*s);}
-int nau_hw_stop(struct nau_hw*h){h->status.running=0;return 0;}
+int nau_hw_stop(struct nau_hw*h){h->status.running=0;h->qcount=0;return 0;}
 static int start(unsigned s,unsigned d){(void)s;(void)d;hardware.status.running=1;return 0;}
 #include "device-policy.inc"
 static void enable_request(void){request=(struct nal_request){1,NAL_ENABLE,0};pending=1;commands();}
@@ -29,7 +32,7 @@ int main(void){
  assert(nsa_dequeue(&stream,out,1)==1&&stream.sound_frames==1);
  assert(nsa_dequeue(&stream,out,3)==3&&stream.sound_frames==0);
  /* Wrapped downstreamqueue and actualceiling-scale eliminate falsekeepalive. */
- hardware.gain_q15=256;hardware.qr=NAH_QUEUE_FRAMES-1;hardware.qcount=2;
+ hardware.gain_q15[0]=hardware.gain_q15[1]=256;hardware.qr=NAH_QUEUE_FRAMES-1;hardware.qcount=2;
  hardware.queue[0]=12000;assert(hardware_sound_pending());
  assert(!nsa_idle_ready(&stream,10000001,hardware_sound_pending(),&last,23334));
  hardware.queue[0]=1;assert(!hardware_sound_pending());
@@ -58,5 +61,24 @@ int main(void){
  nsa_enable(&stream,0);hardware.status.uncertain=1;enable_request();assert(result==NAL_UNAVAILABLE&&!stream.enabled);
  hardware.status.uncertain=0;hardware.status.stop_error=NAH_E_IO;enable_request();assert(result==NAL_UNAVAILABLE&&!stream.enabled);
  hardware.status.stop_error=0;hardware.status.initialized=0;enable_request();assert(result==NAL_UNAVAILABLE&&!stream.enabled);
+ /* A live gain edit may never change queued or active audio. */
+ hardware.status.initialized=1;hardware.status.uncertain=hardware.status.stop_error=hardware.status.error=0;
+ nsa_initialize(&stream,1);
+ request=(struct nal_request){2,NAL_GAIN,0x42};pending=1;commands();assert(result==NAL_REFUSED&&output_gain[1]==256);
+ nsa_enable(&stream,0);hardware.qcount=1;pending=1;commands();assert(result==NAL_REFUSED);
+ hardware.qcount=0;stream.count=1;pending=1;commands();assert(result==NAL_REFUSED);
+ stream.count=0;hardware.status.running=1;pending=1;commands();assert(result==NAL_REFUSED);
+ hardware.status.running=0;pending=1;commands();assert(result==NAL_OK&&output_gain[0]==256&&output_gain[1]==512);
+ hardware.status.error=NAH_E_IO;request.generation=0x66;pending=1;commands();assert(result==NAL_UNAVAILABLE&&output_gain[1]==512);
+ hardware.status.error=0;request.generation=0xf2;pending=1;commands();assert(result==NAL_REFUSED&&output_gain[1]==512);
+ /* Muted channel PCM must not keep producer sound/idle bookkeeping alive. */
+ output_gain[0]=0;output_gain[1]=256;
+ int16_t channel_data[]={32767,0,-32768,0};mask_disabled_channels(channel_data,2);
+ assert(!channel_data[0]&&!channel_data[2]);nsa_enable(&stream,1);
+ assert(nsa_enqueue(&stream,channel_data,2,15000000)==2&&!stream.sound_frames);
+ /* Isolated tone cannot race enabled HAL, including an empty producer. */
+ nsa_flush(&stream);request=(struct nal_request){3,NAL_TONE_BOTTOM,0};pending=1;commands();assert(result==NAL_REFUSED);
+ nsa_enable(&stream,0);pending=1;commands();assert(result==NAL_OK&&device.tone_active&&device.tone_mode==NAL_TONE_BOTTOM);
+ request=(struct nal_request){4,NAL_STOP,0};pending=1;commands();assert(!hardware.status.running&&!device.tone_active&&!stream.enabled);
  puts("PASS actualcandidate:longstartupPCMretained,ringtaildrain,wrappeddownstreamgain,zerotailidle,mute/disablecounters,stickyENABLErefusalwithoutreset");
 }

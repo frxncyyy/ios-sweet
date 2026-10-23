@@ -3,6 +3,29 @@
 
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
+- **2026-10-23: bounded speaker gain controls validated, CI next.**
+  Full ASan/UBSan suite PASS (`ios-balance/host-validation-3.log`), including
+  49gainpairs/7legacy MMIOcycles and all65536USBgainargument encodings.
+  Eleven nativeunits PASS, generatedpatch28847lines cleanapply/matches.
+  Independent worker/protocol review no blocker. Default256/256 unchanged;
+  gain0..1024 separate top/bottom,10msramp, isolatedtones andpostscalepeaks.
+  Physical balance stillneeds calibration; no newphonecommands/flash.
+  Earlier hosttestexpectations updated for deliberate ramp/newceiling;
+  steady-state packing and independent exactramp oracle bothpassed.
+
+
+- **2026-10-23: speaker-balance implementation in progress (offline).**
+  User requests correction; Android bottomspeaker wasnormal, onlyiOS bottom
+  quiet. Current phone remains workingroute3b8cb873, no newdeviceoperation.
+  No proven analogregister defect. Adds PCM-only perchannel absolutelevels
+  with originaldefaults256/256 and hardmaximum1024,10msstart ramp, measured
+  postscaleDMApeaks and isolatedfixed1stests. NewUSB GAIN applies onlywhen
+  disabled/fullydrained/stopped/faultfree; zero-gainchannels removed before
+  produceridle accounting. Settings reset onboot, persistacrosscleanstop.
+  Agentprotocol/CLI checks and56actualMMIOmodelgainlifecyclesPASS. Fullsuite,
+  nativereview/CI/exactimage remain; noauthorizationforcandidate. Stageios-balance.
+
+
 - **2026-10-23: route audio hardware test complete; stable working speakers.**
   Current boot `3b8cb873…4bec4c46`, source6ee28295/CI40019831363. User
   confirms app audio BOTH speakers and responsive volume/pause/resume

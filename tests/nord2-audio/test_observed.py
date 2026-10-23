@@ -13,7 +13,7 @@ def extract(source,name):
   end+=1
  return source[start:end]+'\n'
 hw=(S/'audio_hw.c').read_text();dev=(S/'audio_device.c').read_text()
-start=extract(hw,'int nau_hw_start(')
+start=extract(hw,'int nau_hw_start_channels(')
 assert start.index('amp_enable(h,i)')<start.index('amp_observe_startup(h)')<start.rindex('lease(h,0)')
 assert 'amp_observe_startup('not in extract(hw,'int nau_hw_tick(')
 assert dev.count('report_amp_observed();')==1

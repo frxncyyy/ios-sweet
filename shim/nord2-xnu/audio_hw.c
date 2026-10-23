@@ -260,9 +260,14 @@ int nau_hw_init(struct nau_hw *h,const struct nah_io *io,void *cookie,const stru
 int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
  unsigned silent,unsigned gain,unsigned duration,uint64_t now)
 {
+ return nau_hw_start_channels(h,rate,channels,bits,silent,gain,gain,duration,now);
+}
+int nau_hw_start_channels(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
+ unsigned silent,unsigned top,unsigned bottom,unsigned duration,uint64_t now)
+{
  if (!worker(h)) return NAH_E_WORKER;
  if (!h->status.initialized || h->status.running || h->status.uncertain ||
-     rate!=NAH_RATE || channels!=2 || bits!=16 || silent>1 || gain>NAH_MAX_GAIN_Q15 ||
+     rate!=NAH_RATE || channels!=2 || bits!=16 || silent>1 || top>NAH_MAX_GAIN_Q15 || bottom>NAH_MAX_GAIN_Q15 ||
      duration>NAH_MAX_TEST_US || now>UINT64_MAX-duration) return NAH_E_ARG;
  /* This refusal must happen before any mutation or controller programming. */
  if (!silent && !board_valid(h)) return h->status.error=NAH_E_BOARD_CONFIG;
@@ -275,7 +280,8 @@ int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
   h->status.amp_observed_valid[a]=0;
   for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
  }
- h->status.silent_only=silent; h->gain_q15=gain;
+ h->status.silent_only=silent; h->gain_q15[0]=top; h->gain_q15[1]=bottom;
+ h->status.gain_ramp_frames=0; h->status.dma_peak[0]=h->status.dma_peak[1]=0;
  h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
  h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
  h->first_tick=1; h->new_input=0; h->pointer_waiting=0; h->last_progress_us=now;
@@ -339,7 +345,7 @@ static int terminate(struct nau_hw *h,int reason)
   int err=0;
   if (!h->status.silent_only && reset_hold_fault(h)) err=NAH_E_IO;
   if (naf_stream_close(&afe_io,h,&h->snapshot,&h->plan,&h->afe)) err=NAH_E_UNCERTAIN;
-  h->status.running=0; h->qcount=0; h->status.queued_frames=0;
+  h->status.running=0; h->qcount=0; h->status.queued_frames=0; h->status.gain_ramp_frames=0;
   h->status.uncertain=1;
   h->status.stop_error=err ? err:NAH_E_UNCERTAIN;
   return reason;
@@ -390,14 +396,21 @@ int nau_hw_tick(struct nau_hw *h,uint64_t now)
  for (unsigned i=0;i<consumed;i++) {
   int32_t left=0,right=0;
   if (h->qcount && !h->status.silent_only) {
-   left=(int32_t)h->queue[h->qr*2]*(int32_t)h->gain_q15/32768;
-   right=(int32_t)h->queue[h->qr*2+1]*(int32_t)h->gain_q15/32768;
+   int16_t l=h->queue[h->qr*2],r=h->queue[h->qr*2+1];
+   if (((l && h->gain_q15[0]) || (r && h->gain_q15[1])) &&
+       h->status.gain_ramp_frames<NAH_GAIN_RAMP_FRAMES) h->status.gain_ramp_frames++;
+   /* One signed division avoids two-stage truncation at quiet levels. */
+   left=(int32_t)((int64_t)l*h->gain_q15[0]*h->status.gain_ramp_frames/(32768u*NAH_GAIN_RAMP_FRAMES));
+   right=(int32_t)((int64_t)r*h->gain_q15[1]*h->status.gain_ramp_frames/(32768u*NAH_GAIN_RAMP_FRAMES));
    h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; h->status.pcm_frames++;
   } else {
    /* Silent diagnostic drains producer too, avoiding queue blockage. */
    if (h->qcount) { h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; }
    h->status.silence_frames++; starved=1;
   }
+  uint32_t peak0=(uint32_t)(left<0?-left:left),peak1=(uint32_t)(right<0?-right:right);
+  if(peak0>h->status.dma_peak[0])h->status.dma_peak[0]=peak0;
+  if(peak1>h->status.dma_peak[1])h->status.dma_peak[1]=peak1;
   uint32_t word=(uint16_t)left | ((uint32_t)(uint16_t)right<<16);
   if (wr32(h,NAF_SRAM+4*((h->last_frame+i)%NAH_RING_FRAMES),word))
    return terminate(h,NAH_E_IO);
@@ -456,7 +469,7 @@ int nau_hw_stop(struct nau_hw *h)
  if (!hold_reset && reset_restore(h)) err=NAH_E_IO;
  if (lease(h,1)) err=NAH_E_IO;
  else { if (bus_clock_restore(h)) err=NAH_E_IO; if (lease(h,0)) err=NAH_E_IO; }
- h->status.running=0; h->qcount=0; h->status.queued_frames=0;
+ h->status.running=0; h->qcount=0; h->status.queued_frames=0; h->status.gain_ramp_frames=0;
  h->status.uncertain=h->afe.uncertain || h->bus.uncertain || !!err;
  h->status.stop_error=err;
  if (err && !h->status.error) h->status.error=err;

@@ -5,14 +5,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "audio_hw.h"
+#include "audio_live.h"
+static unsigned output_gain[2]={256,256};
 static struct nau_hw hardware;
-static struct {unsigned starts;}device;
+static struct {unsigned starts,tone_mode;}device;
 static uint64_t clock_us,latency;
 static int bad_clock,start_error,stop_error,stop_calls,console_calls,diagnostic_calls,clock_calls;
 static uint64_t now_us(void){clock_calls++;return clock_us;}
 static void diagnose(const char *where,int e,unsigned initial){(void)where;(void)e;(void)initial;diagnostic_calls++;}
-static int nau_hw_start_mock(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,unsigned silent,unsigned gain,unsigned duration,uint64_t begin){
- assert(rate==48000&&channels==2&&bits==16&&silent<=1&&gain==NAH_MAX_GAIN_Q15);
+static int nau_hw_start_mock(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,unsigned silent,unsigned top,unsigned bottom,unsigned duration,uint64_t begin){
+ assert(rate==48000&&channels==2&&bits==16&&silent<=1&&top==256&&bottom==256);
  if(duration>NAH_MAX_TEST_US||begin>UINT64_MAX-duration)return NAH_E_ARG;
  if(start_error)return start_error;
  h->status.running=1;h->deadline_us=duration?begin+duration:0;
@@ -20,7 +22,7 @@ static int nau_hw_start_mock(struct nau_hw *h,unsigned rate,unsigned channels,un
  return 0;
 }
 static int nau_hw_stop_mock(struct nau_hw *h){stop_calls++;h->status.running=0;h->status.stop_error=stop_error;h->status.uncertain=!!stop_error;return stop_error;}
-#define nau_hw_start nau_hw_start_mock
+#define nau_hw_start_channels nau_hw_start_mock
 #define nau_hw_stop nau_hw_stop_mock
 #define printf(...) ((void)++console_calls)
 #include "audio-start-under-test.inc"

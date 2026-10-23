@@ -140,3 +140,35 @@ or calibrated loudness.
 
 Private immutable evidence is under
 `research/nord2/audio/playback-20261023/ios-route/hardware-review`.
+
+
+## Bounded speaker balance control
+
+The audible test exposed a quiet bottom speaker despite healthy amplifier
+states. Android identifies channel0/slot0/address37 as top and
+channel1/slot1/address34 as bottom. Their pinned profiles intentionally differ
+in analog gain and boost configuration. This change preserves those fields;
+it does not guess a conversion from their raw codes to decibels.
+
+The worker now supports separate absolute PCM gains and isolated one-second
+speaker tones over USB. Defaults remain256/256 Q15. Allowed control steps are
+0,128,256,362,512,724,1024; the hardware layer independently rejects values
+above1024. Compared with256,1024 is12dB more amplitude, not a protected or
+calibrated Android listening level. Actual balance must be judged on device.
+
+Use `stop` before `gain --top 256 --bottom 362` or `tone-top` / `tone-bottom`.
+A gain change requires a healthy driver, disabled producer, empty queues and
+stopped DMA. Changes survive clean STOP/reopen, but reset to256/256 on reboot.
+The original `tone` command keeps its fixed256/256 level. Zero-gain channels
+are masked before producer sound accounting. Every stream ramps meaningful
+PCM over480frames (10ms); silent/starved frames do not consume the ramp.
+Status exposes applied gain settings, ramp progress and measured post-scale
+DMA peaks. HAL volume and mute remain effective. No raw-register controls,
+amplifier gain changes or persistent tuning file are introduced.
+
+New regression coverage compares every modeled DMA word over49gain pairs
+and7legacy cycles, including signed extrema, isolated channels, ramp restart,
+silence and fault cleanup. Transport tests exhaust all65536gain encodings
+and verify argument identity after lost acknowledgments. Updated host tools
+handle old and extended kernels; the former strict-capability CLI must be
+updated for the extended kernel.

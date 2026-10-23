@@ -139,7 +139,7 @@ int main(void)
  assert(cm.writes==0 && cm.reads==0);
  assert(nau_hw_start(&hw,44100,2,16,1,256,2000000,100)==NAH_E_ARG);
  assert(cm.writes==0);
- assert(nau_hw_start(&hw,48000,2,16,1,257,2000000,100)==NAH_E_ARG);
+ assert(nau_hw_start(&hw,48000,2,16,1,NAH_MAX_GAIN_Q15+1,2000000,100)==NAH_E_ARG);
  assert(nau_hw_start(&hw,48000,2,16,1,256,2000000,100)==0);
  assert(nau_hw_tick(&hw,100)==0);
  uint32_t code=0,pcw=naf_pll_pcw(196608000,&code);
@@ -157,7 +157,12 @@ int main(void)
   cm.current=NAF_SRAM+4*((i+1)*240%1024);
   assert(nau_hw_tick(&hw,5100+5000*i)==0);
  }
- for (unsigned i=0;i<720;i++) assert(cm.sram[i]==0xff0000ffu);
+ /* First10ms ramp separately covered by exact balance oracle. */
+ for (unsigned i=0;i<480;i++) {
+  assert((int16_t)cm.sram[i]>=0 && (int16_t)cm.sram[i]<=255);
+  assert((int16_t)(cm.sram[i]>>16)<=0 && (int16_t)(cm.sram[i]>>16)>=-256);
+ }
+ for (unsigned i=480;i<720;i++) assert(cm.sram[i]==0xff0000ffu);
  hw.status.silent_only=1; /* Avoid amp monitoring in isolated refill model. */
  cm.current=NAF_SRAM+4*960; assert(nau_hw_tick(&hw,20100)==0);
  cm.current=NAF_SRAM+4*176; assert(nau_hw_tick(&hw,25100)==0);

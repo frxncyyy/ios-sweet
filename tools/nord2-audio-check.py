@@ -33,6 +33,7 @@ def main():
   if a.board:
    cases.append(('producer-capacity',[T/'test-producer-capacity.c',S/'audio_stream.c']+modules,[],[a.board.resolve()]))
    cases.append(('hardware',[T/'test-full.c']+modules,[],[a.board.resolve()]))
+   cases.append(('balance',[T/'test-balance.c']+modules,[],[a.board.resolve()]))
    cases.append(('route-hardware',[T/'test-route.c']+modules,[],[a.board.resolve()]))
    cases.append(('protection',[T/'test-protection.c']+modules,[],[a.board.resolve()]))
    for case in INHERITED:

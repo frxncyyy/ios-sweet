@@ -32,7 +32,13 @@ static LCK_MTX_DECLARE(nsa_lock, &nsa_group);
 static struct nsa_stream stream;
 static struct nau_hw hardware;
 static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
- unsigned tone_active, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
+ unsigned tone_active, tone_mode, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
+static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_GAIN_Q15};
+static void mask_disabled_channels(int16_t *pcm,unsigned frames) {
+ /* Called under producer mutex; gain edits require disabled, empty queues. */
+ for(unsigned c=0;c<2;c++)if(!output_gain[c])
+  for(unsigned i=0;i<frames;i++)pcm[2*i+c]=0;
+}
 static uint64_t now_us(void) {
  uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
 }
@@ -54,7 +60,8 @@ static int audio_write(__unused dev_t d,struct uio *u,__unused int flags) {
  while (uio_resid(u)) {
   unsigned n=(unsigned)uio_resid(u); if(n>sizeof pcm)n=sizeof pcm;
   int e=uiomove((caddr_t)pcm,(int)n,u); if(e)return e;
-  lck_mtx_lock(&nsa_lock); (void)nsa_enqueue(&stream,pcm,n/4,now_us());
+  lck_mtx_lock(&nsa_lock); mask_disabled_channels(pcm,n/4);
+  (void)nsa_enqueue(&stream,pcm,n/4,now_us());
   lck_mtx_unlock(&nsa_lock);
  }
  notify_worker(); return 0;
@@ -86,8 +93,11 @@ static void snapshot(struct nal_snapshot *out) {
  w[NAL_F_UNDERRUNS]=h.underruns;w[NAL_F_TICKS]=h.ticks;
  w[NAL_F_MAX_GAP]=h.max_tick_gap_us;w[NAL_F_TIME_LO]=(uint32_t)t;w[NAL_F_TIME_HI]=(uint32_t)(t>>32);
  w[NAL_F_STREAM_STARTS]=device.starts;w[NAL_F_TONE_FRAMES]=device.tone_frames;
+ w[NAL_F_GAIN_MAX]=NAH_MAX_GAIN_Q15;w[NAL_F_RAMP_FRAMES]=h.gain_ramp_frames;
+ w[NAL_F_DMA_PEAK_TOP]=h.dma_peak[0];w[NAL_F_DMA_PEAK_BOTTOM]=h.dma_peak[1];
  w[NAL_F_HAL_STATUS]=device.hal_status;w[NAL_F_BOARD_STATUS]=nah_board_profile()!=NULL;
  lck_mtx_lock(&nsa_lock);
+ w[NAL_F_GAIN_TOP]=output_gain[0];w[NAL_F_GAIN_BOTTOM]=output_gain[1];
  w[NAL_F_ENABLED]=stream.enabled;w[NAL_F_WRITTEN_LO]=(uint32_t)stream.written;
  w[NAL_F_WRITTEN_HI]=(uint32_t)(stream.written>>32);w[NAL_F_QUEUED]=stream.count;
  w[NAL_F_DROPPED_LO]=(uint32_t)stream.dropped;w[NAL_F_DROPPED_HI]=(uint32_t)(stream.dropped>>32);
@@ -130,7 +140,13 @@ static void diagnose(const char *where,int reason,unsigned initial) {
 }
 static int start(unsigned silent,unsigned duration) {
  uint64_t begin=now_us();
- int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,begin);
+ unsigned top=output_gain[0],bottom=output_gain[1];
+ if(duration) {
+  if(device.tone_mode==NAL_TONE_TOP)bottom=0;
+  else if(device.tone_mode==NAL_TONE_BOTTOM)top=0;
+  else top=bottom=NAH_DEFAULT_GAIN_Q15; /* Legacy tone/silent remain unchanged. */
+ }
+ int e=nau_hw_start_channels(&hardware,48000,2,16,silent,top,bottom,duration,begin);
  if(!e && duration) {
   /* Hardware startup is bounded but may include reset, board and clock
    * waits. Count the diagnostic interval only after successful startup;
@@ -158,12 +174,24 @@ static void commands(void) {
   else {lck_mtx_lock(&nsa_lock);nsa_enable(&stream,1);lck_mtx_unlock(&nsa_lock);}
  } else if(q.op==NAL_STOP) {
   lck_mtx_lock(&nsa_lock);nsa_enable(&stream,0);lck_mtx_unlock(&nsa_lock);
-  device.tone_active=0;
+  device.tone_active=0;device.stop=0;
   if(hardware.status.running && nau_hw_stop(&hardware))result=NAL_REFUSED;
- } else if(q.op==NAL_TONE || q.op==NAL_SILENT_TEST) {
-  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.running)result=NAL_REFUSED;
+ } else if(q.op==NAL_GAIN) {
+  lck_mtx_lock(&nsa_lock);
+  if(!hardware.status.initialized || hardware.status.error || hardware.status.uncertain || hardware.status.stop_error)
+   result=NAL_UNAVAILABLE;
+  else if(stream.enabled || stream.count || hardware.qcount || hardware.status.running || device.tone_active ||
+          !nal_gain_index_valid(q.generation))result=NAL_REFUSED;
+  else {output_gain[0]=nal_gain_value(q.generation&15);output_gain[1]=nal_gain_value((q.generation>>4)&15);}
+  lck_mtx_unlock(&nsa_lock);
+ } else if(q.op==NAL_TONE || q.op==NAL_SILENT_TEST || q.op==NAL_TONE_TOP || q.op==NAL_TONE_BOTTOM) {
+  unsigned busy;
+  lck_mtx_lock(&nsa_lock);busy=stream.enabled || stream.count;lck_mtx_unlock(&nsa_lock);
+  if(!hardware.status.initialized || hardware.status.error || hardware.status.stop_error ||
+     hardware.status.uncertain || hardware.status.running || hardware.qcount || busy || device.stop || device.tone_active)result=NAL_REFUSED;
   else {
    lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);
+   device.tone_mode=q.op;
    if(start(q.op==NAL_SILENT_TEST,1000000))result=NAL_REFUSED;
    else {device.tone_active=1;device.tone_frames=device.tone_phase=0;}
   }
@@ -216,7 +244,7 @@ static unsigned hardware_sound_pending(void) {
  for(unsigned i=0;i<hardware.qcount && i<NAH_QUEUE_FRAMES;i++) {
   unsigned frame=(hardware.qr+i)%NAH_QUEUE_FRAMES;
   for(unsigned c=0;c<2;c++)
-   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15/32768) return 1;
+   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15[c]/32768) return 1;
  }
  return 0;
 }

@@ -44,7 +44,12 @@ int main(int argc,char **argv){
  for(unsigned k=0;k<3;k++){
   uint64_t t=1000000ull*(k+1);cm.current=NAF_SRAM;
   assert(!nau_hw_start(&hw,48000,2,16,0,256,0,t));assert(!nau_hw_tick(&hw,t));
-  assert(nau_hw_feed(&hw,pcm,240)==240);cm.current=NAF_SRAM+960;assert(!nau_hw_tick(&hw,t+5000));
+  /* Two5ms chunks finish the new start ramp before this routing oracle
+   * checks full-level stereo packing. Ramp itself has independent coverage. */
+  for(unsigned chunk=1;chunk<=3;chunk++){
+   assert(nau_hw_feed(&hw,pcm,240)==240);cm.current=NAF_SRAM+960*chunk;
+   assert(!nau_hw_tick(&hw,t+5000*chunk));
+  }
   /* HD0 is packed interleaved S16LE; source physical32-bit I2S width is
    * independent. Verify values and source-selected channel paths. */
   assert((reg(NAF_AFE_DL1_CON0)&3)==0 && (reg(NAF_AFE_DL1_CON0)&(1u<<5)));
@@ -52,7 +57,7 @@ int main(int argc,char **argv){
   assert((reg(NAF_AFE_I2S_CON3)&0x300b)==0x100b); /* normal matrix,32slots,I2S,HD,on */
   assert((reg(ROUTE_CH1_PA)&(1u<<ROUTE_CH1_BIT)) && (reg(ROUTE_CH2_PA)&(1u<<ROUTE_CH2_BIT)));
   assert((reg(NAF_GPIO_MODE_32)&0xf0ff)==0x1011);
-  for(unsigned i=0;i<240;i++){assert((int16_t)cm.sram[i]==64);assert((int16_t)(cm.sram[i]>>16)==-128);}
+  for(unsigned i=0;i<240;i++){assert((int16_t)cm.sram[480+i]==64);assert((int16_t)(cm.sram[480+i]>>16)==-128);}
   keep_i2s1();assert(!nau_hw_stop(&hw));keep_i2s1();restored();
   assert(!(reg(ROUTE_CH1_PA)&(1u<<ROUTE_CH1_BIT)) && !(reg(ROUTE_CH2_PA)&(1u<<ROUTE_CH2_BIT)));
  }

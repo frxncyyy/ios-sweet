@@ -19124,7 +19124,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_device.c
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,331 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +/* Nord2 speaker PCM endpoint used by the unmodified upstream HAL plugin.
@@ -19161,7 +19161,13 @@
 +static struct nsa_stream stream;
 +static struct nau_hw hardware;
 +static struct { unsigned ready, opens, stop, starts, tone_frames, tone_phase;
-+ unsigned tone_active, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
++ unsigned tone_active, tone_mode, hal_status, amp_report_seq; uint64_t report_us, last_pending_us; } device;
++static unsigned output_gain[2]={NAH_DEFAULT_GAIN_Q15,NAH_DEFAULT_GAIN_Q15};
++static void mask_disabled_channels(int16_t *pcm,unsigned frames) {
++ /* Called under producer mutex; gain edits require disabled, empty queues. */
++ for(unsigned c=0;c<2;c++)if(!output_gain[c])
++  for(unsigned i=0;i<frames;i++)pcm[2*i+c]=0;
++}
 +static uint64_t now_us(void) {
 + uint64_t ns=0; absolutetime_to_nanoseconds(mach_absolute_time(),&ns); return ns/1000;
 +}
@@ -19183,7 +19189,8 @@
 + while (uio_resid(u)) {
 +  unsigned n=(unsigned)uio_resid(u); if(n>sizeof pcm)n=sizeof pcm;
 +  int e=uiomove((caddr_t)pcm,(int)n,u); if(e)return e;
-+  lck_mtx_lock(&nsa_lock); (void)nsa_enqueue(&stream,pcm,n/4,now_us());
++  lck_mtx_lock(&nsa_lock); mask_disabled_channels(pcm,n/4);
++  (void)nsa_enqueue(&stream,pcm,n/4,now_us());
 +  lck_mtx_unlock(&nsa_lock);
 + }
 + notify_worker(); return 0;
@@ -19215,8 +19222,11 @@
 + w[NAL_F_UNDERRUNS]=h.underruns;w[NAL_F_TICKS]=h.ticks;
 + w[NAL_F_MAX_GAP]=h.max_tick_gap_us;w[NAL_F_TIME_LO]=(uint32_t)t;w[NAL_F_TIME_HI]=(uint32_t)(t>>32);
 + w[NAL_F_STREAM_STARTS]=device.starts;w[NAL_F_TONE_FRAMES]=device.tone_frames;
++ w[NAL_F_GAIN_MAX]=NAH_MAX_GAIN_Q15;w[NAL_F_RAMP_FRAMES]=h.gain_ramp_frames;
++ w[NAL_F_DMA_PEAK_TOP]=h.dma_peak[0];w[NAL_F_DMA_PEAK_BOTTOM]=h.dma_peak[1];
 + w[NAL_F_HAL_STATUS]=device.hal_status;w[NAL_F_BOARD_STATUS]=nah_board_profile()!=NULL;
 + lck_mtx_lock(&nsa_lock);
++ w[NAL_F_GAIN_TOP]=output_gain[0];w[NAL_F_GAIN_BOTTOM]=output_gain[1];
 + w[NAL_F_ENABLED]=stream.enabled;w[NAL_F_WRITTEN_LO]=(uint32_t)stream.written;
 + w[NAL_F_WRITTEN_HI]=(uint32_t)(stream.written>>32);w[NAL_F_QUEUED]=stream.count;
 + w[NAL_F_DROPPED_LO]=(uint32_t)stream.dropped;w[NAL_F_DROPPED_HI]=(uint32_t)(stream.dropped>>32);
@@ -19259,7 +19269,13 @@
 +}
 +static int start(unsigned silent,unsigned duration) {
 + uint64_t begin=now_us();
-+ int e=nau_hw_start(&hardware,48000,2,16,silent,NAH_MAX_GAIN_Q15,duration,begin);
++ unsigned top=output_gain[0],bottom=output_gain[1];
++ if(duration) {
++  if(device.tone_mode==NAL_TONE_TOP)bottom=0;
++  else if(device.tone_mode==NAL_TONE_BOTTOM)top=0;
++  else top=bottom=NAH_DEFAULT_GAIN_Q15; /* Legacy tone/silent remain unchanged. */
++ }
++ int e=nau_hw_start_channels(&hardware,48000,2,16,silent,top,bottom,duration,begin);
 + if(!e && duration) {
 +  /* Hardware startup is bounded but may include reset, board and clock
 +   * waits. Count the diagnostic interval only after successful startup;
@@ -19287,12 +19303,24 @@
 +  else {lck_mtx_lock(&nsa_lock);nsa_enable(&stream,1);lck_mtx_unlock(&nsa_lock);}
 + } else if(q.op==NAL_STOP) {
 +  lck_mtx_lock(&nsa_lock);nsa_enable(&stream,0);lck_mtx_unlock(&nsa_lock);
-+  device.tone_active=0;
++  device.tone_active=0;device.stop=0;
 +  if(hardware.status.running && nau_hw_stop(&hardware))result=NAL_REFUSED;
-+ } else if(q.op==NAL_TONE || q.op==NAL_SILENT_TEST) {
-+  if(!hardware.status.initialized || hardware.status.uncertain || hardware.status.running)result=NAL_REFUSED;
++ } else if(q.op==NAL_GAIN) {
++  lck_mtx_lock(&nsa_lock);
++  if(!hardware.status.initialized || hardware.status.error || hardware.status.uncertain || hardware.status.stop_error)
++   result=NAL_UNAVAILABLE;
++  else if(stream.enabled || stream.count || hardware.qcount || hardware.status.running || device.tone_active ||
++          !nal_gain_index_valid(q.generation))result=NAL_REFUSED;
++  else {output_gain[0]=nal_gain_value(q.generation&15);output_gain[1]=nal_gain_value((q.generation>>4)&15);}
++  lck_mtx_unlock(&nsa_lock);
++ } else if(q.op==NAL_TONE || q.op==NAL_SILENT_TEST || q.op==NAL_TONE_TOP || q.op==NAL_TONE_BOTTOM) {
++  unsigned busy;
++  lck_mtx_lock(&nsa_lock);busy=stream.enabled || stream.count;lck_mtx_unlock(&nsa_lock);
++  if(!hardware.status.initialized || hardware.status.error || hardware.status.stop_error ||
++     hardware.status.uncertain || hardware.status.running || hardware.qcount || busy || device.stop || device.tone_active)result=NAL_REFUSED;
 +  else {
 +   lck_mtx_lock(&nsa_lock);nsa_flush(&stream);lck_mtx_unlock(&nsa_lock);
++   device.tone_mode=q.op;
 +   if(start(q.op==NAL_SILENT_TEST,1000000))result=NAL_REFUSED;
 +   else {device.tone_active=1;device.tone_frames=device.tone_phase=0;}
 +  }
@@ -19345,7 +19373,7 @@
 + for(unsigned i=0;i<hardware.qcount && i<NAH_QUEUE_FRAMES;i++) {
 +  unsigned frame=(hardware.qr+i)%NAH_QUEUE_FRAMES;
 +  for(unsigned c=0;c<2;c++)
-+   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15/32768) return 1;
++   if((int32_t)hardware.queue[frame*2+c]*(int32_t)hardware.gain_q15[c]/32768) return 1;
 + }
 + return 0;
 +}
@@ -19560,7 +19588,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_live.c
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,81 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#include "audio_live.h"
@@ -19579,10 +19607,19 @@
 + put(&live.boot[0],(uint32_t)nonce);put(&live.boot[1],(uint32_t)(nonce>>32));
 + put(&live.enabled,1);return 0;
 +}
++unsigned nal_gain_value(unsigned index){
++ static const unsigned steps[NAL_GAIN_STEPS]={0,128,256,362,512,724,NAL_GAIN_MAX};
++ return index<NAL_GAIN_STEPS?steps[index]:UINT32_MAX;
++}
++int nal_gain_index_valid(unsigned encoded){
++ return !(encoded&~255u) && (encoded&15u)<NAL_GAIN_STEPS &&
++  ((encoded>>4)&15u)<NAL_GAIN_STEPS;
++}
 +int nal_submit(unsigned value,unsigned index){
-+ if(!nal_enabled()||value>65535||index!=0)return 0;
++ if(!nal_enabled()||value>65535||index>65535)return 0;
 + unsigned token=value&NAL_MAX_TOKEN,op=value>>12;
-+ if(!token||op<NAL_STATUS||op>NAL_SILENT_TEST||(op==NAL_STATUS&&index))return 0;
++ if(!token||op<NAL_STATUS||op>NAL_TONE_BOTTOM)return 0;
++ if(op==NAL_GAIN ? !nal_gain_index_valid(index) : index!=0)return 0;
 + unsigned previous=get(&live.token);
 + if(token==previous)return op==get(&live.op)&&index==get(&live.generation);
 + if(previous==NAL_MAX_TOKEN||token!=previous+1||get(&live.pending))return 0;
@@ -19635,7 +19672,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_live.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,50 @@
 +#ifndef NORD2_AUDIO_LIVE_H
 +#define NORD2_AUDIO_LIVE_H
 +#include <stddef.h>
@@ -19650,8 +19687,8 @@
 +#define NAL_USB_CAP 0x64u
 +#define NAL_USB_COMMAND 0x65u
 +#define NAL_USB_REPLY 0x66u
-+enum nal_op {NAL_STATUS=1,NAL_ENABLE,NAL_STOP,NAL_TONE,NAL_SILENT_TEST};
-+#define NAL_COMMANDS UINT32_C(0x3e)
++enum nal_op {NAL_STATUS=1,NAL_ENABLE,NAL_STOP,NAL_TONE,NAL_SILENT_TEST,NAL_GAIN,NAL_TONE_TOP,NAL_TONE_BOTTOM};
++#define NAL_COMMANDS UINT32_C(0x1fe)
 +enum nal_result {NAL_OK,NAL_UNAVAILABLE,NAL_STALE,NAL_REFUSED,NAL_LIMIT};
 +enum nal_field {
 + NAL_F_MAGIC,NAL_F_VERSION,NAL_F_BYTES,NAL_F_BOOT_LO,NAL_F_BOOT_HI,
@@ -19662,13 +19699,21 @@
 + NAL_F_QUEUED,NAL_F_DROPPED_LO,NAL_F_DROPPED_HI,NAL_F_PCM,NAL_F_SILENCE,
 + NAL_F_UNDERRUNS,NAL_F_TICKS,NAL_F_MAX_GAP,NAL_F_PEAK,NAL_F_VOLUME,NAL_F_MUTED,
 + NAL_F_OPENS,NAL_F_WRITES,NAL_F_TIME_LO,NAL_F_TIME_HI,NAL_F_STREAM_STARTS,
-+ NAL_F_TONE_FRAMES,NAL_F_HAL_STATUS,NAL_F_BOARD_STATUS,NAL_F_END
++ NAL_F_TONE_FRAMES,NAL_F_HAL_STATUS,NAL_F_BOARD_STATUS,
++ NAL_F_GAIN_TOP,NAL_F_GAIN_BOTTOM,NAL_F_GAIN_MAX,NAL_F_RAMP_FRAMES,
++ NAL_F_DMA_PEAK_TOP,NAL_F_DMA_PEAK_BOTTOM,NAL_F_END
 +};
 +struct nal_request {uint32_t token,op,generation;};
 +struct nal_snapshot {uint32_t word[NAL_WORDS];};
 +/* EP0 is single producer; a dedicated audio worker consumes commands. ACK
 + * means queued, never that sound reached a speaker. No raw addresses, arbitrary
 + * writes, executable upload, I2C commands or PCM leave/enter through USB. */
++/* Fixed absolute Q15 step table. Encoded GAIN index: top low nibble,
++ * bottom next nibble; no other bits. Invalid step returns UINT32_MAX. */
++#define NAL_GAIN_MAX 1024u
++#define NAL_GAIN_STEPS 7u
++unsigned nal_gain_value(unsigned index);
++int nal_gain_index_valid(unsigned encoded);
 +int nal_initialize(uint64_t nonce);
 +int nal_enabled(void);
 +int nal_submit(unsigned value,unsigned index);
@@ -21940,7 +21985,7 @@
 +#endif
 --- /dev/null
 +++ b/bsd/dev/audio_hw.c
-@@ -0,0 +1,480 @@
+@@ -0,0 +1,493 @@
 +#include <arm64/sweet_early.h>
 +#if defined(NORD2)
 +#if defined(KERNEL)
@@ -22205,9 +22250,14 @@
 +int nau_hw_start(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
 + unsigned silent,unsigned gain,unsigned duration,uint64_t now)
 +{
++ return nau_hw_start_channels(h,rate,channels,bits,silent,gain,gain,duration,now);
++}
++int nau_hw_start_channels(struct nau_hw *h,unsigned rate,unsigned channels,unsigned bits,
++ unsigned silent,unsigned top,unsigned bottom,unsigned duration,uint64_t now)
++{
 + if (!worker(h)) return NAH_E_WORKER;
 + if (!h->status.initialized || h->status.running || h->status.uncertain ||
-+     rate!=NAH_RATE || channels!=2 || bits!=16 || silent>1 || gain>NAH_MAX_GAIN_Q15 ||
++     rate!=NAH_RATE || channels!=2 || bits!=16 || silent>1 || top>NAH_MAX_GAIN_Q15 || bottom>NAH_MAX_GAIN_Q15 ||
 +     duration>NAH_MAX_TEST_US || now>UINT64_MAX-duration) return NAH_E_ARG;
 + /* This refusal must happen before any mutation or controller programming. */
 + if (!silent && !board_valid(h)) return h->status.error=NAH_E_BOARD_CONFIG;
@@ -22220,7 +22270,8 @@
 +  h->status.amp_observed_valid[a]=0;
 +  for (unsigned i=0;i<NAH_O_FIELDS;i++)h->status.amp_observed[a][i]=0;
 + }
-+ h->status.silent_only=silent; h->gain_q15=gain;
++ h->status.silent_only=silent; h->gain_q15[0]=top; h->gain_q15[1]=bottom;
++ h->status.gain_ramp_frames=0; h->status.dma_peak[0]=h->status.dma_peak[1]=0;
 + h->qr=h->qw=h->qcount=h->last_frame=h->idle_ticks=0;
 + h->last_us=h->last_feed_us=now; h->deadline_us=duration ? now+duration:0;
 + h->first_tick=1; h->new_input=0; h->pointer_waiting=0; h->last_progress_us=now;
@@ -22284,7 +22335,7 @@
 +  int err=0;
 +  if (!h->status.silent_only && reset_hold_fault(h)) err=NAH_E_IO;
 +  if (naf_stream_close(&afe_io,h,&h->snapshot,&h->plan,&h->afe)) err=NAH_E_UNCERTAIN;
-+  h->status.running=0; h->qcount=0; h->status.queued_frames=0;
++  h->status.running=0; h->qcount=0; h->status.queued_frames=0; h->status.gain_ramp_frames=0;
 +  h->status.uncertain=1;
 +  h->status.stop_error=err ? err:NAH_E_UNCERTAIN;
 +  return reason;
@@ -22335,14 +22386,21 @@
 + for (unsigned i=0;i<consumed;i++) {
 +  int32_t left=0,right=0;
 +  if (h->qcount && !h->status.silent_only) {
-+   left=(int32_t)h->queue[h->qr*2]*(int32_t)h->gain_q15/32768;
-+   right=(int32_t)h->queue[h->qr*2+1]*(int32_t)h->gain_q15/32768;
++   int16_t l=h->queue[h->qr*2],r=h->queue[h->qr*2+1];
++   if (((l && h->gain_q15[0]) || (r && h->gain_q15[1])) &&
++       h->status.gain_ramp_frames<NAH_GAIN_RAMP_FRAMES) h->status.gain_ramp_frames++;
++   /* One signed division avoids two-stage truncation at quiet levels. */
++   left=(int32_t)((int64_t)l*h->gain_q15[0]*h->status.gain_ramp_frames/(32768u*NAH_GAIN_RAMP_FRAMES));
++   right=(int32_t)((int64_t)r*h->gain_q15[1]*h->status.gain_ramp_frames/(32768u*NAH_GAIN_RAMP_FRAMES));
 +   h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; h->status.pcm_frames++;
 +  } else {
 +   /* Silent diagnostic drains producer too, avoiding queue blockage. */
 +   if (h->qcount) { h->qr=(h->qr+1)%NAH_QUEUE_FRAMES; h->qcount--; }
 +   h->status.silence_frames++; starved=1;
 +  }
++  uint32_t peak0=(uint32_t)(left<0?-left:left),peak1=(uint32_t)(right<0?-right:right);
++  if(peak0>h->status.dma_peak[0])h->status.dma_peak[0]=peak0;
++  if(peak1>h->status.dma_peak[1])h->status.dma_peak[1]=peak1;
 +  uint32_t word=(uint16_t)left | ((uint32_t)(uint16_t)right<<16);
 +  if (wr32(h,NAF_SRAM+4*((h->last_frame+i)%NAH_RING_FRAMES),word))
 +   return terminate(h,NAH_E_IO);
@@ -22401,7 +22459,7 @@
 + if (!hold_reset && reset_restore(h)) err=NAH_E_IO;
 + if (lease(h,1)) err=NAH_E_IO;
 + else { if (bus_clock_restore(h)) err=NAH_E_IO; if (lease(h,0)) err=NAH_E_IO; }
-+ h->status.running=0; h->qcount=0; h->status.queued_frames=0;
++ h->status.running=0; h->qcount=0; h->status.queued_frames=0; h->status.gain_ramp_frames=0;
 + h->status.uncertain=h->afe.uncertain || h->bus.uncertain || !!err;
 + h->status.stop_error=err;
 + if (err && !h->status.error) h->status.error=err;
@@ -22423,7 +22481,7 @@
 +#endif /* NORD2 */
 --- /dev/null
 +++ b/bsd/dev/audio_hw.h
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,115 @@
 +#ifndef NORD2_AUDIO_HW_H
 +#define NORD2_AUDIO_HW_H
 +#include <stdint.h>
@@ -22434,7 +22492,9 @@
 +#define NAH_RATE 48000u
 +#define NAH_RING_FRAMES (NAF_SRAM_BYTES / 4u)
 +#define NAH_QUEUE_FRAMES 8192u
-+#define NAH_MAX_GAIN_Q15 256u /* full-scale input <= -42dBFS at DMA */
++#define NAH_DEFAULT_GAIN_Q15 256u /* original tested bringup level */
++#define NAH_MAX_GAIN_Q15 1024u /* absolute full-scale DMA ceiling: -30.1dBFS */
++#define NAH_GAIN_RAMP_FRAMES 480u /* ten-ms PCM ramp; no busy wait */
 +#define NAH_MAX_TEST_US 2000000u
 +/* Failure values are stable public worker status, never a kernel panic. */
 +enum { NAH_OK=0, NAH_E_ARG=-1, NAH_E_WORKER=-2, NAH_E_IO=-3,
@@ -22479,6 +22539,7 @@
 + int error, stop_error, reset_error;
 + uint32_t current_pa, consumed_frames, queued_frames, fed_frames;
 + uint32_t pcm_frames, silence_frames, underruns, ticks, max_tick_gap_us;
++ uint32_t gain_ramp_frames, dma_peak[2];
 + uint16_t amp_revision[2], amp_status[2];
 + uint16_t amp_observed[2][NAH_O_FIELDS];
 + unsigned amp_observed_valid[2], amp_observed_seq;
@@ -22499,7 +22560,7 @@
 + int16_t queue[NAH_QUEUE_FRAMES * 2u];
 + uint32_t qr, qw, qcount, last_frame, idle_ticks;
 + uint64_t last_us, deadline_us, last_feed_us, last_progress_us;
-+ unsigned gain_q15, leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
++ unsigned gain_q15[2], leased, first_tick, new_input, reset_changed, bus_clock_prepared, bus_clock_changed, pointer_waiting;
 +};
 +/* h must be static/heap, zeroed once per boot; never place on kernel stack.
 + * init snapshots original reset GPIO111/148 fields and the inherited clock/
@@ -22514,10 +22575,15 @@
 + * NAH_E_BOARD_CONFIG with zero hardware writes if board is missing.
 + * Both modes run actual continuous DMA and tick. duration_us=0 is continuous
 + * HAL playback with 750ms input-idle watchdog; nonzero tests are capped2s.
-+ * rate must be48000/channels2/bits16. gain0..256 scales queue PCM; no amp gain
++ * rate must be48000/channels2/bits16. gain0..1024 scales queue PCM; no amp gain
 + * guessed or modified. now_us is monotonic microseconds from worker clock. */
 +int nau_hw_start(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
 + unsigned silent_only, unsigned gain_q15, unsigned duration_us, uint64_t now_us);
++/* Physical top=left/slot0/amp37; bottom=right/slot1/amp34. Absolute
++ * gains, never multipliers; each startup ramps only meaningful PCM. */
++int nau_hw_start_channels(struct nau_hw *, unsigned rate, unsigned channels, unsigned bits,
++ unsigned silent_only, unsigned top_q15, unsigned bottom_q15,
++ unsigned duration_us, uint64_t now_us);
 +/* feed returns accepted frames (0 if full), or negative error. Only worker;
 + * producer/devfs queues its data externally before this call. */
 +int nau_hw_feed(struct nau_hw *, const int16_t *, unsigned frames);
