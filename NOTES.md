@@ -4,6 +4,21 @@
 ## Nord 2 active handoff — 2026-10-20 (this workspace)
 
 
+- **2026-10-23: Claude review complete; scan-cancel source ready for CI.**
+  Independent actual Claude off-cleanup-error12 audit confirms wrong wireCID04
+  vs source1b, same distinction in both hardware crash logs, no255 overflow,
+  other accepted command IDs correct. Claude ran no tests. Parent local source,
+  lifecycle/power and generated-native checks above pass. Working tree changed
+  during review; Claude noticed both oldliteral4 and correctedconstant, cites log
+  as historical runtime evidence. New firmware side-effect model is NOT claimed
+  as hardware reproduction (PowerMode55 undocumented). Optional extra raw-guard
+  diagnostics/deauth timing changes deferred: narrow fix preserves hard guards
+  and existing terminal logs. Hardware OFF/ON unproven until new authorized test.
+  Disposition and review hashes in wifi-ios-scan-cancel/ios/review-disposition.json.
+  Phone618 remains user-confirmed healthy. Next push/CI, artifact/image verification,
+  then request exact new image authorization; no additional flash authorized yet.
+
+
 - **2026-10-23: post-OFF recovery confirmed by user.**
   Human call_613ac78d827c441088f016faaca00622 says "tutto ok" for lockscreen,
   touch and buttons. Phone remains known618; no further hardware actions pending.
